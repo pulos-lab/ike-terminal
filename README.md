@@ -93,8 +93,8 @@ Kliknij dwukrotnie plik `start.bat` — uruchomi serwer, klienta i otworzy przeg
 
 1. Wyeksportuj historię transakcji z brokera (format CSV):
    - **Bossa.pl** — historia transakcji + operacje gotówkowe
-   - **mBank** — historia transakcji
-   - **DEGIRO** — historia transakcji
+   - **mBank** — historia transakcji + operacje gotówkowe
+   - **DEGIRO** — historia transakcji + operacje gotówkowe
 2. Kliknij **Import** w aplikacji
 3. Wybierz dom maklerski (lub zostaw "Auto-detekcja")
 4. Wybierz plik CSV
