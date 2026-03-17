@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.local
+
+# Data (personal portfolio databases and config)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/portfolios.json
+
+# Personal import files
+Import/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
+
+# Legacy
+app.py
+
+# Logs
+*.log
+npm-debug.log*
+
+# Documents
+*.pdf
