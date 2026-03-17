@@ -30,10 +30,6 @@ node --version   # powinno być v20 lub nowsze
 npm --version    # powinno być 9 lub nowsze
 ```
 
-### Git
-
-Pobrać z [git-scm.com](https://git-scm.com/).
-
 ### Narzędzia kompilacji C++
 
 Wymagane przez pakiet `better-sqlite3` (natywna baza danych SQLite).
@@ -57,6 +53,8 @@ sudo apt install build-essential python3
 ```
 
 ## Instalacja
+
+Pobranie kodu wymaga [Git](https://git-scm.com/). Można też pobrać ZIP z GitHub.
 
 ```bash
 git clone https://github.com/pulos-lab/ike-terminal.git
