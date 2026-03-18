@@ -1,11 +1,11 @@
 # TIX Terminal
 
-Aplikacja do zarządzania portfelem inwestycyjnym IKE/IKZE. Import transakcji z Bossa.pl, mBank, DEGIR i XTB automatyczne pobieranie kursów, analiza wyników i porównanie z benchmarkami.
+Aplikacja do zarządzania portfelem inwestycyjnym IKE/IKZE. Import transakcji z Bossa.pl, mBank, DEGIRO i XTB, automatyczne pobieranie kursów, analiza wyników i porównanie z benchmarkami.
 
 ## Funkcje
 
 - **Multi-portfel** — obsługa wielu portfeli (IKE, IKZE) z osobnymi bazami danych
-- **Import CSV** — automatyczny import transakcji z Bossa.pl, mBank i DEGIRO
+- **Import CSV/XLSX** — automatyczny import transakcji z Bossa.pl, mBank, DEGIRO i XTB
 - **Auto-rozpoznawanie ISIN** — automatyczne mapowanie kodów ISIN na tickery (Yahoo Finance, Stooq)
 - **Dashboard** — wykres procentowej zmiany portfela vs benchmark (S&P 500, NASDAQ, WIG20, mWIG40, sWIG80)
 - **MWR/TWR** — przełączanie między Money-Weighted Return i Time-Weighted Return
@@ -13,7 +13,7 @@ Aplikacja do zarządzania portfelem inwestycyjnym IKE/IKZE. Import transakcji z 
 - **Transakcje zamknięte** — historia zamkniętych pozycji (FIFO) z P/L
 - **Dywidendy** — przegląd otrzymanych dywidend
 - **Waluty** — historia przewalutowań
-- **Wpłaty** — historia wpłat z limitem IKE/IKZE
+- **Gotówka** — historia wpłat i wypłat z limitem IKE/IKZE
 - **Statystyki** — XIRR, CAGR, Sharpe Ratio, Sortino Ratio, Max Drawdown, Volatility
 - **Multi-waluta** — PLN, USD, CAD, EUR z automatycznym przeliczaniem kursów FX
 - **Dark mode** — ciemny interfejs (domyślny)
@@ -89,26 +89,27 @@ Kliknij dwukrotnie plik `start.bat` — uruchomi serwer, klienta i otworzy przeg
 
 ## Import danych
 
-1. Wyeksportuj historię transakcji z brokera (format CSV):
-   - **Bossa.pl** — historia transakcji + operacje gotówkowe
-   - **mBank** — historia transakcji + operacje gotówkowe
-   - **DEGIRO** — historia transakcji + operacje gotówkowe
+1. Wyeksportuj historię transakcji z brokera:
+   - **Bossa.pl** — CSV: historia transakcji + operacje gotówkowe
+   - **mBank** — CSV: historia transakcji
+   - **DEGIRO** — CSV: historia transakcji
+   - **XTB** — XLSX: eksport konta (transakcje, wpłaty, wypłaty w jednym pliku)
 2. Kliknij **Import** w aplikacji
 3. Wybierz dom maklerski (lub zostaw "Auto-detekcja")
-4. Wybierz plik CSV
+4. Wybierz plik CSV lub XLSX
 5. Aplikacja automatycznie rozpozna papiery i pobierze kursy
 
 ## Struktura projektu
 
 ```
 ike-terminal/
-  shared/          # Typy TypeScript, stałe (ticker map, benchmarki)
+  shared/          # Typy TypeScript, stałe (benchmarki, aliasy)
   server/          # Express API, SQLite, portfolio engine
     src/
       db/          # Repozytoria bazy danych
       routes/      # Endpointy API
       services/    # Logika biznesowa (portfolio-engine, yahoo, stooq)
-      parsers/     # Parsery CSV (Bossa, mBank, DEGIRO)
+      parsers/     # Parsery CSV/XLSX (Bossa, mBank, DEGIRO, XTB)
   client/          # React SPA
     src/
       components/  # Komponenty UI (dashboard, portfolio, import...)
