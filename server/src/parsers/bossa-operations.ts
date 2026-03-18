@@ -42,7 +42,7 @@ export function parseBossaOperations(csvContent: string, importBatch: string): P
     if (!DATE_RE.test(dateStr)) { skipped.push({ row: rowNum, reason: 'invalid_date', paperName: title }); continue; }
     if (amount === 0) { skipped.push({ row: rowNum, reason: 'zero_amount', paperName: title }); continue; }
 
-    const operationType = classifyOperation(title);
+    const operationType = classifyOperation(title, amount);
 
     // Skip transaction settlement records — they belong to transactions, not cash operations
     if (operationType === 'skip') { skipped.push({ row: rowNum, reason: 'settlement_record', paperName: title }); continue; }
@@ -68,9 +68,9 @@ export function parseBossaOperations(csvContent: string, importBatch: string): P
   return { data: operations, skipped };
 }
 
-function classifyOperation(title: string): OperationType | 'skip' {
+function classifyOperation(title: string, amount: number): OperationType | 'skip' {
   if (title.includes('Rozliczenie transakcji')) return 'skip';
-  if (title.includes('Przelew')) return 'deposit';
+  if (title.includes('Przelew')) return amount < 0 ? 'withdrawal' : 'deposit';
   if (title.toLowerCase().includes('dywidendy')) return 'dividend';
   if (title.includes('Wymiana waluty')) return 'fx_exchange';
   if (title.includes('Opłata za transakcj') || title.includes('Op\u0142ata za transakcj')) return 'fee';

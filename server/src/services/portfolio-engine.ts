@@ -390,12 +390,16 @@ export async function computePortfolioHistory(
     d.setUTCDate(d.getUTCDate() + 1);
   }
 
-  // Build daily deposits
+  // Build daily deposits and withdrawals
   const dailyDeposit = new Map<string, number>();
+  const dailyWithdrawal = new Map<string, number>();
   for (const op of operations) {
     if (op.operationType === 'deposit' && op.amount > 0) {
       const date = op.date.split('T')[0];
       dailyDeposit.set(date, (dailyDeposit.get(date) || 0) + op.amount);
+    } else if (op.operationType === 'withdrawal') {
+      const date = op.date.split('T')[0];
+      dailyWithdrawal.set(date, (dailyWithdrawal.get(date) || 0) + Math.abs(op.amount));
     }
   }
 
@@ -609,8 +613,19 @@ export async function computePortfolioHistory(
     return priceMap.get(date) ?? prevPrice;
   }
 
+  // Determine the last date of any activity (deposit, withdrawal, or transaction)
+  const allActivityDates = [
+    ...Array.from(dailyDeposit.keys()),
+    ...Array.from(dailyWithdrawal.keys()),
+    ...transactions.map(tx => tx.date.split('T')[0]),
+  ];
+  const lastActivityDate = allActivityDates.length > 0
+    ? allActivityDates.sort().pop()!
+    : end;
+
   // Compute daily values
   const history: PortfolioHistoryPoint[] = [];
+  let firstDepositSeen = false;
   let cashPln = 0;
   let cashUsd = 0;
   let cashCad = 0;
@@ -645,12 +660,17 @@ export async function computePortfolioHistory(
       }
     }
 
-    // Update invested cumulative
+    // Update invested cumulative (deposits increase, withdrawals decrease)
     const deposit = dailyDeposit.get(date) || 0;
+    const withdrawal = dailyWithdrawal.get(date) || 0;
     investedCumulative += deposit;
+    investedCumulative -= withdrawal;
+
+    // Track first deposit
+    if (deposit > 0) firstDepositSeen = true;
 
     // Skip days before first deposit (no money in account yet)
-    if (investedCumulative <= 0) continue;
+    if (!firstDepositSeen) continue;
 
     // Get FX rates for the day
     const usdPln = getPrice('USDPLN=X', date, prevPrices.get('USDPLN=X') || 4.0);
@@ -680,10 +700,10 @@ export async function computePortfolioHistory(
     }
 
     // Total cash in PLN (convert foreign currency balances)
-    const totalCashPln = Math.max(cashPln, 0)
-      + Math.max(cashUsd, 0) * usdPln
-      + Math.max(cashCad, 0) * cadPln
-      + Math.max(cashEur, 0) * eurPln;
+    const totalCashPln = cashPln
+      + cashUsd * usdPln
+      + cashCad * cadPln
+      + cashEur * eurPln;
 
     const totalValue = stockValuePln + totalCashPln;
 
@@ -705,6 +725,12 @@ export async function computePortfolioHistory(
     } else if (deposit > 0) {
       pendingBenchDeposit += deposit;
     }
+    // Sell benchmark proportionally on withdrawal
+    const benchValueBeforeWithdraw = benchShares * benchPrice;
+    if (withdrawal > 0 && benchValueBeforeWithdraw > 0 && benchPrice > 0) {
+      const pctWithdrawn = Math.min(withdrawal / benchValueBeforeWithdraw, 1);
+      benchShares *= (1 - pctWithdrawn);
+    }
     const benchValue = benchShares * benchPrice;
 
     const returnPct = investedCumulative > 0
@@ -716,9 +742,10 @@ export async function computePortfolioHistory(
       : 0;
 
     // TWR: chain daily returns, adjusting denominator for cash flows
-    // dailyReturn = V_today / (V_yesterday + cashFlow_today) - 1
+    // dailyReturn = V_today / (V_yesterday + netCashFlow_today) - 1
+    const netCashFlow = deposit - withdrawal;
     if (prevTotalValue > 0) {
-      const denominator = prevTotalValue + deposit;
+      const denominator = prevTotalValue + netCashFlow;
       if (denominator > 0) {
         twrCumulative *= totalValue / denominator;
       }
@@ -728,7 +755,7 @@ export async function computePortfolioHistory(
     }
 
     if (prevBenchValue > 0 && benchPrice > 0) {
-      const benchDenom = prevBenchValue + deposit;
+      const benchDenom = prevBenchValue + netCashFlow;
       if (benchDenom > 0) {
         benchTwrCumulative *= benchValue / benchDenom;
       }
@@ -752,12 +779,20 @@ export async function computePortfolioHistory(
       benchmarkTwrPct,
       investedCumulative,
     });
+
+    // Stop generating history when portfolio is fully and permanently closed:
+    // no holdings, negative net invested, and on or past last activity date
+    const hasHoldings = Array.from(holdings.values()).some(qty => qty > 0);
+    if (!hasHoldings && investedCumulative <= 0 && date >= lastActivityDate && history.length > 1) {
+      break;
+    }
   }
 
   // Compute metrics
   const lastPoint = history[history.length - 1];
+  // Include both deposits (positive) and withdrawals (negative) for XIRR
   const depositsList = operations
-    .filter(op => op.operationType === 'deposit' && op.amount > 0 && op.currency === 'PLN')
+    .filter(op => (op.operationType === 'deposit' || op.operationType === 'withdrawal') && op.currency === 'PLN')
     .map(op => ({ date: op.date, amount: op.amount }));
 
   const totalDividends = operations
@@ -787,20 +822,35 @@ export async function computePortfolioHistory(
 
 export function computeCashFlow(operations: CashOperation[], portfolioHistory: PortfolioHistoryPoint[]): CashFlowRecord[] {
   const historyMap = new Map(portfolioHistory.map(p => [p.date, p]));
-  const deposits = operations.filter(op => op.operationType === 'deposit' && op.amount > 0 && op.currency === 'PLN');
+  const cashOps = operations.filter(
+    op => (op.operationType === 'deposit' || op.operationType === 'withdrawal') && op.currency === 'PLN',
+  );
 
-  let cumulative = 0;
+  let cumulativeDeposits = 0;
+  let cumulativeWithdrawals = 0;
   const records: CashFlowRecord[] = [];
 
-  for (const dep of deposits.sort((a, b) => a.date.localeCompare(b.date))) {
-    cumulative += dep.amount;
-    const date = dep.date.split('T')[0];
+  for (const op of cashOps.sort((a, b) => a.date.localeCompare(b.date))) {
+    const isDeposit = op.operationType === 'deposit';
+    const absAmount = Math.abs(op.amount);
+
+    if (isDeposit) {
+      cumulativeDeposits += absAmount;
+    } else {
+      cumulativeWithdrawals += absAmount;
+    }
+
+    const date = op.date.split('T')[0];
     const histPoint = historyMap.get(date);
+    const netCashFlow = cumulativeDeposits - cumulativeWithdrawals;
     records.push({
       date,
-      depositAmount: dep.amount,
-      cumulativeDeposits: cumulative,
-      portfolioValue: histPoint?.portfolioValue || cumulative,
+      depositAmount: isDeposit ? absAmount : 0,
+      withdrawalAmount: isDeposit ? 0 : absAmount,
+      cumulativeDeposits,
+      cumulativeWithdrawals,
+      netCashFlow,
+      portfolioValue: histPoint?.portfolioValue || netCashFlow,
     });
   }
 

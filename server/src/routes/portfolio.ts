@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getAllTransactions, getTransactionById, insertTransaction, updateTransaction, deleteTransaction } from '../db/transactions-repo.js';
-import { getAllOperations, getOperationsByType, insertOperation, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
+import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOperation, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
 import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry } from 'shared';
 import { fetchYahooPrice, fetchFxRate } from '../services/yahoo-finance.js';
@@ -161,10 +161,10 @@ router.delete('/dividends/:id', (req, res) => {
   }
 });
 
-// GET /api/portfolio/deposits
+// GET /api/portfolio/deposits — returns deposits + withdrawals
 router.get('/deposits', (req, res) => {
   try {
-    const deposits = getOperationsByType('deposit', req.portfolioId)
+    const deposits = getOperationsByTypes(['deposit', 'withdrawal'], req.portfolioId)
       .map(op => ({
         id: op.id,
         date: op.date,
@@ -172,6 +172,7 @@ router.get('/deposits', (req, res) => {
         currency: op.currency,
         description: op.description,
         source: op.source,
+        type: op.operationType as 'deposit' | 'withdrawal',
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
     const total = deposits.reduce((s, d) => s + d.amount, 0);
@@ -186,15 +187,16 @@ router.get('/deposits', (req, res) => {
 router.post('/deposits', (req, res) => {
   try {
     const pid = req.portfolioId;
-    const { date, amount } = req.body as DepositInput;
+    const { date, amount, type } = req.body as DepositInput & { type?: 'deposit' | 'withdrawal' };
     if (!date || !amount || amount <= 0) {
       return res.status(400).json({ error: 'Wymagane pola: date, amount (> 0)' });
     }
+    const isWithdrawal = type === 'withdrawal';
     const id = insertOperation({
       date,
-      operationType: 'deposit',
-      description: 'Wpłata na IKE',
-      amount,
+      operationType: isWithdrawal ? 'withdrawal' : 'deposit',
+      description: isWithdrawal ? 'Wypłata' : 'Wpłata',
+      amount: isWithdrawal ? -amount : amount,
       currency: 'PLN',
       source: 'manual',
     }, pid);
@@ -211,13 +213,15 @@ router.put('/deposits/:id', (req, res) => {
     const pid = req.portfolioId;
     const id = parseInt(req.params.id);
     const existing = getOperationById(id, pid);
-    if (!existing || existing.operationType !== 'deposit') {
-      return res.status(404).json({ error: 'Wpłata nie znaleziona' });
+    if (!existing || (existing.operationType !== 'deposit' && existing.operationType !== 'withdrawal')) {
+      return res.status(404).json({ error: 'Operacja nie znaleziona' });
     }
     const { date, amount } = req.body as Partial<DepositInput>;
     const updates: any = {};
     if (date) updates.date = date;
-    if (amount !== undefined && amount > 0) updates.amount = amount;
+    if (amount !== undefined && amount > 0) {
+      updates.amount = existing.operationType === 'withdrawal' ? -amount : amount;
+    }
     const updated = updateOperation(id, updates, pid);
     if (!updated) {
       return res.status(500).json({ error: 'Nie udało się zaktualizować' });
@@ -235,8 +239,8 @@ router.delete('/deposits/:id', (req, res) => {
     const pid = req.portfolioId;
     const id = parseInt(req.params.id);
     const existing = getOperationById(id, pid);
-    if (!existing || existing.operationType !== 'deposit') {
-      return res.status(404).json({ error: 'Wpłata nie znaleziona' });
+    if (!existing || (existing.operationType !== 'deposit' && existing.operationType !== 'withdrawal')) {
+      return res.status(404).json({ error: 'Operacja nie znaleziona' });
     }
     const deleted = deleteOperation(id, pid);
     if (!deleted) {
@@ -344,15 +348,18 @@ router.get('/metrics', async (req, res) => {
 
     const { positions, totalValuePln } = await computeOpenPositions(transactions, tickerMap);
 
-    const deposits = operations
-      .filter(op => op.operationType === 'deposit' && op.amount > 0 && op.currency === 'PLN')
+    // Include both deposits (positive) and withdrawals (negative) for accurate metrics
+    const cashFlows = operations
+      .filter(op => (op.operationType === 'deposit' || op.operationType === 'withdrawal') && op.currency === 'PLN')
       .map(op => ({ date: op.date, amount: op.amount }));
 
-    const totalInvested = deposits.reduce((s, d) => s + d.amount, 0);
+    const totalDeposits = cashFlows.filter(f => f.amount > 0).reduce((s, d) => s + d.amount, 0);
+    const totalWithdrawals = cashFlows.filter(f => f.amount < 0).reduce((s, d) => s + Math.abs(d.amount), 0);
+    const totalInvested = totalDeposits - totalWithdrawals;
 
     let xirr = 0;
     try {
-      const raw = computeXirr(deposits, totalValuePln) * 100;
+      const raw = computeXirr(cashFlows, totalValuePln) * 100;
       xirr = isFinite(raw) ? raw : 0;
     } catch {
       xirr = 0;

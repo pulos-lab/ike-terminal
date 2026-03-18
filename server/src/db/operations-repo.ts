@@ -32,6 +32,13 @@ export function getOperationsByType(type: OperationType, portfolioId: string = '
   return rows.map(mapRow);
 }
 
+export function getOperationsByTypes(types: OperationType[], portfolioId: string = 'default'): CashOperation[] {
+  const db = getDb(portfolioId);
+  const placeholders = types.map(() => '?').join(', ');
+  const rows = db.prepare(`SELECT * FROM cash_operations WHERE operation_type IN (${placeholders}) ORDER BY date DESC`).all(...types) as any[];
+  return rows.map(mapRow);
+}
+
 export function getOperationsCount(portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
   const row = db.prepare('SELECT COUNT(*) as count FROM cash_operations').get() as any;
