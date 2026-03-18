@@ -1,12 +1,13 @@
 // ============ Broker Types ============
 
-export type BrokerType = 'auto' | 'bossa' | 'mbank' | 'degiro';
+export type BrokerType = 'auto' | 'bossa' | 'mbank' | 'degiro' | 'xtb';
 
 export const BROKER_LABELS: Record<BrokerType, string> = {
   auto: 'Wykryj automatycznie',
   bossa: 'Bossa',
   mbank: 'mBank eMakler',
   degiro: 'DEGIRO',
+  xtb: 'XTB',
 };
 
 // ============ Transaction Types ============
@@ -23,13 +24,13 @@ export interface Transaction {
   commission: number;
   total: number; // po prowizji
   currency: string;
-  source: 'bossa' | 'mbank' | 'degiro' | 'manual';
+  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual';
   importBatch?: string;
 }
 
 // ============ Cash Operation Types ============
 
-export type OperationType = 'deposit' | 'dividend' | 'fx_exchange' | 'fee' | 'commission_refund' | 'other';
+export type OperationType = 'deposit' | 'withdrawal' | 'dividend' | 'fx_exchange' | 'fee' | 'commission_refund' | 'other';
 
 export interface CashOperation {
   id?: number;
@@ -42,7 +43,7 @@ export interface CashOperation {
   ticker?: string; // for dividends
   fxRate?: number; // for fx exchanges
   fxPair?: string; // e.g., 'PLN/USD'
-  source: 'bossa' | 'mbank' | 'degiro' | 'manual';
+  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual';
   importBatch?: string;
 }
 
@@ -84,7 +85,7 @@ export interface ClosedTrade {
   holdingDays: number;
   currency: string;
   sellTransactionId: number;
-  sellSource: 'bossa' | 'mbank' | 'degiro' | 'manual';
+  sellSource: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual';
 }
 
 export interface DividendRecord {
@@ -94,7 +95,7 @@ export interface DividendRecord {
   description: string;
   amount: number;
   currency: string;
-  source: 'bossa' | 'mbank' | 'degiro' | 'manual';
+  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual';
 }
 
 export interface DividendInput {
@@ -122,7 +123,10 @@ export interface FxExchangeRecord {
 export interface CashFlowRecord {
   date: string;
   depositAmount: number;
+  withdrawalAmount: number;
   cumulativeDeposits: number;
+  cumulativeWithdrawals: number;
+  netCashFlow: number;
   portfolioValue: number;
 }
 
@@ -201,7 +205,8 @@ export type SkipReason =
   | 'missing_date' | 'missing_isin' | 'missing_name'
   | 'invalid_side' | 'invalid_quantity' | 'invalid_price'
   | 'invalid_date' | 'corporate_action' | 'short_row'
-  | 'zero_amount' | 'settlement_record';
+  | 'zero_amount' | 'settlement_record'
+  | 'summary_row' | 'unparseable_comment' | 'close_trade_entry';
 
 export interface SkippedRow {
   row: number;

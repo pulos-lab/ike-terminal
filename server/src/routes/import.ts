@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 import type { BrokerType } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
 import { parseBossaOperations } from '../parsers/bossa-operations.js';
-import { detectBroker, getParserById } from '../parsers/registry.js';
+import { detectBroker, getParserById, detectBinaryBroker, getBinaryParserById } from '../parsers/registry.js';
 import { insertTransactions, getTransactionsCount, clearTransactions, getLastImportDate } from '../db/transactions-repo.js';
 import { insertOperations, getOperationsCount, clearOperations } from '../db/operations-repo.js';
 import { seedTickerMap, findIsinByName } from '../db/ticker-map-repo.js';
@@ -18,15 +18,19 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype === 'text/csv' || file.originalname.toLowerCase().endsWith('.csv')) {
+    const name = file.originalname.toLowerCase();
+    const isCSV = file.mimetype === 'text/csv' || name.endsWith('.csv');
+    const isXLSX = file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      || name.endsWith('.xlsx');
+    if (isCSV || isXLSX) {
       cb(null, true);
     } else {
-      cb(new Error('Dozwolone są tylko pliki CSV'));
+      cb(new Error('Dozwolone są tylko pliki CSV i XLSX'));
     }
   },
 });
 
-// POST /api/import/transactions - upload transaction CSV
+// POST /api/import/transactions - upload transaction CSV or XLSX
 // Supports auto-detection or explicit broker selection via 'broker' form field
 router.post('/transactions', upload.single('file'), async (req, res) => {
   try {
@@ -34,12 +38,71 @@ router.post('/transactions', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const content = decodeCSVBuffer(req.file.buffer);
     const importBatch = randomUUID();
     const pid = req.portfolioId;
     const requestedBroker = (req.body?.broker || 'auto') as BrokerType;
+    const isXlsx = req.file.originalname.toLowerCase().endsWith('.xlsx');
 
-    // Resolve parser: explicit selection or auto-detect
+    // ── XLSX path (XTB) ──
+    if (isXlsx) {
+      const binaryParser = requestedBroker === 'auto'
+        ? detectBinaryBroker(req.file.buffer)
+        : getBinaryParserById(requestedBroker);
+
+      if (!binaryParser) {
+        return res.status(400).json({
+          error: 'Nie rozpoznano formatu pliku XLSX. Wybierz dom maklerski z listy lub sprawdź czy plik jest poprawny.',
+        });
+      }
+
+      const { transactions: txResult, operations: opsResult } = binaryParser.parse(req.file.buffer, importBatch);
+
+      if (txResult.data.length === 0 && opsResult.data.length === 0) {
+        const skippedInfo = txResult.skipped.length > 0
+          ? ` Pominięto ${txResult.skipped.length} wierszy.`
+          : '';
+        return res.status(400).json({
+          error: `Plik nie zawiera rozpoznawalnych danych ${binaryParser.label}.${skippedInfo}`,
+          skipped: txResult.skipped.length > 0 ? txResult.skipped : undefined,
+        });
+      }
+
+      seedTickerMap(pid);
+
+      // Resolve ticker names to ISINs from existing ticker_map
+      if (binaryParser.needsNameResolution) {
+        for (const tx of txResult.data) {
+          const existing = findIsinByName(tx.paperName, pid);
+          if (existing) {
+            tx.isin = existing.isin;
+          }
+        }
+      }
+
+      const txCount = txResult.data.length > 0 ? insertTransactions(txResult.data, pid) : 0;
+      const opsCount = opsResult.data.length > 0 ? insertOperations(opsResult.data, pid) : 0;
+
+      // Auto-resolve ISINs via Yahoo/Stooq lookups
+      const { resolved, unresolved } = txResult.data.length > 0
+        ? await resolveUnknownIsins(txResult.data, pid)
+        : { resolved: [], unresolved: [] };
+
+      return res.json({
+        success: true,
+        transactionsImported: txCount,
+        operationsImported: opsCount,
+        importBatch,
+        total: getTransactionsCount(pid),
+        detectedSource: binaryParser.id,
+        tickersResolved: resolved.length,
+        tickersUnresolved: unresolved.map(u => u.paperName),
+        skipped: txResult.skipped.length > 0 ? txResult.skipped : undefined,
+      });
+    }
+
+    // ── CSV path (Bossa, mBank, DEGIRO) ──
+    const content = decodeCSVBuffer(req.file.buffer);
+
     const parser = requestedBroker === 'auto'
       ? detectBroker(content)
       : getParserById(requestedBroker);
@@ -62,10 +125,8 @@ router.post('/transactions', upload.single('file'), async (req, res) => {
       });
     }
 
-    // Seed ticker map for ISIN lookups
     seedTickerMap(pid);
 
-    // mBank doesn't provide ISINs — resolve ticker names to ISINs from existing ticker_map
     if (parser.needsNameResolution) {
       for (const tx of transactions) {
         const existing = findIsinByName(tx.paperName, pid);
@@ -76,8 +137,6 @@ router.post('/transactions', upload.single('file'), async (req, res) => {
     }
 
     const count = insertTransactions(transactions, pid);
-
-    // Auto-resolve any ISINs not in the ticker_map via Yahoo/Stooq lookups
     const { resolved, unresolved } = await resolveUnknownIsins(transactions, pid);
 
     res.json({

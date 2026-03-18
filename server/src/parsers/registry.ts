@@ -1,7 +1,8 @@
-import type { Transaction, BrokerType, ParseResult } from 'shared';
+import type { Transaction, CashOperation, BrokerType, ParseResult } from 'shared';
 import { parseBossaTransactions, isBossaFormat } from './bossa-transactions.js';
 import { parseMbankTransactions, isMbankFormat } from './mbank-transactions.js';
 import { parseDegiroTransactions, isDegiroFormat } from './degiro-transactions.js';
+import { parseXtbFile, isXtbFormat } from './xtb-transactions.js';
 
 /**
  * Parser registry — defines all supported brokers, their detection logic,
@@ -69,4 +70,38 @@ export function detectBroker(content: string): BrokerParser | null {
  */
 export function getParserById(id: BrokerType): BrokerParser | undefined {
   return PARSER_REGISTRY.find(p => p.id === id);
+}
+
+// ── Binary (XLSX) parser registry ──────────────────────────────────────────
+
+export interface BinaryBrokerParser {
+  id: BrokerType;
+  label: string;
+  detect: (buffer: Buffer) => boolean;
+  parse: (buffer: Buffer, importBatch: string) => {
+    transactions: ParseResult<Transaction>;
+    operations: ParseResult<CashOperation>;
+  };
+  needsNameResolution: boolean;
+}
+
+export const BINARY_PARSER_REGISTRY: BinaryBrokerParser[] = [
+  {
+    id: 'xtb',
+    label: 'XTB',
+    detect: isXtbFormat,
+    parse: parseXtbFile,
+    needsNameResolution: true,
+  },
+];
+
+export function detectBinaryBroker(buffer: Buffer): BinaryBrokerParser | null {
+  for (const parser of BINARY_PARSER_REGISTRY) {
+    if (parser.detect(buffer)) return parser;
+  }
+  return null;
+}
+
+export function getBinaryParserById(id: BrokerType): BinaryBrokerParser | undefined {
+  return BINARY_PARSER_REGISTRY.find(p => p.id === id);
 }
