@@ -99,8 +99,12 @@ export async function searchStooqByName(companyName: string): Promise<TickerSear
 
     const entries = match[1].split('|');
     for (const entry of entries) {
-      const [ticker, name, exchange] = entry.split('~');
-      if (!ticker || ticker.includes('_')) continue;
+      const parts = entry.split('~');
+      // Strip HTML tags from all parts (Stooq wraps matched text in <b> tags)
+      const ticker = (parts[0] || '').replace(/<\/?b>/gi, '');
+      const name = (parts[1] || '').replace(/<\/?b>/gi, '');
+      const exchange = parts[2] || '';
+      if (!ticker || ticker.includes('_') || ticker.includes('.')) continue;
       if (exchange !== 'XWAR' && exchange !== 'XNCO') continue;
 
       return {
