@@ -7,9 +7,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { formatPLN, formatDate } from '@/lib/formatters';
-import { ChevronRight, ChevronDown, Loader2, Plus, Pencil, Trash2, Check, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, Loader2, Plus, Pencil, Trash2, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
 
 const IKE_LIMITS: Record<number, number> = {
   2021: 15777,
@@ -38,29 +39,32 @@ const IKZE_DG_LIMITS: Record<number, number> = {
   2026: 16957.80,
 };
 
-interface Deposit {
+interface CashEntry {
   id: number;
   date: string;
   amount: number;
   currency: string;
-  source: 'bossa' | 'manual';
+  source: string;
   description: string;
+  type: 'deposit' | 'withdrawal';
 }
 
-interface DepositForm {
+interface EntryForm {
   date: string;
   amount: string;
+  type: 'deposit' | 'withdrawal';
 }
 
 interface YearGroup {
   year: number;
   totalDeposits: number;
+  totalWithdrawals: number;
   ikeLimit: number;
   ikzeLimit: number;
-  deposits: Deposit[];
+  entries: CashEntry[];
 }
 
-const emptyForm: DepositForm = { date: '', amount: '' };
+const emptyForm: EntryForm = { date: '', amount: '', type: 'deposit' };
 
 export function CashFlowPage() {
   const queryClient = useQueryClient();
@@ -83,9 +87,9 @@ export function CashFlowPage() {
 
   const [expandedYears, setExpandedYears] = useState<Set<number>>(new Set());
   const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm] = useState<DepositForm>(emptyForm);
+  const [addForm, setAddForm] = useState<EntryForm>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<DepositForm>(emptyForm);
+  const [editForm, setEditForm] = useState<EntryForm>(emptyForm);
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ['portfolio', 'deposits'] });
@@ -94,8 +98,8 @@ export function CashFlowPage() {
   };
 
   const createMutation = useMutation({
-    mutationFn: (form: DepositForm) =>
-      api.createDeposit({ date: form.date, amount: parseFloat(form.amount) }),
+    mutationFn: (form: EntryForm) =>
+      api.createDeposit({ date: form.date, amount: parseFloat(form.amount) }, form.type),
     onSuccess: () => {
       invalidateAll();
       setAddForm(emptyForm);
@@ -104,7 +108,7 @@ export function CashFlowPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, form }: { id: number; form: DepositForm }) =>
+    mutationFn: ({ id, form }: { id: number; form: EntryForm }) =>
       api.updateDeposit(id, { date: form.date, amount: parseFloat(form.amount) }),
     onSuccess: () => {
       invalidateAll();
@@ -126,55 +130,63 @@ export function CashFlowPage() {
     });
   };
 
-  function startEdit(dep: Deposit) {
-    setEditingId(dep.id);
+  function startEdit(entry: CashEntry) {
+    setEditingId(entry.id);
     setEditForm({
-      date: dep.date.split('T')[0],
-      amount: dep.amount.toString(),
+      date: entry.date.split('T')[0],
+      amount: Math.abs(entry.amount).toString(),
+      type: entry.type,
     });
   }
 
-  function handleDelete(dep: Deposit) {
-    if (window.confirm(`Usunąć wpłatę ${formatPLN(dep.amount)} z ${formatDate(dep.date)}?`)) {
-      deleteMutation.mutate(dep.id);
+  function handleDelete(entry: CashEntry) {
+    const label = entry.type === 'deposit' ? 'wpłatę' : 'wypłatę';
+    if (window.confirm(`Usunąć ${label} ${formatPLN(Math.abs(entry.amount))} z ${formatDate(entry.date)}?`)) {
+      deleteMutation.mutate(entry.id);
     }
   }
 
-  const deposits: Deposit[] = depositsData?.deposits || [];
+  const entries: CashEntry[] = (depositsData?.deposits || []).map((d: any) => ({
+    ...d,
+    type: d.type || 'deposit',
+  }));
   const ikzeLimits = activeSettings.ikzeIsDG ? IKZE_DG_LIMITS : IKZE_LIMITS;
 
   const yearGroups = useMemo(() => {
-    if (!deposits.length) return [];
+    if (!entries.length) return [];
 
-    const byYear = new Map<number, Deposit[]>();
-    for (const dep of deposits) {
-      const year = parseInt(dep.date.slice(0, 4));
+    const byYear = new Map<number, CashEntry[]>();
+    for (const entry of entries) {
+      const year = parseInt(entry.date.slice(0, 4));
       const arr = byYear.get(year) || [];
-      arr.push(dep);
+      arr.push(entry);
       byYear.set(year, arr);
     }
 
     const groups: YearGroup[] = [];
-    for (const [year, yearDeposits] of byYear) {
-      const totalDeposits = yearDeposits.reduce((s, d) => s + d.amount, 0);
+    for (const [year, yearEntries] of byYear) {
+      const totalDeposits = yearEntries
+        .filter(e => e.type === 'deposit')
+        .reduce((s, d) => s + Math.abs(d.amount), 0);
+      const totalWithdrawals = yearEntries
+        .filter(e => e.type === 'withdrawal')
+        .reduce((s, d) => s + Math.abs(d.amount), 0);
       const ikeLimit = IKE_LIMITS[year] || 0;
       const ikzeLimit = ikzeLimits[year] || 0;
-      yearDeposits.sort((a, b) => b.date.localeCompare(a.date));
-      groups.push({ year, totalDeposits, ikeLimit, ikzeLimit, deposits: yearDeposits });
+      yearEntries.sort((a, b) => b.date.localeCompare(a.date));
+      groups.push({ year, totalDeposits, totalWithdrawals, ikeLimit, ikzeLimit, entries: yearEntries });
     }
 
     groups.sort((a, b) => b.year - a.year);
     return groups;
-  }, [deposits, ikzeLimits]);
+  }, [entries, ikzeLimits]);
 
-  const grandTotal = useMemo(() => {
-    return yearGroups.reduce((s, g) => s + g.totalDeposits, 0);
-  }, [yearGroups]);
+  const grandTotalDeposits = useMemo(() => yearGroups.reduce((s, g) => s + g.totalDeposits, 0), [yearGroups]);
+  const grandTotalWithdrawals = useMemo(() => yearGroups.reduce((s, g) => s + g.totalWithdrawals, 0), [yearGroups]);
 
   const isAddValid = addForm.date && addForm.amount && parseFloat(addForm.amount) > 0;
   const isEditValid = editForm.date && editForm.amount && parseFloat(editForm.amount) > 0;
 
-  // Compute total limit per year (IKE + IKZE)
   const getYearLimit = (group: YearGroup) => {
     let total = 0;
     if (showIKE) total += group.ikeLimit;
@@ -192,27 +204,26 @@ export function CashFlowPage() {
     return limit > 0 ? (group.totalDeposits / limit) * 100 : 0;
   };
 
-  // Column count for colSpan calculations
-  const limitColCount = (showIKE ? 1 : 0) + (showIKZE ? 1 : 0) + (showLimits ? 2 : 0); // limit cols + remaining + usage
-  const totalCols = 2 + limitColCount + 1; // rok + wpłaty + limits + actions
+  const limitColCount = (showIKE ? 1 : 0) + (showIKZE ? 1 : 0) + (showLimits ? 2 : 0);
+  const totalCols = 3 + limitColCount + 1; // rok + wpłaty + wypłaty + limits + actions
 
   const cardTitle = showIKE && showIKZE
-    ? 'Wpłaty roczne vs limity IKE/IKZE'
+    ? 'Przepływy gotówkowe vs limity IKE/IKZE'
     : showIKE
-    ? 'Wpłaty roczne vs limit IKE'
+    ? 'Przepływy gotówkowe vs limit IKE'
     : showIKZE
-    ? 'Wpłaty roczne vs limit IKZE'
-    : 'Wpłaty roczne';
+    ? 'Przepływy gotówkowe vs limit IKZE'
+    : 'Przepływy gotówkowe';
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Wpłaty vs Wartość portfela</h1>
+        <h1 className="text-2xl font-bold">Gotówka vs Wartość portfela</h1>
         <Button
           size="sm"
           onClick={() => {
             if (!showAddForm) {
-              setAddForm({ date: new Date().toISOString().slice(0, 10), amount: '' });
+              setAddForm({ date: new Date().toISOString().slice(0, 10), amount: '', type: 'deposit' });
             } else {
               setAddForm(emptyForm);
             }
@@ -221,13 +232,13 @@ export function CashFlowPage() {
           }}
         >
           <Plus className="h-4 w-4" />
-          Dodaj wpłatę
+          Dodaj operację
         </Button>
       </div>
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Historia wpłat a wycena portfela</CardTitle>
+          <CardTitle className="text-base">Wpłaty netto a wycena portfela</CardTitle>
         </CardHeader>
         <CardContent>
           {cashFlowLoading ? (
@@ -242,12 +253,12 @@ export function CashFlowPage() {
                 <Tooltip
                   formatter={(value: number, name: string) => [
                     formatPLN(value),
-                    name === 'cumulativeDeposits' ? 'Wpłaty' : 'Wartość portfela',
+                    name === 'netCashFlow' ? 'Wpłaty netto' : 'Wartość portfela',
                   ]}
                   labelFormatter={(label) => `Data: ${label}`}
                 />
                 <Area type="monotone" dataKey="portfolioValue" stroke="#22c55e" fill="#22c55e" fillOpacity={0.1} strokeWidth={2} name="portfolioValue" />
-                <Area type="stepAfter" dataKey="cumulativeDeposits" stroke="#71717a" fill="#71717a" fillOpacity={0.05} strokeWidth={1} strokeDasharray="4 4" name="cumulativeDeposits" />
+                <Area type="stepAfter" dataKey="netCashFlow" stroke="#71717a" fill="#71717a" fillOpacity={0.05} strokeWidth={1} strokeDasharray="4 4" name="netCashFlow" />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
@@ -263,7 +274,9 @@ export function CashFlowPage() {
           <CardTitle className="text-base">
             {cardTitle}
             <span className="ml-2 text-muted-foreground font-normal">
-              (łącznie {formatPLN(grandTotal)})
+              (wpłaty: {formatPLN(grandTotalDeposits)}
+              {grandTotalWithdrawals > 0 && <>, wypłaty: {formatPLN(grandTotalWithdrawals)}</>}
+              , netto: {formatPLN(grandTotalDeposits - grandTotalWithdrawals)})
             </span>
           </CardTitle>
         </CardHeader>
@@ -279,6 +292,7 @@ export function CashFlowPage() {
                   <TableRow>
                     <TableHead>Rok</TableHead>
                     <TableHead className="text-right">Wpłaty</TableHead>
+                    <TableHead className="text-right">Wypłaty</TableHead>
                     {showIKE && <TableHead className="text-right">Limit IKE</TableHead>}
                     {showIKZE && <TableHead className="text-right">Limit IKZE</TableHead>}
                     {showLimits && <TableHead className="text-right">Pozostało</TableHead>}
@@ -297,19 +311,30 @@ export function CashFlowPage() {
                           className="h-8 w-[140px]"
                         />
                       </TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="0.00"
-                          value={addForm.amount}
-                          onChange={e => setAddForm({ ...addForm, amount: e.target.value })}
-                          className="h-8 w-[120px] text-right"
-                        />
+                      <TableCell colSpan={2}>
+                        <div className="flex items-center gap-2">
+                          <Select value={addForm.type} onValueChange={v => setAddForm({ ...addForm, type: v as 'deposit' | 'withdrawal' })}>
+                            <SelectTrigger className="h-8 w-[110px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="deposit">Wpłata</SelectItem>
+                              <SelectItem value="withdrawal">Wypłata</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            value={addForm.amount}
+                            onChange={e => setAddForm({ ...addForm, amount: e.target.value })}
+                            className="h-8 w-[120px] text-right"
+                          />
+                        </div>
                       </TableCell>
                       <TableCell colSpan={limitColCount || 1} className="text-muted-foreground text-sm">
-                        Nowa wpłata PLN
+                        PLN
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
@@ -336,7 +361,7 @@ export function CashFlowPage() {
                   {yearGroups.length === 0 && !showAddForm ? (
                     <TableRow>
                       <TableCell colSpan={totalCols} className="text-center py-12 text-muted-foreground">
-                        Brak wpłat. Kliknij &quot;Dodaj wpłatę&quot; aby dodać pierwszą.
+                        Brak operacji gotówkowych. Kliknij &quot;Dodaj operację&quot; aby dodać pierwszą.
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -361,10 +386,15 @@ export function CashFlowPage() {
                                   : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                                 }
                                 {group.year}
-                                <span className="text-xs text-muted-foreground ml-1">({group.deposits.length})</span>
+                                <span className="text-xs text-muted-foreground ml-1">({group.entries.length})</span>
                               </div>
                             </TableCell>
-                            <TableCell className="text-right font-medium">{formatPLN(group.totalDeposits)}</TableCell>
+                            <TableCell className="text-right font-medium text-green-500">
+                              {group.totalDeposits > 0 ? formatPLN(group.totalDeposits) : '—'}
+                            </TableCell>
+                            <TableCell className="text-right font-medium text-red-500">
+                              {group.totalWithdrawals > 0 ? formatPLN(group.totalWithdrawals) : '—'}
+                            </TableCell>
                             {showIKE && (
                               <TableCell className="text-right text-muted-foreground">
                                 {group.ikeLimit > 0 ? formatPLN(group.ikeLimit) : '—'}
@@ -395,9 +425,9 @@ export function CashFlowPage() {
                             <TableCell />
                           </TableRow>
 
-                          {isExpanded && group.deposits.map((dep) =>
-                            editingId === dep.id ? (
-                              <TableRow key={dep.id} className="bg-muted/30">
+                          {isExpanded && group.entries.map((entry) =>
+                            editingId === entry.id ? (
+                              <TableRow key={entry.id} className="bg-muted/30">
                                 <TableCell className="pl-9">
                                   <Input
                                     type="date"
@@ -406,7 +436,7 @@ export function CashFlowPage() {
                                     className="h-8 w-[140px]"
                                   />
                                 </TableCell>
-                                <TableCell>
+                                <TableCell colSpan={2}>
                                   <Input
                                     type="number"
                                     step="0.01"
@@ -422,7 +452,7 @@ export function CashFlowPage() {
                                     <Button
                                       size="icon-xs"
                                       variant="ghost"
-                                      onClick={() => updateMutation.mutate({ id: dep.id, form: editForm })}
+                                      onClick={() => updateMutation.mutate({ id: entry.id, form: editForm })}
                                       disabled={!isEditValid || updateMutation.isPending}
                                       className="text-green-500 hover:text-green-600"
                                     >
@@ -439,26 +469,37 @@ export function CashFlowPage() {
                                 </TableCell>
                               </TableRow>
                             ) : (
-                              <TableRow key={dep.id} className="bg-muted/30">
+                              <TableRow key={entry.id} className="bg-muted/30">
                                 <TableCell className="text-muted-foreground pl-9 text-sm">
-                                  └ {formatDate(dep.date)}
+                                  <div className="flex items-center gap-1.5">
+                                    {entry.type === 'deposit'
+                                      ? <ArrowUp className="h-3 w-3 text-green-500 shrink-0" />
+                                      : <ArrowDown className="h-3 w-3 text-red-500 shrink-0" />
+                                    }
+                                    {formatDate(entry.date)}
+                                  </div>
                                 </TableCell>
-                                <TableCell className="text-right text-muted-foreground">{formatPLN(dep.amount)}</TableCell>
+                                <TableCell className={`text-right ${entry.type === 'deposit' ? 'text-green-500' : ''}`}>
+                                  {entry.type === 'deposit' ? formatPLN(Math.abs(entry.amount)) : ''}
+                                </TableCell>
+                                <TableCell className={`text-right ${entry.type === 'withdrawal' ? 'text-red-500' : ''}`}>
+                                  {entry.type === 'withdrawal' ? formatPLN(Math.abs(entry.amount)) : ''}
+                                </TableCell>
                                 <TableCell colSpan={limitColCount > 0 ? limitColCount - 1 : 0} />
                                 <TableCell className="text-right">
-                                  {dep.source === 'manual' && (
+                                  {entry.source === 'manual' && (
                                     <Badge variant="secondary" className="text-xs bg-blue-500/10 text-blue-500">
                                       ręczna
                                     </Badge>
                                   )}
                                 </TableCell>
                                 <TableCell>
-                                  {dep.source === 'manual' && (
+                                  {entry.source === 'manual' && (
                                     <div className="flex gap-1">
                                       <Button
                                         size="icon-xs"
                                         variant="ghost"
-                                        onClick={(e) => { e.stopPropagation(); startEdit(dep); }}
+                                        onClick={(e) => { e.stopPropagation(); startEdit(entry); }}
                                         className="text-muted-foreground hover:text-foreground"
                                       >
                                         <Pencil className="h-3 w-3" />
@@ -466,7 +507,7 @@ export function CashFlowPage() {
                                       <Button
                                         size="icon-xs"
                                         variant="ghost"
-                                        onClick={(e) => { e.stopPropagation(); handleDelete(dep); }}
+                                        onClick={(e) => { e.stopPropagation(); handleDelete(entry); }}
                                         disabled={deleteMutation.isPending}
                                         className="text-muted-foreground hover:text-destructive"
                                       >

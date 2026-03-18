@@ -94,10 +94,10 @@ export const api = {
 
   // Deposits CRUD
   getDeposits: () => request<any>('/portfolio/deposits'),
-  createDeposit: (body: { date: string; amount: number }) =>
+  createDeposit: (body: { date: string; amount: number }, type: 'deposit' | 'withdrawal' = 'deposit') =>
     request<{ id: number }>('/portfolio/deposits', {
       method: 'POST',
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, type }),
     }),
   updateDeposit: (id: number, body: { date?: string; amount?: number }) =>
     request<{ success: boolean }>(`/portfolio/deposits/${id}`, {

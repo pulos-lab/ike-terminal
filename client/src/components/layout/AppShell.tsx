@@ -19,7 +19,7 @@ const navItems = [
   { to: '/trades', label: 'Transakcje', icon: ArrowLeftRight },
   { to: '/dividends', label: 'Dywidendy', icon: Coins },
   { to: '/currency', label: 'Waluty', icon: DollarSign },
-  { to: '/cash', label: 'Wpłaty', icon: Wallet },
+  { to: '/cash', label: 'Gotówka', icon: Wallet },
 ];
 
 function NavContent({ onNavigate }: { onNavigate?: () => void }) {
