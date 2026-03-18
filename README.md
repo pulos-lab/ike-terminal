@@ -1,6 +1,6 @@
 # TIX Terminal
 
-Aplikacja do zarządzania portfelem inwestycyjnym IKE/IKZE. Import transakcji z Bossa.pl, mBank i DEGIRO, automatyczne pobieranie kursów, analiza wyników i porównanie z benchmarkami.
+Aplikacja do zarządzania portfelem inwestycyjnym IKE/IKZE. Import transakcji z Bossa.pl, mBank, DEGIR i XTB automatyczne pobieranie kursów, analiza wyników i porównanie z benchmarkami.
 
 ## Funkcje
 
