@@ -19,7 +19,7 @@ data/*.db-wal
 data/portfolios.json
 
 # Personal import files
-Import/
+/Import/
 
 # OS files
 .DS_Store
