@@ -1,5 +1,6 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
+import { parseNumber, roundTo2 } from './utils.js';
 
 /**
  * Parse DEGIRO Transactions CSV.
@@ -74,11 +75,11 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
     const dateStr = row[0]?.trim();
     const timeStr = row[1]?.trim();
     const isin = row[3]?.trim();
-    const liczba = parseDegiroNumber(row[6]);
-    const price = parseDegiroNumber(row[7]);
+    const liczba = parseNumber(row[6]);
+    const price = parseNumber(row[7]);
     const priceCurrency = row[8]?.trim();
-    const localValue = parseDegiroNumber(row[9]);
-    const fee = parseDegiroNumber(row[14]);
+    const localValue = parseNumber(row[9]);
+    const fee = parseNumber(row[14]);
 
     if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date', paperName: product }); continue; }
     if (!product) { skipped.push({ row: rowNum, reason: 'missing_name' }); continue; }
@@ -166,16 +167,6 @@ function parseDegiroDate(dateStr: string, timeStr?: string): string {
   return dateStr;
 }
 
-/**
- * Parse number with either comma or dot as decimal separator.
- * DEGIRO uses dots (e.g. 762.0000) but some locale exports may use commas.
- */
-function parseDegiroNumber(value: string | undefined): number {
-  if (!value) return 0;
-  const cleaned = value.toString().replace(/\s/g, '').replace(',', '.');
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? 0 : num;
-}
 
 /**
  * Normalize currency codes.
@@ -187,6 +178,3 @@ function normalizeCurrency(currency: string): string {
   return upper || 'EUR';
 }
 
-function roundTo2(n: number): number {
-  return Math.round(n * 100) / 100;
-}

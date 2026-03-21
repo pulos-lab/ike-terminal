@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import type { Transaction, CashOperation, ParseResult, SkippedRow } from 'shared';
+import { roundTo2 } from './utils.js';
 
 /**
  * XTB XLSX parser — reads CASH OPERATION HISTORY sheet
@@ -322,7 +323,7 @@ export function parseXtbFile(
       if (price <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol }); continue; }
 
       const ids = resolveSymbolIdentifiers(raw.symbol);
-      const value = round2(qty * price);
+      const value = roundTo2(qty * price);
 
       const idx = transactions.length;
       transactions.push({
@@ -368,7 +369,7 @@ export function parseXtbFile(
           // close trade Amount = P/L
           // Actual sale value = Amount + P/L
           const saleValue = Math.abs(raw.amount) + pl;
-          price = round2(saleValue / qty);
+          price = roundTo2(saleValue / qty);
         } else {
           txSkipped.push({ row: raw.rowNum, reason: 'unparseable_comment', paperName: raw.symbol });
           continue;
@@ -379,7 +380,7 @@ export function parseXtbFile(
       if (price <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol }); continue; }
 
       const ids = resolveSymbolIdentifiers(raw.symbol);
-      const value = round2(qty * price);
+      const value = roundTo2(qty * price);
 
       const idx = transactions.length;
       transactions.push({
@@ -413,8 +414,8 @@ export function parseXtbFile(
       const idx = txBySymbolTime.get(key);
       if (idx !== undefined) {
         const fee = Math.abs(raw.amount);
-        transactions[idx].commission = round2(transactions[idx].commission + fee);
-        transactions[idx].total = round2(
+        transactions[idx].commission = roundTo2(transactions[idx].commission + fee);
+        transactions[idx].total = roundTo2(
           transactions[idx].side === 'K'
             ? transactions[idx].value + transactions[idx].commission
             : transactions[idx].value - transactions[idx].commission,
@@ -435,8 +436,8 @@ export function parseXtbFile(
       const idx = sellBySymbolDate.get(key);
       if (idx !== undefined) {
         const fee = Math.abs(raw.amount);
-        transactions[idx].commission = round2(transactions[idx].commission + fee);
-        transactions[idx].total = round2(transactions[idx].value - transactions[idx].commission);
+        transactions[idx].commission = roundTo2(transactions[idx].commission + fee);
+        transactions[idx].total = roundTo2(transactions[idx].value - transactions[idx].commission);
       } else {
         unmatchedFees.push(raw);
       }
@@ -538,6 +539,3 @@ function extractAccountCurrency(rows: any[][]): string {
   return 'PLN';
 }
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}

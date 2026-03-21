@@ -1,5 +1,6 @@
 import Papa from 'papaparse';
 import type { CashOperation, OperationType, ParseResult, SkippedRow } from 'shared';
+import { parseNumber } from './utils.js';
 
 /**
  * Parse Bossa cash operations CSV
@@ -35,7 +36,7 @@ export function parseBossaOperations(csvContent: string, importBatch: string): P
     const dateStr = row['data']?.trim();
     const title = row['tytuł operacji']?.trim() || row['tytu\u0142 operacji']?.trim() || '';
     const details = row['szczegóły']?.trim() || row['szczeg\u00f3\u0142y']?.trim() || '';
-    const amount = parsePolishNumber(row['kwota']);
+    const amount = parseNumber(row['kwota']);
     const currency = row['waluta']?.trim();
 
     if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date', paperName: title }); continue; }
@@ -100,9 +101,3 @@ function parseFxRate(title: string): { pair: string; rate: number } | null {
   return null;
 }
 
-function parsePolishNumber(value: string | undefined): number {
-  if (!value) return 0;
-  const cleaned = value.toString().replace(/\s/g, '').replace(',', '.');
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? 0 : num;
-}

@@ -1,5 +1,6 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
+import { parseNumber, parseDottedDate } from './utils.js';
 
 /**
  * Parse Bossa transaction CSV (hisPW.csv / hisPW-2.csv format)
@@ -42,12 +43,12 @@ export function parseBossaTransactions(csvContent: string, importBatch: string):
     const dateStr = row['data']?.trim();
     const paperName = row['papier']?.trim();
     const isin = row['isin']?.trim();
-    const quantity = parsePolishNumber(row['ilość']);
+    const quantity = parseNumber(row['ilość']);
     const side = row['-']?.trim();
-    const price = parsePolishNumber(row['cena']);
-    const value = parsePolishNumber(row['wartość']);
-    const commission = parsePolishNumber(row['prowizja']);
-    const total = parsePolishNumber(row['po prowizji']);
+    const price = parseNumber(row['cena']);
+    const value = parseNumber(row['wartość']);
+    const commission = parseNumber(row['prowizja']);
+    const total = parseNumber(row['po prowizji']);
     const currency = row['waluta']?.trim();
 
     if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date', paperName }); continue; }
@@ -55,7 +56,7 @@ export function parseBossaTransactions(csvContent: string, importBatch: string):
     if (side !== 'K' && side !== 'S') { skipped.push({ row: rowNum, reason: 'invalid_side', paperName }); continue; }
     if (quantity <= 0) { skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName }); continue; }
 
-    const isoDate = parseBossaDate(dateStr);
+    const isoDate = parseDottedDate(dateStr);
 
     transactions.push({
       date: isoDate,
@@ -76,29 +77,3 @@ export function parseBossaTransactions(csvContent: string, importBatch: string):
   return { data: transactions, skipped };
 }
 
-/**
- * Parse DD.MM.YYYY HH:MM:SS to ISO 8601
- */
-function parseBossaDate(dateStr: string): string {
-  // "25.02.2026 09:47:27" -> "2026-02-25T09:47:27"
-  const match = dateStr.match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}:\d{2}:\d{2})/);
-  if (match) {
-    return `${match[3]}-${match[2]}-${match[1]}T${match[4]}`;
-  }
-  // Fallback: try DD.MM.YYYY without time
-  const dateOnly = dateStr.match(/(\d{2})\.(\d{2})\.(\d{4})/);
-  if (dateOnly) {
-    return `${dateOnly[3]}-${dateOnly[2]}-${dateOnly[1]}T00:00:00`;
-  }
-  return dateStr;
-}
-
-/**
- * Parse Polish number format: "1 234,56" -> 1234.56
- */
-function parsePolishNumber(value: string | undefined): number {
-  if (!value) return 0;
-  const cleaned = value.toString().replace(/\s/g, '').replace(',', '.');
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? 0 : num;
-}

@@ -1,5 +1,6 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
+import { parseNumber, roundTo2, parseDottedDate } from './utils.js';
 
 /**
  * Parse mBank eMakler transaction CSV.
@@ -40,10 +41,10 @@ export function parseMbankTransactions(csvContent: string, importBatch: string):
 
     const dateStr = row[colMap.date]?.trim();
     const side = row[colMap.side]?.trim();
-    const quantity = parsePolishNumber(row[colMap.quantity]);
-    const price = parsePolishNumber(row[colMap.price]);
+    const quantity = parseNumber(row[colMap.quantity]);
+    const price = parseNumber(row[colMap.price]);
     const priceCurrency = row[colMap.priceCurrency]?.trim();
-    const commission = parsePolishNumber(row[colMap.commission]);
+    const commission = parseNumber(row[colMap.commission]);
     const commissionCurrency = row[colMap.commissionCurrency]?.trim() || priceCurrency;
 
     if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date', paperName }); continue; }
@@ -52,7 +53,7 @@ export function parseMbankTransactions(csvContent: string, importBatch: string):
     if (quantity <= 0) { skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName }); continue; }
     if (price <= 0) { skipped.push({ row: rowNum, reason: 'invalid_price', paperName }); continue; }
 
-    const isoDate = parseMbankDate(dateStr);
+    const isoDate = parseDottedDate(dateStr);
     const value = roundTo2(quantity * price);
     const total = side === 'K'
       ? roundTo2(value + commission)
@@ -163,25 +164,3 @@ const DEFAULT_COL_MAP: ColumnMap = {
   price: 5, priceCurrency: 6, commission: 7, commissionCurrency: 8,
 };
 
-/**
- * Parse dd.MM.yyyy or dd.MM.yyyy HH:MM:SS to ISO 8601.
- */
-function parseMbankDate(dateStr: string): string {
-  const match = dateStr.match(/(\d{2})\.(\d{2})\.(\d{4})\s*(\d{2}:\d{2}:\d{2})?/);
-  if (match) {
-    const time = match[4] || '00:00:00';
-    return `${match[3]}-${match[2]}-${match[1]}T${time}`;
-  }
-  return dateStr;
-}
-
-function parsePolishNumber(value: string | undefined): number {
-  if (!value) return 0;
-  const cleaned = value.toString().replace(/\s/g, '').replace(',', '.');
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? 0 : num;
-}
-
-function roundTo2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
