@@ -1,212 +1,212 @@
-import { useState, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Upload, FileUp, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
-import { api } from '@/lib/api-client';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { api } from '@/lib/api-client';
+import { CheckCircle, AlertCircle, AlertTriangle, Loader2 } from 'lucide-react';
+import { type BrokerType, type SkipReason, BROKER_LABELS } from 'shared';
 
-type ImportType = 'transactions' | 'operations';
-type BrokerType = 'auto' | 'bossa' | 'mbank' | 'degiro' | 'xtb';
+const SKIP_REASON_LABELS: Record<SkipReason, string> = {
+  missing_date: 'brak daty',
+  missing_isin: 'brak ISIN',
+  missing_name: 'brak nazwy',
+  invalid_side: 'nieprawidłowa strona (K/S)',
+  invalid_quantity: 'nieprawidłowa ilość',
+  invalid_price: 'nieprawidłowa cena',
+  invalid_date: 'nieprawidłowy format daty',
+  corporate_action: 'akcja korporacyjna',
+  short_row: 'niekompletny wiersz',
+  zero_amount: 'kwota zerowa',
+  settlement_record: 'rozliczenie transakcji',
+  summary_row: 'wiersz podsumowania',
+  unparseable_comment: 'nierozpoznany format komentarza',
+  close_trade_entry: 'wpis P/L (pominięty)',
+};
 
-interface ImportResult {
-  success?: boolean;
-  error?: string;
-  transactionsImported?: number;
-  operationsImported?: number;
-  detectedSource?: string;
-  tickersResolved?: number;
-  tickersUnresolved?: string[];
-  skipped?: Array<{ row: number; reason: string; paperName?: string }>;
+interface Props {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
-const BROKER_OPTIONS: { value: BrokerType; label: string }[] = [
-  { value: 'auto', label: 'Auto-detekcja' },
-  { value: 'bossa', label: 'Bossa' },
-  { value: 'mbank', label: 'mBank eMakler' },
-  { value: 'degiro', label: 'DEGIRO' },
-  { value: 'xtb', label: 'XTB' },
-];
-
-export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function ImportDialog({ open, onOpenChange }: Props) {
   const queryClient = useQueryClient();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [importType, setImportType] = useState<ImportType>('transactions');
-  const [broker, setBroker] = useState<BrokerType>('auto');
   const [uploading, setUploading] = useState(false);
-  const [result, setResult] = useState<ImportResult | null>(null);
+  const [results, setResults] = useState<string[]>([]);
+  const [selectedBroker, setSelectedBroker] = useState<BrokerType>('auto');
 
-  const reset = () => {
-    setFile(null);
-    setResult(null);
-    setUploading(false);
-    if (fileRef.current) fileRef.current.value = '';
-  };
-
-  const handleClose = (open: boolean) => {
-    if (!open) reset();
-    onOpenChange(open);
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = e.target.files?.[0] ?? null;
-    setFile(selected);
-    setResult(null);
-
-    if (selected?.name.toLowerCase().endsWith('.xlsx')) {
-      setBroker('xtb');
-    }
-  };
-
-  const handleUpload = async () => {
-    if (!file) return;
+  const handleUpload = useCallback(async (file: File, type: 'transactions' | 'operations') => {
     setUploading(true);
-    setResult(null);
-
     try {
-      const res = importType === 'transactions'
-        ? await api.uploadTransactions(file, broker)
+      const result = type === 'transactions'
+        ? await api.uploadTransactions(file, selectedBroker)
         : await api.uploadOperations(file);
 
-      setResult(res);
+      if (result.success) {
+        const txCount = result.transactionsImported || 0;
+        const opsCount = result.operationsImported || 0;
+        const sourceLabel = result.detectedSource
+          ? ` (${BROKER_LABELS[result.detectedSource as BrokerType] || result.detectedSource})`
+          : '';
+        const messages: string[] = [];
+        if (txCount > 0 && opsCount > 0) {
+          messages.push(`Zaimportowano ${txCount} transakcji i ${opsCount} operacji z ${file.name}${sourceLabel}`);
+        } else {
+          const count = txCount || opsCount;
+          messages.push(`Zaimportowano ${count} rekordów z ${file.name}${sourceLabel}`);
+        }
 
-      if (res.success) {
-        queryClient.invalidateQueries({ queryKey: ['import'] });
-        queryClient.invalidateQueries({ queryKey: ['transactions'] });
-        queryClient.invalidateQueries({ queryKey: ['positions'] });
-        queryClient.invalidateQueries({ queryKey: ['metrics'] });
-        queryClient.invalidateQueries({ queryKey: ['deposits'] });
-        queryClient.invalidateQueries({ queryKey: ['cash-flow'] });
-        queryClient.invalidateQueries({ queryKey: ['dividends'] });
+        if (result.tickersResolved && result.tickersResolved > 0) {
+          messages.push(`Rozpoznano ${result.tickersResolved} nowych papierów wartościowych`);
+        }
+        if (result.tickersUnresolved && result.tickersUnresolved.length > 0) {
+          messages.push(`WARN:Nie rozpoznano: ${result.tickersUnresolved.join(', ')}`);
+        }
+
+        if (result.skipped && result.skipped.length > 0) {
+          const MAX_SHOWN = 10;
+          const items = result.skipped.slice(0, MAX_SHOWN);
+          const lines = items.map(s => {
+            const name = s.paperName ? `${s.paperName} ` : '';
+            const reason = SKIP_REASON_LABELS[s.reason as SkipReason] || s.reason;
+            return `${name}(wiersz ${s.row}) — ${reason}`;
+          });
+          let detail = lines.join('\n');
+          if (result.skipped.length > MAX_SHOWN) {
+            detail += `\n...i ${result.skipped.length - MAX_SHOWN} więcej`;
+          }
+          messages.push(`WARN:Pominięto ${result.skipped.length} wierszy:\n${detail}`);
+        }
+
+        setResults(prev => [...prev, ...messages]);
+        queryClient.invalidateQueries();
+      } else {
+        const messages: string[] = [`Błąd: ${result.error}`];
+        if (result.skipped && result.skipped.length > 0) {
+          const MAX_SHOWN = 10;
+          const items = result.skipped.slice(0, MAX_SHOWN);
+          const lines = items.map((s: any) => {
+            const name = s.paperName ? `${s.paperName} ` : '';
+            const reason = SKIP_REASON_LABELS[s.reason as SkipReason] || s.reason;
+            return `${name}(wiersz ${s.row}) — ${reason}`;
+          });
+          let detail = lines.join('\n');
+          if (result.skipped.length > MAX_SHOWN) {
+            detail += `\n...i ${result.skipped.length - MAX_SHOWN} więcej`;
+          }
+          messages.push(`WARN:Pominięte wiersze:\n${detail}`);
+        }
+        setResults(prev => [...prev, ...messages]);
       }
     } catch (err) {
-      setResult({ success: false, error: err instanceof Error ? err.message : 'Nieznany błąd' });
+      setResults(prev => [...prev, `Błąd: ${(err as Error).message}`]);
     } finally {
       setUploading(false);
     }
-  };
+  }, [queryClient, selectedBroker]);
+
+  const handleMultipleFiles = useCallback(async (files: FileList, type: 'transactions' | 'operations') => {
+    for (const file of Array.from(files)) {
+      await handleUpload(file, type);
+    }
+  }, [handleUpload]);
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Upload className="h-5 w-5" />
-            Import danych
-          </DialogTitle>
+          <DialogTitle>Import danych</DialogTitle>
           <DialogDescription>
-            Zaimportuj transakcje lub operacje z pliku CSV/XLSX.
+            Prześlij pliki CSV lub XLSX z historią transakcji i operacji gotówkowych.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="flex gap-2">
-            <Button
-              variant={importType === 'transactions' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => { setImportType('transactions'); reset(); }}
-            >
-              Transakcje
-            </Button>
-            <Button
-              variant={importType === 'operations' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => { setImportType('operations'); reset(); }}
-            >
-              Operacje gotówkowe
-            </Button>
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium">Dom maklerski</label>
+            <Select value={selectedBroker} onValueChange={(v) => setSelectedBroker(v as BrokerType)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.entries(BROKER_LABELS) as [BrokerType, string][]).map(([id, label]) => (
+                  <SelectItem key={id} value={id}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
-          {importType === 'transactions' && (
-            <div>
-              <label className="text-sm font-medium mb-1 block">Dom maklerski</label>
-              <Select value={broker} onValueChange={(v) => setBroker(v as BrokerType)}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {BROKER_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium">
+              {selectedBroker === 'xtb' ? 'Eksport XTB (XLSX)' : 'Transakcje'}
+            </label>
+            <span className="text-xs text-muted-foreground">Można wybrać wiele plików naraz.</span>
+            <Input
+              type="file"
+              accept={selectedBroker === 'xtb' ? '.xlsx' : selectedBroker === 'auto' ? '.csv,.xlsx' : '.csv'}
+              multiple
+              disabled={uploading}
+              onChange={(e) => {
+                const files = e.target.files;
+                if (files?.length) handleMultipleFiles(files, 'transactions');
+              }}
+            />
+          </div>
 
-          <div>
-            <label className="text-sm font-medium mb-1 block">Plik</label>
-            <div
-              className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
-              onClick={() => fileRef.current?.click()}
-            >
-              <input
-                ref={fileRef}
+          {(selectedBroker === 'auto' || selectedBroker === 'bossa') && (
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium">Operacje gotówkowe</label>
+              <span className="text-xs text-muted-foreground">Tylko format Bossa.</span>
+              <Input
                 type="file"
-                accept=".csv,.xlsx"
-                className="hidden"
-                onChange={handleFileChange}
+                accept=".csv"
+                multiple
+                disabled={uploading}
+                onChange={(e) => {
+                  const files = e.target.files;
+                  if (files?.length) handleMultipleFiles(files, 'operations');
+                }}
               />
-              {file ? (
-                <div className="flex items-center justify-center gap-2 text-sm">
-                  <FileUp className="h-4 w-4 text-primary" />
-                  <span className="font-medium">{file.name}</span>
-                  <span className="text-muted-foreground">({(file.size / 1024).toFixed(1)} KB)</span>
-                </div>
-              ) : (
-                <div className="text-muted-foreground text-sm">
-                  <FileUp className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  Kliknij aby wybrać plik CSV lub XLSX
-                </div>
-              )}
-            </div>
-          </div>
-
-          {result && (
-            <div className={`rounded-lg p-3 text-sm ${result.success ? 'bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-destructive/10 text-destructive'}`}>
-              {result.success ? (
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 font-medium">
-                    <CheckCircle2 className="h-4 w-4" />
-                    Import zakończony
-                  </div>
-                  {result.transactionsImported !== undefined && result.transactionsImported > 0 && (
-                    <p>Zaimportowano {result.transactionsImported} transakcji{result.detectedSource ? ` (${result.detectedSource})` : ''}</p>
-                  )}
-                  {result.operationsImported !== undefined && result.operationsImported > 0 && (
-                    <p>Zaimportowano {result.operationsImported} operacji</p>
-                  )}
-                  {result.tickersUnresolved && result.tickersUnresolved.length > 0 && (
-                    <p className="text-yellow-600 dark:text-yellow-400">
-                      Nierozpoznane: {result.tickersUnresolved.join(', ')}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                  <span>{result.error}</span>
-                </div>
-              )}
             </div>
           )}
-        </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => handleClose(false)}>
-            {result?.success ? 'Zamknij' : 'Anuluj'}
+          {uploading && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Importowanie...
+            </div>
+          )}
+
+          {results.map((r, i) => {
+            const isError = r.startsWith('Błąd');
+            const isWarn = r.startsWith('WARN:');
+            const displayText = isWarn ? r.slice(5) : r;
+            return (
+              <div key={i} className="flex items-start gap-2 text-sm">
+                {isError ? (
+                  <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                ) : isWarn ? (
+                  <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+                ) : (
+                  <CheckCircle className="h-4 w-4 text-green-500 shrink-0 mt-0.5" />
+                )}
+                <span className={isWarn ? 'text-yellow-600 dark:text-yellow-400 whitespace-pre-line' : ''}>{displayText}</span>
+              </div>
+            );
+          })}
+
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => {
+              setResults([]);
+              onOpenChange(false);
+            }}
+          >
+            Zamknij
           </Button>
-          {!result?.success && (
-            <Button onClick={handleUpload} disabled={!file || uploading}>
-              {uploading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Importuj
-            </Button>
-          )}
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
