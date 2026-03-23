@@ -73,7 +73,7 @@ export const api = {
     }),
   // Transactions CRUD
   getTransactions: () => request<any>('/portfolio/transactions'),
-  createTransaction: (body: { date: string; ticker: string; side: 'K' | 'S'; quantity: number; price: number; commission: number }) =>
+  createTransaction: (body: { date: string; ticker: string; side: 'K' | 'S'; quantity: number; price: number; commission: number; currency?: string; fxRate?: number }) =>
     request<{ id: number }>('/portfolio/transactions', {
       method: 'POST',
       body: JSON.stringify(body),

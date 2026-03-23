@@ -17,11 +17,9 @@ function loadPortfolios(): Portfolio[] {
   const p = getRegistryPath();
   if (!fs.existsSync(p)) return [];
   const list: Portfolio[] = JSON.parse(fs.readFileSync(p, 'utf-8'));
-  // Backfill settings for portfolios created before settings were added
+  // Backfill settings — merge with defaults to add new fields to existing portfolios
   for (const portfolio of list) {
-    if (!portfolio.settings) {
-      portfolio.settings = { ...DEFAULT_PORTFOLIO_SETTINGS };
-    }
+    portfolio.settings = { ...DEFAULT_PORTFOLIO_SETTINGS, ...(portfolio.settings || {}) };
   }
   return list;
 }

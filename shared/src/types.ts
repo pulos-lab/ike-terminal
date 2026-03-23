@@ -208,6 +208,8 @@ export interface TransactionInput {
   quantity: number;
   price: number;
   commission: number;
+  currency?: string;  // override waluty z tickera
+  fxRate?: number;    // kurs wymiany brokera (informacyjny)
 }
 
 // ============ Import Parse Types ============
@@ -275,12 +277,20 @@ export interface PortfolioSettings {
   isIKE: boolean;
   isIKZE: boolean;
   ikzeIsDG: boolean; // działalność gospodarcza
+  commissionPl: number;         // prowizja GPW w % (np. 0.39)
+  commissionForeign: number;    // prowizja zagraniczne w % (np. 0.29)
+  minCommissionPl: number;      // minimalna prowizja GPW w PLN
+  minCommissionForeign: number; // minimalna prowizja zagraniczne
 }
 
 export const DEFAULT_PORTFOLIO_SETTINGS: PortfolioSettings = {
   isIKE: false,
   isIKZE: false,
   ikzeIsDG: false,
+  commissionPl: 0,
+  commissionForeign: 0,
+  minCommissionPl: 0,
+  minCommissionForeign: 0,
 };
 
 export interface Portfolio {

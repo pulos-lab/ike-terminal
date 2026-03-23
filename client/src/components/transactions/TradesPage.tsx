@@ -1,6 +1,7 @@
-import { useState, Fragment } from 'react';
+import { useState, useMemo, useEffect, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { usePortfolio } from '@/lib/portfolio-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
@@ -34,6 +35,8 @@ interface TxForm {
   quantity: string;
   price: string;
   commission: string;
+  currency: string; // 'auto' | 'PLN' | 'USD' | 'EUR' | 'GBP'
+  fxRate: string;
 }
 
 interface SellForm {
@@ -43,15 +46,23 @@ interface SellForm {
   commission: string;
 }
 
-const emptyTxForm: TxForm = { date: '', ticker: '', side: 'K', quantity: '', price: '', commission: '0' };
+const CURRENCIES = ['auto', 'PLN', 'USD', 'EUR', 'GBP'] as const;
+const emptyTxForm: TxForm = { date: '', ticker: '', side: 'K', quantity: '', price: '', commission: '0', currency: 'auto', fxRate: '' };
 const today = () => new Date().toISOString().slice(0, 10);
 
 export function TradesPage() {
   const queryClient = useQueryClient();
+  const { activeSettings } = usePortfolio();
 
   const { data: posData, isLoading: posLoading } = useQuery({
     queryKey: ['portfolio', 'positions'],
     queryFn: api.getPositions,
+  });
+
+  const { data: pricesData } = useQuery({
+    queryKey: ['prices', 'live'],
+    queryFn: api.getLivePrices,
+    staleTime: 5 * 60 * 1000,
   });
 
   // Add transaction form state
@@ -71,6 +82,48 @@ export function TradesPage() {
     queryClient.invalidateQueries({ queryKey: ['portfolio', 'history'] });
   };
 
+  // Auto-calculate commission based on portfolio settings
+  const calcCommission = (ticker: string, quantity: string, price: string): string => {
+    const qty = parseFloat(quantity);
+    const prc = parseFloat(price);
+    if (!qty || !prc || qty <= 0 || prc <= 0) return '0';
+    const value = qty * prc;
+    const isPolish = ticker.endsWith('.WA') || ticker.endsWith('.NC');
+    const rate = isPolish ? (activeSettings?.commissionPl || 0) : (activeSettings?.commissionForeign || 0);
+    const min = isPolish ? (activeSettings?.minCommissionPl || 0) : (activeSettings?.minCommissionForeign || 0);
+    if (rate <= 0 && min <= 0) return '0';
+    const commission = Math.max(value * rate / 100, min);
+    return (Math.round(commission * 100) / 100).toString();
+  };
+
+  // Determine effective currency for display
+  const effectiveCurrency = addForm.currency !== 'auto' ? addForm.currency : (addForm.ticker.endsWith('.WA') || addForm.ticker.endsWith('.NC') ? 'PLN' : '');
+  const showFxRate = effectiveCurrency && effectiveCurrency !== 'PLN';
+
+  // Get live FX rate for pre-fill
+  const getLiveFxRate = (currency: string): string => {
+    const fx = pricesData?.fx;
+    if (!fx) return '';
+    if (currency === 'USD' && fx.USDPLN) return fx.USDPLN.toFixed(4);
+    if (currency === 'EUR' && fx.EURPLN) return fx.EURPLN.toFixed(4);
+    if (currency === 'GBP' && fx.GBPPLN) return fx.GBPPLN.toFixed(4);
+    return '';
+  };
+
+  // Auto-fill commission when ticker/quantity/price changes
+  const updateFormWithCommission = (form: TxForm, changedField?: string): TxForm => {
+    const updated = { ...form };
+    // Auto-calc commission unless user manually edited it
+    if (changedField !== 'commission' && updated.ticker && updated.quantity && updated.price) {
+      updated.commission = calcCommission(updated.ticker, updated.quantity, updated.price);
+    }
+    // Pre-fill FX rate when currency changes
+    if (changedField === 'currency' && updated.currency !== 'auto' && updated.currency !== 'PLN') {
+      updated.fxRate = getLiveFxRate(updated.currency);
+    }
+    return updated;
+  };
+
   const createMutation = useMutation({
     mutationFn: (form: TxForm) =>
       api.createTransaction({
@@ -80,6 +133,8 @@ export function TradesPage() {
         quantity: parseFloat(form.quantity),
         price: parseFloat(form.price),
         commission: parseFloat(form.commission) || 0,
+        currency: form.currency !== 'auto' ? form.currency : undefined,
+        fxRate: form.fxRate ? parseFloat(form.fxRate) : undefined,
       }),
     onSuccess: () => {
       invalidateAll();
@@ -110,11 +165,14 @@ export function TradesPage() {
 
   function startSell(pos: Position) {
     setSellingTicker(pos.ticker);
+    const qty = pos.shares.toString();
+    const price = pos.currentPrice?.toString() || '';
+    const commission = calcCommission(pos.ticker, qty, price);
     setSellForm({
       date: today(),
-      quantity: pos.shares.toString(),
-      price: pos.currentPrice?.toString() || '',
-      commission: '0',
+      quantity: qty,
+      price,
+      commission,
     });
     setShowAddForm(false);
     setError(null);
@@ -126,6 +184,12 @@ export function TradesPage() {
     setAddForm({ ...emptyTxForm, date: today() });
     setError(null);
   }
+
+  // Helper to update add form field and recalculate commission
+  const setField = (field: keyof TxForm, value: string) => {
+    const updated = { ...addForm, [field]: value };
+    setAddForm(updateFormWithCommission(updated, field));
+  };
 
   const isAddValid = addForm.date && addForm.ticker && addForm.quantity && parseFloat(addForm.quantity) > 0 && addForm.price && parseFloat(addForm.price) > 0;
   const isSellValid = sellForm.date && sellForm.quantity && parseFloat(sellForm.quantity) > 0 && sellForm.price && parseFloat(sellForm.price) > 0;
@@ -161,7 +225,7 @@ export function TradesPage() {
                 <Input
                   type="date"
                   value={addForm.date}
-                  onChange={e => setAddForm({ ...addForm, date: e.target.value })}
+                  onChange={e => setField('date', e.target.value)}
                   className="h-8 w-[140px]"
                 />
               </div>
@@ -169,14 +233,14 @@ export function TradesPage() {
                 <label className="text-xs text-muted-foreground">Ticker</label>
                 <TickerAutocomplete
                   value={addForm.ticker}
-                  onChange={(val) => setAddForm({ ...addForm, ticker: val })}
+                  onChange={(val) => setField('ticker', val)}
                   className="w-[160px]"
                   placeholder="Ticker"
                 />
               </div>
               <div className="flex flex-col gap-2">
                 <label className="text-xs text-muted-foreground">K/S</label>
-                <Select value={addForm.side} onValueChange={(v: 'K' | 'S') => setAddForm({ ...addForm, side: v })}>
+                <Select value={addForm.side} onValueChange={(v: 'K' | 'S') => setField('side', v)}>
                   <SelectTrigger className="h-8 w-[65px]" size="sm">
                     <SelectValue />
                   </SelectTrigger>
@@ -193,7 +257,7 @@ export function TradesPage() {
                   min="0"
                   placeholder="0"
                   value={addForm.quantity}
-                  onChange={e => setAddForm({ ...addForm, quantity: e.target.value })}
+                  onChange={e => setField('quantity', e.target.value)}
                   className="h-8 w-[80px] text-right"
                 />
               </div>
@@ -205,9 +269,20 @@ export function TradesPage() {
                   min="0"
                   placeholder="0.00"
                   value={addForm.price}
-                  onChange={e => setAddForm({ ...addForm, price: e.target.value })}
+                  onChange={e => setField('price', e.target.value)}
                   className="h-8 w-[100px] text-right"
                 />
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-xs text-muted-foreground">Rozliczenie</label>
+                <Select value={addForm.currency} onValueChange={(v) => setField('currency', v)}>
+                  <SelectTrigger className="h-8 w-[80px]" size="sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CURRENCIES.map(c => <SelectItem key={c} value={c}>{c === 'auto' ? 'Auto' : c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex flex-col gap-2">
                 <label className="text-xs text-muted-foreground">Prowizja</label>
@@ -217,10 +292,24 @@ export function TradesPage() {
                   min="0"
                   placeholder="0"
                   value={addForm.commission}
-                  onChange={e => setAddForm({ ...addForm, commission: e.target.value })}
+                  onChange={e => setField('commission', e.target.value)}
                   className="h-8 w-[80px] text-right"
                 />
               </div>
+              {showFxRate && (
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs text-muted-foreground">Kurs {effectiveCurrency}/PLN</label>
+                  <Input
+                    type="number"
+                    step="0.0001"
+                    min="0"
+                    placeholder="0.0000"
+                    value={addForm.fxRate}
+                    onChange={e => setField('fxRate', e.target.value)}
+                    className="h-8 w-[100px] text-right"
+                  />
+                </div>
+              )}
               <div className="flex gap-1">
                 <Button
                   size="icon-xs"
@@ -240,6 +329,11 @@ export function TradesPage() {
                 </Button>
               </div>
             </div>
+            {showFxRate && addForm.fxRate && addForm.quantity && addForm.price && (
+              <div className="mt-2 text-xs text-muted-foreground">
+                Wartość w PLN: {formatNumber(parseFloat(addForm.quantity) * parseFloat(addForm.price) * parseFloat(addForm.fxRate))} zł
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

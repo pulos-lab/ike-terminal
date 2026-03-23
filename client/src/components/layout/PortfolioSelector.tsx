@@ -20,7 +20,7 @@ export function PortfolioSelector() {
 
   // Local settings state for the dialog
   const [editName, setEditName] = useState('');
-  const [editSettings, setEditSettings] = useState<PortfolioSettings>({ isIKE: false, isIKZE: false, ikzeIsDG: false });
+  const [editSettings, setEditSettings] = useState<PortfolioSettings>({ isIKE: false, isIKZE: false, ikzeIsDG: false, commissionPl: 0, commissionForeign: 0, minCommissionPl: 0, minCommissionForeign: 0 });
 
   const handleValueChange = (value: string) => {
     if (value === NEW_PORTFOLIO_VALUE) {
@@ -173,6 +173,66 @@ export function PortfolioSelector() {
                   <span className="text-xs text-muted-foreground">— wyższy limit IKZE</span>
                 </label>
               )}
+            </div>
+
+            <Separator />
+
+            <div className="flex flex-col gap-3">
+              <label className="text-sm font-medium">Prowizje domyślne</label>
+
+              <div className="flex flex-col gap-2">
+                <span className="text-xs text-muted-foreground">Giełda polska (GPW)</span>
+                <div className="flex gap-2 items-center">
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.39"
+                    value={editSettings.commissionPl || ''}
+                    onChange={(e) => setEditSettings({ ...editSettings, commissionPl: parseFloat(e.target.value) || 0 })}
+                    className="w-20 text-right"
+                  />
+                  <span className="text-xs text-muted-foreground">%</span>
+                  <span className="text-xs text-muted-foreground ml-2">min.</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="5.00"
+                    value={editSettings.minCommissionPl || ''}
+                    onChange={(e) => setEditSettings({ ...editSettings, minCommissionPl: parseFloat(e.target.value) || 0 })}
+                    className="w-20 text-right"
+                  />
+                  <span className="text-xs text-muted-foreground">PLN</span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <span className="text-xs text-muted-foreground">Giełdy zagraniczne</span>
+                <div className="flex gap-2 items-center">
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.29"
+                    value={editSettings.commissionForeign || ''}
+                    onChange={(e) => setEditSettings({ ...editSettings, commissionForeign: parseFloat(e.target.value) || 0 })}
+                    className="w-20 text-right"
+                  />
+                  <span className="text-xs text-muted-foreground">%</span>
+                  <span className="text-xs text-muted-foreground ml-2">min.</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="1.00"
+                    value={editSettings.minCommissionForeign || ''}
+                    onChange={(e) => setEditSettings({ ...editSettings, minCommissionForeign: parseFloat(e.target.value) || 0 })}
+                    className="w-20 text-right"
+                  />
+                  <span className="text-xs text-muted-foreground">w wal. giełdy</span>
+                </div>
+              </div>
             </div>
           </div>
 
