@@ -118,6 +118,17 @@ export interface FxExchangeRecord {
   currencyFrom: string;
   amountTo: number;
   currencyTo: string;
+  fromOperationId?: number;
+  toOperationId?: number;
+  source?: string;
+}
+
+export interface FxExchangeInput {
+  date: string;
+  currencyFrom: string;
+  currencyTo: string;
+  amountFrom: number;
+  rate: number;
 }
 
 export interface CashFlowRecord {

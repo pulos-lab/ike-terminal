@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { getAllTransactions, getTransactionById, insertTransaction, updateTransaction, deleteTransaction } from '../db/transactions-repo.js';
-import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOperation, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
+import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOperation, insertOperations, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
 import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
-import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry } from 'shared';
+import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput } from 'shared';
 import { fetchYahooPrice, fetchFxRate } from '../services/yahoo-finance.js';
 import {
   computeOpenPositions,
@@ -277,6 +277,84 @@ router.get('/fx-history', async (req, res) => {
   } catch (error) {
     console.error('FX history error:', error);
     res.status(500).json({ error: 'Failed to extract FX history' });
+  }
+});
+
+// POST /api/portfolio/fx-exchanges
+router.post('/fx-exchanges', (req, res) => {
+  try {
+    const pid = req.portfolioId;
+    const { date, currencyFrom, currencyTo, amountFrom, rate } = req.body as FxExchangeInput;
+
+    if (!date || !currencyFrom || !currencyTo || !amountFrom || !rate) {
+      return res.status(400).json({ error: 'Wymagane pola: data, waluty, kwota, kurs' });
+    }
+    if (currencyFrom === currencyTo) {
+      return res.status(400).json({ error: 'Waluty muszą być różne' });
+    }
+    if (amountFrom <= 0 || rate <= 0) {
+      return res.status(400).json({ error: 'Kwota i kurs muszą być dodatnie' });
+    }
+
+    const amountTo = Math.round((amountFrom / rate) * 100) / 100;
+    const pair = `${currencyFrom}/${currencyTo}`;
+    const description = `Wymiana waluty ${pair} ${rate}`;
+
+    const count = insertOperations([
+      {
+        date,
+        operationType: 'fx_exchange',
+        description,
+        amount: -amountFrom,
+        currency: currencyFrom,
+        fxRate: rate,
+        fxPair: pair,
+        source: 'manual',
+      },
+      {
+        date,
+        operationType: 'fx_exchange',
+        description,
+        amount: amountTo,
+        currency: currencyTo,
+        fxRate: rate,
+        fxPair: pair,
+        source: 'manual',
+      },
+    ], pid);
+
+    res.json({ success: true, operationsCreated: count });
+  } catch (error) {
+    console.error('Create FX exchange error:', error);
+    res.status(500).json({ error: 'Nie udało się utworzyć wymiany walut' });
+  }
+});
+
+// DELETE /api/portfolio/fx-exchanges/:fromId/:toId
+router.delete('/fx-exchanges/:fromId/:toId', (req, res) => {
+  try {
+    const pid = req.portfolioId;
+    const fromId = parseInt(req.params.fromId);
+    const toId = parseInt(req.params.toId);
+
+    if (isNaN(fromId) || isNaN(toId)) {
+      return res.status(400).json({ error: 'Nieprawidłowe ID operacji' });
+    }
+
+    const fromOp = getOperationById(fromId, pid);
+    const toOp = getOperationById(toId, pid);
+
+    if (!fromOp || !toOp || fromOp.operationType !== 'fx_exchange' || toOp.operationType !== 'fx_exchange') {
+      return res.status(404).json({ error: 'Operacje wymiany nie znalezione' });
+    }
+
+    deleteOperation(fromId, pid);
+    deleteOperation(toId, pid);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete FX exchange error:', error);
+    res.status(500).json({ error: 'Nie udało się usunąć wymiany walut' });
   }
 });
 

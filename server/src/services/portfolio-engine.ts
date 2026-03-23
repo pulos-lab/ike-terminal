@@ -294,18 +294,26 @@ export function extractFxExchanges(operations: CashOperation[]): FxExchangeRecor
   }
 
   for (const [date, ops] of byDate) {
-    const fromOp = ops.find(o => o.amount < 0);
-    const toOp = ops.find(o => o.amount > 0);
-    if (fromOp && toOp) {
-      records.push({
-        date,
-        pair: fromOp.fxPair || `${fromOp.currency}/${toOp.currency}`,
-        rate: fromOp.fxRate || (Math.abs(fromOp.amount) / toOp.amount),
-        amountFrom: Math.abs(fromOp.amount),
-        currencyFrom: fromOp.currency,
-        amountTo: toOp.amount,
-        currencyTo: toOp.currency,
-      });
+    // Sort by id so paired inserts stay together
+    ops.sort((a, b) => (a.id || 0) - (b.id || 0));
+    for (let i = 0; i < ops.length - 1; i += 2) {
+      const [first, second] = [ops[i], ops[i + 1]];
+      const fromOp = first.amount < 0 ? first : second;
+      const toOp = first.amount < 0 ? second : first;
+      if (fromOp.amount < 0 && toOp.amount > 0) {
+        records.push({
+          date,
+          pair: fromOp.fxPair || `${fromOp.currency}/${toOp.currency}`,
+          rate: fromOp.fxRate || (Math.abs(fromOp.amount) / toOp.amount),
+          amountFrom: Math.abs(fromOp.amount),
+          currencyFrom: fromOp.currency,
+          amountTo: toOp.amount,
+          currencyTo: toOp.currency,
+          fromOperationId: fromOp.id,
+          toOperationId: toOp.id,
+          source: fromOp.source,
+        });
+      }
     }
   }
 

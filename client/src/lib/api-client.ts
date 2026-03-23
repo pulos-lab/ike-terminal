@@ -110,6 +110,15 @@ export const api = {
     }),
 
   getFxHistory: () => request<any>('/portfolio/fx-history'),
+  createFxExchange: (body: { date: string; currencyFrom: string; currencyTo: string; amountFrom: number; rate: number }) =>
+    request<{ success: boolean }>('/portfolio/fx-exchanges', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deleteFxExchange: (fromId: number, toId: number) =>
+    request<{ success: boolean }>(`/portfolio/fx-exchanges/${fromId}/${toId}`, {
+      method: 'DELETE',
+    }),
   getCashFlow: () => request<any>('/portfolio/cash-flow'),
 
   postHistory: (body: { benchmark: string; startDate?: string; endDate?: string }) =>
