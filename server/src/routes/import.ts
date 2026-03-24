@@ -46,7 +46,7 @@ router.post('/transactions', upload.single('file'), async (req, res) => {
     // ── XLSX path (XTB) ──
     if (isXlsx) {
       const binaryParser = requestedBroker === 'auto'
-        ? detectBinaryBroker(req.file.buffer)
+        ? await detectBinaryBroker(req.file.buffer)
         : getBinaryParserById(requestedBroker);
 
       if (!binaryParser) {
@@ -55,7 +55,7 @@ router.post('/transactions', upload.single('file'), async (req, res) => {
         });
       }
 
-      const { transactions: txResult, operations: opsResult } = binaryParser.parse(req.file.buffer, importBatch);
+      const { transactions: txResult, operations: opsResult } = await binaryParser.parse(req.file.buffer, importBatch);
 
       if (txResult.data.length === 0 && opsResult.data.length === 0) {
         const skippedInfo = txResult.skipped.length > 0

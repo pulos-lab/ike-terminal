@@ -77,11 +77,11 @@ export function getParserById(id: BrokerType): BrokerParser | undefined {
 export interface BinaryBrokerParser {
   id: BrokerType;
   label: string;
-  detect: (buffer: Buffer) => boolean;
-  parse: (buffer: Buffer, importBatch: string) => {
+  detect: (buffer: Buffer) => boolean | Promise<boolean>;
+  parse: (buffer: Buffer, importBatch: string) => Promise<{
     transactions: ParseResult<Transaction>;
     operations: ParseResult<CashOperation>;
-  };
+  }>;
   needsNameResolution: boolean;
 }
 
@@ -95,9 +95,9 @@ export const BINARY_PARSER_REGISTRY: BinaryBrokerParser[] = [
   },
 ];
 
-export function detectBinaryBroker(buffer: Buffer): BinaryBrokerParser | null {
+export async function detectBinaryBroker(buffer: Buffer): Promise<BinaryBrokerParser | null> {
   for (const parser of BINARY_PARSER_REGISTRY) {
-    if (parser.detect(buffer)) return parser;
+    if (await parser.detect(buffer)) return parser;
   }
   return null;
 }

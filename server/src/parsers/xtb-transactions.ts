@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import type { Transaction, CashOperation, ParseResult, SkippedRow } from 'shared';
 import { roundTo2 } from './utils.js';
 
@@ -90,7 +90,18 @@ function resolveSymbolIdentifiers(symbol: string): { paperName: string; isin: st
  * Parse XTB time — handles both Excel serial numbers (43769.59) and
  * string format "DD/MM/YYYY HH:MM:SS" → ISO 8601.
  */
-function parseXtbTime(time: string | number): string | null {
+function parseXtbTime(time: string | number | Date): string | null {
+  // ExcelJS may return Date objects for date-formatted cells
+  if (time instanceof Date) {
+    const yyyy = time.getFullYear();
+    const mm = String(time.getMonth() + 1).padStart(2, '0');
+    const dd = String(time.getDate()).padStart(2, '0');
+    const hh = String(time.getHours()).padStart(2, '0');
+    const mi = String(time.getMinutes()).padStart(2, '0');
+    const ss = String(time.getSeconds()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}`;
+  }
+
   // Excel serial number
   if (typeof time === 'number') {
     return excelSerialToISO(time);
@@ -134,11 +145,12 @@ function parseSecFeeDate(yyyymmdd: string): string | null {
 
 // ── Format detection ────────────────────────────────────────────────────────
 
-export function isXtbFormat(buffer: Buffer): boolean {
+export async function isXtbFormat(buffer: Buffer): Promise<boolean> {
   try {
-    const wb = XLSX.read(buffer, { type: 'buffer' });
-    return wb.SheetNames.some(name =>
-      name.toUpperCase().includes('CASH OPERATION')
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+    return wb.worksheets.some(ws =>
+      ws.name.toUpperCase().includes('CASH OPERATION')
     );
   } catch {
     return false;
@@ -151,7 +163,7 @@ interface RawRow {
   rowNum: number;
   id: string;
   type: string;
-  time: string | number;
+  time: string | number | Date;
   comment: string;
   symbol: string;
   amount: number;
@@ -159,24 +171,50 @@ interface RawRow {
 
 // ── Main parser ─────────────────────────────────────────────────────────────
 
-export function parseXtbFile(
+export async function parseXtbFile(
   buffer: Buffer,
   importBatch: string,
-): { transactions: ParseResult<Transaction>; operations: ParseResult<CashOperation> } {
-  const wb = XLSX.read(buffer, { type: 'buffer' });
+): Promise<{ transactions: ParseResult<Transaction>; operations: ParseResult<CashOperation> }> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer as unknown as ArrayBuffer);
 
-  const sheetName = wb.SheetNames.find(n =>
-    n.toUpperCase().includes('CASH OPERATION')
+  const worksheet = wb.worksheets.find(ws =>
+    ws.name.toUpperCase().includes('CASH OPERATION')
   );
-  if (!sheetName) {
+  if (!worksheet) {
     return {
       transactions: { data: [], skipped: [] },
       operations: { data: [], skipped: [] },
     };
   }
 
-  const sheet = wb.Sheets[sheetName];
-  const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+  // Convert to 2D array (equivalent to xlsx sheet_to_json with header:1)
+  // ExcelJS preserves column positions (including empty leading columns),
+  // while xlsx's sheet_to_json trimmed them. Find the first data column
+  // from the header row and shift all rows to match the old behavior.
+  const rawRows2d: any[][] = [];
+  worksheet.eachRow({ includeEmpty: false }, (row) => {
+    rawRows2d.push((row.values as any[]).slice(1));
+  });
+
+  // Detect leading empty columns offset from the header row (ID/Type in col 0)
+  let colOffset = 0;
+  for (const row of rawRows2d) {
+    const col0 = row[0]?.toString?.().trim();
+    const col1 = row[1]?.toString?.().trim();
+    if ((col0 === 'ID' && col1 === 'Type') || (col0 === 'Type' && col1 === 'Instrument')) {
+      break; // data starts at index 0 — no offset needed
+    }
+    if ((col1 === 'ID' && row[2]?.toString?.().trim() === 'Type') ||
+        (col1 === 'Type' && row[2]?.toString?.().trim() === 'Instrument')) {
+      colOffset = 1;
+      break;
+    }
+  }
+
+  const rows: any[][] = colOffset > 0
+    ? rawRows2d.map(r => r.slice(colOffset))
+    : rawRows2d;
 
   // ── Extract account currency from metadata rows (1-8) ──
   const accountCurrency = extractAccountCurrency(rows);
@@ -228,7 +266,7 @@ export function parseXtbFile(
         rowNum: i + 1,
         id: row[4]?.toString().trim() || '',
         type: col0,
-        time: typeof row[2] === 'number' ? row[2] : row[2]?.toString().trim() || '',
+        time: row[2] instanceof Date || typeof row[2] === 'number' ? row[2] : row[2]?.toString().trim() || '',
         comment: row[5]?.toString().trim() || '',
         symbol: row[1]?.toString().trim() || '', // Instrument = full company name
         amount: amountVal,
@@ -239,7 +277,7 @@ export function parseXtbFile(
         rowNum: i + 1,
         id: col0,
         type: row[1]?.toString().trim() || '',
-        time: typeof row[2] === 'number' ? row[2] : row[2]?.toString().trim() || '',
+        time: row[2] instanceof Date || typeof row[2] === 'number' ? row[2] : row[2]?.toString().trim() || '',
         comment: row[3]?.toString().trim() || '',
         symbol: row[4]?.toString().trim() || '',
         amount: typeof row[5] === 'number' ? row[5] : parseFloat(row[5]?.toString() || '0') || 0,
