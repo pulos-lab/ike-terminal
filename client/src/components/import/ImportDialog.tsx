@@ -67,7 +67,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         if (result.skipped && result.skipped.length > 0) {
           const MAX_SHOWN = 10;
           const items = result.skipped.slice(0, MAX_SHOWN);
-          const lines = items.map(s => {
+          const lines = items.map((s: { paperName?: string; reason: string; row: number }) => {
             const name = s.paperName ? `${s.paperName} ` : '';
             const reason = SKIP_REASON_LABELS[s.reason as SkipReason] || s.reason;
             return `${name}(wiersz ${s.row}) — ${reason}`;

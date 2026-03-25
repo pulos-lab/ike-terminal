@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PortfolioProvider } from '@/lib/portfolio-context';
+import { AuthGuard } from '@/components/auth/AuthGuard';
+import { LoginPage } from '@/components/auth/LoginPage';
 import { AppShell } from '@/components/layout/AppShell';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { PortfolioPage } from '@/components/portfolio/PortfolioPage';
@@ -25,23 +27,33 @@ function App() {
   return (
     <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
-      <PortfolioProvider>
-        <TooltipProvider>
-          <BrowserRouter>
-            <AppShell>
-            <Routes>
-              <Route path="/" element={<DashboardPage />} />
-              <Route path="/portfolio" element={<PortfolioPage />} />
-              <Route path="/trades" element={<TradesPage />} />
-              <Route path="/dividends" element={<DividendsPage />} />
-              <Route path="/currency" element={<CurrencyExchangePage />} />
-              <Route path="/cash" element={<CashFlowPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-            </AppShell>
-          </BrowserRouter>
-        </TooltipProvider>
-      </PortfolioProvider>
+      <TooltipProvider>
+        <BrowserRouter>
+          <Routes>
+            {/* Public route */}
+            <Route path="/login" element={<LoginPage />} />
+
+            {/* Protected routes */}
+            <Route path="/*" element={
+              <AuthGuard>
+                <PortfolioProvider>
+                  <AppShell>
+                    <Routes>
+                      <Route path="/" element={<DashboardPage />} />
+                      <Route path="/portfolio" element={<PortfolioPage />} />
+                      <Route path="/trades" element={<TradesPage />} />
+                      <Route path="/dividends" element={<DividendsPage />} />
+                      <Route path="/currency" element={<CurrencyExchangePage />} />
+                      <Route path="/cash" element={<CashFlowPage />} />
+                      <Route path="*" element={<Navigate to="/" replace />} />
+                    </Routes>
+                  </AppShell>
+                </PortfolioProvider>
+              </AuthGuard>
+            } />
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
     </QueryClientProvider>
     </ErrorBoundary>
   );

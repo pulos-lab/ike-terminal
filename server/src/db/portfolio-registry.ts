@@ -17,7 +17,6 @@ function loadPortfolios(): Portfolio[] {
   const p = getRegistryPath();
   if (!fs.existsSync(p)) return [];
   const list: Portfolio[] = JSON.parse(fs.readFileSync(p, 'utf-8'));
-  // Backfill settings — merge with defaults to add new fields to existing portfolios
   for (const portfolio of list) {
     portfolio.settings = { ...DEFAULT_PORTFOLIO_SETTINGS, ...(portfolio.settings || {}) };
   }
@@ -30,21 +29,34 @@ function savePortfolios(list: Portfolio[]): void {
   fs.writeFileSync(getRegistryPath(), JSON.stringify(list, null, 2));
 }
 
-export function getAllPortfolios(): Portfolio[] {
-  return loadPortfolios();
+// ── User-scoped queries ─────────────────────────────────────────────────────
+
+/** Get all portfolios. If userId provided, filter by owner. */
+export function getAllPortfolios(userId?: string): Portfolio[] {
+  const all = loadPortfolios();
+  if (!userId) return all;
+  return all.filter(p => p.userId === userId || !p.userId); // include legacy portfolios without userId
 }
 
 export function getPortfolio(id: string): Portfolio | null {
   return loadPortfolios().find(p => p.id === id) || null;
 }
 
-export function createPortfolio(name: string): Portfolio {
+/** Check if a portfolio belongs to a user (or has no owner — legacy) */
+export function isPortfolioOwnedBy(id: string, userId: string): boolean {
+  const portfolio = getPortfolio(id);
+  if (!portfolio) return false;
+  return !portfolio.userId || portfolio.userId === userId;
+}
+
+export function createPortfolio(name: string, userId?: string): Portfolio {
   const list = loadPortfolios();
   const portfolio: Portfolio = {
     id: randomUUID(),
     name,
     createdAt: new Date().toISOString(),
     settings: { ...DEFAULT_PORTFOLIO_SETTINGS },
+    userId,
   };
   list.push(portfolio);
   savePortfolios(list);
@@ -82,7 +94,6 @@ export function initRegistry(): void {
   const oldDbPath = path.join(config.dataDir, 'portfolio.db');
   const defaultDbPath = getDbPathForPortfolio('default');
 
-  // Migrate existing DB
   if (fs.existsSync(oldDbPath) && !fs.existsSync(defaultDbPath)) {
     fs.renameSync(oldDbPath, defaultDbPath);
     for (const suffix of ['-wal', '-shm']) {

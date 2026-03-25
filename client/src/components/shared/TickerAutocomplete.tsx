@@ -23,7 +23,7 @@ export function TickerAutocomplete({ value, onChange, placeholder = 'Wpisz ticke
   const [isLoading, setIsLoading] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Sync external value
   useEffect(() => {

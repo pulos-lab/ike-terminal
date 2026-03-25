@@ -1,0 +1,21 @@
+[Unit]
+Description=TIX Terminal — Portfolio Manager
+After=network.target
+
+[Service]
+Type=simple
+User=ike-terminal
+WorkingDirectory=/opt/ike-terminal/app
+ExecStart=/usr/bin/node server/dist/index.js
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/ike-terminal/.env
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/ike-terminal/data
+
+[Install]
+WantedBy=multi-user.target

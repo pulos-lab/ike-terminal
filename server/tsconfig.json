@@ -5,7 +5,9 @@
     "rootDir": "src",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "target": "ES2022"
+    "target": "ES2022",
+    "declaration": false,
+    "declarationMap": false
   },
   "include": ["src"],
   "references": [{ "path": "../shared" }]

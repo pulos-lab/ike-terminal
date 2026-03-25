@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { formatPLN } from '@/lib/formatters';
 
 interface Position {
   ticker: string;

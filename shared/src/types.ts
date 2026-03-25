@@ -298,4 +298,5 @@ export interface Portfolio {
   name: string;
   createdAt: string;
   settings: PortfolioSettings;
+  userId?: string; // owner (multi-tenancy)
 }

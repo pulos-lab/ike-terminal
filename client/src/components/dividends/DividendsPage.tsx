@@ -142,7 +142,7 @@ export function DividendsPage() {
                   <BarChart data={yearlyData}>
                     <XAxis dataKey="year" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: number) => formatPLN(v)} />
+                    <Tooltip formatter={(v: number | undefined) => formatPLN(v ?? 0)} />
                     <Bar dataKey="amount" fill="#22c55e" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>

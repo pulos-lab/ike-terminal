@@ -25,7 +25,7 @@ interface TradeGroup {
   maxBuyPrice: number;
   avgHoldingDays: number;
   sellTransactionId: number;
-  sellSource: 'bossa' | 'mbank' | 'degiro' | 'manual';
+  sellSource: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual';
   trades: ClosedTrade[];
 }
 

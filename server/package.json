@@ -8,10 +8,13 @@
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^11.8.1",
+    "better-auth": "^1.5.6",
+    "better-sqlite3": "^12.8.0",
     "cors": "^2.8.5",
     "exceljs": "^4.4.0",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.3.1",
+    "helmet": "^8.1.0",
     "iconv-lite": "^0.6.3",
     "multer": "^1.4.5-lts.1",
     "node-cache": "^5.1.2",

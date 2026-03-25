@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { useSession, signOut } from '@/lib/auth-client';
 import {
   LayoutDashboard, Briefcase, ArrowLeftRight, Coins,
-  DollarSign, Wallet, Upload, Moon, Sun, Menu,
+  DollarSign, Wallet, Upload, Moon, Sun, Menu, LogOut,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -56,9 +57,16 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
+  const { data: session } = useSession();
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
   const [importOpen, setImportOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate('/login', { replace: true });
+  };
 
   const { data: importStatus } = useQuery({
     queryKey: ['import', 'status'],
@@ -93,6 +101,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <p className="text-[10px] text-muted-foreground px-1">
               Ostatni import: {lastImport}
             </p>
+          )}
+          {session?.user && (
+            <div className="flex items-center justify-between pt-2 border-t border-border">
+              <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+                {session.user.email}
+              </span>
+              <Button variant="ghost" size="sm" onClick={handleLogout} title="Wyloguj">
+                <LogOut className="h-3 w-3" />
+              </Button>
+            </div>
           )}
         </div>
       </aside>

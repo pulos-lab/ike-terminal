@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { getPortfolio } from '../db/portfolio-registry.js';
+import { getPortfolio, isPortfolioOwnedBy } from '../db/portfolio-registry.js';
 
 declare global {
   namespace Express {
@@ -21,6 +21,11 @@ export function portfolioMiddleware(req: Request, res: Response, next: NextFunct
   const portfolio = getPortfolio(portfolioId);
   if (!portfolio) {
     return res.status(404).json({ error: 'Portfolio not found' });
+  }
+
+  // Ownership check (multi-tenancy) — skip if no auth (userId not set)
+  if (req.userId && !isPortfolioOwnedBy(portfolioId, req.userId)) {
+    return res.status(403).json({ error: 'Access denied' });
   }
 
   req.portfolioId = portfolioId;

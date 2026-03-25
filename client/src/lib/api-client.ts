@@ -23,8 +23,15 @@ function portfolioHeaders(): Record<string, string> {
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${url}`, {
     headers: portfolioHeaders(),
+    credentials: 'include', // send auth cookies
     ...options,
   });
+
+  // Redirect to login on 401 (session expired or not authenticated)
+  if (response.status === 401) {
+    window.location.href = '/login';
+    throw new Error('Session expired');
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Unknown error' }));
