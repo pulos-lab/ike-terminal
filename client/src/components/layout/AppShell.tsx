@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Separator } from '@/components/ui/separator';
 import { MetricsBar } from '@/components/dashboard/MetricsBar';
 import { ImportDialog } from '@/components/import/ImportDialog';
+import { BugReportDialog } from '@/components/shared/BugReportDialog';
 import { PortfolioSelector } from './PortfolioSelector';
 
 const navItems = [
@@ -88,7 +89,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="hidden md:flex w-60 flex-col border-r bg-card">
         <NavContent />
         <div className="mt-auto p-3 space-y-1">
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button variant="ghost" size="sm" onClick={toggleTheme}>
               {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
@@ -96,6 +97,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Upload className="h-4 w-4 mr-1" />
               Import
             </Button>
+            <BugReportDialog />
           </div>
           {lastImport && (
             <p className="text-[10px] text-muted-foreground px-1">

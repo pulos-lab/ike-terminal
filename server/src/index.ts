@@ -16,6 +16,7 @@ import portfoliosRouter from './routes/portfolios.js';
 import pricesRouter from './routes/prices.js';
 import portfolioRouter from './routes/portfolio.js';
 import importRouter from './routes/import.js';
+import bugReportsRouter from './routes/bug-reports.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -100,6 +101,7 @@ app.use('/api/portfolios', requireAuth, portfolioMiddleware, portfoliosRouter);
 app.use('/api/prices', requireAuth, portfolioMiddleware, pricesRouter);
 app.use('/api/portfolio', requireAuth, portfolioMiddleware, portfolioRouter);
 app.use('/api/import', requireAuth, portfolioMiddleware, importRouter);
+app.use('/api/bug-reports', requireAuth, bugReportsRouter);
 
 // ── SPA fallback (after API routes — serves index.html for client routing) ──
 if (isProduction) {

@@ -170,4 +170,11 @@ export const api = {
     }
     return response.json();
   },
+
+  // Bug reports
+  submitBugReport: (data: { category: string; description: string }) =>
+    request<{ success: boolean; id: string }>('/bug-reports', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 };

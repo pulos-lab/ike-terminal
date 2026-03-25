@@ -56,7 +56,23 @@ db.exec(`
     createdAt TEXT DEFAULT (datetime('now')),
     updatedAt TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS "bug_reports" (
+    id TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    userEmail TEXT,
+    category TEXT NOT NULL,
+    description TEXT NOT NULL,
+    userAgent TEXT,
+    url TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
+
+/** Get the auth database instance (for bug reports, admin queries) */
+export function getAuthDb() {
+  return db;
+}
 
 /** Close the auth database (called during graceful shutdown) */
 export function closeAuthDb(): void {
