@@ -89,7 +89,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="hidden md:flex w-60 flex-col border-r bg-card">
         <NavContent />
         <div className="mt-auto p-3 space-y-1">
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2">
             <Button variant="ghost" size="sm" onClick={toggleTheme}>
               {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
@@ -97,7 +97,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Upload className="h-4 w-4 mr-1" />
               Import
             </Button>
-            <BugReportDialog />
           </div>
           {lastImport && (
             <p className="text-[10px] text-muted-foreground px-1">
@@ -106,12 +105,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
           {session?.user && (
             <div className="flex items-center justify-between pt-2 border-t border-border">
-              <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+              <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">
                 {session.user.email}
               </span>
-              <Button variant="ghost" size="sm" onClick={handleLogout} title="Wyloguj">
-                <LogOut className="h-3 w-3" />
-              </Button>
+              <div className="flex gap-0.5">
+                <BugReportDialog />
+                <Button variant="ghost" size="sm" onClick={handleLogout} title="Wyloguj">
+                  <LogOut className="h-3 w-3" />
+                </Button>
+              </div>
             </div>
           )}
         </div>

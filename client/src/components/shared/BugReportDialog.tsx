@@ -49,9 +49,8 @@ export function BugReportDialog() {
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setSuccess(false); setError(''); } }}>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="sm">
-          <Bug className="h-4 w-4 mr-1" />
-          Zgłoś błąd
+        <Button variant="ghost" size="sm" title="Zgłoś błąd">
+          <Bug className="h-3 w-3" />
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
