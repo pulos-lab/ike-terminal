@@ -50,6 +50,15 @@ app.use('/api/auth', rateLimit({
   legacyHeaders: false,
 }));
 
+// Stricter limit on sign-up: max 3 registrations per IP per hour
+app.use('/api/auth/sign-up', rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many accounts created. Try again later.' },
+}));
+
 // ── CORS ────────────────────────────────────────────────────────────────────
 const corsOrigins = isProduction
   ? [config.corsOrigin]
