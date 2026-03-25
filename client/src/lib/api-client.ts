@@ -177,4 +177,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+
+  getBugReports: () =>
+    request<Array<{
+      id: string;
+      userId: string;
+      userEmail: string;
+      category: string;
+      description: string;
+      userAgent: string;
+      url: string;
+      createdAt: string;
+    }>>('/bug-reports'),
 };
