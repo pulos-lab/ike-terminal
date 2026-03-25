@@ -31,22 +31,33 @@ function savePortfolios(list: Portfolio[]): void {
 
 // ── User-scoped queries ─────────────────────────────────────────────────────
 
-/** Get all portfolios. If userId provided, filter by owner. */
+/** Get all portfolios. If userId provided, filter by owner only. */
 export function getAllPortfolios(userId?: string): Portfolio[] {
   const all = loadPortfolios();
   if (!userId) return all;
-  return all.filter(p => p.userId === userId || !p.userId); // include legacy portfolios without userId
+  return all.filter(p => p.userId === userId);
 }
 
 export function getPortfolio(id: string): Portfolio | null {
   return loadPortfolios().find(p => p.id === id) || null;
 }
 
-/** Check if a portfolio belongs to a user (or has no owner — legacy) */
+/** Check if a portfolio belongs to a user */
 export function isPortfolioOwnedBy(id: string, userId: string): boolean {
   const portfolio = getPortfolio(id);
   if (!portfolio) return false;
-  return !portfolio.userId || portfolio.userId === userId;
+  return portfolio.userId === userId;
+}
+
+/** Claim an unowned (legacy) portfolio — assigns it to the given user */
+export function claimPortfolio(id: string, userId: string): Portfolio | null {
+  const list = loadPortfolios();
+  const idx = list.findIndex(p => p.id === id);
+  if (idx === -1) return null;
+  if (list[idx].userId) return null; // already owned
+  list[idx].userId = userId;
+  savePortfolios(list);
+  return list[idx];
 }
 
 export function createPortfolio(name: string, userId?: string): Portfolio {

@@ -65,6 +65,7 @@ app.get('/api/health', (_req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    googleAuthEnabled: !!(config.googleClientId && config.googleClientSecret),
   });
 });
 
@@ -77,15 +78,11 @@ for (const portfolio of getAllPortfolios()) {
 }
 console.log('All databases initialized, ticker maps seeded.');
 
-// ── Auth + Portfolio middleware (all /api routes below require authentication)
-app.use(requireAuth);
-app.use(portfolioMiddleware);
-
-// ── Protected API Routes ────────────────────────────────────────────────────
-app.use('/api/portfolios', portfoliosRouter);
-app.use('/api/prices', pricesRouter);
-app.use('/api/portfolio', portfolioRouter);
-app.use('/api/import', importRouter);
+// ── Protected API Routes (auth + portfolio middleware applied only to /api) ──
+app.use('/api/portfolios', requireAuth, portfolioMiddleware, portfoliosRouter);
+app.use('/api/prices', requireAuth, portfolioMiddleware, pricesRouter);
+app.use('/api/portfolio', requireAuth, portfolioMiddleware, portfolioRouter);
+app.use('/api/import', requireAuth, portfolioMiddleware, importRouter);
 
 // ── SPA fallback (after API routes — serves index.html for client routing) ──
 if (isProduction) {
