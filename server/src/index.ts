@@ -25,7 +25,15 @@ app.set('trust proxy', isProduction ? 1 : false);
 
 // ── Security ────────────────────────────────────────────────────────────────
 app.use(helmet({
-  contentSecurityPolicy: isProduction ? undefined : false,
+  contentSecurityPolicy: isProduction
+    ? {
+        directives: {
+          ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+          'script-src': ["'self'", 'stats.tixterminal.app'],
+          'connect-src': ["'self'", 'stats.tixterminal.app'],
+        },
+      }
+    : false,
 }));
 
 app.use(rateLimit({
