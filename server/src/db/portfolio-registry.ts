@@ -49,17 +49,6 @@ export function isPortfolioOwnedBy(id: string, userId: string): boolean {
   return portfolio.userId === userId;
 }
 
-/** Claim an unowned (legacy) portfolio — assigns it to the given user */
-export function claimPortfolio(id: string, userId: string): Portfolio | null {
-  const list = loadPortfolios();
-  const idx = list.findIndex(p => p.id === id);
-  if (idx === -1) return null;
-  if (list[idx].userId) return null; // already owned
-  list[idx].userId = userId;
-  savePortfolios(list);
-  return list[idx];
-}
-
 export function createPortfolio(name: string, userId?: string): Portfolio {
   const list = loadPortfolios();
   const portfolio: Portfolio = {

@@ -1,16 +1,18 @@
 import { Router } from 'express';
-import { getAllPortfolios, createPortfolio, updatePortfolio, deletePortfolio, isPortfolioOwnedBy, claimPortfolio } from '../db/portfolio-registry.js';
+import { getAllPortfolios, createPortfolio, updatePortfolio, deletePortfolio, isPortfolioOwnedBy } from '../db/portfolio-registry.js';
 import { getDb, closeDb } from '../db/connection.js';
 import { seedTickerMap } from '../db/ticker-map-repo.js';
 
 const router = Router();
 
 // GET /api/portfolios — returns portfolios owned by the authenticated user
-// If user has none, auto-creates a default portfolio
+// Auto-creates a default portfolio if user has none
 router.get('/', (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Authentication required' });
+
   let portfolios = getAllPortfolios(req.userId);
 
-  if (portfolios.length === 0 && req.userId) {
+  if (portfolios.length === 0) {
     const portfolio = createPortfolio('Mój portfel', req.userId);
     getDb(portfolio.id);
     seedTickerMap(portfolio.id);
@@ -22,6 +24,7 @@ router.get('/', (req, res) => {
 
 // POST /api/portfolios
 router.post('/', (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Authentication required' });
   const { name } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
 
@@ -31,21 +34,11 @@ router.post('/', (req, res) => {
   res.json(portfolio);
 });
 
-// POST /api/portfolios/:id/claim — claim an unowned legacy portfolio
-router.post('/:id/claim', (req, res) => {
-  if (!req.userId) return res.status(401).json({ error: 'Authentication required' });
-
-  const claimed = claimPortfolio(req.params.id, req.userId);
-  if (!claimed) {
-    return res.status(400).json({ error: 'Portfolio not found or already owned' });
-  }
-  res.json(claimed);
-});
-
 // PUT /api/portfolios/:id
 router.put('/:id', (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Authentication required' });
   const { id } = req.params;
-  if (req.userId && !isPortfolioOwnedBy(id, req.userId)) {
+  if (!isPortfolioOwnedBy(id, req.userId)) {
     return res.status(403).json({ error: 'Access denied' });
   }
   const { name, settings } = req.body;
@@ -56,9 +49,10 @@ router.put('/:id', (req, res) => {
 
 // DELETE /api/portfolios/:id
 router.delete('/:id', (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Authentication required' });
   const { id } = req.params;
   if (id === 'default') return res.status(400).json({ error: 'Cannot delete default portfolio' });
-  if (req.userId && !isPortfolioOwnedBy(id, req.userId)) {
+  if (!isPortfolioOwnedBy(id, req.userId)) {
     return res.status(403).json({ error: 'Access denied' });
   }
 

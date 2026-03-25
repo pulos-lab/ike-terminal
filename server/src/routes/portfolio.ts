@@ -256,7 +256,7 @@ router.delete('/deposits/:id', (req, res) => {
 // GET /api/portfolio/ticker-search
 router.get('/ticker-search', async (req, res) => {
   try {
-    const q = req.query.q as string;
+    const q = (req.query.q as string || '').trim().slice(0, 50);
     if (!q || q.length < 1) {
       return res.json([]);
     }

@@ -12,7 +12,7 @@ import { resolveUnknownIsins } from '../services/isin-resolver.js';
 
 const router = Router();
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 
 const upload = multer({
   storage: multer.memoryStorage(),
