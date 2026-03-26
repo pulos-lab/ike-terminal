@@ -188,7 +188,7 @@ export function DashboardPage() {
             />
           ) : (
             <div className="flex items-center justify-center h-80 text-muted-foreground">
-              Brak danych. Zaimportuj historię transakcji.
+              Brak danych. Zaimportuj historię transakcji lub dodaj ręcznie transakcje.
             </div>
           )}
         </CardContent>

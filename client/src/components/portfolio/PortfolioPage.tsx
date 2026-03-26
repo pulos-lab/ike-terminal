@@ -233,7 +233,7 @@ export function PortfolioPage() {
             </div>
           ) : (
             <div className="text-center py-12 text-muted-foreground">
-              Brak otwartych pozycji. Zaimportuj historię transakcji.
+              Brak otwartych pozycji. Zaimportuj historię transakcji lub dodaj ręcznie transakcje.
             </div>
           )}
         </CardContent>
