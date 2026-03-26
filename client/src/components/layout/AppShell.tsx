@@ -13,6 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { MetricsBar } from '@/components/dashboard/MetricsBar';
 import { ImportDialog } from '@/components/import/ImportDialog';
 import { BugReportDialog } from '@/components/shared/BugReportDialog';
+import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog';
 import { PortfolioSelector } from './PortfolioSelector';
 
 const navItems = [
@@ -109,6 +110,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {session.user.email}
               </span>
               <div className="flex gap-0.5">
+                <ChangePasswordDialog />
                 <BugReportDialog />
                 <Button variant="ghost" size="sm" onClick={handleLogout} title="Wyloguj">
                   <LogOut className="h-3 w-3" />
