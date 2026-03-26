@@ -46,7 +46,7 @@ app.use(rateLimit({
 
 app.use('/api/auth', rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
 }));
@@ -58,6 +58,15 @@ app.use('/api/auth/sign-up', rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many accounts created. Try again later.' },
+}));
+
+// Brute-force protection on login: max 10 attempts per 15 min
+app.use('/api/auth/sign-in', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts. Try again later.' },
 }));
 
 // ── CORS ────────────────────────────────────────────────────────────────────
