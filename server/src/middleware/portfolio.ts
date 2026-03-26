@@ -21,7 +21,11 @@ export function portfolioMiddleware(req: Request, res: Response, next: NextFunct
   }
 
   // Skip existence/ownership check for portfolio management routes
-  if (req.path.startsWith('/api/portfolios')) {
+  // When mounted on /api/portfolios, req.path is stripped to '/' or '/:id'
+  // When mounted on /api, req.path still starts with /portfolios
+  // Use req.baseUrl + req.path to get the full path
+  const fullPath = req.baseUrl + req.path;
+  if (fullPath.startsWith('/api/portfolios')) {
     req.portfolioId = portfolioId;
     return next();
   }
