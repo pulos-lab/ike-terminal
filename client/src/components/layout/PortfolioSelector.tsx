@@ -30,13 +30,18 @@ export function PortfolioSelector() {
     switchPortfolio(value);
   };
 
+  const [createError, setCreateError] = useState('');
+
   const handleCreate = async () => {
     if (!newName.trim()) return;
     setCreating(true);
+    setCreateError('');
     try {
       await createPortfolio(newName.trim());
       setNewName('');
       setCreateDialogOpen(false);
+    } catch (err: any) {
+      setCreateError(err?.message || 'Nie udało się utworzyć portfela');
     } finally {
       setCreating(false);
     }
@@ -103,6 +108,9 @@ export function PortfolioSelector() {
               autoFocus
             />
           </div>
+          {createError && (
+            <p className="text-sm text-destructive">{createError}</p>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
               Anuluj

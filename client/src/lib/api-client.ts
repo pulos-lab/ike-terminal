@@ -2,11 +2,14 @@ import type { Portfolio, PortfolioSettings } from 'shared';
 
 const API_BASE = '/api';
 
-let activePortfolioId = localStorage.getItem('activePortfolioId') || 'default';
+let activePortfolioId = (() => {
+  try { return localStorage.getItem('activePortfolioId') || 'default'; }
+  catch { return 'default'; }
+})();
 
 export function setActivePortfolioId(id: string) {
   activePortfolioId = id;
-  localStorage.setItem('activePortfolioId', id);
+  try { localStorage.setItem('activePortfolioId', id); } catch { /* Safari Private */ }
 }
 
 export function getActivePortfolioId(): string {
@@ -147,6 +150,7 @@ export const api = {
     const response = await fetch(`${API_BASE}/import/transactions`, {
       method: 'POST',
       headers: { 'X-Portfolio-Id': activePortfolioId },
+      credentials: 'include',
       body: formData,
     });
     if (!response.ok) {
@@ -162,6 +166,7 @@ export const api = {
     const response = await fetch(`${API_BASE}/import/operations`, {
       method: 'POST',
       headers: { 'X-Portfolio-Id': activePortfolioId },
+      credentials: 'include',
       body: formData,
     });
     if (!response.ok) {
