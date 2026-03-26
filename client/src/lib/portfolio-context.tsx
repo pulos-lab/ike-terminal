@@ -27,6 +27,11 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   const refreshPortfolios = useCallback(async () => {
     const list = await api.getPortfolios();
     setPortfolios(list);
+    // If active portfolio doesn't exist in user's list, switch to first available
+    if (list.length > 0 && !list.find(p => p.id === getActivePortfolioId())) {
+      setActivePortfolioId(list[0].id);
+      setActiveId(list[0].id);
+    }
   }, []);
 
   useEffect(() => {
