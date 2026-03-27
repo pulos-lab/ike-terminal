@@ -149,7 +149,7 @@ export function TradesPage() {
   });
 
   const sellMutation = useMutation({
-    mutationFn: ({ ticker, form }: { ticker: string; form: SellForm }) =>
+    mutationFn: ({ ticker, form, category }: { ticker: string; form: SellForm; category?: 'stock' | 'etf' | 'cfd' }) =>
       api.createTransaction({
         date: form.date,
         ticker,
@@ -157,6 +157,7 @@ export function TradesPage() {
         quantity: parseFloat(form.quantity),
         price: parseFloat(form.price),
         commission: parseFloat(form.commission) || 0,
+        category,
       }),
     onSuccess: () => {
       invalidateAll();
@@ -476,7 +477,7 @@ export function TradesPage() {
                                   <Button
                                     size="icon-xs"
                                     variant="ghost"
-                                    onClick={() => sellMutation.mutate({ ticker: pos.ticker, form: sellForm })}
+                                    onClick={() => sellMutation.mutate({ ticker: pos.ticker, form: sellForm, category: pos.category })}
                                     disabled={!isSellValid || sellMutation.isPending}
                                     className="text-green-500 hover:text-green-600"
                                   >
