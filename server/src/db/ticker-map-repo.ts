@@ -104,6 +104,20 @@ function mapTickerRow(row: any): TickerMapEntry {
   };
 }
 
+/**
+ * One-time migration: switch GPW tickers from Stooq to Yahoo price source.
+ * NewConnect (exchange='NC') stays on Stooq.
+ * This reduces Stooq daily API usage by ~90%.
+ */
+export function migrateGpwToYahoo(portfolioId: string): number {
+  const db = getDb(portfolioId);
+  const result = db.prepare(`
+    UPDATE ticker_map SET price_source = 'yahoo'
+    WHERE exchange = 'GPW' AND price_source = 'stooq'
+  `).run();
+  return result.changes;
+}
+
 export function upsertTickerMapEntry(entry: TickerMapEntry, portfolioId: string = 'default'): void {
   const db = getDb(portfolioId);
   db.prepare(`

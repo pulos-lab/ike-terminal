@@ -10,7 +10,7 @@ import { auth, closeAuthDb } from './auth.js';
 import { requireAuth } from './middleware/auth.js';
 import { initRegistry, getAllPortfolios } from './db/portfolio-registry.js';
 import { getDb, closeDb } from './db/connection.js';
-import { seedTickerMap } from './db/ticker-map-repo.js';
+import { seedTickerMap, migrateGpwToYahoo } from './db/ticker-map-repo.js';
 import { portfolioMiddleware } from './middleware/portfolio.js';
 import portfoliosRouter from './routes/portfolios.js';
 import pricesRouter from './routes/prices.js';
@@ -39,7 +39,7 @@ app.use(helmet({
 
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 500,
   standardHeaders: true,
   legacyHeaders: false,
 }));
@@ -102,6 +102,8 @@ initRegistry();
 for (const portfolio of getAllPortfolios()) {
   getDb(portfolio.id);
   seedTickerMap(portfolio.id);
+  const migrated = migrateGpwToYahoo(portfolio.id);
+  if (migrated > 0) console.log(`  Migrated ${migrated} GPW tickers to Yahoo in ${portfolio.id}`);
 }
 console.log('All databases initialized, ticker maps seeded.');
 

@@ -16,7 +16,8 @@ router.get('/live', async (req, res) => {
     for (let i = 0; i < tickers.length; i += batchSize) {
       const batch = tickers.slice(i, i + batchSize);
       await Promise.all(batch.map(async (entry) => {
-        if (entry.priceSource === 'stooq' || entry.ticker.endsWith('.WA')) {
+        if (entry.exchange === 'NC') {
+          // NewConnect: Stooq only (Yahoo doesn't list all NC stocks)
           const price = await fetchStooqPrice(entry.ticker);
           prices[entry.ticker] = { price, currency: entry.currency };
         } else {

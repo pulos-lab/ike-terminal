@@ -15,8 +15,9 @@ export const config = {
   googleClientId: process.env.GOOGLE_CLIENT_ID || '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
   cache: {
-    priceTtl: 15 * 60,
-    historyTtl: 12 * 60 * 60,
+    priceTtl: 60 * 60,           // 1h — live prices (was 15min)
+    stooqLiveTtl: 4 * 60 * 60,   // 4h — Stooq NewConnect (preserve daily quota)
+    historyTtl: 12 * 60 * 60,    // 12h — historical data
   },
 };
 

@@ -55,10 +55,13 @@ function inferExchange(
 }
 
 /**
- * Infer price source from ticker symbol.
+ * Infer price source from ticker symbol and exchange.
+ * NewConnect (.NC) → Stooq (Yahoo doesn't list all NC stocks).
+ * Everything else (GPW .WA, foreign) → Yahoo (to avoid Stooq daily rate limits).
  */
-function inferPriceSource(ticker: string): 'yahoo' | 'stooq' {
-  return ticker.endsWith('.WA') ? 'stooq' : 'yahoo';
+function inferPriceSource(ticker: string, exchange?: string): 'yahoo' | 'stooq' {
+  if (exchange === 'NC') return 'stooq';
+  return 'yahoo';
 }
 
 /**
@@ -165,13 +168,14 @@ async function resolveIsin(
     for (const candidate of candidates) {
       const stooqResult = await validateStooq(candidate);
       if (stooqResult) {
+        const exchange = 'GPW' as TickerMapEntry['exchange'];
         return {
           isin,
           ticker: stooqResult.symbol,
           name: stooqResult.name !== candidate.toUpperCase() ? stooqResult.name : paperName,
-          exchange: 'GPW',
+          exchange,
           currency: 'PLN',
-          priceSource: 'stooq',
+          priceSource: inferPriceSource(stooqResult.symbol, exchange),
         };
       }
     }
@@ -180,13 +184,14 @@ async function resolveIsin(
     if (cleanName.length >= 3) {
       const stooqSearch = await searchStooqByName(cleanName);
       if (stooqSearch) {
+        const exchange = (stooqSearch.exchange === 'NC' ? 'NC' : 'GPW') as TickerMapEntry['exchange'];
         return {
           isin,
           ticker: stooqSearch.symbol,
           name: stooqSearch.name,
-          exchange: (stooqSearch.exchange === 'NC' ? 'NC' : 'GPW') as TickerMapEntry['exchange'],
+          exchange,
           currency: 'PLN',
-          priceSource: 'stooq',
+          priceSource: inferPriceSource(stooqSearch.symbol, exchange),
         };
       }
     }
@@ -247,13 +252,14 @@ async function resolveIsin(
     for (const candidate of candidates) {
       const stooqResult = await validateStooq(candidate, cleanName);
       if (stooqResult) {
+        const exchange = 'GPW' as TickerMapEntry['exchange'];
         return {
           isin,
           ticker: stooqResult.symbol,
           name: stooqResult.name !== candidate.toUpperCase() ? stooqResult.name : paperName,
-          exchange: 'GPW',
+          exchange,
           currency: 'PLN',
-          priceSource: 'stooq',
+          priceSource: inferPriceSource(stooqResult.symbol, exchange),
         };
       }
     }
@@ -275,9 +281,9 @@ async function buildEntry(
   txCurrency: string,
 ): Promise<TickerMapEntry> {
   const exchange = inferExchange(ticker, yahooExchange);
-  const priceSource = inferPriceSource(ticker);
+  const priceSource = inferPriceSource(ticker, exchange);
 
-  // For .WA tickers, we know it's PLN/stooq — skip Yahoo price lookup
+  // For .WA tickers, we know it's PLN — skip Yahoo price lookup
   if (ticker.endsWith('.WA')) {
     return {
       isin,
@@ -285,7 +291,7 @@ async function buildEntry(
       name: name || paperName,
       exchange,
       currency: 'PLN',
-      priceSource: 'stooq',
+      priceSource,
     };
   }
 

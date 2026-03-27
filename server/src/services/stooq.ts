@@ -1,5 +1,6 @@
 import { getCached, setCached } from './price-cache.js';
 import { storeHistoricalPrices, loadHistoricalPrices, getLastCachedDate } from './history-cache.js';
+import { config } from '../config.js';
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 
@@ -68,7 +69,7 @@ export async function fetchStooqPrice(ticker: string): Promise<number | null> {
       const price = parseFloat(values[closeIdx]);
       if (isNaN(price)) return null;
 
-      setCached(cacheKey, price);
+      setCached(cacheKey, price, config.cache.stooqLiveTtl);
       return price;
     } catch (error) {
       console.error(`Stooq price fetch failed for ${ticker}:`, error);
@@ -118,7 +119,7 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
       if (rows.length < 2) return null;
 
       const prevClose = rows[rows.length - 2].close;
-      setCached(cacheKey, prevClose);
+      setCached(cacheKey, prevClose, config.cache.stooqLiveTtl);
       return prevClose;
     } catch (error) {
       console.error(`Stooq previous close fetch failed for ${ticker}:`, error);

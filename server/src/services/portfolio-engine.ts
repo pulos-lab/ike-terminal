@@ -97,10 +97,12 @@ export async function computeOpenPositions(
     // Fetch current price (in the paper's native currency)
     let currentPrice: number | null = null;
     let previousClose: number | null = null;
-    if (entry.priceSource === 'stooq' || entry.ticker.endsWith('.WA')) {
+    if (entry.exchange === 'NC') {
+      // NewConnect: Stooq only (Yahoo doesn't list all NC stocks)
       currentPrice = await fetchStooqPrice(entry.ticker);
       previousClose = await fetchStooqPreviousClose(entry.ticker);
     } else {
+      // GPW (.WA) + foreign: Yahoo (to preserve Stooq daily quota)
       const yp = await fetchYahooPrice(entry.ticker);
       currentPrice = yp?.price || null;
       previousClose = yp?.previousClose ?? null;
@@ -505,20 +507,23 @@ export async function computePortfolioHistory(
   // Fetch all historical data
   const historicalPrices = new Map<string, Map<string, number>>(); // ticker -> date -> close
 
-  // Fetch in batches — try Stooq first for .WA tickers, fall back to Yahoo
-  const fetchPromises = tickersToFetch.map(async ({ ticker, source }) => {
+  // Fetch historical data — Yahoo-first for GPW, Stooq only for NewConnect
+  const fetchPromises = tickersToFetch.map(async ({ ticker, source, isin }) => {
+    const entry = tickerMap.get(isin);
     let data: Array<{ date: string; close: number }>;
-    if (source === 'stooq' || ticker.endsWith('.WA')) {
+    if (entry?.exchange === 'NC') {
+      // NewConnect: Stooq only (Yahoo doesn't list all NC stocks)
       data = await fetchStooqHistory(ticker, start);
-      // If Stooq returned no/insufficient data (rate limit), fall back to Yahoo
+    } else if (ticker.endsWith('.WA')) {
+      // GPW: Yahoo first, Stooq fallback (to preserve Stooq daily quota)
+      data = await fetchYahooHistory(ticker, start, end);
       if (data.length < 10) {
-        console.log(`Stooq returned ${data.length} points for ${ticker}, falling back to Yahoo`);
-        const yahooData = await fetchYahooHistory(ticker, start, end);
-        if (yahooData.length > data.length) {
-          data = yahooData;
-        }
+        console.log(`Yahoo returned ${data.length} points for ${ticker}, falling back to Stooq`);
+        const stooqData = await fetchStooqHistory(ticker, start);
+        if (stooqData.length > data.length) data = stooqData;
       }
     } else {
+      // Foreign: Yahoo
       data = await fetchYahooHistory(ticker, start, end);
     }
     const priceMap = new Map<string, number>();
