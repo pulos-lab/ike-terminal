@@ -21,37 +21,33 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Setup SSH
+      - name: Create deploy archive
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+          tar czf deploy.tar.gz \
+            client/dist/ server/dist/ shared/dist/ \
+            package.json package-lock.json \
+            server/package.json shared/package.json client/package.json
 
-      - name: Deploy to server
-        run: |
-          SSH_OPTS="-o StrictHostKeyChecking=no -i ~/.ssh/deploy_key"
-          SERVER="${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}"
-          REMOTE_DIR="/opt/ike-terminal/app"
+      - name: Copy archive to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: deploy.tar.gz
+          target: /tmp/
 
-          rsync -az --delete -e "ssh $SSH_OPTS" client/dist/ "$SERVER:$REMOTE_DIR/client/dist/"
-          rsync -az --delete -e "ssh $SSH_OPTS" server/dist/ "$SERVER:$REMOTE_DIR/server/dist/"
-          rsync -az --delete -e "ssh $SSH_OPTS" shared/dist/ "$SERVER:$REMOTE_DIR/shared/dist/"
-
-          rsync -az -e "ssh $SSH_OPTS" package.json package-lock.json "$SERVER:$REMOTE_DIR/"
-          ssh $SSH_OPTS "$SERVER" "mkdir -p $REMOTE_DIR/server $REMOTE_DIR/shared $REMOTE_DIR/client"
-          rsync -az -e "ssh $SSH_OPTS" server/package.json "$SERVER:$REMOTE_DIR/server/"
-          rsync -az -e "ssh $SSH_OPTS" shared/package.json "$SERVER:$REMOTE_DIR/shared/"
-          rsync -az -e "ssh $SSH_OPTS" client/package.json "$SERVER:$REMOTE_DIR/client/"
-
-          ssh $SSH_OPTS "$SERVER" "cd $REMOTE_DIR && npm ci --omit=dev"
-
-      - name: Restart service & health check
-        run: |
-          SSH_OPTS="-o StrictHostKeyChecking=no -i ~/.ssh/deploy_key"
-          SERVER="${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}"
-          ssh $SSH_OPTS "$SERVER" "systemctl restart ike-terminal && sleep 3 && curl -sf https://tixterminal.app/api/health"
-
-      - name: Cleanup
-        if: always()
-        run: rm -f ~/.ssh/deploy_key
+      - name: Deploy & restart
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/ike-terminal/app
+            tar xzf /tmp/deploy.tar.gz
+            rm /tmp/deploy.tar.gz
+            npm ci --omit=dev
+            systemctl restart ike-terminal
+            sleep 3
+            curl -sf https://tixterminal.app/api/health || exit 1
