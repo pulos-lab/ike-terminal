@@ -222,7 +222,7 @@ export function PerformanceStats({ data, benchmarkLabel }: Props) {
           <StatCard
             label="Sortino Ratio"
             value={formatNumber(metrics.sortinoRatio)}
-            tooltip="Podobny do Sharpe, ale mierzy tylko ryzyko spadkowe (downside deviation). Nie „karze" za wzrosty — lepiej oddaje rzeczywiste ryzyko straty."
+            tooltip="Podobny do Sharpe, ale mierzy tylko ryzyko spadkowe (downside deviation). Nie karze za wzrosty — lepiej oddaje rzeczywiste ryzyko straty."
           />
           <StatCard
             label="Max Drawdown"
