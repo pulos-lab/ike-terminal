@@ -39,8 +39,9 @@ jobs:
 
       - name: Upload & deploy
         run: |
-          scp -i ~/.ssh/deploy_key deploy.tar.gz ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/tmp/deploy.tar.gz
-          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
+          ssh -vvv -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "echo SSH_OK" 2>&1 | tail -30
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy.tar.gz ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/tmp/deploy.tar.gz
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
             cd /opt/ike-terminal/app &&
             tar xzf /tmp/deploy.tar.gz &&
             rm /tmp/deploy.tar.gz &&
