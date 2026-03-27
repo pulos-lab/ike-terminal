@@ -68,7 +68,8 @@ router.get('/closed-trades', async (req, res) => {
     const pid = req.portfolioId;
     const transactions = getAllTransactions(pid);
     const tickerMap = getTickerMap(pid);
-    const trades = computeClosedTrades(transactions, tickerMap);
+    const operations = getAllOperations(pid);
+    const trades = computeClosedTrades(transactions, tickerMap, operations);
     res.json({ trades });
   } catch (error) {
     console.error('Closed trades error:', error);

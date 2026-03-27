@@ -4,14 +4,14 @@ import type { Transaction } from 'shared';
 export function insertTransactions(transactions: Transaction[], portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
   const stmt = db.prepare(`
-    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, source, import_batch)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, category, source, import_batch)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertMany = db.transaction((txs: Transaction[]) => {
     let count = 0;
     for (const tx of txs) {
-      stmt.run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.source, tx.importBatch);
+      stmt.run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.category || 'stock', tx.source, tx.importBatch);
       count++;
     }
     return count;
@@ -52,9 +52,9 @@ export function getTransactionById(id: number, portfolioId: string = 'default'):
 export function insertTransaction(tx: Transaction, portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
   const result = db.prepare(`
-    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, source, import_batch)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.source, tx.importBatch || null);
+    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, category, source, import_batch)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.category || 'stock', tx.source, tx.importBatch || null);
   return Number(result.lastInsertRowid);
 }
 
@@ -65,9 +65,9 @@ export function updateTransaction(id: number, updates: Partial<Transaction>, por
 
   const merged = { ...existing, ...updates };
   const result = db.prepare(`
-    UPDATE transactions SET date = ?, paper_name = ?, isin = ?, quantity = ?, side = ?, price = ?, value = ?, commission = ?, total = ?, currency = ?, source = ?
+    UPDATE transactions SET date = ?, paper_name = ?, isin = ?, quantity = ?, side = ?, price = ?, value = ?, commission = ?, total = ?, currency = ?, category = ?, source = ?
     WHERE id = ?
-  `).run(merged.date, merged.paperName, merged.isin, merged.quantity, merged.side, merged.price, merged.value, merged.commission, merged.total, merged.currency, merged.source, id);
+  `).run(merged.date, merged.paperName, merged.isin, merged.quantity, merged.side, merged.price, merged.value, merged.commission, merged.total, merged.currency, merged.category || 'stock', merged.source, id);
   return result.changes > 0;
 }
 
@@ -96,6 +96,7 @@ function mapRow(row: any): Transaction {
     commission: row.commission,
     total: row.total,
     currency: row.currency,
+    category: row.category || 'stock',
     source: row.source,
     importBatch: row.import_batch,
   };

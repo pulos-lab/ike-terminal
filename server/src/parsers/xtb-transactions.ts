@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import type { Transaction, CashOperation, ParseResult, SkippedRow } from 'shared';
+import type { Transaction, CashOperation, ParseResult, SkippedRow, InstrumentCategory } from 'shared';
 import { roundTo2 } from './utils.js';
 
 /**
@@ -217,6 +217,10 @@ export async function parseXtbFile(
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer as unknown as ArrayBuffer);
 
+  // ── Extract instrument categories from Closed Positions sheet ──
+  // Headers: Instrument, Category, Ticker, Type, ...
+  const categoryMap = extractCategoryMap(wb);
+
   const worksheet = wb.worksheets.find(ws =>
     ws.name.toUpperCase().includes('CASH OPERATION')
   );
@@ -402,6 +406,7 @@ export async function parseXtbFile(
 
       const ids = resolveSymbolIdentifiers(raw.symbol);
       const value = roundTo2(qty * price);
+      const category = categoryMap.get(raw.symbol) || 'stock';
 
       const idx = transactions.length;
       transactions.push({
@@ -415,6 +420,7 @@ export async function parseXtbFile(
         commission: 0,
         total: value,
         currency: ids.currency,
+        category,
         source: 'xtb',
         importBatch,
       });
@@ -459,6 +465,7 @@ export async function parseXtbFile(
 
       const ids = resolveSymbolIdentifiers(raw.symbol);
       const value = roundTo2(qty * price);
+      const category = categoryMap.get(raw.symbol) || 'stock';
 
       const idx = transactions.length;
       transactions.push({
@@ -472,6 +479,7 @@ export async function parseXtbFile(
         commission: 0,
         total: value,
         currency: ids.currency,
+        category,
         source: 'xtb',
         importBatch,
       });
@@ -522,10 +530,59 @@ export async function parseXtbFile(
     }
   }
 
-  // ── Pass 3: Build cash operations ──
+  // ── Pre-pass: Build WHT lookup for dividend netting ──
+  const whtLookup = new Map<string, { amount: number; comment: string; rowNum: number }>();
+  for (const raw of rawRows) {
+    if (raw.type === 'withholding tax') {
+      const isoTime = parseXtbTime(raw.time);
+      if (!isoTime || !raw.symbol) continue;
+      const key = `${raw.symbol}|${isoTime}`;
+      whtLookup.set(key, { amount: raw.amount, comment: raw.comment, rowNum: raw.rowNum });
+    }
+  }
+  const usedWht = new Set<string>(); // track paired WHTs
+
+  // ── Pass 3a: Process dividends first (to pair with WHT before WHT is processed) ──
   const operations: CashOperation[] = [];
 
   for (const raw of rawRows) {
+    if (raw.type === 'dividend') {
+      const isoTime = parseXtbTime(raw.time);
+      if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.symbol }); continue; }
+
+      const grossAmount = Math.abs(raw.amount);
+      let netAmount = grossAmount;
+      let description = raw.comment || `Dividend: ${raw.symbol}`;
+
+      // Try to pair with WHT
+      const whtKey = `${raw.symbol}|${isoTime}`;
+      const wht = whtLookup.get(whtKey);
+      if (wht) {
+        const whtAbs = Math.abs(wht.amount);
+        netAmount = roundTo2(grossAmount - whtAbs);
+        const pctMatch = wht.comment.match(/WHT (\d+)%/);
+        const pctStr = pctMatch ? ` WHT ${pctMatch[1]}%` : ' WHT';
+        description = `${raw.comment} (brutto ${grossAmount},${pctStr} -${whtAbs})`;
+        usedWht.add(whtKey);
+      }
+
+      operations.push({
+        date: isoTime,
+        operationType: 'dividend',
+        description,
+        amount: netAmount,
+        currency: accountCurrency,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol).paperName : undefined,
+        source: 'xtb',
+        importBatch,
+      });
+    }
+  }
+
+  // ── Pass 3b: Build remaining cash operations ──
+  for (const raw of rawRows) {
+    if (raw.type === 'dividend') continue; // already processed in pass 3a
+
     if (raw.type === 'deposit') {
       const isoTime = parseXtbTime(raw.time);
       if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.comment }); continue; }
@@ -568,24 +625,13 @@ export async function parseXtbFile(
         importBatch,
       });
 
-    } else if (raw.type === 'dividend') {
-      const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.symbol }); continue; }
-
-      operations.push({
-        date: isoTime,
-        operationType: 'dividend',
-        description: raw.comment || `Dividend: ${raw.symbol}`,
-        amount: Math.abs(raw.amount),
-        currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol).paperName : undefined,
-        source: 'xtb',
-        importBatch,
-      });
-
     } else if (raw.type === 'withholding tax') {
       const isoTime = parseXtbTime(raw.time);
       if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.symbol }); continue; }
+
+      // Only create fee if not already paired with a dividend
+      const whtKey = `${raw.symbol}|${isoTime}`;
+      if (usedWht.has(whtKey)) continue; // already netted into dividend
 
       operations.push({
         date: isoTime,
@@ -675,5 +721,46 @@ function extractAccountCurrency(rows: any[][]): string {
     }
   }
   return 'PLN';
+}
+
+/** Extract instrument category (STOCK/ETF/CFD) from Closed Positions sheet.
+ * Returns Map<instrumentName, InstrumentCategory> */
+function extractCategoryMap(wb: ExcelJS.Workbook): Map<string, InstrumentCategory> {
+  const map = new Map<string, InstrumentCategory>();
+  const ws = wb.worksheets.find(s =>
+    s.name.toUpperCase().includes('CLOSED')
+  );
+  if (!ws) return map;
+
+  // Find header row with "Instrument" and "Category"
+  let headerIdx = -1;
+  let instrCol = -1;
+  let catCol = -1;
+  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (headerIdx !== -1) return;
+    const vals = (row.values as any[]).slice(1);
+    for (let i = 0; i < vals.length; i++) {
+      const v = vals[i]?.toString?.().trim();
+      if (v === 'Instrument') instrCol = i;
+      if (v === 'Category') catCol = i;
+    }
+    if (instrCol !== -1 && catCol !== -1) headerIdx = rowNum;
+  });
+
+  if (headerIdx === -1) return map;
+
+  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (rowNum <= headerIdx) return;
+    const vals = (row.values as any[]).slice(1);
+    const instr = vals[instrCol]?.toString?.().trim();
+    const cat = vals[catCol]?.toString?.().trim()?.toLowerCase();
+    if (instr && cat) {
+      if (cat === 'cfd') map.set(instr, 'cfd');
+      else if (cat === 'etf') map.set(instr, 'etf');
+      else map.set(instr, 'stock');
+    }
+  });
+
+  return map;
 }
 

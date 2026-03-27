@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TickerAutocomplete } from '@/components/shared/TickerAutocomplete';
-import { formatNumber, formatPercent, formatCurrency } from '@/lib/formatters';
+import { formatNumber, formatPercent, formatCurrency, formatQuantity } from '@/lib/formatters';
 import { Loader2, Plus, Check, X, TrendingDown } from 'lucide-react';
 import { ClosedTradesPage } from './ClosedTradesPage';
 
@@ -26,6 +26,7 @@ interface Position {
   profitLossPct: number;
   currency: string;
   weight: number;
+  category?: 'stock' | 'etf' | 'cfd';
 }
 
 interface TxForm {
@@ -370,8 +371,12 @@ export function TradesPage() {
                     return (
                       <Fragment key={pos.ticker}>
                         <TableRow>
-                          <TableCell className="font-mono font-medium">{pos.ticker}</TableCell>
-                          <TableCell className="text-right">{pos.shares}</TableCell>
+                          <TableCell className="font-mono font-medium">
+                            {pos.ticker}
+                            {pos.category === 'cfd' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">CFD</Badge>}
+                            {pos.category === 'etf' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">ETF</Badge>}
+                          </TableCell>
+                          <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
                           <TableCell className="text-right">{formatNumber(pos.avgBuyPrice)}</TableCell>
                           <TableCell className="text-right">
                             {pos.currentPrice != null ? formatNumber(pos.currentPrice) : '—'}

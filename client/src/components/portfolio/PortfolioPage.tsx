@@ -13,7 +13,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
-import { formatCurrency, formatNumber, formatPercent, formatPLN } from '@/lib/formatters';
+import { formatCurrency, formatNumber, formatPercent, formatPLN, formatQuantity } from '@/lib/formatters';
 import { Loader2, Eye, EyeOff } from 'lucide-react';
 import { PortfolioDiversification } from './PortfolioDiversification';
 
@@ -164,9 +164,13 @@ export function PortfolioPage() {
                     const isPositive = pos.profitLossPct >= 0;
                     return (
                       <TableRow key={pos.isin}>
-                        <TableCell className="font-mono font-medium">{pos.ticker}</TableCell>
+                        <TableCell className="font-mono font-medium">
+                          {pos.ticker}
+                          {pos.category === 'cfd' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">CFD</Badge>}
+                          {pos.category === 'etf' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">ETF</Badge>}
+                        </TableCell>
                         <TableCell className="text-muted-foreground">{pos.paperName}</TableCell>
-                        <TableCell className="text-right">{pos.shares}</TableCell>
+                        <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
                         {colVis.avgPrice && (
                           <TableCell className="text-right">{formatNumber(pos.avgBuyPrice)}</TableCell>
                         )}

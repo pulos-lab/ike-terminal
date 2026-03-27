@@ -75,3 +75,10 @@ export function formatDateTime(dateStr: string): string {
     minute: '2-digit',
   });
 }
+
+/**
+ * Format quantity — integer if whole, 2 decimal places if fractional
+ */
+export function formatQuantity(qty: number): string {
+  return qty % 1 === 0 ? qty.toString() : qty.toFixed(2);
+}

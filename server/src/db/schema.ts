@@ -7,13 +7,14 @@ export function initSchema(db: Database.Database): void {
       date TEXT NOT NULL,
       paper_name TEXT NOT NULL,
       isin TEXT NOT NULL,
-      quantity INTEGER NOT NULL,
+      quantity REAL NOT NULL,
       side TEXT NOT NULL CHECK(side IN ('K', 'S')),
       price REAL NOT NULL,
       value REAL NOT NULL,
       commission REAL NOT NULL,
       total REAL NOT NULL,
       currency TEXT NOT NULL,
+      category TEXT DEFAULT 'stock',
       source TEXT DEFAULT 'bossa',
       import_batch TEXT,
       created_at TEXT DEFAULT (datetime('now'))
@@ -56,7 +57,7 @@ export function initSchema(db: Database.Database): void {
       isin TEXT,
       ticker TEXT NOT NULL,
       name TEXT NOT NULL,
-      quantity INTEGER NOT NULL,
+      quantity REAL NOT NULL,
       avg_price REAL NOT NULL,
       currency TEXT NOT NULL DEFAULT 'PLN',
       date_added TEXT NOT NULL,
@@ -87,8 +88,13 @@ export function initSchema(db: Database.Database): void {
   `);
 
   // Migrations for existing databases
-  const columns = db.prepare("PRAGMA table_info(ticker_map)").all() as any[];
-  if (!columns.some((c: any) => c.name === 'sector')) {
+  const tmColumns = db.prepare("PRAGMA table_info(ticker_map)").all() as any[];
+  if (!tmColumns.some((c: any) => c.name === 'sector')) {
     db.exec("ALTER TABLE ticker_map ADD COLUMN sector TEXT");
+  }
+
+  const txColumns = db.prepare("PRAGMA table_info(transactions)").all() as any[];
+  if (!txColumns.some((c: any) => c.name === 'category')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN category TEXT DEFAULT 'stock'");
   }
 }

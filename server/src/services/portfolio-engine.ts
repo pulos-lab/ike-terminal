@@ -140,6 +140,9 @@ export async function computeOpenPositions(
 
     totalValuePln += currentValuePln;
 
+    // Determine category from the first transaction
+    const category = txs[0]?.category || 'stock';
+
     positions.push({
       paperName: entry.name,
       isin,
@@ -158,6 +161,7 @@ export async function computeOpenPositions(
       exchange: entry.exchange,
       sector: entry.sector,
       dailyChangePct,
+      category,
     });
   }
 
@@ -176,7 +180,8 @@ export async function computeOpenPositions(
 
 export function computeClosedTrades(
   transactions: Transaction[],
-  tickerMap: Map<string, TickerMapEntry>
+  tickerMap: Map<string, TickerMapEntry>,
+  operations?: CashOperation[],
 ): ClosedTrade[] {
   const byIsin = new Map<string, Transaction[]>();
   for (const tx of transactions) {
@@ -237,6 +242,7 @@ export function computeClosedTrades(
             currency: tx.currency,
             sellTransactionId: tx.id!,
             sellSource: tx.source,
+            category: tx.category,
           });
 
           if (lot.quantity <= remaining) {
@@ -248,6 +254,41 @@ export function computeClosedTrades(
           }
         }
       }
+    }
+  }
+
+  // ── Match fee operations to closed trades by ticker + date range ──
+  if (operations?.length) {
+    const feeOps = operations.filter(op =>
+      op.operationType === 'fee' && op.ticker
+    );
+
+    for (const trade of closedTrades) {
+      const buyDate = trade.buyDate.slice(0, 10);
+      const sellDate = trade.sellDate.slice(0, 10);
+      const fees: { type: string; amount: number; description: string }[] = [];
+
+      for (const fee of feeOps) {
+        const feeDate = fee.date.slice(0, 10);
+        if (fee.ticker === trade.ticker && feeDate >= buyDate && feeDate <= sellDate) {
+          fees.push({
+            type: fee.description.split(':')[0]?.trim() || 'fee',
+            amount: Math.abs(fee.amount),
+            description: fee.description,
+          });
+        }
+      }
+
+      if (fees.length) {
+        trade.fees = fees;
+      }
+      const feesTotal = (trade.fees || []).reduce((s, f) => s + f.amount, 0);
+      trade.totalCost = trade.buyCommission + trade.sellCommission + feesTotal;
+    }
+  } else {
+    // No operations — just set totalCost from commissions
+    for (const trade of closedTrades) {
+      trade.totalCost = trade.buyCommission + trade.sellCommission;
     }
   }
 

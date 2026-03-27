@@ -12,6 +12,8 @@ export const BROKER_LABELS: Record<BrokerType, string> = {
 
 // ============ Transaction Types ============
 
+export type InstrumentCategory = 'stock' | 'etf' | 'cfd';
+
 export interface Transaction {
   id?: number;
   date: string; // ISO 8601
@@ -24,6 +26,7 @@ export interface Transaction {
   commission: number;
   total: number; // po prowizji
   currency: string;
+  category?: InstrumentCategory;
   source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual';
   importBatch?: string;
 }
@@ -67,6 +70,13 @@ export interface Position {
   exchange?: string;
   sector?: string;
   dailyChangePct: number | null;
+  category?: InstrumentCategory;
+}
+
+export interface ClosedTradeFee {
+  type: string;
+  amount: number;
+  description: string;
 }
 
 export interface ClosedTrade {
@@ -86,6 +96,9 @@ export interface ClosedTrade {
   currency: string;
   sellTransactionId: number;
   sellSource: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual';
+  category?: InstrumentCategory;
+  fees?: ClosedTradeFee[];
+  totalCost?: number;
 }
 
 export interface DividendRecord {
@@ -210,6 +223,7 @@ export interface TransactionInput {
   commission: number;
   currency?: string;  // override waluty z tickera
   fxRate?: number;    // kurs wymiany brokera (informacyjny)
+  category?: InstrumentCategory;
 }
 
 // ============ Import Parse Types ============

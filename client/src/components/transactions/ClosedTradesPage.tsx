@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { formatNumber, formatPercent, formatDate, formatCurrency } from '@/lib/formatters';
+import { formatNumber, formatPercent, formatDate, formatCurrency, formatQuantity } from '@/lib/formatters';
 import { ChevronRight, ChevronDown, Loader2, Trash2 } from 'lucide-react';
 import type { ClosedTrade } from 'shared';
 
@@ -18,6 +18,7 @@ interface TradeGroup {
   currency: string;
   totalQuantity: number;
   totalProfitLoss: number;
+  totalCost: number;
   weightedProfitLossPct: number;
   minBuyDate: string;
   maxBuyDate: string;
@@ -83,6 +84,8 @@ export function ClosedTradesPage() {
       const buyPrices = trades.map(t => t.buyPrice);
       const totalHoldingDaysWeighted = trades.reduce((s, t) => s + t.holdingDays * t.quantity, 0);
 
+      const totalCost = trades.reduce((s, t) => s + (t.totalCost || t.buyCommission + t.sellCommission), 0);
+
       result.push({
         key,
         ticker: first.ticker,
@@ -92,6 +95,7 @@ export function ClosedTradesPage() {
         currency: first.currency,
         totalQuantity,
         totalProfitLoss,
+        totalCost,
         weightedProfitLossPct,
         minBuyDate: buyDates[0],
         maxBuyDate: buyDates[buyDates.length - 1],
@@ -141,6 +145,7 @@ export function ClosedTradesPage() {
                     <TableHead className="text-right">Cena sprzedaży</TableHead>
                     <TableHead className="text-right">P/L</TableHead>
                     <TableHead className="text-right">P/L %</TableHead>
+                    <TableHead className="text-right">Prowizja</TableHead>
                     <TableHead className="text-right">Dni</TableHead>
                     <TableHead className="w-[40px]"></TableHead>
                   </TableRow>
@@ -154,8 +159,12 @@ export function ClosedTradesPage() {
                       const isPositive = trade.profitLossPct >= 0;
                       return (
                         <TableRow key={group.key}>
-                          <TableCell className="font-mono font-medium">{trade.ticker}</TableCell>
-                          <TableCell className="text-right">{trade.quantity}</TableCell>
+                          <TableCell className="font-mono font-medium">
+                            {trade.ticker}
+                            {trade.category === 'cfd' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">CFD</Badge>}
+                            {trade.category === 'etf' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">ETF</Badge>}
+                          </TableCell>
+                          <TableCell className="text-right">{formatQuantity(trade.quantity)}</TableCell>
                           <TableCell className="text-muted-foreground">{formatDate(trade.buyDate)}</TableCell>
                           <TableCell className="text-right">{formatNumber(trade.buyPrice)}</TableCell>
                           <TableCell className="text-muted-foreground">{formatDate(trade.sellDate)}</TableCell>
@@ -167,6 +176,9 @@ export function ClosedTradesPage() {
                             <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
                               {formatPercent(trade.profitLossPct)}
                             </Badge>
+                          </TableCell>
+                          <TableCell className="text-right text-muted-foreground text-xs">
+                            {(trade.totalCost || 0) > 0 ? formatNumber(trade.totalCost!) : '—'}
                           </TableCell>
                           <TableCell className="text-right text-muted-foreground">{trade.holdingDays}d</TableCell>
                           <TableCell>
@@ -209,10 +221,12 @@ export function ClosedTradesPage() {
                                 : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                               }
                               {group.ticker}
+                              {group.trades[0]?.category === 'cfd' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">CFD</Badge>}
+                              {group.trades[0]?.category === 'etf' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">ETF</Badge>}
                               <span className="text-xs text-muted-foreground ml-1">({group.trades.length})</span>
                             </div>
                           </TableCell>
-                          <TableCell className="text-right">{group.totalQuantity}</TableCell>
+                          <TableCell className="text-right">{formatQuantity(group.totalQuantity)}</TableCell>
                           <TableCell className="text-muted-foreground text-sm">
                             {sameBuyDate
                               ? formatDate(group.minBuyDate)
@@ -234,6 +248,9 @@ export function ClosedTradesPage() {
                             <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
                               {formatPercent(group.weightedProfitLossPct)}
                             </Badge>
+                          </TableCell>
+                          <TableCell className="text-right text-muted-foreground text-xs">
+                            {group.totalCost > 0 ? formatNumber(group.totalCost) : '—'}
                           </TableCell>
                           <TableCell className="text-right text-muted-foreground">{group.avgHoldingDays}d</TableCell>
                           <TableCell>
@@ -259,7 +276,7 @@ export function ClosedTradesPage() {
                               <TableCell className="font-mono text-muted-foreground pl-9 text-sm">
                                 └ lot {j + 1}
                               </TableCell>
-                              <TableCell className="text-right text-muted-foreground">{trade.quantity}</TableCell>
+                              <TableCell className="text-right text-muted-foreground">{formatQuantity(trade.quantity)}</TableCell>
                               <TableCell className="text-muted-foreground">{formatDate(trade.buyDate)}</TableCell>
                               <TableCell className="text-right text-muted-foreground">{formatNumber(trade.buyPrice)}</TableCell>
                               <TableCell className="text-muted-foreground">{formatDate(trade.sellDate)}</TableCell>
@@ -271,6 +288,9 @@ export function ClosedTradesPage() {
                                 <Badge variant={tradePositive ? 'default' : 'destructive'} className={`text-xs ${tradePositive ? 'bg-green-500/10 text-green-500/70' : 'bg-red-500/10 text-red-500/70'}`}>
                                   {formatPercent(trade.profitLossPct)}
                                 </Badge>
+                              </TableCell>
+                              <TableCell className="text-right text-muted-foreground text-xs">
+                                {(trade.totalCost || 0) > 0 ? formatNumber(trade.totalCost!) : '—'}
                               </TableCell>
                               <TableCell className="text-right text-muted-foreground">{trade.holdingDays}d</TableCell>
                               <TableCell />
