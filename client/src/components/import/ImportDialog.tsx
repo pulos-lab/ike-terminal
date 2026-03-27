@@ -65,18 +65,22 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         }
 
         if (result.skipped && result.skipped.length > 0) {
-          const MAX_SHOWN = 10;
-          const items = result.skipped.slice(0, MAX_SHOWN);
-          const lines = items.map((s: { paperName?: string; reason: string; row: number }) => {
-            const name = s.paperName ? `${s.paperName} ` : '';
-            const reason = SKIP_REASON_LABELS[s.reason as SkipReason] || s.reason;
-            return `${name}(wiersz ${s.row}) — ${reason}`;
-          });
-          let detail = lines.join('\n');
-          if (result.skipped.length > MAX_SHOWN) {
-            detail += `\n...i ${result.skipped.length - MAX_SHOWN} więcej`;
+          // Hide close_trade_entry — these are expected CFD P/L entries, not errors
+          const visible = result.skipped.filter((s: any) => s.reason !== 'close_trade_entry');
+          if (visible.length > 0) {
+            const MAX_SHOWN = 10;
+            const items = visible.slice(0, MAX_SHOWN);
+            const lines = items.map((s: { paperName?: string; reason: string; row: number }) => {
+              const name = s.paperName ? `${s.paperName} ` : '';
+              const reason = SKIP_REASON_LABELS[s.reason as SkipReason] || s.reason;
+              return `${name}(wiersz ${s.row}) — ${reason}`;
+            });
+            let detail = lines.join('\n');
+            if (visible.length > MAX_SHOWN) {
+              detail += `\n...i ${visible.length - MAX_SHOWN} więcej`;
+            }
+            messages.push(`WARN:Pominięto ${visible.length} wierszy:\n${detail}`);
           }
-          messages.push(`WARN:Pominięto ${result.skipped.length} wierszy:\n${detail}`);
         }
 
         setResults(prev => [...prev, ...messages]);
