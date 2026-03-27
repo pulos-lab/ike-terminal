@@ -21,102 +21,37 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Deploy client dist
-        uses: burnett01/rsync-deployments@7.0.1
-        with:
-          switches: -az --delete
-          path: client/dist/
-          remote_path: /opt/ike-terminal/app/client/dist/
-          remote_host: ${{ secrets.DEPLOY_HOST }}
-          remote_user: ${{ secrets.DEPLOY_USER }}
-          remote_key: ${{ secrets.DEPLOY_SSH_KEY }}
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy server dist
-        uses: burnett01/rsync-deployments@7.0.1
-        with:
-          switches: -az --delete
-          path: server/dist/
-          remote_path: /opt/ike-terminal/app/server/dist/
-          remote_host: ${{ secrets.DEPLOY_HOST }}
-          remote_user: ${{ secrets.DEPLOY_USER }}
-          remote_key: ${{ secrets.DEPLOY_SSH_KEY }}
+      - name: Deploy to server
+        run: |
+          SSH_OPTS="-o StrictHostKeyChecking=no -i ~/.ssh/deploy_key"
+          SERVER="${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}"
+          REMOTE_DIR="/opt/ike-terminal/app"
 
-      - name: Deploy shared dist
-        uses: burnett01/rsync-deployments@7.0.1
-        with:
-          switches: -az --delete
-          path: shared/dist/
-          remote_path: /opt/ike-terminal/app/shared/dist/
-          remote_host: ${{ secrets.DEPLOY_HOST }}
-          remote_user: ${{ secrets.DEPLOY_USER }}
-          remote_key: ${{ secrets.DEPLOY_SSH_KEY }}
+          rsync -az --delete -e "ssh $SSH_OPTS" client/dist/ "$SERVER:$REMOTE_DIR/client/dist/"
+          rsync -az --delete -e "ssh $SSH_OPTS" server/dist/ "$SERVER:$REMOTE_DIR/server/dist/"
+          rsync -az --delete -e "ssh $SSH_OPTS" shared/dist/ "$SERVER:$REMOTE_DIR/shared/dist/"
 
-      - name: Deploy package files
-        uses: burnett01/rsync-deployments@7.0.1
-        with:
-          switches: -az
-          path: package.json package-lock.json
-          remote_path: /opt/ike-terminal/app/
-          remote_host: ${{ secrets.DEPLOY_HOST }}
-          remote_user: ${{ secrets.DEPLOY_USER }}
-          remote_key: ${{ secrets.DEPLOY_SSH_KEY }}
+          rsync -az -e "ssh $SSH_OPTS" package.json package-lock.json "$SERVER:$REMOTE_DIR/"
+          ssh $SSH_OPTS "$SERVER" "mkdir -p $REMOTE_DIR/server $REMOTE_DIR/shared $REMOTE_DIR/client"
+          rsync -az -e "ssh $SSH_OPTS" server/package.json "$SERVER:$REMOTE_DIR/server/"
+          rsync -az -e "ssh $SSH_OPTS" shared/package.json "$SERVER:$REMOTE_DIR/shared/"
+          rsync -az -e "ssh $SSH_OPTS" client/package.json "$SERVER:$REMOTE_DIR/client/"
 
-      - name: Deploy workspace package.json files
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            mkdir -p /opt/ike-terminal/app/server /opt/ike-terminal/app/shared /opt/ike-terminal/app/client
-
-      - name: Deploy server package.json
-        uses: burnett01/rsync-deployments@7.0.1
-        with:
-          switches: -az
-          path: server/package.json
-          remote_path: /opt/ike-terminal/app/server/
-          remote_host: ${{ secrets.DEPLOY_HOST }}
-          remote_user: ${{ secrets.DEPLOY_USER }}
-          remote_key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - name: Deploy shared package.json
-        uses: burnett01/rsync-deployments@7.0.1
-        with:
-          switches: -az
-          path: shared/package.json
-          remote_path: /opt/ike-terminal/app/shared/
-          remote_host: ${{ secrets.DEPLOY_HOST }}
-          remote_user: ${{ secrets.DEPLOY_USER }}
-          remote_key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - name: Deploy client package.json
-        uses: burnett01/rsync-deployments@7.0.1
-        with:
-          switches: -az
-          path: client/package.json
-          remote_path: /opt/ike-terminal/app/client/
-          remote_host: ${{ secrets.DEPLOY_HOST }}
-          remote_user: ${{ secrets.DEPLOY_USER }}
-          remote_key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - name: Install production dependencies
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            cd /opt/ike-terminal/app
-            npm ci --omit=dev
+          ssh $SSH_OPTS "$SERVER" "cd $REMOTE_DIR && npm ci --omit=dev"
 
       - name: Restart service & health check
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            systemctl restart ike-terminal
-            sleep 3
-            curl -sf https://tixterminal.app/api/health || exit 1
+        run: |
+          SSH_OPTS="-o StrictHostKeyChecking=no -i ~/.ssh/deploy_key"
+          SERVER="${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}"
+          ssh $SSH_OPTS "$SERVER" "systemctl restart ike-terminal && sleep 3 && curl -sf https://tixterminal.app/api/health"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
