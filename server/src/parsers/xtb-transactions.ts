@@ -6,22 +6,31 @@ import { roundTo2 } from './utils.js';
  * XTB XLSX parser — reads CASH OPERATION HISTORY sheet
  *
  * Operation types handled:
- * - Stock purchase → Transaction K (extract qty/price from Comment)
- * - Stock sale     → Transaction S (extract qty/price from Comment)
- * - commission     → matched to transaction by Symbol + Time
- * - Sec Fee        → matched to sell transaction by Symbol + date from Comment
- * - deposit        → CashOperation deposit
- * - withdrawal     → CashOperation withdrawal
- * - close trade    → skipped (P/L accounting entry)
+ * - Stock purchase      → Transaction K (extract qty/price from Comment, supports fractional shares)
+ * - Stock sale/sell     → Transaction S (extract qty/price from Comment, supports fractional shares)
+ * - commission          → matched to transaction by Symbol + Time
+ * - Sec Fee             → matched to sell transaction by Symbol + date from Comment
+ * - deposit             → CashOperation deposit (also handles IKZE/IKE deposit)
+ * - withdrawal          → CashOperation withdrawal
+ * - dividend            → CashOperation dividend
+ * - withholding tax     → CashOperation fee (tax on dividends)
+ * - swap                → CashOperation fee
+ * - Tax IFTT            → CashOperation fee (Italian Financial Transaction Tax)
+ * - rights issue        → CashOperation other
+ * - rollover            → CashOperation fee
+ * - Free funds interest → CashOperation other
+ * - close trade         → skipped (P/L accounting entry)
+ *
+ * Type matching is case-insensitive ("Deposit" = "deposit").
  */
 
 // ── Regex patterns ──────────────────────────────────────────────────────────
 
-/** "OPEN BUY 64 @ 16.00" or "OPEN BUY 33/60 @ 35.560" */
-const BUY_RE = /(?:OPEN )?BUY (\d+)(?:\/\d+)? @ ([\d.]+)/;
+/** "OPEN BUY 64 @ 16.00" or "OPEN BUY 33/60 @ 35.560" or "OPEN BUY 0.3069 @ 494.15" */
+const BUY_RE = /(?:OPEN )?BUY ([\d.]+)(?:\/[\d.]+)? @ ([\d.]+)/;
 
-/** "CLOSE BUY 64 @ 26.07" or "CLOSE BUY 2/4 @ 222.03" */
-const SELL_RE = /CLOSE BUY (\d+)(?:\/\d+)? @ ([\d.]+)/;
+/** "CLOSE BUY 64 @ 26.07" or "CLOSE BUY 2/4 @ 222.03" or "CLOSE BUY 0.4926 @ 175.20" */
+const SELL_RE = /CLOSE BUY ([\d.]+)(?:\/[\d.]+)? @ ([\d.]+)/;
 
 /** "Sec Fee adj PLTR.US 20201201" → symbol=PLTR.US, date=20201201 */
 const SEC_FEE_RE = /Sec Fee adj (\S+) (\d{8})/;
@@ -65,10 +74,40 @@ function xtbToYahooTicker(symbol: string): string {
   return yahooSuffix !== undefined ? ticker + yahooSuffix : ticker;
 }
 
+// ── Type normalization ────────────────────────────────────────────────────────
+
+/** Normalize XTB operation type to canonical lowercase form.
+ * Handles case variations ("Deposit" vs "deposit") and aliases ("Stock sell" → "Stock sale"). */
+function normalizeType(type: string): string {
+  const lower = type.toLowerCase();
+  // Map aliases to canonical names used by the parser
+  const ALIASES: Record<string, string> = {
+    'stock sell': 'Stock sale',
+    'stock sale': 'Stock sale',
+    'stock purchase': 'Stock purchase',
+    'close trade': 'close trade',
+    'deposit': 'deposit',
+    'withdrawal': 'withdrawal',
+    'commission': 'commission',
+    'sec fee': 'Sec Fee',
+    'free funds interest': 'Free funds interest',
+    'free funds interest tax': 'Free funds interest tax',
+    'dividend': 'dividend',
+    'withholding tax': 'withholding tax',
+    'swap': 'swap',
+    'tax iftt': 'tax iftt',
+    'rights issue': 'rights issue',
+    'rollover': 'rollover',
+    'ikze deposit': 'deposit',
+    'ike deposit': 'deposit',
+  };
+  return ALIASES[lower] || type;
+}
+
 // ── Commission data extraction (for old-format JSW-like entries) ────────────
 
 /** "BUY 80 @ 19.32" → { qty: 80, price: 19.32 } */
-const COMMISSION_BUY_RE = /BUY (\d+) @ ([\d.]+)/;
+const COMMISSION_BUY_RE = /BUY ([\d.]+) @ ([\d.]+)/;
 
 /** Determine paperName and isin for a raw symbol.
  * Old format: "JSW.PL" → yahooTicker "JSW.WA"
@@ -257,7 +296,8 @@ export async function parseXtbFile(
     if (!row || !row[0]) continue;
 
     const col0 = row[0]?.toString().trim() || '';
-    if (col0 === 'Total' || col0 === 'Profit/loss' || col0 === '') continue;
+    const col0Lower = col0.toLowerCase();
+    if (col0Lower === 'total' || col0Lower === 'profit/loss' || col0 === '') continue;
 
     if (isNewFormat) {
       // New format: Type[0], Instrument[1], Time[2], Amount[3], ID[4], Comment[5]
@@ -265,7 +305,7 @@ export async function parseXtbFile(
       rawRows.push({
         rowNum: i + 1,
         id: row[4]?.toString().trim() || '',
-        type: col0,
+        type: normalizeType(col0),
         time: row[2] instanceof Date || typeof row[2] === 'number' ? row[2] : row[2]?.toString().trim() || '',
         comment: row[5]?.toString().trim() || '',
         symbol: row[1]?.toString().trim() || '', // Instrument = full company name
@@ -276,7 +316,7 @@ export async function parseXtbFile(
       rawRows.push({
         rowNum: i + 1,
         id: col0,
-        type: row[1]?.toString().trim() || '',
+        type: normalizeType(row[1]?.toString().trim() || ''),
         time: row[2] instanceof Date || typeof row[2] === 'number' ? row[2] : row[2]?.toString().trim() || '',
         comment: row[3]?.toString().trim() || '',
         symbol: row[4]?.toString().trim() || '',
@@ -296,7 +336,7 @@ export async function parseXtbFile(
         const isoTime = parseXtbTime(raw.time);
         if (isoTime) {
           commissionData.set(`${raw.symbol}|${isoTime}`, {
-            qty: parseInt(m[1], 10),
+            qty: parseFloat(m[1]),
             price: parseFloat(m[2]),
           });
         }
@@ -342,7 +382,7 @@ export async function parseXtbFile(
 
       const match = BUY_RE.exec(raw.comment);
       if (match) {
-        qty = parseInt(match[1], 10);
+        qty = parseFloat(match[1]);
         price = parseFloat(match[2]);
       } else {
         // Fallback: try commission row data ("BUY 80 @ 19.32")
@@ -393,7 +433,7 @@ export async function parseXtbFile(
 
       const match = SELL_RE.exec(raw.comment);
       if (match) {
-        qty = parseInt(match[1], 10);
+        qty = parseFloat(match[1]);
         price = parseFloat(match[2]);
       } else {
         // Fallback for old format: "Return position #NNN open nominal value"
@@ -524,6 +564,66 @@ export async function parseXtbFile(
         description: raw.comment || raw.type,
         amount: raw.amount,
         currency: accountCurrency,
+        source: 'xtb',
+        importBatch,
+      });
+
+    } else if (raw.type === 'dividend') {
+      const isoTime = parseXtbTime(raw.time);
+      if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.symbol }); continue; }
+
+      operations.push({
+        date: isoTime,
+        operationType: 'dividend',
+        description: raw.comment || `Dividend: ${raw.symbol}`,
+        amount: Math.abs(raw.amount),
+        currency: accountCurrency,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol).paperName : undefined,
+        source: 'xtb',
+        importBatch,
+      });
+
+    } else if (raw.type === 'withholding tax') {
+      const isoTime = parseXtbTime(raw.time);
+      if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.symbol }); continue; }
+
+      operations.push({
+        date: isoTime,
+        operationType: 'fee',
+        description: raw.comment || `Withholding tax: ${raw.symbol}`,
+        amount: raw.amount, // negative
+        currency: accountCurrency,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol).paperName : undefined,
+        source: 'xtb',
+        importBatch,
+      });
+
+    } else if (raw.type === 'swap' || raw.type === 'tax iftt' || raw.type === 'rollover') {
+      const isoTime = parseXtbTime(raw.time);
+      if (!isoTime) continue;
+
+      operations.push({
+        date: isoTime,
+        operationType: 'fee',
+        description: raw.comment || raw.type,
+        amount: raw.amount,
+        currency: accountCurrency,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol).paperName : undefined,
+        source: 'xtb',
+        importBatch,
+      });
+
+    } else if (raw.type === 'rights issue') {
+      const isoTime = parseXtbTime(raw.time);
+      if (!isoTime) continue;
+
+      operations.push({
+        date: isoTime,
+        operationType: 'other',
+        description: raw.comment || `Rights issue: ${raw.symbol}`,
+        amount: raw.amount,
+        currency: accountCurrency,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol).paperName : undefined,
         source: 'xtb',
         importBatch,
       });
