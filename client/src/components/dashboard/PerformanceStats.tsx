@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
+import { Info } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPercent, formatNumber } from '@/lib/formatters';
 
 interface ChartDataPoint {
@@ -142,11 +144,12 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   };
 }
 
-function StatCard({ label, value, subtext, color }: {
+function StatCard({ label, value, subtext, color, tooltip }: {
   label: string;
   value: string;
   subtext?: string;
   color?: 'green' | 'red' | 'default';
+  tooltip?: string;
 }) {
   const colorClass = color === 'green'
     ? 'text-green-500'
@@ -156,7 +159,19 @@ function StatCard({ label, value, subtext, color }: {
 
   return (
     <div className="space-y-0.5">
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-xs text-muted-foreground flex items-center gap-1">
+        {label}
+        {tooltip && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Info className="h-3 w-3 cursor-help text-muted-foreground/60 hover:text-muted-foreground transition-colors" />
+            </TooltipTrigger>
+            <TooltipContent className="max-w-[220px] text-xs">
+              {tooltip}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </p>
       <p className={`text-sm font-semibold ${colorClass}`}>{value}</p>
       {subtext && <p className="text-xs text-muted-foreground">{subtext}</p>}
     </div>
@@ -175,6 +190,7 @@ export function PerformanceStats({ data, benchmarkLabel }: Props) {
   return (
     <Card>
       <CardContent className="pt-4 pb-4">
+        <TooltipProvider>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-x-6 gap-y-3">
           <StatCard
             label="Stopa zwrotu"
@@ -190,19 +206,23 @@ export function PerformanceStats({ data, benchmarkLabel }: Props) {
             label="CAGR"
             value={formatPercent(metrics.cagr)}
             color={returnColor(metrics.cagr)}
+            tooltip="Skumulowana roczna stopa wzrostu. Pokazuje, o ile % rocznie rósł portfel przy założeniu równomiernego wzrostu przez cały okres."
           />
           <StatCard
             label="Volatility"
             value={`${metrics.volatility.toFixed(2)}%`}
+            tooltip="Zmienność — odchylenie standardowe rocznych zwrotów. Im wyższa, tym większe wahania wartości portfela i ryzyko."
           />
           <StatCard
             label="Sharpe Ratio"
             value={formatNumber(metrics.sharpeRatio)}
             subtext="rf = 5%"
+            tooltip="Zwrot ponad stopę wolną od ryzyka (rf = 5%) na jednostkę zmienności. Wartość >1 dobra, >2 bardzo dobra. Uwzględnia wszystkie wahania — zarówno wzrosty, jak i spadki."
           />
           <StatCard
             label="Sortino Ratio"
             value={formatNumber(metrics.sortinoRatio)}
+            tooltip="Podobny do Sharpe, ale mierzy tylko ryzyko spadkowe (downside deviation). Nie „karze" za wzrosty — lepiej oddaje rzeczywiste ryzyko straty."
           />
           <StatCard
             label="Max Drawdown"
@@ -216,6 +236,7 @@ export function PerformanceStats({ data, benchmarkLabel }: Props) {
           <StatCard
             label="Calmar Ratio"
             value={formatNumber(metrics.calmarRatio)}
+            tooltip="Roczny zwrot podzielony przez maksymalne obsunięcie (Max Drawdown). Mierzy, ile zysku portfel generuje w stosunku do najgorszego możliwego scenariusza straty."
           />
           <StatCard
             label="Najlepszy dzień"
@@ -232,6 +253,7 @@ export function PerformanceStats({ data, benchmarkLabel }: Props) {
             value={`${formatNumber(metrics.winRate, 1)}%`}
           />
         </div>
+        </TooltipProvider>
       </CardContent>
     </Card>
   );
