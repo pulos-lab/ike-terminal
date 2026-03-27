@@ -28,26 +28,28 @@ jobs:
             package.json package-lock.json \
             server/package.json shared/package.json client/package.json
 
-      - name: Copy archive to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          source: deploy.tar.gz
-          target: /tmp/
+      - name: Setup SSH key
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Deploy & restart
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            cd /opt/ike-terminal/app
-            tar xzf /tmp/deploy.tar.gz
-            rm /tmp/deploy.tar.gz
-            npm ci --omit=dev
-            systemctl restart ike-terminal
-            sleep 3
-            curl -sf https://tixterminal.app/api/health || exit 1
+      - name: Upload & deploy
+        run: |
+          scp -i ~/.ssh/deploy_key deploy.tar.gz ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/tmp/deploy.tar.gz
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
+            cd /opt/ike-terminal/app &&
+            tar xzf /tmp/deploy.tar.gz &&
+            rm /tmp/deploy.tar.gz &&
+            npm ci --omit=dev &&
+            systemctl restart ike-terminal &&
+            sleep 3 &&
+            curl -sf https://tixterminal.app/api/health
+          '
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
