@@ -21,35 +21,45 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Create deploy archive
-        run: |
-          tar czf deploy.tar.gz \
-            client/dist/ server/dist/ shared/dist/ \
-            package.json package-lock.json \
-            server/package.json shared/package.json client/package.json
-
-      - name: Setup SSH key
-        env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Upload & deploy
+      - name: Test SSH connection
+        run: ssh -i ~/.ssh/deploy_key -o BatchMode=yes ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "echo SSH_OK"
+
+      - name: Deploy files
         run: |
-          ssh -vvv -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "echo SSH_OK" 2>&1 | tail -30
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy.tar.gz ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/tmp/deploy.tar.gz
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
+          HOST="${{ secrets.DEPLOY_HOST }}"
+          USER="${{ secrets.DEPLOY_USER }}"
+          SSH="ssh -i ~/.ssh/deploy_key"
+          REMOTE="/opt/ike-terminal/app"
+
+          rsync -az --delete -e "$SSH" server/dist/ $USER@$HOST:$REMOTE/server/dist/
+          rsync -az --delete -e "$SSH" client/dist/ $USER@$HOST:$REMOTE/client/dist/
+          rsync -az --delete -e "$SSH" shared/dist/ $USER@$HOST:$REMOTE/shared/dist/
+
+          rsync -az -e "$SSH" package.json package-lock.json $USER@$HOST:$REMOTE/
+          $SSH $USER@$HOST "mkdir -p $REMOTE/server $REMOTE/shared $REMOTE/client"
+          rsync -az -e "$SSH" server/package.json $USER@$HOST:$REMOTE/server/
+          rsync -az -e "$SSH" shared/package.json $USER@$HOST:$REMOTE/shared/
+          rsync -az -e "$SSH" client/package.json $USER@$HOST:$REMOTE/client/
+
+      - name: Install deps & restart
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
             cd /opt/ike-terminal/app &&
-            tar xzf /tmp/deploy.tar.gz &&
-            rm /tmp/deploy.tar.gz &&
             npm ci --omit=dev &&
-            systemctl restart ike-terminal &&
-            sleep 3 &&
-            curl -sf https://tixterminal.app/api/health
+            sudo systemctl restart ike-terminal
           '
+
+      - name: Health check
+        run: |
+          sleep 3
+          curl -sf https://tixterminal.app/api/health
 
       - name: Cleanup
         if: always()
