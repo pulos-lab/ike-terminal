@@ -324,8 +324,10 @@ export async function resolveUnknownIsins(
   const existingMap = getTickerMap(portfolioId);
 
   // Collect unique ISINs with their paper names and currencies
+  // Skip CFD instruments — they don't have market prices on Yahoo/Stooq
   const unknowns = new Map<string, { paperName: string; currency: string }>();
   for (const tx of transactions) {
+    if (tx.category === 'cfd') continue;
     if (!existingMap.has(tx.isin) && !unknowns.has(tx.isin)) {
       unknowns.set(tx.isin, { paperName: tx.paperName, currency: tx.currency });
     }

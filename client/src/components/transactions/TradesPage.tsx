@@ -38,6 +38,7 @@ interface TxForm {
   commission: string;
   currency: string; // 'auto' | 'PLN' | 'USD' | 'EUR' | 'GBP'
   fxRate: string;
+  category: 'stock' | 'etf' | 'cfd';
 }
 
 interface SellForm {
@@ -48,7 +49,7 @@ interface SellForm {
 }
 
 const CURRENCIES = ['auto', 'PLN', 'USD', 'EUR', 'GBP'] as const;
-const emptyTxForm: TxForm = { date: '', ticker: '', side: 'K', quantity: '', price: '', commission: '0', currency: 'auto', fxRate: '' };
+const emptyTxForm: TxForm = { date: '', ticker: '', side: 'K', quantity: '', price: '', commission: '0', currency: 'auto', fxRate: '', category: 'stock' };
 const today = () => new Date().toISOString().slice(0, 10);
 
 export function TradesPage() {
@@ -136,6 +137,7 @@ export function TradesPage() {
         commission: parseFloat(form.commission) || 0,
         currency: form.currency !== 'auto' ? form.currency : undefined,
         fxRate: form.fxRate ? parseFloat(form.fxRate) : undefined,
+        category: form.category,
       }),
     onSuccess: () => {
       invalidateAll();
@@ -296,6 +298,19 @@ export function TradesPage() {
                   onChange={e => setField('commission', e.target.value)}
                   className="h-8 w-[80px] text-right"
                 />
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-xs text-muted-foreground">Kategoria</label>
+                <Select value={addForm.category} onValueChange={(v: 'stock' | 'etf' | 'cfd') => setField('category', v)}>
+                  <SelectTrigger className="h-8 w-[80px]" size="sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="stock">Stock</SelectItem>
+                    <SelectItem value="etf">ETF</SelectItem>
+                    <SelectItem value="cfd">CFD</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               {showFxRate && (
                 <div className="flex flex-col gap-2">

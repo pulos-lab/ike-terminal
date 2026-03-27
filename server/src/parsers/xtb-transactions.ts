@@ -111,15 +111,24 @@ const COMMISSION_BUY_RE = /BUY ([\d.]+) @ ([\d.]+)/;
 
 /** Determine paperName and isin for a raw symbol.
  * Old format: "JSW.PL" → yahooTicker "JSW.WA"
- * New format: "Cyfrowy Polsat" → use as-is (resolved by findIsinByName) */
-function resolveSymbolIdentifiers(symbol: string): { paperName: string; isin: string; currency: string } {
+ * New format: "Cyfrowy Polsat" → look up in Closed Positions ticker column,
+ *   fall back to company name as placeholder */
+function resolveSymbolIdentifiers(
+  symbol: string,
+  tickerLookup?: Map<string, string>,
+): { paperName: string; isin: string; currency: string } {
   if (symbol.includes('.') && /\.\w{2}$/.test(symbol)) {
     // Old format: ticker.COUNTRY (e.g., "JSW.PL", "PLTR.US")
     const yahooTicker = xtbToYahooTicker(symbol);
     return { paperName: yahooTicker, isin: yahooTicker, currency: instrumentCurrency(symbol) };
   }
-  // New format: full company name — use as paperName/isin placeholder
-  // Currency defaults to PLN for Polish company names
+  // New format: full company name — try Closed Positions ticker lookup first
+  const cpTicker = tickerLookup?.get(symbol);
+  if (cpTicker) {
+    const yahooTicker = xtbToYahooTicker(cpTicker);
+    return { paperName: yahooTicker, isin: yahooTicker, currency: instrumentCurrency(cpTicker) };
+  }
+  // Fallback: use company name as placeholder
   return { paperName: symbol, isin: symbol, currency: 'PLN' };
 }
 
@@ -217,9 +226,9 @@ export async function parseXtbFile(
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer as unknown as ArrayBuffer);
 
-  // ── Extract instrument categories from Closed Positions sheet ──
-  // Headers: Instrument, Category, Ticker, Type, ...
+  // ── Extract instrument categories and ticker lookup from Closed Positions sheet ──
   const categoryMap = extractCategoryMap(wb);
+  const tickerLookup = extractTickerLookup(wb);
 
   const worksheet = wb.worksheets.find(ws =>
     ws.name.toUpperCase().includes('CASH OPERATION')
@@ -404,7 +413,7 @@ export async function parseXtbFile(
       if (qty <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_quantity', paperName: raw.symbol }); continue; }
       if (price <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol }); continue; }
 
-      const ids = resolveSymbolIdentifiers(raw.symbol);
+      const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup);
       const value = roundTo2(qty * price);
       const category = categoryMap.get(raw.symbol) || 'stock';
 
@@ -463,7 +472,7 @@ export async function parseXtbFile(
       if (qty <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_quantity', paperName: raw.symbol }); continue; }
       if (price <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol }); continue; }
 
-      const ids = resolveSymbolIdentifiers(raw.symbol);
+      const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup);
       const value = roundTo2(qty * price);
       const category = categoryMap.get(raw.symbol) || 'stock';
 
@@ -572,7 +581,7 @@ export async function parseXtbFile(
         description,
         amount: netAmount,
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol).paperName : undefined,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup).paperName : undefined,
         source: 'xtb',
         importBatch,
       });
@@ -639,7 +648,7 @@ export async function parseXtbFile(
         description: raw.comment || `Withholding tax: ${raw.symbol}`,
         amount: raw.amount, // negative
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol).paperName : undefined,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup).paperName : undefined,
         source: 'xtb',
         importBatch,
       });
@@ -654,7 +663,7 @@ export async function parseXtbFile(
         description: raw.comment || raw.type,
         amount: raw.amount,
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol).paperName : undefined,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup).paperName : undefined,
         source: 'xtb',
         importBatch,
       });
@@ -669,7 +678,7 @@ export async function parseXtbFile(
         description: raw.comment || `Rights issue: ${raw.symbol}`,
         amount: raw.amount,
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol).paperName : undefined,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup).paperName : undefined,
         source: 'xtb',
         importBatch,
       });
@@ -690,15 +699,18 @@ export async function parseXtbFile(
       description: `${raw.type}: ${raw.comment}`,
       amount: raw.amount,
       currency: accountCurrency,
-      ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol).paperName : undefined,
+      ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup).paperName : undefined,
       source: 'xtb',
       importBatch,
     });
   }
 
-  // Add summary row skip
-  const totalRow = rawRows.length > 0 ? rawRows[rawRows.length - 1] : null;
-  // (Total row is already filtered out in parsing, no action needed)
+  // ── Pass 4: Generate CFD transactions from Closed Positions ──
+  // CFD instruments have no Stock purchase/Stock sell in Cash Operations.
+  // Build a set of existing transaction keys for deduplication.
+  const existingTxKeys = new Set(txBySymbolTime.keys());
+  const cfdTransactions = extractCfdTransactions(wb, accountCurrency, importBatch, existingTxKeys);
+  transactions.push(...cfdTransactions);
 
   return {
     transactions: { data: transactions, skipped: txSkipped },
@@ -721,6 +733,123 @@ function extractAccountCurrency(rows: any[][]): string {
     }
   }
   return 'PLN';
+}
+
+/** Extract CFD transactions from Closed Positions sheet.
+ * CFD positions have no Stock purchase/Stock sell rows in Cash Operations —
+ * all data (volume, prices, times, fees) lives in Closed Positions only.
+ *
+ * For each CFD row:
+ *   Type=BUY (long):  K @ OpenTime/OpenPrice  +  S @ CloseTime/ClosePrice
+ *   Type=SELL (short): S @ OpenTime/OpenPrice  +  K @ CloseTime/ClosePrice
+ *
+ * Swap + Rollover + Commission are summed and attached to the closing transaction. */
+function extractCfdTransactions(
+  wb: ExcelJS.Workbook,
+  accountCurrency: string,
+  importBatch: string,
+  existingTxKeys: Set<string>,
+): Transaction[] {
+  const ws = wb.worksheets.find(s => s.name.toUpperCase().includes('CLOSED'));
+  if (!ws) return [];
+
+  // Find header row and column indices
+  let headerIdx = -1;
+  const cols: Record<string, number> = {};
+  const NEEDED = ['Instrument', 'Category', 'Type', 'Volume', 'Open Price', 'Open Time (UTC)', 'Close Price', 'Close Time (UTC)', 'Commission', 'Swap', 'Rollover'];
+
+  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (headerIdx !== -1) return;
+    const vals = (row.values as any[]).slice(1);
+    for (let i = 0; i < vals.length; i++) {
+      const v = vals[i]?.toString?.().trim();
+      if (v && NEEDED.includes(v)) cols[v] = i;
+    }
+    if (cols['Instrument'] !== undefined && cols['Category'] !== undefined) headerIdx = rowNum;
+  });
+
+  if (headerIdx === -1) return [];
+
+  const transactions: Transaction[] = [];
+
+  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (rowNum <= headerIdx) return;
+    const vals = (row.values as any[]).slice(1);
+
+    const cat = vals[cols['Category']]?.toString?.().trim()?.toUpperCase();
+    if (cat !== 'CFD') return;
+
+    const instrument = vals[cols['Instrument']]?.toString?.().trim() || '';
+    const posType = vals[cols['Type']]?.toString?.().trim()?.toUpperCase() || ''; // BUY or SELL
+    const volume = typeof vals[cols['Volume']] === 'number' ? vals[cols['Volume']] : parseFloat(vals[cols['Volume']]?.toString() || '0');
+    const openPrice = typeof vals[cols['Open Price']] === 'number' ? vals[cols['Open Price']] : parseFloat(vals[cols['Open Price']]?.toString() || '0');
+    const closePrice = typeof vals[cols['Close Price']] === 'number' ? vals[cols['Close Price']] : parseFloat(vals[cols['Close Price']]?.toString() || '0');
+    const openTimeRaw = vals[cols['Open Time (UTC)']];
+    const closeTimeRaw = vals[cols['Close Time (UTC)']];
+
+    if (!instrument || !posType || volume <= 0 || openPrice <= 0 || closePrice <= 0) return;
+
+    const openTime = parseXtbTime(openTimeRaw);
+    const closeTime = parseXtbTime(closeTimeRaw);
+    if (!openTime || !closeTime) return;
+
+    // Fees: commission + swap + rollover (all typically negative or zero)
+    const commission = Math.abs(typeof vals[cols['Commission']] === 'number' ? vals[cols['Commission']] : parseFloat(vals[cols['Commission']]?.toString() || '0') || 0);
+    const swap = Math.abs(typeof vals[cols['Swap']] === 'number' ? vals[cols['Swap']] : parseFloat(vals[cols['Swap']]?.toString() || '0') || 0);
+    const rollover = Math.abs(typeof vals[cols['Rollover']] === 'number' ? vals[cols['Rollover']] : parseFloat(vals[cols['Rollover']]?.toString() || '0') || 0);
+    const totalFees = roundTo2(commission + swap + rollover);
+
+    // Deduplicate: skip if Cash Operations already has a transaction for this instrument+time
+    const openKey = `${instrument}|${openTime}`;
+    const closeKey = `${instrument}|${closeTime}`;
+    if (existingTxKeys.has(openKey) || existingTxKeys.has(closeKey)) return;
+
+    const openValue = roundTo2(volume * openPrice);
+    const closeValue = roundTo2(volume * closePrice);
+
+    // BUY position (long): K at open, S at close
+    // SELL position (short): S at open, K at close
+    const openSide: 'K' | 'S' = posType === 'BUY' ? 'K' : 'S';
+    const closeSide: 'K' | 'S' = posType === 'BUY' ? 'S' : 'K';
+
+    // Opening transaction (no fees)
+    transactions.push({
+      date: openTime,
+      paperName: instrument,
+      isin: instrument,
+      quantity: volume,
+      side: openSide,
+      price: openPrice,
+      value: openValue,
+      commission: 0,
+      total: openValue,
+      currency: accountCurrency,
+      category: 'cfd',
+      source: 'xtb',
+      importBatch,
+    });
+
+    // Closing transaction (fees attached here)
+    transactions.push({
+      date: closeTime,
+      paperName: instrument,
+      isin: instrument,
+      quantity: volume,
+      side: closeSide,
+      price: closePrice,
+      value: closeValue,
+      commission: totalFees,
+      total: closeSide === 'S'
+        ? roundTo2(closeValue - totalFees)
+        : roundTo2(closeValue + totalFees),
+      currency: accountCurrency,
+      category: 'cfd',
+      source: 'xtb',
+      importBatch,
+    });
+  });
+
+  return transactions;
 }
 
 /** Extract instrument category (STOCK/ETF/CFD) from Closed Positions sheet.
@@ -758,6 +887,44 @@ function extractCategoryMap(wb: ExcelJS.Workbook): Map<string, InstrumentCategor
       if (cat === 'cfd') map.set(instr, 'cfd');
       else if (cat === 'etf') map.set(instr, 'etf');
       else map.set(instr, 'stock');
+    }
+  });
+
+  return map;
+}
+
+/** Extract instrument name → XTB ticker mapping from Closed Positions sheet.
+ * e.g. "Grupa Kęty" → "KTY.PL", "Synektik" → "SNT.PL"
+ * Used to resolve new-format company names to Yahoo-compatible tickers. */
+function extractTickerLookup(wb: ExcelJS.Workbook): Map<string, string> {
+  const map = new Map<string, string>();
+  const ws = wb.worksheets.find(s => s.name.toUpperCase().includes('CLOSED'));
+  if (!ws) return map;
+
+  let headerIdx = -1;
+  let instrCol = -1;
+  let tickerCol = -1;
+  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (headerIdx !== -1) return;
+    const vals = (row.values as any[]).slice(1);
+    for (let i = 0; i < vals.length; i++) {
+      const v = vals[i]?.toString?.().trim();
+      if (v === 'Instrument') instrCol = i;
+      if (v === 'Ticker') tickerCol = i;
+    }
+    if (instrCol !== -1 && tickerCol !== -1) headerIdx = rowNum;
+  });
+
+  if (headerIdx === -1) return map;
+
+  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (rowNum <= headerIdx) return;
+    const vals = (row.values as any[]).slice(1);
+    const instr = vals[instrCol]?.toString?.().trim();
+    const ticker = vals[tickerCol]?.toString?.().trim();
+    if (instr && ticker && instr !== ticker) {
+      // Only store if instrument name differs from ticker (new format)
+      map.set(instr, ticker);
     }
   });
 

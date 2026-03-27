@@ -77,8 +77,10 @@ export function formatDateTime(dateStr: string): string {
 }
 
 /**
- * Format quantity — integer if whole, 2 decimal places if fractional
+ * Format quantity — integer if whole, up to 4 decimal places for small
+ * fractional values (CFD volumes like 0.035), 2 for larger values.
  */
 export function formatQuantity(qty: number): string {
-  return qty % 1 === 0 ? qty.toString() : qty.toFixed(2);
+  if (qty % 1 === 0) return qty.toString();
+  return qty < 1 ? parseFloat(qty.toFixed(4)).toString() : qty.toFixed(2);
 }
