@@ -1,11 +1,13 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { QUERY_KEYS, invalidateFx } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { formatNumber, formatDate } from '@/lib/formatters';
 import { Loader2, Plus, Trash2, Check, X } from 'lucide-react';
 import type { FxExchangeRecord } from 'shared';
@@ -32,12 +34,12 @@ export function CurrencyExchangePage() {
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['portfolio', 'fx-history'],
+    queryKey: QUERY_KEYS.fxHistory,
     queryFn: api.getFxHistory,
   });
 
   const { data: pricesData } = useQuery({
-    queryKey: ['prices', 'live'],
+    queryKey: QUERY_KEYS.livePrices,
     queryFn: api.getLivePrices,
     staleTime: 5 * 60 * 1000,
   });
@@ -85,8 +87,7 @@ export function CurrencyExchangePage() {
         rate: parseFloat(form.rate),
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'fx-history'] });
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'positions'] });
+      invalidateFx(queryClient);
       setAddForm(emptyForm);
       setShowAddForm(false);
     },
@@ -95,10 +96,7 @@ export function CurrencyExchangePage() {
   const deleteMutation = useMutation({
     mutationFn: ({ fromId, toId }: { fromId: number; toId: number }) =>
       api.deleteFxExchange(fromId, toId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'fx-history'] });
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'positions'] });
-    },
+    onSuccess: () => invalidateFx(queryClient),
   });
 
   const handleCurrencyChange = (field: 'currencyFrom' | 'currencyTo', value: string) => {
@@ -163,9 +161,7 @@ export function CurrencyExchangePage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <LoadingSpinner />
           ) : (
             <div className="overflow-x-auto">
               <Table>

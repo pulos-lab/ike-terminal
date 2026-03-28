@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { QUERY_KEYS } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -13,8 +13,11 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
+import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
+import { CategoryBadge } from '@/components/ui/category-badge';
+import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { formatCurrency, formatNumber, formatPercent, formatPLN, formatQuantity } from '@/lib/formatters';
-import { Loader2, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { PortfolioDiversification } from './PortfolioDiversification';
 
 interface ColumnVisibility {
@@ -59,7 +62,7 @@ export function PortfolioPage() {
   const allVisible = colVis.avgPrice && colVis.dailyChange && colVis.pl && colVis.plPct;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['portfolio', 'positions'],
+    queryKey: QUERY_KEYS.positions,
     queryFn: api.getPositions,
     refetchInterval: 15 * 60 * 1000, // auto-refresh every 15 min
   });
@@ -138,9 +141,7 @@ export function PortfolioPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <LoadingSpinner />
           ) : data?.positions?.length ? (
             <div className="overflow-x-auto">
               <Table>
@@ -159,14 +160,11 @@ export function PortfolioPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.positions.map((pos: any) => {
-                    const isPositive = pos.profitLossPct >= 0;
-                    return (
+                  {data.positions.map((pos: any) => (
                       <TableRow key={pos.isin}>
                         <TableCell className="font-mono font-medium">
                           {pos.ticker}
-                          {pos.category === 'cfd' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">CFD</Badge>}
-                          {pos.category === 'etf' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">ETF</Badge>}
+                          <CategoryBadge category={pos.category} />
                         </TableCell>
                         <TableCell className="text-muted-foreground">{pos.paperName}</TableCell>
                         <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
@@ -180,63 +178,48 @@ export function PortfolioPage() {
                         {colVis.dailyChange && (
                           <TableCell className="text-right">
                             {pos.dailyChangePct != null ? (
-                              <Badge
-                                variant={pos.dailyChangePct >= 0 ? 'default' : 'destructive'}
-                                className={`text-xs ${pos.dailyChangePct >= 0 ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20' : 'bg-red-500/15 text-red-400 hover:bg-red-500/25'}`}
-                              >
-                                {formatPercent(pos.dailyChangePct)}
-                              </Badge>
+                              <PLBadge value={pos.dailyChangePct} />
                             ) : '—'}
                           </TableCell>
                         )}
                         <TableCell className="text-right font-medium">{formatPLN(pos.currentValuePln)}</TableCell>
                         {colVis.pl && (
-                          <TableCell className={`text-right font-medium ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
+                          <TableCell className={`text-right font-medium ${plColor(pos.profitLossPct)}`}>
                             {formatCurrency(pos.profitLoss, pos.currency)}
                           </TableCell>
                         )}
                         {colVis.plPct && (
                           <TableCell className="text-right">
-                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20' : 'bg-red-500/15 text-red-400 hover:bg-red-500/25'}`}>
-                              {formatPercent(pos.profitLossPct)}
-                            </Badge>
+                            <PLBadge value={pos.profitLossPct} />
                           </TableCell>
                         )}
                         <TableCell className="text-right text-muted-foreground">
                           {formatPercent(pos.weight).replace('+', '')}
                         </TableCell>
                       </TableRow>
-                    );
-                  })}
-                  {totals && (() => {
-                    const isPositive = totals.totalProfitLoss >= 0;
-                    return (
+                  ))}
+                  {totals && (
                       <TableRow className="border-t-2 font-semibold">
                         <TableCell colSpan={colsBeforeValue} className="text-right">Razem</TableCell>
                         <TableCell className="text-right">{formatPLN(totals.totalValuePln)}</TableCell>
                         {colVis.pl && (
-                          <TableCell className={`text-right ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
+                          <TableCell className={`text-right ${plColor(totals.totalProfitLoss)}`}>
                             {formatPLN(totals.totalProfitLoss)}
                           </TableCell>
                         )}
                         {colVis.plPct && (
                           <TableCell className="text-right">
-                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
-                              {formatPercent(totals.totalProfitLossPct)}
-                            </Badge>
+                            <PLBadge value={totals.totalProfitLossPct} />
                           </TableCell>
                         )}
                         <TableCell />
                       </TableRow>
-                    );
-                  })()}
+                  )}
                 </TableBody>
               </Table>
             </div>
           ) : (
-            <div className="text-center py-12 text-muted-foreground">
-              Brak otwartych pozycji. Zaimportuj historię transakcji lub dodaj ręcznie transakcje.
-            </div>
+            <EmptyState message="Brak otwartych pozycji. Zaimportuj historię transakcji lub dodaj ręcznie transakcje." />
           )}
         </CardContent>
       </Card>

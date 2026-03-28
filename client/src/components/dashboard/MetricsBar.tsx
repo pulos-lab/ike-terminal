@@ -1,11 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { QUERY_KEYS } from '@/lib/query-keys';
+import { plColor } from '@/components/ui/pl-badge';
 import { formatPLN, formatPercent } from '@/lib/formatters';
 import { TrendingUp, TrendingDown, DollarSign, Target } from 'lucide-react';
 
 export function MetricsBar() {
   const { data } = useQuery({
-    queryKey: ['portfolio', 'metrics'],
+    queryKey: QUERY_KEYS.metrics,
     queryFn: api.getMetrics,
   });
 
@@ -16,8 +18,6 @@ export function MetricsBar() {
       <div className="h-4 w-24 bg-muted rounded" />
     </div>
   );
-
-  const isPositive = data.totalReturn >= 0;
 
   return (
     <div className="border-b px-4 md:px-6 py-3 flex flex-wrap gap-x-6 gap-y-1 text-sm">
@@ -32,19 +32,19 @@ export function MetricsBar() {
         <span className="font-medium">{formatPLN(data.totalInvested)}</span>
       </div>
       <div className="flex items-center gap-1.5">
-        {isPositive ? (
+        {data.totalReturn >= 0 ? (
           <TrendingUp className="h-3.5 w-3.5 text-green-500" />
         ) : (
           <TrendingDown className="h-3.5 w-3.5 text-red-500" />
         )}
         <span className="text-muted-foreground">Zysk:</span>
-        <span className={`font-semibold ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
+        <span className={`font-semibold ${plColor(data.totalReturn)}`}>
           {formatPLN(data.totalReturn)} ({formatPercent(data.totalReturnPct)})
         </span>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="text-muted-foreground">XIRR:</span>
-        <span className={`font-semibold ${data.xirr >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+        <span className={`font-semibold ${plColor(data.xirr)}`}>
           {formatPercent(data.xirr)}
         </span>
       </div>

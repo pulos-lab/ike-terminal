@@ -1,12 +1,16 @@
-import { useState, useMemo, Fragment } from 'react';
+import { useMemo, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { formatNumber, formatPercent, formatDate, formatCurrency, formatQuantity } from '@/lib/formatters';
-import { ChevronRight, ChevronDown, Loader2, Trash2 } from 'lucide-react';
+import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
+import { CategoryBadge } from '@/components/ui/category-badge';
+import { PLBadge, plColor } from '@/components/ui/pl-badge';
+import { formatNumber, formatDate, formatCurrency, formatQuantity } from '@/lib/formatters';
+import { useToggleSet } from '@/hooks/useToggleSet';
+import { ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
 import type { ClosedTrade } from 'shared';
 
 interface TradeGroup {
@@ -34,31 +38,16 @@ export function ClosedTradesPage() {
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['portfolio', 'closed-trades'],
+    queryKey: QUERY_KEYS.closedTrades,
     queryFn: api.getClosedTrades,
   });
 
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedGroups, toggleGroup] = useToggleSet<string>();
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.deleteTransaction(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'positions'] });
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'closed-trades'] });
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'metrics'] });
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'history'] });
-    },
+    onSuccess: () => invalidatePortfolio(queryClient),
   });
-
-  const toggleGroup = (key: string) => {
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
 
   const groups = useMemo(() => {
     if (!data?.trades?.length) return [];
@@ -129,9 +118,7 @@ export function ClosedTradesPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <LoadingSpinner />
           ) : groups.length ? (
             <div className="overflow-x-auto">
               <Table>
@@ -156,26 +143,22 @@ export function ClosedTradesPage() {
 
                     if (isSingle) {
                       const trade = group.trades[0];
-                      const isPositive = trade.profitLossPct >= 0;
                       return (
                         <TableRow key={group.key}>
                           <TableCell className="font-mono font-medium">
                             {trade.ticker}
-                            {trade.category === 'cfd' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">CFD</Badge>}
-                            {trade.category === 'etf' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">ETF</Badge>}
+                            <CategoryBadge category={trade.category} />
                           </TableCell>
                           <TableCell className="text-right">{formatQuantity(trade.quantity)}</TableCell>
                           <TableCell className="text-muted-foreground">{formatDate(trade.buyDate)}</TableCell>
                           <TableCell className="text-right">{formatNumber(trade.buyPrice)}</TableCell>
                           <TableCell className="text-muted-foreground">{formatDate(trade.sellDate)}</TableCell>
                           <TableCell className="text-right">{formatNumber(trade.sellPrice)}</TableCell>
-                          <TableCell className={`text-right font-medium ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
+                          <TableCell className={`text-right font-medium ${plColor(trade.profitLossPct)}`}>
                             {formatCurrency(trade.profitLoss, trade.currency)}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
-                              {formatPercent(trade.profitLossPct)}
-                            </Badge>
+                            <PLBadge value={trade.profitLossPct} />
                           </TableCell>
                           <TableCell className="text-right text-muted-foreground text-xs">
                             {(trade.totalCost || 0) > 0 ? formatNumber(trade.totalCost!) : '—'}
@@ -201,7 +184,6 @@ export function ClosedTradesPage() {
 
                     // Multi-trade group
                     const isExpanded = expandedGroups.has(group.key);
-                    const isPositive = group.weightedProfitLossPct >= 0;
                     const sameBuyDate = group.minBuyDate.slice(0, 10) === group.maxBuyDate.slice(0, 10);
                     const sameBuyPrice = group.minBuyPrice === group.maxBuyPrice;
 
@@ -221,8 +203,7 @@ export function ClosedTradesPage() {
                                 : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                               }
                               {group.ticker}
-                              {group.trades[0]?.category === 'cfd' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">CFD</Badge>}
-                              {group.trades[0]?.category === 'etf' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">ETF</Badge>}
+                              <CategoryBadge category={group.trades[0]?.category} />
                               <span className="text-xs text-muted-foreground ml-1">({group.trades.length})</span>
                             </div>
                           </TableCell>
@@ -241,13 +222,11 @@ export function ClosedTradesPage() {
                           </TableCell>
                           <TableCell className="text-muted-foreground">{formatDate(group.sellDate)}</TableCell>
                           <TableCell className="text-right">{formatNumber(group.sellPrice)}</TableCell>
-                          <TableCell className={`text-right font-medium ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
+                          <TableCell className={`text-right font-medium ${plColor(group.weightedProfitLossPct)}`}>
                             {formatCurrency(group.totalProfitLoss, group.currency)}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
-                              {formatPercent(group.weightedProfitLossPct)}
-                            </Badge>
+                            <PLBadge value={group.weightedProfitLossPct} />
                           </TableCell>
                           <TableCell className="text-right text-muted-foreground text-xs">
                             {group.totalCost > 0 ? formatNumber(group.totalCost) : '—'}
@@ -269,9 +248,7 @@ export function ClosedTradesPage() {
                           </TableCell>
                         </TableRow>
 
-                        {isExpanded && group.trades.map((trade, j) => {
-                          const tradePositive = trade.profitLossPct >= 0;
-                          return (
+                        {isExpanded && group.trades.map((trade, j) => (
                             <TableRow key={`${group.key}-${j}`} className="bg-muted/30">
                               <TableCell className="font-mono text-muted-foreground pl-9 text-sm">
                                 └ lot {j + 1}
@@ -281,13 +258,11 @@ export function ClosedTradesPage() {
                               <TableCell className="text-right text-muted-foreground">{formatNumber(trade.buyPrice)}</TableCell>
                               <TableCell className="text-muted-foreground">{formatDate(trade.sellDate)}</TableCell>
                               <TableCell className="text-right text-muted-foreground">{formatNumber(trade.sellPrice)}</TableCell>
-                              <TableCell className={`text-right text-sm ${tradePositive ? 'text-green-500/70' : 'text-red-500/70'}`}>
+                              <TableCell className={`text-right text-sm ${trade.profitLossPct >= 0 ? 'text-green-500/70' : 'text-red-500/70'}`}>
                                 {formatCurrency(trade.profitLoss, trade.currency)}
                               </TableCell>
                               <TableCell className="text-right">
-                                <Badge variant={tradePositive ? 'default' : 'destructive'} className={`text-xs ${tradePositive ? 'bg-green-500/10 text-green-500/70' : 'bg-red-500/15 text-red-400/70'}`}>
-                                  {formatPercent(trade.profitLossPct)}
-                                </Badge>
+                                <PLBadge value={trade.profitLossPct} muted />
                               </TableCell>
                               <TableCell className="text-right text-muted-foreground text-xs">
                                 {(trade.totalCost || 0) > 0 ? formatNumber(trade.totalCost!) : '—'}
@@ -295,8 +270,7 @@ export function ClosedTradesPage() {
                               <TableCell className="text-right text-muted-foreground">{trade.holdingDays}d</TableCell>
                               <TableCell />
                             </TableRow>
-                          );
-                        })}
+                        ))}
                       </Fragment>
                     );
                   })}
@@ -304,7 +278,7 @@ export function ClosedTradesPage() {
               </Table>
             </div>
           ) : (
-            <div className="text-center py-12 text-muted-foreground">Brak danych.</div>
+            <EmptyState message="Brak danych." />
           )}
         </CardContent>
       </Card>

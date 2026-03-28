@@ -44,6 +44,20 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json();
 }
 
+async function uploadFile(endpoint: string, formData: FormData) {
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    method: 'POST',
+    headers: { 'X-Portfolio-Id': activePortfolioId },
+    credentials: 'include',
+    body: formData,
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: 'Unknown error' }));
+    return { success: false, error: err.error || `HTTP ${response.status}`, skipped: err.skipped };
+  }
+  return response.json();
+}
+
 export const api = {
   // Portfolio management
   getPortfolios: () => request<Portfolio[]>('/portfolios'),
@@ -143,37 +157,17 @@ export const api = {
   // Import
   getImportStatus: () => request<any>('/import/status'),
 
-  uploadTransactions: async (file: File, broker: string = 'auto') => {
+  uploadTransactions: (file: File, broker: string = 'auto') => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('broker', broker);
-    const response = await fetch(`${API_BASE}/import/transactions`, {
-      method: 'POST',
-      headers: { 'X-Portfolio-Id': activePortfolioId },
-      credentials: 'include',
-      body: formData,
-    });
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ error: 'Unknown error' }));
-      return { success: false, error: err.error || `HTTP ${response.status}`, skipped: err.skipped };
-    }
-    return response.json();
+    return uploadFile('/import/transactions', formData);
   },
 
-  uploadOperations: async (file: File) => {
+  uploadOperations: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    const response = await fetch(`${API_BASE}/import/operations`, {
-      method: 'POST',
-      headers: { 'X-Portfolio-Id': activePortfolioId },
-      credentials: 'include',
-      body: formData,
-    });
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({ error: 'Unknown error' }));
-      return { success: false, error: err.error || `HTTP ${response.status}`, skipped: err.skipped };
-    }
-    return response.json();
+    return uploadFile('/import/operations', formData);
   },
 
   // Bug reports

@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PortfolioChart } from './PortfolioChart';
 import { PerformanceStats } from './PerformanceStats';
-import { Loader2 } from 'lucide-react';
+import { LoadingSpinner } from '@/components/ui/loading-spinner';
 
 const BENCHMARKS = [
   { value: 'sp500', label: 'S&P 500' },
@@ -177,9 +177,7 @@ export function DashboardPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex items-center justify-center h-80">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <LoadingSpinner />
           ) : filteredHistory.length ? (
             <PortfolioChart
               data={filteredHistory}

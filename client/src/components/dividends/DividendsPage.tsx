@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { QUERY_KEYS, invalidateDividends } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { formatNumber, formatDate, formatPLN } from '@/lib/formatters';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loader2, Coins, Plus, Pencil, Trash2, Check, X } from 'lucide-react';
@@ -23,7 +25,7 @@ const emptyForm: DividendForm = { date: '', ticker: '', amount: '', currency: 'P
 export function DividendsPage() {
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
-    queryKey: ['portfolio', 'dividends'],
+    queryKey: QUERY_KEYS.dividends,
     queryFn: api.getDividends,
   });
 
@@ -41,8 +43,7 @@ export function DividendsPage() {
         currency: form.currency,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'dividends'] });
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'metrics'] });
+      invalidateDividends(queryClient);
       setAddForm(emptyForm);
       setShowAddForm(false);
     },
@@ -57,18 +58,14 @@ export function DividendsPage() {
         currency: form.currency,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'dividends'] });
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'metrics'] });
+      invalidateDividends(queryClient);
       setEditingId(null);
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.deleteDividend(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'dividends'] });
-      queryClient.invalidateQueries({ queryKey: ['portfolio', 'metrics'] });
-    },
+    onSuccess: () => invalidateDividends(queryClient),
   });
 
   function startEdit(d: DividendRecord) {
@@ -163,9 +160,7 @@ export function DividendsPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <LoadingSpinner />
           ) : (
             <div className="overflow-x-auto">
               <Table>

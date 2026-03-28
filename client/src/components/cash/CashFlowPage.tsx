@@ -2,14 +2,17 @@ import { useState, useMemo, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { usePortfolio } from '@/lib/portfolio-context';
+import { QUERY_KEYS, invalidateCashFlow } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { formatPLN, formatDate } from '@/lib/formatters';
+import { useToggleSet } from '@/hooks/useToggleSet';
 import { ChevronRight, ChevronDown, Loader2, Plus, Pencil, Trash2, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
 
 const IKE_LIMITS: Record<number, number> = {
@@ -75,27 +78,23 @@ export function CashFlowPage() {
   const showLimits = showIKE || showIKZE;
 
   const { data: cashFlowData, isLoading: cashFlowLoading } = useQuery({
-    queryKey: ['portfolio', 'cash-flow'],
+    queryKey: QUERY_KEYS.cashFlow,
     queryFn: api.getCashFlow,
     staleTime: 60 * 60 * 1000,
   });
 
   const { data: depositsData, isLoading: depositsLoading } = useQuery({
-    queryKey: ['portfolio', 'deposits'],
+    queryKey: QUERY_KEYS.deposits,
     queryFn: api.getDeposits,
   });
 
-  const [expandedYears, setExpandedYears] = useState<Set<number>>(new Set());
+  const [expandedYears, toggleYear] = useToggleSet<number>();
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState<EntryForm>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<EntryForm>(emptyForm);
 
-  const invalidateAll = () => {
-    queryClient.invalidateQueries({ queryKey: ['portfolio', 'deposits'] });
-    queryClient.invalidateQueries({ queryKey: ['portfolio', 'cash-flow'] });
-    queryClient.invalidateQueries({ queryKey: ['portfolio', 'metrics'] });
-  };
+  const invalidateAll = () => invalidateCashFlow(queryClient);
 
   const createMutation = useMutation({
     mutationFn: (form: EntryForm) =>
@@ -120,15 +119,6 @@ export function CashFlowPage() {
     mutationFn: (id: number) => api.deleteDeposit(id),
     onSuccess: () => invalidateAll(),
   });
-
-  const toggleYear = (year: number) => {
-    setExpandedYears(prev => {
-      const next = new Set(prev);
-      if (next.has(year)) next.delete(year);
-      else next.add(year);
-      return next;
-    });
-  };
 
   function startEdit(entry: CashEntry) {
     setEditingId(entry.id);
@@ -242,9 +232,7 @@ export function CashFlowPage() {
         </CardHeader>
         <CardContent>
           {cashFlowLoading ? (
-            <div className="flex items-center justify-center h-80">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <LoadingSpinner />
           ) : cashFlowData?.cashFlow?.length ? (
             <ResponsiveContainer width="100%" height={400}>
               <AreaChart data={cashFlowData.cashFlow}>
@@ -282,9 +270,7 @@ export function CashFlowPage() {
         </CardHeader>
         <CardContent>
           {depositsLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <LoadingSpinner />
           ) : (
             <div className="overflow-x-auto">
               <Table>

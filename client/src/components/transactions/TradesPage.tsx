@@ -2,14 +2,18 @@ import { useState, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { usePortfolio } from '@/lib/portfolio-context';
+import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
+import { CategoryBadge } from '@/components/ui/category-badge';
+import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { TickerAutocomplete } from '@/components/shared/TickerAutocomplete';
-import { formatNumber, formatPercent, formatCurrency, formatQuantity, formatDate } from '@/lib/formatters';
+import { formatNumber, formatCurrency, formatQuantity, formatDate } from '@/lib/formatters';
+import { useToggleSet } from '@/hooks/useToggleSet';
 import { Loader2, Plus, Check, X, TrendingDown, ChevronRight, ChevronDown } from 'lucide-react';
 import { ClosedTradesPage } from './ClosedTradesPage';
 
@@ -66,12 +70,12 @@ export function TradesPage() {
   const { activeSettings } = usePortfolio();
 
   const { data: posData, isLoading: posLoading } = useQuery({
-    queryKey: ['portfolio', 'positions'],
+    queryKey: QUERY_KEYS.positions,
     queryFn: api.getPositions,
   });
 
   const { data: pricesData } = useQuery({
-    queryKey: ['prices', 'live'],
+    queryKey: QUERY_KEYS.livePrices,
     queryFn: api.getLivePrices,
     staleTime: 5 * 60 * 1000,
   });
@@ -86,23 +90,9 @@ export function TradesPage() {
   const [sellForm, setSellForm] = useState<SellForm>({ date: '', quantity: '', price: '', commission: '0' });
 
   // Expand/collapse lot details
-  const [expandedPositions, setExpandedPositions] = useState<Set<string>>(new Set());
-  const togglePosition = (ticker: string) => {
-    setExpandedPositions(prev => {
-      const next = new Set(prev);
-      if (next.has(ticker)) next.delete(ticker);
-      else next.add(ticker);
-      return next;
-    });
-  };
+  const [expandedPositions, togglePosition] = useToggleSet<string>();
 
-  const invalidateAll = () => {
-    queryClient.invalidateQueries({ queryKey: ['portfolio', 'positions'] });
-    queryClient.invalidateQueries({ queryKey: ['portfolio', 'transactions'] });
-    queryClient.invalidateQueries({ queryKey: ['portfolio', 'closed-trades'] });
-    queryClient.invalidateQueries({ queryKey: ['portfolio', 'metrics'] });
-    queryClient.invalidateQueries({ queryKey: ['portfolio', 'history'] });
-  };
+  const invalidateAll = () => invalidatePortfolio(queryClient);
 
   // Auto-calculate commission based on portfolio settings
   const calcCommission = (ticker: string, quantity: string, price: string): string => {
@@ -382,9 +372,7 @@ export function TradesPage() {
         </CardHeader>
         <CardContent>
           {posLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <LoadingSpinner />
           ) : positions.length ? (
             <div className="overflow-x-auto">
               <Table>
@@ -404,7 +392,6 @@ export function TradesPage() {
                 </TableHeader>
                 <TableBody>
                   {positions.map((pos) => {
-                    const isPositive = pos.profitLossPct >= 0;
                     const isSelling = sellingTicker === pos.ticker;
                     const lots = pos.buyLots || [];
                     const isMultiLot = lots.length > 1;
@@ -435,8 +422,7 @@ export function TradesPage() {
                                   : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                               )}
                               {pos.ticker}
-                              {pos.category === 'cfd' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">CFD</Badge>}
-                              {pos.category === 'etf' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">ETF</Badge>}
+                              <CategoryBadge category={pos.category} />
                               {isMultiLot && <span className="text-xs text-muted-foreground ml-1">({lots.length})</span>}
                             </div>
                           </TableCell>
@@ -457,16 +443,11 @@ export function TradesPage() {
                             <span className="text-xs text-muted-foreground ml-1">{pos.currency}</span>
                           </TableCell>
                           <TableCell className="text-right">{formatNumber(pos.currentValuePln)}</TableCell>
-                          <TableCell className={`text-right font-medium ${isPositive ? 'text-green-500' : 'text-red-500'}`}>
+                          <TableCell className={`text-right font-medium ${plColor(pos.profitLossPct)}`}>
                             {formatCurrency(pos.profitLoss, pos.currency)}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Badge
-                              variant={isPositive ? 'default' : 'destructive'}
-                              className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'}`}
-                            >
-                              {formatPercent(pos.profitLossPct)}
-                            </Badge>
+                            <PLBadge value={pos.profitLossPct} />
                           </TableCell>
                           <TableCell>
                             <Button
@@ -579,7 +560,7 @@ export function TradesPage() {
               </Table>
             </div>
           ) : (
-            <div className="text-center py-12 text-muted-foreground">Brak otwartych pozycji.</div>
+            <EmptyState message="Brak otwartych pozycji." />
           )}
         </CardContent>
       </Card>
