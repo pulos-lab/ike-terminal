@@ -173,7 +173,7 @@ export function ClosedTradesPage() {
                             {formatCurrency(trade.profitLoss, trade.currency)}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
                               {formatPercent(trade.profitLossPct)}
                             </Badge>
                           </TableCell>
@@ -245,7 +245,7 @@ export function ClosedTradesPage() {
                             {formatCurrency(group.totalProfitLoss, group.currency)}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
                               {formatPercent(group.weightedProfitLossPct)}
                             </Badge>
                           </TableCell>
@@ -285,7 +285,7 @@ export function ClosedTradesPage() {
                                 {formatCurrency(trade.profitLoss, trade.currency)}
                               </TableCell>
                               <TableCell className="text-right">
-                                <Badge variant={tradePositive ? 'default' : 'destructive'} className={`text-xs ${tradePositive ? 'bg-green-500/10 text-green-500/70' : 'bg-red-500/10 text-red-500/70'}`}>
+                                <Badge variant={tradePositive ? 'default' : 'destructive'} className={`text-xs ${tradePositive ? 'bg-green-500/10 text-green-500/70' : 'bg-red-500/15 text-red-400/70'}`}>
                                   {formatPercent(trade.profitLossPct)}
                                 </Badge>
                               </TableCell>

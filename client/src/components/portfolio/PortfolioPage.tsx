@@ -182,7 +182,7 @@ export function PortfolioPage() {
                             {pos.dailyChangePct != null ? (
                               <Badge
                                 variant={pos.dailyChangePct >= 0 ? 'default' : 'destructive'}
-                                className={`text-xs ${pos.dailyChangePct >= 0 ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20' : 'bg-red-500/10 text-red-500 hover:bg-red-500/20'}`}
+                                className={`text-xs ${pos.dailyChangePct >= 0 ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20' : 'bg-red-500/15 text-red-400 hover:bg-red-500/25'}`}
                               >
                                 {formatPercent(pos.dailyChangePct)}
                               </Badge>
@@ -197,7 +197,7 @@ export function PortfolioPage() {
                         )}
                         {colVis.plPct && (
                           <TableCell className="text-right">
-                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20' : 'bg-red-500/10 text-red-500 hover:bg-red-500/20'}`}>
+                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20' : 'bg-red-500/15 text-red-400 hover:bg-red-500/25'}`}>
                               {formatPercent(pos.profitLossPct)}
                             </Badge>
                           </TableCell>
@@ -221,7 +221,7 @@ export function PortfolioPage() {
                         )}
                         {colVis.plPct && (
                           <TableCell className="text-right">
-                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+                            <Badge variant={isPositive ? 'default' : 'destructive'} className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'}`}>
                               {formatPercent(totals.totalProfitLossPct)}
                             </Badge>
                           </TableCell>

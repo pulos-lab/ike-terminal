@@ -463,7 +463,7 @@ export function TradesPage() {
                           <TableCell className="text-right">
                             <Badge
                               variant={isPositive ? 'default' : 'destructive'}
-                              className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}
+                              className={`text-xs ${isPositive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'}`}
                             >
                               {formatPercent(pos.profitLossPct)}
                             </Badge>
