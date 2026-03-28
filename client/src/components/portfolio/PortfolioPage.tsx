@@ -150,7 +150,6 @@ export function PortfolioPage() {
                     <TableHead>Nazwa</TableHead>
                     <TableHead className="text-right">Ilość</TableHead>
                     {colVis.avgPrice && <TableHead className="text-right">Śr. cena</TableHead>}
-                    <TableHead className="text-right">Prowizje</TableHead>
                     <TableHead className="text-right">Kurs</TableHead>
                     {colVis.dailyChange && <TableHead className="text-right">Zmiana</TableHead>}
                     <TableHead className="text-right">Wartość (PLN)</TableHead>
@@ -174,7 +173,6 @@ export function PortfolioPage() {
                         {colVis.avgPrice && (
                           <TableCell className="text-right">{formatNumber(pos.avgBuyPrice)}</TableCell>
                         )}
-                        <TableCell className="text-right text-muted-foreground">{formatNumber(pos.totalCommission)}</TableCell>
                         <TableCell className="text-right">
                           {pos.currentPrice ? formatNumber(pos.currentPrice) : '—'}
                           <span className="text-xs text-muted-foreground ml-1">{pos.currency}</span>

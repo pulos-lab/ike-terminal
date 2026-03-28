@@ -52,6 +52,14 @@ export interface CashOperation {
 
 // ============ Portfolio Types ============
 
+export interface OpenBuyLot {
+  quantity: number;
+  price: number;
+  commission: number;
+  date: string;
+  currency: string;
+}
+
 export interface Position {
   paperName: string;
   isin: string;
@@ -71,6 +79,7 @@ export interface Position {
   sector?: string;
   dailyChangePct: number | null;
   category?: InstrumentCategory;
+  buyLots?: OpenBuyLot[];
 }
 
 export interface ClosedTradeFee {

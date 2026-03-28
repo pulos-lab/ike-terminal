@@ -164,6 +164,13 @@ export async function computeOpenPositions(
       sector: entry.sector,
       dailyChangePct,
       category,
+      buyLots: metrics.buyLots.map(lot => ({
+        quantity: lot.quantity,
+        price: lot.price,
+        commission: lot.commission,
+        date: lot.date,
+        currency: lot.currency,
+      })),
     });
   }
 

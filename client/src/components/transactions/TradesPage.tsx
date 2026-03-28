@@ -9,9 +9,17 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TickerAutocomplete } from '@/components/shared/TickerAutocomplete';
-import { formatNumber, formatPercent, formatCurrency, formatQuantity } from '@/lib/formatters';
-import { Loader2, Plus, Check, X, TrendingDown } from 'lucide-react';
+import { formatNumber, formatPercent, formatCurrency, formatQuantity, formatDate } from '@/lib/formatters';
+import { Loader2, Plus, Check, X, TrendingDown, ChevronRight, ChevronDown } from 'lucide-react';
 import { ClosedTradesPage } from './ClosedTradesPage';
+
+interface BuyLot {
+  quantity: number;
+  price: number;
+  commission: number;
+  date: string;
+  currency: string;
+}
 
 interface Position {
   paperName: string;
@@ -27,6 +35,7 @@ interface Position {
   currency: string;
   weight: number;
   category?: 'stock' | 'etf' | 'cfd';
+  buyLots?: BuyLot[];
 }
 
 interface TxForm {
@@ -75,6 +84,17 @@ export function TradesPage() {
   // Sell form state
   const [sellingTicker, setSellingTicker] = useState<string | null>(null);
   const [sellForm, setSellForm] = useState<SellForm>({ date: '', quantity: '', price: '', commission: '0' });
+
+  // Expand/collapse lot details
+  const [expandedPositions, setExpandedPositions] = useState<Set<string>>(new Set());
+  const togglePosition = (ticker: string) => {
+    setExpandedPositions(prev => {
+      const next = new Set(prev);
+      if (next.has(ticker)) next.delete(ticker);
+      else next.add(ticker);
+      return next;
+    });
+  };
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ['portfolio', 'positions'] });
@@ -372,7 +392,9 @@ export function TradesPage() {
                   <TableRow>
                     <TableHead>Ticker</TableHead>
                     <TableHead className="text-right">Ilość</TableHead>
+                    <TableHead>Data kupna</TableHead>
                     <TableHead className="text-right">Śr. cena kupna</TableHead>
+                    <TableHead className="text-right">Prowizja</TableHead>
                     <TableHead className="text-right">Cena bieżąca</TableHead>
                     <TableHead className="text-right">Wartość (PLN)</TableHead>
                     <TableHead className="text-right">P/L</TableHead>
@@ -384,16 +406,52 @@ export function TradesPage() {
                   {positions.map((pos) => {
                     const isPositive = pos.profitLossPct >= 0;
                     const isSelling = sellingTicker === pos.ticker;
+                    const lots = pos.buyLots || [];
+                    const isMultiLot = lots.length > 1;
+                    const isExpanded = expandedPositions.has(pos.ticker);
+
+                    // Buy date range
+                    const buyDates = lots.map(l => l.date).sort();
+                    const minBuyDate = buyDates[0] || '';
+                    const maxBuyDate = buyDates[buyDates.length - 1] || '';
+                    const sameBuyDate = minBuyDate.slice(0, 10) === maxBuyDate.slice(0, 10);
+
+                    const totalCommission = lots.reduce((s, l) => s + l.commission, 0);
+
                     return (
                       <Fragment key={pos.ticker}>
-                        <TableRow>
+                        <TableRow
+                          className={isMultiLot ? 'cursor-pointer hover:bg-muted/50' : undefined}
+                          onClick={isMultiLot ? () => togglePosition(pos.ticker) : undefined}
+                          role={isMultiLot ? 'button' : undefined}
+                          tabIndex={isMultiLot ? 0 : undefined}
+                          onKeyDown={isMultiLot ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePosition(pos.ticker); } } : undefined}
+                        >
                           <TableCell className="font-mono font-medium">
-                            {pos.ticker}
-                            {pos.category === 'cfd' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">CFD</Badge>}
-                            {pos.category === 'etf' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">ETF</Badge>}
+                            <div className="flex items-center gap-1">
+                              {isMultiLot && (
+                                isExpanded
+                                  ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                                  : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                              )}
+                              {pos.ticker}
+                              {pos.category === 'cfd' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">CFD</Badge>}
+                              {pos.category === 'etf' && <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">ETF</Badge>}
+                              {isMultiLot && <span className="text-xs text-muted-foreground ml-1">({lots.length})</span>}
+                            </div>
                           </TableCell>
                           <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
+                          <TableCell className="text-muted-foreground text-sm">
+                            {minBuyDate
+                              ? sameBuyDate
+                                ? formatDate(minBuyDate)
+                                : `${formatDate(minBuyDate)} – ${formatDate(maxBuyDate)}`
+                              : '—'}
+                          </TableCell>
                           <TableCell className="text-right">{formatNumber(pos.avgBuyPrice)}</TableCell>
+                          <TableCell className="text-right text-muted-foreground text-xs">
+                            {totalCommission > 0 ? formatNumber(totalCommission) : '—'}
+                          </TableCell>
                           <TableCell className="text-right">
                             {pos.currentPrice != null ? formatNumber(pos.currentPrice) : '—'}
                             <span className="text-xs text-muted-foreground ml-1">{pos.currency}</span>
@@ -414,7 +472,7 @@ export function TradesPage() {
                             <Button
                               size="xs"
                               variant="ghost"
-                              onClick={() => isSelling ? setSellingTicker(null) : startSell(pos)}
+                              onClick={(e) => { e.stopPropagation(); isSelling ? setSellingTicker(null) : startSell(pos); }}
                               className="text-muted-foreground hover:text-red-500"
                             >
                               <TrendingDown className="h-3 w-3 mr-1" />
@@ -423,9 +481,28 @@ export function TradesPage() {
                           </TableCell>
                         </TableRow>
 
+                        {isExpanded && lots.map((lot, j) => (
+                          <TableRow key={`${pos.ticker}-lot-${j}`} className="bg-muted/30">
+                            <TableCell className="font-mono text-muted-foreground pl-9 text-sm">
+                              └ lot {j + 1}
+                            </TableCell>
+                            <TableCell className="text-right text-muted-foreground">{formatQuantity(lot.quantity)}</TableCell>
+                            <TableCell className="text-muted-foreground">{formatDate(lot.date)}</TableCell>
+                            <TableCell className="text-right text-muted-foreground">{formatNumber(lot.price)}</TableCell>
+                            <TableCell className="text-right text-muted-foreground text-xs">
+                              {lot.commission > 0 ? formatNumber(lot.commission) : '—'}
+                            </TableCell>
+                            <TableCell />
+                            <TableCell />
+                            <TableCell />
+                            <TableCell />
+                            <TableCell />
+                          </TableRow>
+                        ))}
+
                         {isSelling && (
                           <TableRow className="bg-muted/30">
-                            <TableCell colSpan={8} className="px-4 py-3">
+                            <TableCell colSpan={10} className="px-4 py-3">
                               <div className="flex items-center gap-2 mb-3">
                                 <TrendingDown className="h-3.5 w-3.5 text-muted-foreground" />
                                 <span className="text-sm font-medium">Sprzedaż {pos.ticker}</span>
