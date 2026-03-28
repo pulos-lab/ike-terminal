@@ -164,13 +164,20 @@ export async function computeOpenPositions(
       sector: entry.sector,
       dailyChangePct,
       category,
-      buyLots: metrics.buyLots.map(lot => ({
-        quantity: lot.quantity,
-        price: lot.price,
-        commission: lot.commission,
-        date: lot.date,
-        currency: lot.currency,
-      })),
+      buyLots: metrics.buyLots.map(lot => {
+        // Convert lot price to the paper's native currency for consistent display
+        const lotFx = fxRates[lot.currency] || 1;
+        const priceInNativeCurrency = lot.currency === entry.currency
+          ? lot.price
+          : lot.price * lotFx / fxNativeToPln;
+        return {
+          quantity: lot.quantity,
+          price: priceInNativeCurrency,
+          commission: lot.commission,
+          date: lot.date,
+          currency: entry.currency,
+        };
+      }),
     });
   }
 
