@@ -17,6 +17,7 @@ import pricesRouter from './routes/prices.js';
 import portfolioRouter from './routes/portfolio.js';
 import importRouter from './routes/import.js';
 import bugReportsRouter from './routes/bug-reports.js';
+import { updateBenchmarkPrices } from './services/benchmark-updater.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -134,6 +135,19 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 const server = app.listen(config.port, () => {
   console.log(`Server running on http://localhost:${config.port} [${config.nodeEnv}]`);
 });
+
+// ── Benchmark price updater (fetch latest from Stooq every 6h) ─────────────
+setTimeout(() => {
+  updateBenchmarkPrices().catch(err =>
+    console.error('Initial benchmark update failed:', err)
+  );
+}, 10_000);
+
+setInterval(() => {
+  updateBenchmarkPrices().catch(err =>
+    console.error('Benchmark update failed:', err)
+  );
+}, 6 * 60 * 60 * 1000);
 
 // ── Graceful shutdown ───────────────────────────────────────────────────────
 function shutdown(signal: string) {

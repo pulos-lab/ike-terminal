@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "seed-benchmarks": "tsx src/seed-benchmarks.ts"
   },
   "dependencies": {
     "better-auth": "^1.5.6",
