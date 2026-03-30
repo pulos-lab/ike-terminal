@@ -1,4 +1,5 @@
 import type { Transaction, TickerMapEntry } from 'shared';
+import { findNcTicker } from 'shared';
 import { getTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { searchYahoo, validateStooq, searchStooqByName } from './ticker-search.js';
 import { fetchYahooPrice } from './yahoo-finance.js';
@@ -199,7 +200,22 @@ async function resolveIsin(
       }
     }
 
-    // 3. Yahoo fallback with .WA preference
+    // 3. NC offline fallback — use static map before Yahoo (prevents wrong foreign matches)
+    if (isNewConnect) {
+      const ncEntry = findNcTicker(cleanName);
+      if (ncEntry) {
+        return {
+          isin,
+          ticker: `${ncEntry.ticker}.WA`,
+          name: ncEntry.name,
+          exchange: 'NC' as TickerMapEntry['exchange'],
+          currency: 'PLN',
+          priceSource: 'stooq',
+        };
+      }
+    }
+
+    // 4. Yahoo fallback with .WA preference
     const byIsin = await searchYahoo(isin);
     if (byIsin.length > 0) {
       const hit = byIsin.find(r => r.symbol.endsWith('.WA')) || byIsin[0];
@@ -269,6 +285,22 @@ async function resolveIsin(
           priceSource: inferPriceSource(stooqSearch.symbol, exchange),
         };
       }
+    }
+  }
+
+  // Strategy 2c: NC offline fallback — static map prevents Yahoo from matching
+  // NC stocks to wrong foreign tickers (e.g., MINERAL → NAK)
+  if (isNewConnect && cleanName.length >= 2) {
+    const ncEntry = findNcTicker(cleanName);
+    if (ncEntry) {
+      return {
+        isin,
+        ticker: `${ncEntry.ticker}.WA`,
+        name: ncEntry.name,
+        exchange: 'NC' as TickerMapEntry['exchange'],
+        currency: 'PLN',
+        priceSource: 'stooq',
+      };
     }
   }
 
