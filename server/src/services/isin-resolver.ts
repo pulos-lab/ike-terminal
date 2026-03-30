@@ -1,5 +1,5 @@
 import type { Transaction, TickerMapEntry } from 'shared';
-import { findNcTicker } from 'shared';
+import { findNcTicker, findCfdTicker } from 'shared';
 import { getTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { searchYahoo, validateStooq, searchStooqByName } from './ticker-search.js';
 import { fetchYahooPrice } from './yahoo-finance.js';
@@ -385,12 +385,10 @@ export async function resolveUnknownIsins(
   const existingMap = getTickerMap(portfolioId);
 
   // Collect unique ISINs with their paper names and currencies
-  // Skip CFD instruments — they don't have market prices on Yahoo/Stooq
-  const unknowns = new Map<string, { paperName: string; currency: string }>();
+  const unknowns = new Map<string, { paperName: string; currency: string; category?: string }>();
   for (const tx of transactions) {
-    if (tx.category === 'cfd') continue;
     if (!existingMap.has(tx.isin) && !unknowns.has(tx.isin)) {
-      unknowns.set(tx.isin, { paperName: tx.paperName, currency: tx.currency });
+      unknowns.set(tx.isin, { paperName: tx.paperName, currency: tx.currency, category: tx.category });
     }
   }
 
@@ -405,8 +403,30 @@ export async function resolveUnknownIsins(
 
   const items = Array.from(unknowns.entries());
 
-  await withConcurrencyLimit(items, async ([isin, { paperName, currency }]) => {
+  await withConcurrencyLimit(items, async ([isin, { paperName, currency, category }]) => {
     try {
+      // CFD instruments: resolve via static map (Yahoo/Stooq search won't find them)
+      if (category === 'cfd') {
+        const cfdEntry = findCfdTicker(isin);
+        if (cfdEntry) {
+          const entry: TickerMapEntry = {
+            isin,
+            ticker: cfdEntry.yahooTicker,
+            name: cfdEntry.name,
+            exchange: 'OTHER',
+            currency: cfdEntry.currency,
+            priceSource: 'yahoo',
+          };
+          upsertTickerMapEntry(entry, portfolioId);
+          resolved.push(entry);
+          console.log(`  ✓ ${isin} → ${entry.ticker} (${entry.name}) [CFD]`);
+        } else {
+          unresolved.push({ isin, paperName, currency });
+          console.log(`  ✗ ${isin} (${paperName}) — unknown CFD instrument`);
+        }
+        return;
+      }
+
       const entry = await resolveIsin(isin, paperName, currency);
       if (entry) {
         upsertTickerMapEntry(entry, portfolioId);

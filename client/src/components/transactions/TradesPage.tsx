@@ -318,7 +318,6 @@ export function TradesPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="stock">Stock</SelectItem>
-                    <SelectItem value="etf">ETF</SelectItem>
                     <SelectItem value="cfd">CFD</SelectItem>
                   </SelectContent>
                 </Select>
