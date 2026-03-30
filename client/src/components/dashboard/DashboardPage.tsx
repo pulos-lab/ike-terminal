@@ -1,17 +1,21 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Info } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioChart } from './PortfolioChart';
 import { PerformanceStats } from './PerformanceStats';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 
 const BENCHMARKS = [
+  { value: 'none', label: 'Brak' },
   { value: 'sp500', label: 'S&P 500' },
   { value: 'nasdaq', label: 'NASDAQ' },
+  { value: 'wig', label: 'WIG' },
   { value: 'wig20', label: 'WIG20' },
   { value: 'mwig40', label: 'mWIG40' },
   { value: 'swig80', label: 'sWIG80' },
@@ -94,6 +98,7 @@ export function DashboardPage() {
   }
 
   const benchmarkLabel = BENCHMARKS.find(b => b.value === benchmark)?.label || '';
+  const showBenchmark = benchmark !== 'none';
 
   return (
     <div className="space-y-4">
@@ -138,41 +143,67 @@ export function DashboardPage() {
               />
             </div>
           )}
-          <div className="flex gap-1 rounded-lg border p-0.5">
-            <Button
-              variant={chartMode === 'mwr' ? 'default' : 'ghost'}
-              size="sm"
-              className="h-7 px-2.5 text-xs"
-              onClick={() => setChartMode('mwr')}
-            >
-              MWR
-            </Button>
-            <Button
-              variant={chartMode === 'twr' ? 'default' : 'ghost'}
-              size="sm"
-              className="h-7 px-2.5 text-xs"
-              onClick={() => setChartMode('twr')}
-            >
-              TWR
-            </Button>
-          </div>
-          <Select value={benchmark} onValueChange={setBenchmark}>
-            <SelectTrigger className="w-36 h-8">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {BENCHMARKS.map((b) => (
-                <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <TooltipProvider>
+            <div className="flex gap-1 rounded-lg border p-0.5">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={chartMode === 'mwr' ? 'default' : 'ghost'}
+                    size="sm"
+                    className="h-7 px-2.5 text-xs"
+                    onClick={() => setChartMode('mwr')}
+                  >
+                    MWR
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-[260px] text-xs">
+                  Money-Weighted Return — uwzględnia wpłaty/wypłaty, pokazuje realną stopę zwrotu inwestora
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={chartMode === 'twr' ? 'default' : 'ghost'}
+                    size="sm"
+                    className="h-7 px-2.5 text-xs"
+                    onClick={() => setChartMode('twr')}
+                  >
+                    TWR
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-[260px] text-xs">
+                  Time-Weighted Return — eliminuje wpływ wpłat/wypłat, pokazuje czystą efektywność strategii
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            <div className="flex items-center gap-1">
+              <Select value={benchmark} onValueChange={setBenchmark}>
+                <SelectTrigger className="w-36 h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BENCHMARKS.map((b) => (
+                    <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-4 w-4 cursor-help text-muted-foreground/60 hover:text-muted-foreground transition-colors" />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-[280px] text-xs">
+                  Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy przy tych samych wpłatach/wypłatach (strategia DCA)
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          </TooltipProvider>
         </div>
       </div>
 
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">
-            {chartMode === 'twr' ? 'TWR' : 'MWR'} portfela vs {benchmarkLabel}
+            {chartMode === 'twr' ? 'TWR' : 'MWR'} portfela{showBenchmark ? ` vs ${benchmarkLabel}` : ''}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -183,6 +214,7 @@ export function DashboardPage() {
               data={filteredHistory}
               benchmarkLabel={benchmarkLabel}
               mode={chartMode}
+              showBenchmark={showBenchmark}
             />
           ) : (
             <div className="flex items-center justify-center h-80 text-muted-foreground">
@@ -193,7 +225,7 @@ export function DashboardPage() {
       </Card>
 
       {!isLoading && filteredHistory.length > 1 && (
-        <PerformanceStats data={filteredHistory} benchmarkLabel={benchmarkLabel} />
+        <PerformanceStats data={filteredHistory} benchmarkLabel={benchmarkLabel} showBenchmark={showBenchmark} />
       )}
     </div>
   );

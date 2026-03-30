@@ -144,6 +144,9 @@ async function resolveIsin(
   const isRealPolishIsin = isin.startsWith('PL') && isRealIsin(isin);
   const isPolishTicker = isRealPolishIsin || isin.endsWith('.WA') || (isPseudoIsin && txCurrency === 'PLN');
 
+  // Detect NewConnect from paper name suffix (Bossa uses "-NC", "-NC-FIX")
+  const isNewConnect = /-NC(?:-FIX)?$/i.test(paperName);
+
   // Clean up paper names: remove Bossa suffixes like "-NC", "-NC-FIX", "-C"
   const cleanName = paperName
     .replace(/-NC(?:-FIX)?$/i, '')
@@ -216,7 +219,7 @@ async function resolveIsin(
 
   // === Non-Polish or real ISINs: Yahoo first ===
 
-  // Strategy 1: Yahoo search by ISIN
+  // Strategy 1: Yahoo search by ISIN (exact identifier — reliable)
   const byIsin = await searchYahoo(isin);
   if (byIsin.length > 0) {
     const hit = isPolishTicker
@@ -225,7 +228,51 @@ async function resolveIsin(
     return await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
   }
 
-  // Strategy 2: Yahoo search by paper name
+  // Strategy 2: Stooq check for real Polish ISINs BEFORE Yahoo name search.
+  // This prevents Yahoo from matching "MINERAL" → NAK (Northern Dynasty)
+  // when the actual stock is MINERAL-NC on NewConnect.
+  if (isRealPolishIsin && cleanName.length >= 2) {
+    // 2a. Stooq ticker validation (short tickers: MNR, KBT, BCT)
+    const candidates = [cleanName];
+    if (!cleanName.toUpperCase().startsWith('ETF') && !cleanName.toUpperCase().startsWith('BETA')) {
+      if (cleanName.length > 4) candidates.push(cleanName.substring(0, 4));
+      if (cleanName.length > 3) candidates.push(cleanName.substring(0, 3));
+    }
+
+    for (const candidate of candidates) {
+      const stooqResult = await validateStooq(candidate, cleanName);
+      if (stooqResult) {
+        // Use paper name suffix (-NC) or searchStooqByName exchange info to detect NC
+        const exchange = (isNewConnect ? 'NC' : 'GPW') as TickerMapEntry['exchange'];
+        return {
+          isin,
+          ticker: stooqResult.symbol,
+          name: stooqResult.name !== candidate.toUpperCase() ? stooqResult.name : paperName,
+          exchange,
+          currency: 'PLN',
+          priceSource: inferPriceSource(stooqResult.symbol, exchange),
+        };
+      }
+    }
+
+    // 2b. Stooq company name search (works for full names on GPW/NC)
+    if (cleanName.length >= 3) {
+      const stooqSearch = await searchStooqByName(cleanName);
+      if (stooqSearch) {
+        const exchange = (stooqSearch.exchange === 'NC' ? 'NC' : 'GPW') as TickerMapEntry['exchange'];
+        return {
+          isin,
+          ticker: stooqSearch.symbol,
+          name: stooqSearch.name,
+          exchange,
+          currency: 'PLN',
+          priceSource: inferPriceSource(stooqSearch.symbol, exchange),
+        };
+      }
+    }
+  }
+
+  // Strategy 3: Yahoo search by paper name (fallback for foreign stocks)
   if (cleanName.length >= 2) {
     const searchVariants = [cleanName];
     if (isPseudoIsin) {
@@ -237,30 +284,6 @@ async function resolveIsin(
       const byName = await searchYahoo(variant);
       if (byName.length > 0) {
         return await buildEntry(isin, byName[0].symbol, byName[0].name, byName[0].exchange, paperName, txCurrency);
-      }
-    }
-  }
-
-  // Strategy 3: Stooq validation (fallback for real Polish ISINs)
-  if (isPolishTicker && cleanName.length >= 2) {
-    const candidates = [cleanName];
-    if (!cleanName.toUpperCase().startsWith('ETF') && !cleanName.toUpperCase().startsWith('BETA')) {
-      if (cleanName.length > 4) candidates.push(cleanName.substring(0, 4));
-      if (cleanName.length > 3) candidates.push(cleanName.substring(0, 3));
-    }
-
-    for (const candidate of candidates) {
-      const stooqResult = await validateStooq(candidate, cleanName);
-      if (stooqResult) {
-        const exchange = 'GPW' as TickerMapEntry['exchange'];
-        return {
-          isin,
-          ticker: stooqResult.symbol,
-          name: stooqResult.name !== candidate.toUpperCase() ? stooqResult.name : paperName,
-          exchange,
-          currency: 'PLN',
-          priceSource: inferPriceSource(stooqResult.symbol, exchange),
-        };
       }
     }
   }

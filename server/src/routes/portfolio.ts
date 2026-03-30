@@ -303,9 +303,11 @@ router.post('/history', asyncHandler(async (req, res) => {
   const operations = getAllOperations(pid);
   const tickerMap = getTickerMap(pid);
 
-  const benchTicker = benchConfig.source === 'stooq'
-    ? (benchConfig as any).stooqTicker
-    : (benchConfig as any).yahooTicker;
+  const benchTicker = benchConfig.source === 'none'
+    ? ''
+    : benchConfig.source === 'stooq'
+      ? (benchConfig as any).stooqTicker
+      : (benchConfig as any).yahooTicker;
 
   // Always compute full history – client filters & rebases by date range
   const result = await computePortfolioHistory(

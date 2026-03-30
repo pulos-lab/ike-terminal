@@ -16,6 +16,7 @@ interface ChartDataPoint {
 interface Props {
   data: ChartDataPoint[];
   benchmarkLabel: string;
+  showBenchmark?: boolean;
 }
 
 interface PerformanceMetrics {
@@ -178,7 +179,7 @@ function StatCard({ label, value, subtext, color, tooltip }: {
   );
 }
 
-export function PerformanceStats({ data, benchmarkLabel }: Props) {
+export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }: Props) {
   const metrics = useMemo(() => computeMetrics(data), [data]);
 
   if (!metrics) {
@@ -197,11 +198,13 @@ export function PerformanceStats({ data, benchmarkLabel }: Props) {
             value={formatPercent(metrics.totalReturn)}
             color={returnColor(metrics.totalReturn)}
           />
-          <StatCard
-            label={`vs ${benchmarkLabel}`}
-            value={formatPercent(metrics.benchmarkReturn)}
-            color={returnColor(metrics.benchmarkReturn)}
-          />
+          {showBenchmark && metrics.benchmarkReturn !== 0 && (
+            <StatCard
+              label={`vs ${benchmarkLabel}`}
+              value={formatPercent(metrics.benchmarkReturn)}
+              color={returnColor(metrics.benchmarkReturn)}
+            />
+          )}
           <StatCard
             label="CAGR"
             value={formatPercent(metrics.cagr)}

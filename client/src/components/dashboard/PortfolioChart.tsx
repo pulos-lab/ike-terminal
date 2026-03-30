@@ -16,9 +16,10 @@ interface Props {
   data: ChartDataPoint[];
   benchmarkLabel: string;
   mode?: 'mwr' | 'twr';
+  showBenchmark?: boolean;
 }
 
-export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr' }: Props) {
+export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr', showBenchmark = true }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
@@ -65,25 +66,30 @@ export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr' }: Props) {
       priceFormat: { type: 'custom', formatter: (v: number) => `${v.toFixed(2)}%` },
     });
 
-    const benchmarkSeries = chart.addSeries(LineSeries, {
-      color: '#71717a',
-      lineWidth: 1,
-      lineStyle: 2,
-      title: `${benchmarkLabel} ${isTwr ? 'TWR ' : ''}%`,
-      priceFormat: { type: 'custom', formatter: (v: number) => `${v.toFixed(2)}%` },
-    });
-
     const portfolioData = data.map(d => ({
       time: d.date as string,
       value: isTwr ? d.twrPct : d.returnPct,
     }));
-    const benchmarkData = data.map(d => ({
-      time: d.date as string,
-      value: isTwr ? d.benchmarkTwrPct : d.benchmarkReturnPct,
-    }));
-
     portfolioSeries.setData(portfolioData as any);
-    benchmarkSeries.setData(benchmarkData as any);
+
+    // Show benchmark only when enabled and data is available (not all zeros from failed fetch)
+    const benchmarkField = isTwr ? 'benchmarkTwrPct' : 'benchmarkReturnPct';
+    const hasBenchmarkData = showBenchmark && data.some(d => d[benchmarkField] !== 0);
+
+    if (hasBenchmarkData) {
+      const benchmarkSeries = chart.addSeries(LineSeries, {
+        color: '#71717a',
+        lineWidth: 1,
+        lineStyle: 2,
+        title: `${benchmarkLabel} ${isTwr ? 'TWR ' : ''}%`,
+        priceFormat: { type: 'custom', formatter: (v: number) => `${v.toFixed(2)}%` },
+      });
+      const benchmarkData = data.map(d => ({
+        time: d.date as string,
+        value: isTwr ? d.benchmarkTwrPct : d.benchmarkReturnPct,
+      }));
+      benchmarkSeries.setData(benchmarkData as any);
+    }
 
     chart.timeScale().fitContent();
 
@@ -99,7 +105,7 @@ export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr' }: Props) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, benchmarkLabel, mode]);
+  }, [data, benchmarkLabel, mode, showBenchmark]);
 
   return <div ref={containerRef} className="w-full" />;
 }

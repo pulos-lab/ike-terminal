@@ -433,7 +433,7 @@ export async function computePortfolioHistory(
   operations: CashOperation[],
   tickerMap: Map<string, TickerMapEntry>,
   benchmarkTicker: string,
-  benchmarkSource: 'yahoo' | 'stooq',
+  benchmarkSource: 'yahoo' | 'stooq' | 'none',
   startDate?: string,
   endDate?: string
 ): Promise<{ history: PortfolioHistoryPoint[]; metrics: PortfolioMetrics }> {
@@ -567,18 +567,20 @@ export async function computePortfolioHistory(
     historicalPrices.set('EURPLN=X', priceMap);
   })());
 
-  // Fetch benchmark
-  fetchPromises.push((async () => {
-    let data: Array<{ date: string; close: number }>;
-    if (benchmarkSource === 'stooq') {
-      data = await fetchStooqHistory(benchmarkTicker, start);
-    } else {
-      data = await fetchYahooHistory(benchmarkTicker, start, end);
-    }
-    const priceMap = new Map<string, number>();
-    for (const d of data) priceMap.set(d.date, d.close);
-    historicalPrices.set(`benchmark_${benchmarkTicker}`, priceMap);
-  })());
+  // Fetch benchmark (skip when disabled)
+  if (benchmarkSource !== 'none') {
+    fetchPromises.push((async () => {
+      let data: Array<{ date: string; close: number }>;
+      if (benchmarkSource === 'stooq') {
+        data = await fetchStooqHistory(benchmarkTicker, start);
+      } else {
+        data = await fetchYahooHistory(benchmarkTicker, start, end);
+      }
+      const priceMap = new Map<string, number>();
+      for (const d of data) priceMap.set(d.date, d.close);
+      historicalPrices.set(`benchmark_${benchmarkTicker}`, priceMap);
+    })());
+  }
 
   await Promise.all(fetchPromises);
 
