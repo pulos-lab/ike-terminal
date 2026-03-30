@@ -30,15 +30,43 @@ Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i st
 6. **Wpłaty** — historia wpłat z wyceną portfela
 
 ## Import danych — obsługiwane domy maklerskie
-1. **Bossa** — transakcje + operacje (średnik, Windows-1250)
-2. **mBank eMakler** — transakcje GPW + zagraniczne (średnik, Windows-1250)
-3. **DEGIRO** — transakcje multi-currency (przecinek, UTF-8)
-- Auto-detekcja formatu po nagłówkach CSV — użytkownik nie musi wskazywać brokera
+1. **Bossa** — transakcje + operacje (średnik, Windows-1250, CSV)
+2. **mBank eMakler** — transakcje GPW + zagraniczne (średnik, Windows-1250, CSV)
+3. **DEGIRO** — transakcje multi-currency (przecinek, UTF-8, CSV)
+4. **XTB** — transakcje stock/ETF + zamknięte pozycje CFD (XLSX, ExcelJS)
+   - Arkusz "CASH OPERATION HISTORY": stock purchase/sale, commission, Sec Fee, deposit, withdrawal, dividend, WHT, swap, rollover
+   - Arkusz "Closed Positions" (opcjonalny): zamknięte CFD → para transakcji K+S, kategorie instrumentów (stock/etf/cfd)
+   - Symbole XTB: suffix krajowy (CDR.PL, AAPL.US, SAP.DE) → waluta z suffixu
+   - Obsługa fractional shares (np. 0.3069 @ 494.15)
+- Auto-detekcja formatu po nagłówkach CSV/XLSX — użytkownik nie musi wskazywać brokera
 
-## Źródła cen
-- **Stooq** — polskie akcje (.WA), priorytet dla GPW
-- **Yahoo Finance** — zagraniczne, FX, benchmark
-- Cache: in-memory (NodeCache 12h) → SQLite persistent → fetch sieciowy
+## Źródła cen — priorytety
+
+### Ceny bieżące (live)
+- **GPW (akcje .WA)**: Yahoo Finance
+- **NewConnect (NC)**: Stooq (jedyne źródło — Yahoo nie listuje NC)
+- **Zagraniczne (NYSE, NASDAQ, XETRA, TSX)**: Yahoo Finance
+- **CFD (surowce, indeksy, forex, krypto)**: Yahoo Finance (statyczna mapa instrument → ticker w `shared/src/cfd-ticker-map.ts`, np. GOLD → GC=F)
+- **FX (kursy walut)**: Yahoo Finance (USDPLN=X, EURPLN=X, CADPLN=X)
+
+### Ceny historyczne (dashboard/benchmark)
+- **GPW (.WA)**: Yahoo Finance (priorytet) → Stooq (fallback gdy Yahoo < 10 punktów)
+- **NewConnect (NC)**: Stooq
+- **Zagraniczne**: Yahoo Finance
+- **Benchmarki polskie (WIG, WIG20, mWIG40, sWIG80)**: SQLite cache (seed z CSV w `benchmark/`) + Stooq auto-update co 6h (`benchmark-updater.ts`)
+- **Benchmarki zagraniczne (S&P 500, NASDAQ)**: Yahoo Finance
+
+### Cache (3 warstwy)
+1. **In-memory** (NodeCache) — live: 1-4h TTL, historia: 12h TTL
+2. **SQLite persistent** (`data/price_history.db`) — historia cenowa, przeżywa restart serwera
+3. **Fetch sieciowy** — Yahoo/Stooq API, tylko gdy cache miss
+
+### Resolwowanie tickerów (ISIN resolver)
+- **Polskie pseudo-ISINy** (mBank/XTB): Stooq → Yahoo (z preferencją .WA)
+- **Prawdziwe polskie ISINy** (Bossa/DEGIRO): Yahoo by ISIN → Stooq validate → Stooq name search → NC offline map → Yahoo by name
+- **NewConnect**: statyczna mapa offline (`shared/src/nc-ticker-map.ts`, 374 spółki) jako fallback gdy Stooq rate-limited
+- **CFD**: statyczna mapa (`shared/src/cfd-ticker-map.ts`) → Yahoo ticker (np. GOLD → GC=F)
+- **Zagraniczne ISINy**: Yahoo by ISIN → Yahoo by name
 
 ## Konwencje
 - TypeScript strict mode
@@ -49,6 +77,7 @@ Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i st
 ## Zasady testowania
 - Przed wprowadzeniem nowej funkcjonalności — przetestuj na obecnych danych lub stwórz przykładowe dane jeżeli nie da się przetestować na obecnych
 - Po testach przywróć portfel do stanu pierwotnego (usunięcie nadmiarowych i niepotrzebnych danych)
+- Upewniej się za każdym razem, że logika importu działa tak samo w przypadku wszystkich parserów
 - W razie wątpliwości — zadawaj pytania i weryfikuj
 
 ## Uruchomienie
