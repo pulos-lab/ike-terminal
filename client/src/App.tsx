@@ -5,6 +5,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PortfolioProvider } from '@/lib/portfolio-context';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { LoginPage } from '@/components/auth/LoginPage';
+import { VerifyOTPPage } from '@/components/auth/VerifyOTPPage';
 import { AppShell } from '@/components/layout/AppShell';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { PortfolioPage } from '@/components/portfolio/PortfolioPage';
@@ -31,8 +32,9 @@ function App() {
       <TooltipProvider>
         <BrowserRouter>
           <Routes>
-            {/* Public route */}
+            {/* Public routes */}
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/verify-email" element={<VerifyOTPPage />} />
 
             {/* Protected routes */}
             <Route path="/*" element={

@@ -1,7 +1,12 @@
 import { betterAuth } from 'better-auth';
+import { emailOTP } from 'better-auth/plugins';
 import Database from 'better-sqlite3';
 import path from 'path';
+import { Resend } from 'resend';
 import { config, isProduction } from './config.js';
+
+// ── Resend email client (for OTP verification) ────────────────────────────
+const resend = config.resendApiKey ? new Resend(config.resendApiKey) : null;
 
 // ── Auth database (separate from portfolio databases) ───────────────────────
 const authDbPath = path.join(config.dataDir, 'auth.db');
@@ -85,9 +90,45 @@ export const auth = betterAuth({
   secret: config.authSecret,
   baseURL: isProduction ? config.corsOrigin : `http://localhost:${config.port}`,
 
+  plugins: [
+    emailOTP({
+      otpLength: 6,
+      expiresIn: 300, // 5 minutes
+      sendVerificationOnSignUp: true,
+      overrideDefaultEmailVerification: true,
+      async sendVerificationOTP({ email, otp, type }) {
+        if (!resend) {
+          console.log(`[DEV] OTP for ${email} (${type}): ${otp}`);
+          return;
+        }
+        const subjectMap: Record<string, string> = {
+          'email-verification': `${otp} — Twój kod weryfikacyjny`,
+          'forget-password': `${otp} — Reset hasła`,
+          'sign-in': `${otp} — Kod logowania`,
+          'change-email': `${otp} — Zmiana adresu email`,
+        };
+        await resend.emails.send({
+          from: config.emailFrom,
+          to: email,
+          subject: subjectMap[type] || `${otp} — Kod weryfikacyjny TIX Terminal`,
+          html: `
+            <div style="font-family: system-ui, sans-serif; max-width: 400px; margin: 0 auto; padding: 32px;">
+              <h2 style="color: #16a34a; margin: 0 0 24px;">TIX Terminal</h2>
+              <p style="color: #333; margin: 0 0 16px;">Twój kod weryfikacyjny:</p>
+              <div style="background: #f4f4f5; border-radius: 8px; padding: 16px; text-align: center; margin: 0 0 16px;">
+                <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #111;">${otp}</span>
+              </div>
+              <p style="color: #666; font-size: 14px; margin: 0;">Kod wygasa za 5 minut. Jeśli nie prosiłeś o ten kod, zignoruj tę wiadomość.</p>
+            </div>
+          `,
+        });
+      },
+    }),
+  ],
+
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: false,
+    requireEmailVerification: true,
   },
 
   socialProviders: {

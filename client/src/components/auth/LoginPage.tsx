@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { signIn, signUp, useSession } from '@/lib/auth-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 
 export function LoginPage() {
   const { data: session, isPending } = useSession();
+  const navigate = useNavigate();
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -37,9 +38,17 @@ export function LoginPage() {
           setError(err.message || 'Błąd rejestracji');
           return;
         }
+        // Redirect to OTP verification page after registration
+        navigate(`/verify-email?email=${encodeURIComponent(email)}`);
+        return;
       } else {
         const { error: err } = await signIn.email({ email, password });
         if (err) {
+          // If email not verified, redirect to verification page and trigger OTP send
+          if (err.code === 'EMAIL_NOT_VERIFIED') {
+            navigate(`/verify-email?email=${encodeURIComponent(email)}&from=signin`);
+            return;
+          }
           setError(err.message || 'Nieprawidłowy email lub hasło');
           return;
         }

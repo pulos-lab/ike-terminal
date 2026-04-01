@@ -14,6 +14,8 @@ export const config = {
   authSecret: process.env.AUTH_SECRET || 'dev-secret-change-in-production',
   googleClientId: process.env.GOOGLE_CLIENT_ID || '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+  resendApiKey: process.env.RESEND_API_KEY || '',
+  emailFrom: process.env.EMAIL_FROM || 'TIX Terminal <noreply@tixterminal.app>',
   cache: {
     priceTtl: 60 * 60,           // 1h — live prices (was 15min)
     stooqLiveTtl: 4 * 60 * 60,   // 4h — Stooq NewConnect (preserve daily quota)
