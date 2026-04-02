@@ -7,6 +7,7 @@ import { AuthGuard } from '@/components/auth/AuthGuard';
 import { LoginPage } from '@/components/auth/LoginPage';
 import { VerifyOTPPage } from '@/components/auth/VerifyOTPPage';
 import { ForgotPasswordPage } from '@/components/auth/ForgotPasswordPage';
+import { LandingPage } from '@/components/landing/LandingPage';
 import { AppShell } from '@/components/layout/AppShell';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { PortfolioPage } from '@/components/portfolio/PortfolioPage';
@@ -34,6 +35,7 @@ function App() {
         <BrowserRouter>
           <Routes>
             {/* Public routes */}
+            <Route path="/landing" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/verify-email" element={<VerifyOTPPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { signIn, signUp, useSession } from '@/lib/auth-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 export function LoginPage() {
   const { data: session, isPending } = useSession();
   const navigate = useNavigate();
-  const [isRegister, setIsRegister] = useState(false);
+  const [searchParams] = useSearchParams();
+  const [isRegister, setIsRegister] = useState(searchParams.get('register') === '1');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
