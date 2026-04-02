@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getAllPortfolios, createPortfolio, updatePortfolio, deletePortfolio, isPortfolioOwnedBy } from '../db/portfolio-registry.js';
 import { getDb, closeDb } from '../db/connection.js';
 import { seedTickerMap } from '../db/ticker-map-repo.js';
+import { purgeAllData } from '../db/transactions-repo.js';
 
 const router = Router();
 
@@ -58,6 +59,18 @@ router.delete('/:id', (req, res) => {
 
   closeDb(id);
   deletePortfolio(id);
+  res.json({ success: true });
+});
+
+// DELETE /api/portfolios/:id/data — purge all data but keep the portfolio
+router.delete('/:id/data', (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Authentication required' });
+  const { id } = req.params;
+  if (!isPortfolioOwnedBy(id, req.userId)) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  purgeAllData(id);
   res.json({ success: true });
 });
 

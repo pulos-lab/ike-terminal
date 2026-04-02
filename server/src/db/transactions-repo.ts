@@ -43,6 +43,19 @@ export function clearTransactions(portfolioId: string = 'default'): void {
   db.prepare('DELETE FROM transactions').run();
 }
 
+/** Purge ALL data from a portfolio database (transactions, operations, ticker map, snapshots, etc.) */
+export function purgeAllData(portfolioId: string = 'default'): void {
+  const db = getDb(portfolioId);
+  db.transaction(() => {
+    db.prepare('DELETE FROM transactions').run();
+    db.prepare('DELETE FROM cash_operations').run();
+    db.prepare('DELETE FROM ticker_map').run();
+    db.prepare('DELETE FROM portfolio_snapshots').run();
+    db.prepare('DELETE FROM manual_positions').run();
+    db.prepare('DELETE FROM price_cache').run();
+  })();
+}
+
 export function getTransactionById(id: number, portfolioId: string = 'default'): Transaction | null {
   const db = getDb(portfolioId);
   const row = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id) as any;

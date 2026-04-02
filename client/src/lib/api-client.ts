@@ -75,6 +75,10 @@ export const api = {
     request<{ success: boolean }>(`/portfolios/${id}`, {
       method: 'DELETE',
     }),
+  purgePortfolioData: (id: string) =>
+    request<{ success: boolean }>(`/portfolios/${id}/data`, {
+      method: 'DELETE',
+    }),
 
   // Portfolio
   getPositions: () => request<any>('/portfolio/positions'),

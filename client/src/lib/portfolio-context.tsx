@@ -12,6 +12,7 @@ interface PortfolioContextValue {
   switchPortfolio: (id: string) => void;
   createPortfolio: (name: string) => Promise<Portfolio>;
   deletePortfolio: (id: string) => Promise<void>;
+  purgeData: (id: string) => Promise<void>;
   updateSettings: (settings: PortfolioSettings) => Promise<void>;
   updateName: (name: string) => Promise<void>;
   refreshPortfolios: () => Promise<void>;
@@ -60,6 +61,11 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     }
   }, [activeId, refreshPortfolios, switchPortfolio]);
 
+  const purgeDataFn = useCallback(async (id: string) => {
+    await api.purgePortfolioData(id);
+    queryClient.resetQueries();
+  }, [queryClient]);
+
   const updateSettingsFn = useCallback(async (settings: PortfolioSettings) => {
     await api.updatePortfolio(activeId, { settings });
     await refreshPortfolios();
@@ -83,6 +89,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       switchPortfolio,
       createPortfolio: createPortfolioFn,
       deletePortfolio: deletePortfolioFn,
+      purgeData: purgeDataFn,
       updateSettings: updateSettingsFn,
       updateName: updateNameFn,
       refreshPortfolios,

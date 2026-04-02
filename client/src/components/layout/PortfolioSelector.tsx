@@ -11,10 +11,12 @@ import type { PortfolioSettings } from 'shared';
 const NEW_PORTFOLIO_VALUE = '__new__';
 
 export function PortfolioSelector() {
-  const { portfolios, activeId, activeSettings, activeName, switchPortfolio, createPortfolio, deletePortfolio, updateSettings, updateName } = usePortfolio();
+  const { portfolios, activeId, activeSettings, activeName, switchPortfolio, createPortfolio, deletePortfolio, purgeData, updateSettings, updateName } = usePortfolio();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
+  const [purging, setPurging] = useState(false);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
 
@@ -65,6 +67,17 @@ export function PortfolioSelector() {
     await deletePortfolio(activeId);
     setDeleteConfirmOpen(false);
     setSettingsDialogOpen(false);
+  };
+
+  const handlePurge = async () => {
+    setPurging(true);
+    try {
+      await purgeData(activeId);
+      setPurgeConfirmOpen(false);
+      setSettingsDialogOpen(false);
+    } finally {
+      setPurging(false);
+    }
   };
 
   return (
@@ -245,16 +258,27 @@ export function PortfolioSelector() {
           </div>
 
           <DialogFooter className="flex !justify-between">
-            {activeId !== 'default' && (
+            <div className="flex gap-2">
               <Button
-                variant="destructive"
+                variant="ghost"
                 size="sm"
-                onClick={() => setDeleteConfirmOpen(true)}
+                className="text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                onClick={() => setPurgeConfirmOpen(true)}
               >
                 <Trash2 className="h-4 w-4 mr-1" />
-                Usuń portfel
+                Wyczyść dane
               </Button>
-            )}
+              {activeId !== 'default' && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setDeleteConfirmOpen(true)}
+                >
+                  <Trash2 className="h-4 w-4 mr-1" />
+                  Usuń portfel
+                </Button>
+              )}
+            </div>
             <div className="flex gap-2 ml-auto">
               <Button variant="outline" onClick={() => setSettingsDialogOpen(false)}>
                 Anuluj
@@ -282,6 +306,26 @@ export function PortfolioSelector() {
             </Button>
             <Button variant="destructive" onClick={handleDelete}>
               Usuń
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Purge data confirmation dialog */}
+      <Dialog open={purgeConfirmOpen} onOpenChange={setPurgeConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Wyczyść dane portfela</DialogTitle>
+            <DialogDescription>
+              Czy na pewno chcesz usunąć wszystkie dane z portfela &quot;{activeName}&quot;? Usunięte zostaną wszystkie transakcje, dywidendy, wpłaty, wymiany walut i historia — zarówno zaimportowane jak i dodane ręcznie. Ustawienia portfela zostaną zachowane.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPurgeConfirmOpen(false)}>
+              Anuluj
+            </Button>
+            <Button variant="destructive" onClick={handlePurge} disabled={purging}>
+              {purging ? 'Czyszczę...' : 'Wyczyść wszystko'}
             </Button>
           </DialogFooter>
         </DialogContent>
