@@ -55,7 +55,7 @@ export function LoginPage() {
         }
       }
       // Full reload to ensure auth cookies are picked up by all components
-      window.location.href = '/';
+      window.location.href = '/app';
     } catch {
       setError('Wystąpił błąd. Spróbuj ponownie.');
     } finally {
@@ -64,12 +64,12 @@ export function LoginPage() {
   }
 
   async function handleGoogleSignIn() {
-    await signIn.social({ provider: 'google', callbackURL: '/' });
+    await signIn.social({ provider: 'google', callbackURL: '/app' });
   }
 
   // Redirect to dashboard if already logged in
   if (!isPending && session?.user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/app" replace />;
   }
 
   return (

@@ -17,12 +17,12 @@ import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog';
 import { PortfolioSelector } from './PortfolioSelector';
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/portfolio', label: 'Portfel', icon: Briefcase },
-  { to: '/trades', label: 'Transakcje', icon: ArrowLeftRight },
-  { to: '/dividends', label: 'Dywidendy', icon: Coins },
-  { to: '/currency', label: 'Waluty', icon: DollarSign },
-  { to: '/cash', label: 'Gotówka', icon: Wallet },
+  { to: '/app', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/app/portfolio', label: 'Portfel', icon: Briefcase },
+  { to: '/app/trades', label: 'Transakcje', icon: ArrowLeftRight },
+  { to: '/app/dividends', label: 'Dywidendy', icon: Coins },
+  { to: '/app/currency', label: 'Waluty', icon: DollarSign },
+  { to: '/app/cash', label: 'Gotówka', icon: Wallet },
 ];
 
 function NavContent({ onNavigate }: { onNavigate?: () => void }) {
@@ -40,7 +40,7 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
         <NavLink
           key={item.to}
           to={item.to}
-          end={item.to === '/'}
+          end={item.to === '/app'}
           onClick={onNavigate}
           className={({ isActive }) =>
             `flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${

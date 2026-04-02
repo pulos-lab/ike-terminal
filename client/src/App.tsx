@@ -35,13 +35,13 @@ function App() {
         <BrowserRouter>
           <Routes>
             {/* Public routes */}
-            <Route path="/landing" element={<LandingPage />} />
+            <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/verify-email" element={<VerifyOTPPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
             {/* Protected routes */}
-            <Route path="/*" element={
+            <Route path="/app/*" element={
               <AuthGuard>
                 <PortfolioProvider>
                   <AppShell>
@@ -53,12 +53,15 @@ function App() {
                       <Route path="/currency" element={<CurrencyExchangePage />} />
                       <Route path="/cash" element={<CashFlowPage />} />
                       <Route path="/admin/bugs" element={<BugReportsPage />} />
-                      <Route path="*" element={<Navigate to="/" replace />} />
+                      <Route path="*" element={<Navigate to="/app" replace />} />
                     </Routes>
                   </AppShell>
                 </PortfolioProvider>
               </AuthGuard>
             } />
+
+            {/* Catch-all */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
       </TooltipProvider>

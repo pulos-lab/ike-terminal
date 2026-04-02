@@ -26,7 +26,7 @@ export function VerifyOTPPage() {
   // Redirect if already verified
   useEffect(() => {
     if (session?.user?.emailVerified) {
-      window.location.href = '/';
+      window.location.href = '/app';
     }
   }, [session]);
 
@@ -126,7 +126,7 @@ export function VerifyOTPPage() {
       setSuccess(true);
       // Full reload to ensure auth cookies are refreshed
       setTimeout(() => {
-        window.location.href = '/';
+        window.location.href = '/app';
       }, 500);
     } catch {
       setError('Wystąpił błąd. Spróbuj ponownie.');
