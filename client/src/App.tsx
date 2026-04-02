@@ -6,6 +6,7 @@ import { PortfolioProvider } from '@/lib/portfolio-context';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { LoginPage } from '@/components/auth/LoginPage';
 import { VerifyOTPPage } from '@/components/auth/VerifyOTPPage';
+import { ForgotPasswordPage } from '@/components/auth/ForgotPasswordPage';
 import { AppShell } from '@/components/layout/AppShell';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { PortfolioPage } from '@/components/portfolio/PortfolioPage';
@@ -35,6 +36,7 @@ function App() {
             {/* Public routes */}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/verify-email" element={<VerifyOTPPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
             {/* Protected routes */}
             <Route path="/*" element={

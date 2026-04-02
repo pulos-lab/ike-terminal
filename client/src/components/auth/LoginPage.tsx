@@ -156,6 +156,18 @@ export function LoginPage() {
             </Button>
           </form>
 
+          {!isRegister && (
+            <p className="text-center text-sm">
+              <button
+                type="button"
+                onClick={() => navigate('/forgot-password')}
+                className="text-zinc-500 hover:text-zinc-300 hover:underline"
+              >
+                Zapomniałeś hasła?
+              </button>
+            </p>
+          )}
+
           <p className="text-center text-sm text-zinc-500">
             {isRegister ? 'Masz już konto?' : 'Nie masz konta?'}{' '}
             <button
