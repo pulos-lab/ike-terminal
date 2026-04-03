@@ -176,85 +176,84 @@ export const DEMO_PORTFOLIO_TOTAL = {
   plPct: 34.08,
 };
 
-// ── Trades (open positions view) ───────────────────────────────────────────
-export const DEMO_TRADES = [
+// ── Closed Trades (FIFO grouped) ──────────────────────────────────────────
+
+export interface DemoClosedTrade {
+  ticker: string;
+  quantity: number;
+  buyDate: string;
+  buyPrice: number;
+  sellDate: string;
+  sellPrice: number;
+  currency: string;
+  profitLoss: number;
+  profitLossPct: number;
+  holdingDays: number;
+}
+
+export interface DemoTradeGroup {
+  ticker: string;
+  sellDate: string;
+  sellPrice: number;
+  currency: string;
+  totalQuantity: number;
+  totalProfitLoss: number;
+  weightedProfitLossPct: number;
+  trades: DemoClosedTrade[];
+}
+
+export const DEMO_CLOSED_TRADES: DemoTradeGroup[] = [
   {
     ticker: 'CDR',
-    category: 'Stock' as const,
-    quantity: 45,
-    buyDate: '2025-06-12',
-    avgBuyPrice: 198.50,
-    commission: 44.66,
-    currentPrice: 247.80,
+    sellDate: '2026-03-10',
+    sellPrice: 268.40,
     currency: 'PLN',
-    valuePLN: 11_151.00,
-    pl: 2_218.50,
-    plPct: 24.88,
+    totalQuantity: 45,
+    totalProfitLoss: 3_226.50,
+    weightedProfitLossPct: 38.16,
+    trades: [
+      { ticker: 'CDR', quantity: 20, buyDate: '2025-04-15', buyPrice: 172.30, sellDate: '2026-03-10', sellPrice: 268.40, currency: 'PLN', profitLoss: 1_922.00, profitLossPct: 55.77, holdingDays: 330 },
+      { ticker: 'CDR', quantity: 15, buyDate: '2025-07-22', buyPrice: 198.50, sellDate: '2026-03-10', sellPrice: 268.40, currency: 'PLN', profitLoss: 1_048.50, profitLossPct: 35.21, holdingDays: 231 },
+      { ticker: 'CDR', quantity: 10, buyDate: '2025-11-03', buyPrice: 242.80, sellDate: '2026-03-10', sellPrice: 268.40, currency: 'PLN', profitLoss: 256.00, profitLossPct: 10.54, holdingDays: 128 },
+    ],
   },
   {
     ticker: 'AAPL',
-    category: 'Stock' as const,
-    quantity: 15,
-    buyDate: '2025-05-03',
-    avgBuyPrice: 178.20,
-    commission: 12.50,
-    currentPrice: 213.40,
+    sellDate: '2026-02-18',
+    sellPrice: 228.90,
     currency: 'USD',
-    valuePLN: 12_804.00,
-    pl: 2_112.00,
-    plPct: 19.74,
-  },
-  {
-    ticker: 'MSFT',
-    category: 'Stock' as const,
-    quantity: 8,
-    buyDate: '2025-07-18',
-    avgBuyPrice: 380.50,
-    commission: 14.20,
-    currentPrice: 428.90,
-    currency: 'USD',
-    valuePLN: 13_724.80,
-    pl: 1_548.80,
-    plPct: 12.72,
-  },
-  {
-    ticker: 'VWCE',
-    category: 'ETF' as const,
-    quantity: 25,
-    buyDate: '2025-04-22',
-    avgBuyPrice: 108.40,
-    commission: 8.90,
-    currentPrice: 119.85,
-    currency: 'EUR',
-    valuePLN: 12_944.85,
-    pl: 1_237.43,
-    plPct: 10.56,
+    totalQuantity: 12,
+    totalProfitLoss: 625.20,
+    weightedProfitLossPct: 29.50,
+    trades: [
+      { ticker: 'AAPL', quantity: 5, buyDate: '2025-03-10', buyPrice: 168.40, sellDate: '2026-02-18', sellPrice: 228.90, currency: 'USD', profitLoss: 302.50, profitLossPct: 35.93, holdingDays: 345 },
+      { ticker: 'AAPL', quantity: 7, buyDate: '2025-06-05', buyPrice: 185.30, sellDate: '2026-02-18', sellPrice: 228.90, currency: 'USD', profitLoss: 305.20, profitLossPct: 23.53, holdingDays: 258 },
+    ],
   },
   {
     ticker: 'PKN',
-    category: 'Stock' as const,
-    quantity: 80,
-    buyDate: '2025-09-05',
-    avgBuyPrice: 62.10,
-    commission: 24.84,
-    currentPrice: 58.30,
+    sellDate: '2026-01-22',
+    sellPrice: 56.80,
     currency: 'PLN',
-    valuePLN: 4_664.00,
-    pl: -304.00,
-    plPct: -6.12,
+    totalQuantity: 80,
+    totalProfitLoss: -424.00,
+    weightedProfitLossPct: -8.53,
+    trades: [
+      { ticker: 'PKN', quantity: 80, buyDate: '2025-09-05', buyPrice: 62.10, sellDate: '2026-01-22', sellPrice: 56.80, currency: 'PLN', profitLoss: -424.00, profitLossPct: -8.53, holdingDays: 139 },
+    ],
   },
   {
-    ticker: 'ALR',
-    category: 'Stock' as const,
-    quantity: 50,
-    buyDate: '2025-11-14',
-    avgBuyPrice: 78.60,
-    commission: 19.65,
-    currentPrice: 86.90,
-    currency: 'PLN',
-    valuePLN: 4_345.00,
-    pl: 415.00,
-    plPct: 10.56,
+    ticker: 'VWCE',
+    sellDate: '2026-03-25',
+    sellPrice: 124.60,
+    currency: 'EUR',
+    totalQuantity: 30,
+    totalProfitLoss: 482.40,
+    weightedProfitLossPct: 14.83,
+    trades: [
+      { ticker: 'VWCE', quantity: 15, buyDate: '2025-04-22', buyPrice: 108.40, sellDate: '2026-03-25', sellPrice: 124.60, currency: 'EUR', profitLoss: 243.00, profitLossPct: 14.94, holdingDays: 337 },
+      { ticker: 'VWCE', quantity: 15, buyDate: '2025-08-14', buyPrice: 105.00, sellDate: '2026-03-25', sellPrice: 124.60, currency: 'EUR', profitLoss: 294.00, profitLossPct: 18.67, holdingDays: 223 },
+    ],
   },
 ];
 

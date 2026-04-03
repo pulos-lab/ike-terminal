@@ -97,4 +97,12 @@ export function initSchema(db: Database.Database): void {
   if (!txColumns.some((c: any) => c.name === 'category')) {
     db.exec("ALTER TABLE transactions ADD COLUMN category TEXT DEFAULT 'stock'");
   }
+
+  // Composite indexes for duplicate detection during import
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_transactions_dedup
+      ON transactions(date, isin, side, quantity, price);
+    CREATE INDEX IF NOT EXISTS idx_operations_dedup
+      ON cash_operations(date, operation_type, amount, currency, ticker);
+  `);
 }

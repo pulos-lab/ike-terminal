@@ -23,6 +23,7 @@ const SKIP_REASON_LABELS: Record<SkipReason, string> = {
   summary_row: 'wiersz podsumowania',
   unparseable_comment: 'nierozpoznany format komentarza',
   close_trade_entry: 'wpis P/L (pominięty)',
+  duplicate: 'duplikat (już zaimportowano)',
 };
 
 interface Props {
@@ -64,9 +65,13 @@ export function ImportDialog({ open, onOpenChange }: Props) {
           messages.push(`WARN:Nie rozpoznano: ${result.tickersUnresolved.join(', ')}`);
         }
 
+        if (result.duplicatesSkipped && result.duplicatesSkipped > 0) {
+          messages.push(`WARN:Pominięto ${result.duplicatesSkipped} duplikatów — te rekordy już istnieją w bazie`);
+        }
+
         if (result.skipped && result.skipped.length > 0) {
-          // Hide close_trade_entry — these are expected CFD P/L entries, not errors
-          const visible = result.skipped.filter((s: any) => s.reason !== 'close_trade_entry');
+          // Hide close_trade_entry and duplicate — these have their own notifications
+          const visible = result.skipped.filter((s: any) => s.reason !== 'close_trade_entry' && s.reason !== 'duplicate');
           if (visible.length > 0) {
             const MAX_SHOWN = 10;
             const items = visible.slice(0, MAX_SHOWN);

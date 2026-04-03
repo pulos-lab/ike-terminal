@@ -242,7 +242,8 @@ export type SkipReason =
   | 'invalid_side' | 'invalid_quantity' | 'invalid_price'
   | 'invalid_date' | 'corporate_action' | 'short_row'
   | 'zero_amount' | 'settlement_record'
-  | 'summary_row' | 'unparseable_comment' | 'close_trade_entry';
+  | 'summary_row' | 'unparseable_comment' | 'close_trade_entry'
+  | 'duplicate';
 
 export interface SkippedRow {
   row: number;
@@ -292,6 +293,7 @@ export interface ImportResult {
   tickersResolved?: number;
   tickersUnresolved?: string[];
   skipped?: SkippedRow[];
+  duplicatesSkipped?: number;
 }
 
 // ============ Portfolio Management ============

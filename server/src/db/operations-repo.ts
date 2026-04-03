@@ -1,5 +1,6 @@
 import { getDb } from './connection.js';
-import type { CashOperation, OperationType } from 'shared';
+import type { CashOperation, OperationType, SkippedRow } from 'shared';
+import type { InsertWithDedupResult } from './transactions-repo.js';
 
 export function insertOperations(operations: CashOperation[], portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
@@ -18,6 +19,60 @@ export function insertOperations(operations: CashOperation[], portfolioId: strin
   });
 
   return insertMany(operations);
+}
+
+/** Insert operations with duplicate detection (count-based). */
+export function insertOperationsWithDedup(
+  operations: CashOperation[],
+  portfolioId: string = 'default',
+): InsertWithDedupResult {
+  const db = getDb(portfolioId);
+
+  const countStmt = db.prepare(`
+    SELECT COUNT(*) as cnt FROM cash_operations
+    WHERE date = ? AND operation_type = ? AND amount = ? AND currency = ?
+      AND (ticker IS ? OR (ticker IS NULL AND ? IS NULL))
+  `);
+  const insertStmt = db.prepare(`
+    INSERT INTO cash_operations (date, operation_type, description, details, amount, currency, ticker, fx_rate, fx_pair, source, import_batch)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  // Group by dedup key
+  const groups = new Map<string, CashOperation[]>();
+  for (const op of operations) {
+    const key = `${op.date}|${op.operationType}|${op.amount}|${op.currency}|${op.ticker || ''}`;
+    const group = groups.get(key);
+    if (group) group.push(op);
+    else groups.set(key, [op]);
+  }
+
+  const duplicates: SkippedRow[] = [];
+  let inserted = 0;
+
+  db.transaction(() => {
+    for (const [, opGroup] of groups) {
+      const sample = opGroup[0];
+      const ticker = sample.ticker || null;
+      const { cnt: existingCount } = countStmt.get(
+        sample.date, sample.operationType, sample.amount, sample.currency, ticker, ticker,
+      ) as { cnt: number };
+
+      const toInsert = Math.max(0, opGroup.length - existingCount);
+
+      for (let i = 0; i < toInsert; i++) {
+        const op = opGroup[i];
+        insertStmt.run(op.date, op.operationType, op.description, op.details || null, op.amount, op.currency, op.ticker || null, op.fxRate || null, op.fxPair || null, op.source, op.importBatch);
+        inserted++;
+      }
+
+      for (let i = toInsert; i < opGroup.length; i++) {
+        duplicates.push({ row: 0, reason: 'duplicate', paperName: opGroup[i].description });
+      }
+    }
+  })();
+
+  return { inserted, duplicates };
 }
 
 export function getAllOperations(portfolioId: string = 'default'): CashOperation[] {

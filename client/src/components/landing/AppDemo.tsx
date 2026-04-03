@@ -10,6 +10,8 @@ import {
   Target,
   ArrowUp,
   ArrowDown,
+  ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -28,7 +30,7 @@ import {
   DEMO_POSITIONS,
   DEMO_CASH,
   DEMO_PORTFOLIO_TOTAL,
-  DEMO_TRADES,
+  DEMO_CLOSED_TRADES,
   DEMO_DIVIDEND_TOTAL,
   DEMO_DIVIDEND_YEARLY,
   DEMO_DIVIDENDS,
@@ -280,66 +282,128 @@ function PortfolioView() {
   );
 }
 
-// ── Trades View ────────────────────────────────────────────────────────────
+// ── Trades View (closed trades, FIFO grouped) ────────────────────────────
 function TradesView() {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set(['CDR|2026-03-10']));
+  const toggle = (key: string) => setExpanded(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
   return (
     <div className="space-y-3">
-      <div className="text-sm font-medium text-zinc-300">Otwarte pozycje</div>
+      <div className="text-sm font-medium text-zinc-300">Zamknięte transakcje (FIFO)</div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-zinc-800 text-zinc-500 text-xs">
+              <th className="text-left py-2 px-2 font-medium w-6"></th>
               <th className="text-left py-2 px-2 font-medium">Ticker</th>
               <th className="text-right py-2 px-2 font-medium">Ilość</th>
-              <th className="text-left py-2 px-2 font-medium hidden sm:table-cell">Data kupna</th>
-              <th className="text-right py-2 px-2 font-medium hidden md:table-cell">Śr. cena</th>
-              <th className="text-right py-2 px-2 font-medium">Cena bieżąca</th>
-              <th className="text-right py-2 px-2 font-medium">Wartość (PLN)</th>
+              <th className="text-left py-2 px-2 font-medium hidden sm:table-cell">Kupno</th>
+              <th className="text-left py-2 px-2 font-medium hidden sm:table-cell">Sprzedaż</th>
+              <th className="text-right py-2 px-2 font-medium hidden md:table-cell">Cena K</th>
+              <th className="text-right py-2 px-2 font-medium">Cena S</th>
               <th className="text-right py-2 px-2 font-medium">P/L %</th>
             </tr>
           </thead>
           <tbody>
-            {DEMO_TRADES.map((t) => (
-              <tr key={t.ticker} className="border-b border-zinc-800/50 hover:bg-zinc-800/20">
-                <td className="py-2 px-2">
-                  <span className="font-mono font-bold text-white">{t.ticker}</span>
-                  {t.category === 'ETF' && (
-                    <span className="ml-1 text-[10px] border border-zinc-600 text-zinc-400 rounded px-1">
-                      ETF
-                    </span>
-                  )}
-                </td>
-                <td className="py-2 px-2 text-right text-zinc-300">{t.quantity}</td>
-                <td className="py-2 px-2 text-zinc-500 hidden sm:table-cell">
-                  {new Date(t.buyDate).toLocaleDateString('pl-PL')}
-                </td>
-                <td className="py-2 px-2 text-right text-zinc-300 hidden md:table-cell">
-                  {t.avgBuyPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
-                  <span className="text-[10px] text-zinc-600 ml-0.5">{t.currency}</span>
-                </td>
-                <td className="py-2 px-2 text-right text-zinc-300">
-                  {t.currentPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
-                  <span className="text-[10px] text-zinc-600 ml-0.5">{t.currency}</span>
-                </td>
-                <td className="py-2 px-2 text-right font-medium text-white">
-                  {formatPLN(t.valuePLN)}
-                </td>
-                <td className="py-2 px-2 text-right">
-                  <span
-                    className={`inline-block text-xs px-1.5 py-0.5 rounded ${
-                      t.plPct >= 0 ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'
-                    }`}
+            {DEMO_CLOSED_TRADES.map((g) => {
+              const key = `${g.ticker}|${g.sellDate}`;
+              const isExpanded = expanded.has(key);
+              const hasLots = g.trades.length > 1;
+              return (
+                <>
+                  <tr
+                    key={key}
+                    className={`border-b border-zinc-800/50 ${hasLots ? 'cursor-pointer hover:bg-zinc-800/30' : 'hover:bg-zinc-800/20'}`}
+                    onClick={() => hasLots && toggle(key)}
                   >
-                    {formatPct(t.plPct)}
-                  </span>
-                </td>
-              </tr>
-            ))}
+                    <td className="py-2 px-2 text-zinc-500">
+                      {hasLots && (isExpanded
+                        ? <ChevronDown className="w-3.5 h-3.5" />
+                        : <ChevronRight className="w-3.5 h-3.5" />
+                      )}
+                    </td>
+                    <td className="py-2 px-2">
+                      <span className="font-mono font-bold text-white">{g.ticker}</span>
+                      {hasLots && (
+                        <span className="ml-1 text-[10px] text-zinc-500">
+                          {g.trades.length} loty
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 px-2 text-right text-zinc-300">{g.totalQuantity}</td>
+                    <td className="py-2 px-2 text-zinc-500 hidden sm:table-cell">
+                      {hasLots
+                        ? `${fmtDate(g.trades[0].buyDate)} – ${fmtDate(g.trades[g.trades.length - 1].buyDate)}`
+                        : fmtDate(g.trades[0].buyDate)
+                      }
+                    </td>
+                    <td className="py-2 px-2 text-zinc-500 hidden sm:table-cell">
+                      {fmtDate(g.sellDate)}
+                    </td>
+                    <td className="py-2 px-2 text-right text-zinc-300 hidden md:table-cell">
+                      {hasLots ? '—' : g.trades[0].buyPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
+                      {!hasLots && <span className="text-[10px] text-zinc-600 ml-0.5">{g.currency}</span>}
+                    </td>
+                    <td className="py-2 px-2 text-right text-zinc-300">
+                      {g.sellPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
+                      <span className="text-[10px] text-zinc-600 ml-0.5">{g.currency}</span>
+                    </td>
+                    <td className="py-2 px-2 text-right">
+                      <span
+                        className={`inline-block text-xs px-1.5 py-0.5 rounded ${
+                          g.weightedProfitLossPct >= 0 ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'
+                        }`}
+                      >
+                        {formatPct(g.weightedProfitLossPct)}
+                      </span>
+                    </td>
+                  </tr>
+                  {hasLots && isExpanded && g.trades.map((t, i) => (
+                    <tr key={`${key}-${i}`} className="border-b border-zinc-800/30 bg-zinc-900/40">
+                      <td className="py-1.5 px-2"></td>
+                      <td className="py-1.5 px-2 text-zinc-500 text-xs pl-5">lot {i + 1}</td>
+                      <td className="py-1.5 px-2 text-right text-zinc-400 text-xs">{t.quantity}</td>
+                      <td className="py-1.5 px-2 text-zinc-500 text-xs hidden sm:table-cell">
+                        {fmtDate(t.buyDate)}
+                        <span className="text-zinc-600 ml-1">({t.holdingDays}d)</span>
+                      </td>
+                      <td className="py-1.5 px-2 text-zinc-500 text-xs hidden sm:table-cell">
+                        {fmtDate(t.sellDate)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right text-zinc-400 text-xs hidden md:table-cell">
+                        {t.buyPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
+                        <span className="text-[10px] text-zinc-600 ml-0.5">{t.currency}</span>
+                      </td>
+                      <td className="py-1.5 px-2 text-right text-zinc-400 text-xs">
+                        {t.sellPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-1.5 px-2 text-right">
+                        <span
+                          className={`inline-block text-[11px] px-1 py-0.5 rounded ${
+                            t.profitLossPct >= 0 ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'
+                          }`}
+                        >
+                          {formatPct(t.profitLossPct)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </>
+              );
+            })}
           </tbody>
         </table>
       </div>
     </div>
   );
+}
+
+function fmtDate(d: string) {
+  return new Date(d).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
 // ── Dividends View ─────────────────────────────────────────────────────────

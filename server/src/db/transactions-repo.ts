@@ -1,5 +1,5 @@
 import { getDb } from './connection.js';
-import type { Transaction } from 'shared';
+import type { Transaction, SkippedRow } from 'shared';
 
 export function insertTransactions(transactions: Transaction[], portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
@@ -18,6 +18,63 @@ export function insertTransactions(transactions: Transaction[], portfolioId: str
   });
 
   return insertMany(transactions);
+}
+
+export interface InsertWithDedupResult {
+  inserted: number;
+  duplicates: SkippedRow[];
+}
+
+/** Insert transactions with duplicate detection (count-based). */
+export function insertTransactionsWithDedup(
+  transactions: Transaction[],
+  portfolioId: string = 'default',
+): InsertWithDedupResult {
+  const db = getDb(portfolioId);
+
+  const countStmt = db.prepare(`
+    SELECT COUNT(*) as cnt FROM transactions
+    WHERE date = ? AND isin = ? AND side = ? AND quantity = ? AND price = ?
+  `);
+  const insertStmt = db.prepare(`
+    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, category, source, import_batch)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  // Group by dedup key
+  const groups = new Map<string, Transaction[]>();
+  for (const tx of transactions) {
+    const key = `${tx.date}|${tx.isin}|${tx.side}|${tx.quantity}|${tx.price}`;
+    const group = groups.get(key);
+    if (group) group.push(tx);
+    else groups.set(key, [tx]);
+  }
+
+  const duplicates: SkippedRow[] = [];
+  let inserted = 0;
+
+  db.transaction(() => {
+    for (const [, txGroup] of groups) {
+      const sample = txGroup[0];
+      const { cnt: existingCount } = countStmt.get(
+        sample.date, sample.isin, sample.side, sample.quantity, sample.price,
+      ) as { cnt: number };
+
+      const toInsert = Math.max(0, txGroup.length - existingCount);
+
+      for (let i = 0; i < toInsert; i++) {
+        const tx = txGroup[i];
+        insertStmt.run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.category || 'stock', tx.source, tx.importBatch);
+        inserted++;
+      }
+
+      for (let i = toInsert; i < txGroup.length; i++) {
+        duplicates.push({ row: 0, reason: 'duplicate', paperName: txGroup[i].paperName });
+      }
+    }
+  })();
+
+  return { inserted, duplicates };
 }
 
 export function getAllTransactions(portfolioId: string = 'default'): Transaction[] {

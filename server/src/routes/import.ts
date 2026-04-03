@@ -5,8 +5,8 @@ import type { BrokerType } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
 import { parseBossaOperations } from '../parsers/bossa-operations.js';
 import { detectBroker, getParserById, detectBinaryBroker, getBinaryParserById } from '../parsers/registry.js';
-import { insertTransactions, getTransactionsCount, clearTransactions, getLastImportDate } from '../db/transactions-repo.js';
-import { insertOperations, getOperationsCount, clearOperations } from '../db/operations-repo.js';
+import { insertTransactionsWithDedup, getTransactionsCount, clearTransactions, getLastImportDate } from '../db/transactions-repo.js';
+import { insertOperationsWithDedup, getOperationsCount, clearOperations } from '../db/operations-repo.js';
 import { seedTickerMap, findIsinByName } from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from '../services/isin-resolver.js';
 import { asyncHandler } from '../middleware/async-handler.js';
@@ -79,8 +79,15 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
       }
     }
 
-    const txCount = txResult.data.length > 0 ? insertTransactions(txResult.data, pid) : 0;
-    const opsCount = opsResult.data.length > 0 ? insertOperations(opsResult.data, pid) : 0;
+    const txDedup = txResult.data.length > 0
+      ? insertTransactionsWithDedup(txResult.data, pid)
+      : { inserted: 0, duplicates: [] };
+    const opsDedup = opsResult.data.length > 0
+      ? insertOperationsWithDedup(opsResult.data, pid)
+      : { inserted: 0, duplicates: [] };
+
+    const allSkipped = [...txResult.skipped, ...txDedup.duplicates, ...opsDedup.duplicates];
+    const duplicatesSkipped = txDedup.duplicates.length + opsDedup.duplicates.length;
 
     // Auto-resolve ISINs via Yahoo/Stooq lookups
     const { resolved, unresolved } = txResult.data.length > 0
@@ -89,14 +96,15 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
 
     return res.json({
       success: true,
-      transactionsImported: txCount,
-      operationsImported: opsCount,
+      transactionsImported: txDedup.inserted,
+      operationsImported: opsDedup.inserted,
       importBatch,
       total: getTransactionsCount(pid),
       detectedSource: binaryParser.id,
       tickersResolved: resolved.length,
       tickersUnresolved: unresolved.map(u => u.paperName),
-      skipped: txResult.skipped.length > 0 ? txResult.skipped : undefined,
+      skipped: allSkipped.length > 0 ? allSkipped : undefined,
+      duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
     });
   }
 
@@ -136,18 +144,22 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
     }
   }
 
-  const count = insertTransactions(transactions, pid);
+  const { inserted, duplicates } = insertTransactionsWithDedup(transactions, pid);
   const { resolved, unresolved } = await resolveUnknownIsins(transactions, pid);
+
+  const allSkipped = [...skipped, ...duplicates];
+  const duplicatesSkipped = duplicates.length;
 
   res.json({
     success: true,
-    transactionsImported: count,
+    transactionsImported: inserted,
     importBatch,
     total: getTransactionsCount(pid),
     detectedSource: parser.id,
     tickersResolved: resolved.length,
     tickersUnresolved: unresolved.map(u => u.paperName),
-    skipped: skipped.length > 0 ? skipped : undefined,
+    skipped: allSkipped.length > 0 ? allSkipped : undefined,
+    duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
   });
 }));
 
@@ -174,14 +186,18 @@ router.post('/operations', upload.single('file'), asyncHandler((req, res) => {
   }
 
   const pid = req.portfolioId;
-  const count = insertOperations(operations, pid);
+  const { inserted, duplicates } = insertOperationsWithDedup(operations, pid);
+
+  const allSkipped = [...skipped, ...duplicates];
+  const duplicatesSkipped = duplicates.length;
 
   res.json({
     success: true,
-    operationsImported: count,
+    operationsImported: inserted,
     importBatch,
     total: getOperationsCount(pid),
-    skipped: skipped.length > 0 ? skipped : undefined,
+    skipped: allSkipped.length > 0 ? allSkipped : undefined,
+    duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
   });
 }));
 
