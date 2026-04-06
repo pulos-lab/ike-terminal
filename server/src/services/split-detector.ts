@@ -17,30 +17,34 @@ export interface DetectedSplit {
   source: 'auto' | 'manual';
 }
 
-/** Minimum price discrepancy threshold to consider a split (15%) */
-const SPLIT_THRESHOLD = 0.15;
-
 /** Maximum tolerance when matching a raw ratio to a known split ratio (5%) */
 const RATIO_TOLERANCE = 0.05;
 
 /**
  * Known real-world stock split ratios (forward and reverse).
- * A raw ratio must be within ±5% of one of these to be considered a real split
- * rather than a normal price movement.
+ * The smallest possible split is 2:1 (forward) or 1:2 (reverse),
+ * so any ratio between 0.53 and 1.9 is definitely NOT a split.
  */
 const KNOWN_SPLIT_RATIOS = [
-  // Forward splits
+  // Forward splits (ratio >= 2)
   2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 50, 100,
-  // Reverse splits
+  // Reverse splits (ratio <= 0.5)
   1/2, 1/3, 1/4, 1/5, 1/6, 1/8, 1/10, 1/15, 1/20, 1/25, 1/50,
 ];
 
 /**
  * Check if a detected ratio is close to a known stock split ratio.
- * This prevents false positives from normal price movements (e.g. -40% crash
- * giving ratio 1.67, which is NOT a real split).
+ *
+ * The minimum real split is 2:1 (forward) or 1:2 (reverse), so any price
+ * discrepancy under 2x is guaranteed to be a normal price movement, not a split.
+ * This eliminates false positives from crashes (-40%, -60%) and rallies (+80%, +150%).
  */
 export function isPlausibleSplitRatio(ratio: number): boolean {
+  // Quick reject: anything between 0.53 and 1.9 can't be a split
+  // (smallest split is 2:1 forward or 1:2 reverse, with 5% tolerance)
+  if (ratio > 0.5 * (1 + RATIO_TOLERANCE) && ratio < 2 * (1 - RATIO_TOLERANCE)) {
+    return false;
+  }
   return KNOWN_SPLIT_RATIOS.some(known =>
     Math.abs(ratio / known - 1) < RATIO_TOLERANCE
   );
@@ -101,24 +105,21 @@ export function detectSplits(
     const currentRatio = cumulativeRatio.get(entry.ticker) ?? 1;
     const scaledProviderPrice = providerPrice * currentRatio;
 
-    const discrepancy = Math.abs(tx.price / scaledProviderPrice - 1);
-    if (discrepancy > SPLIT_THRESHOLD) {
-      const rawRatio = tx.price / scaledProviderPrice;
-      // Only accept ratios that match known split values (prevents false positives
-      // from normal price movements like a -40% crash)
-      if (isPlausibleSplitRatio(rawRatio)) {
-        const snappedRatio = snapToKnownRatio(rawRatio);
-        splits.push({
-          ticker: entry.ticker,
-          isin: tx.isin,
-          date: dateKey,
-          ratio: snappedRatio,
-          txPrice: tx.price,
-          providerPrice: scaledProviderPrice,
-          source: 'auto',
-        });
-        cumulativeRatio.set(entry.ticker, currentRatio * snappedRatio);
-      }
+    const rawRatio = tx.price / scaledProviderPrice;
+    // Only accept ratios matching known splits (>=2x or <=0.5x).
+    // Any discrepancy under 2x is a normal price movement, not a split.
+    if (isPlausibleSplitRatio(rawRatio)) {
+      const snappedRatio = snapToKnownRatio(rawRatio);
+      splits.push({
+        ticker: entry.ticker,
+        isin: tx.isin,
+        date: dateKey,
+        ratio: snappedRatio,
+        txPrice: tx.price,
+        providerPrice: scaledProviderPrice,
+        source: 'auto',
+      });
+      cumulativeRatio.set(entry.ticker, currentRatio * snappedRatio);
     }
   }
 

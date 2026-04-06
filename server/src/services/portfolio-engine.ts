@@ -28,7 +28,6 @@ async function detectSplitsFromTransactions(
   tickerMap: Map<string, TickerMapEntry>,
   existingSplits: DetectedSplit[],
 ): Promise<DetectedSplit[]> {
-  const THRESHOLD = 0.15;
   const detected: DetectedSplit[] = [];
 
   // ISINs that already have splits don't need re-detection
@@ -65,8 +64,7 @@ async function detectSplitsFromTransactions(
       if (!priceOnDate || priceOnDate.close <= 0) return;
 
       const rawRatio = tx.price / priceOnDate.close;
-      const discrepancy = Math.abs(rawRatio - 1);
-      if (discrepancy > THRESHOLD && isPlausibleSplitRatio(rawRatio)) {
+      if (isPlausibleSplitRatio(rawRatio)) {
         detected.push({
           ticker: entry.ticker,
           isin,
