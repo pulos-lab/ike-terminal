@@ -82,7 +82,15 @@ router.get('/positions', asyncHandler(async (req, res) => {
     cp.weight = totalValuePln > 0 ? (cp.valuePln / totalValuePln) * 100 : 0;
   }
 
-  res.json({ positions, cashPositions, totalValuePln, stocksValuePln, cashValuePln });
+  // Recent splits (within last 7 days) for UI notification
+  const weekAgo = new Date();
+  weekAgo.setDate(weekAgo.getDate() - 7);
+  const weekAgoStr = weekAgo.toISOString().split('T')[0];
+  const recentSplits = detectedSplits
+    .filter(s => s.date >= weekAgoStr)
+    .map(s => ({ isin: s.isin, ticker: s.ticker, date: s.date, ratio: s.ratio }));
+
+  res.json({ positions, cashPositions, totalValuePln, stocksValuePln, cashValuePln, recentSplits });
 }));
 
 // GET /api/portfolio/closed-trades
