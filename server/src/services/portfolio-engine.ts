@@ -17,6 +17,74 @@ function mergeDetectedSplits(saved: DetectedSplit[], detected: DetectedSplit[]):
   return [...map.values()];
 }
 
+/**
+ * Lightweight split detection for open positions: fetches one provider price
+ * per ISIN (at the earliest transaction date) and checks for discrepancies.
+ * This ensures splits are detected even if the dashboard hasn't been visited.
+ * Skips ISINs that already have saved splits.
+ */
+async function detectSplitsFromTransactions(
+  transactions: Transaction[],
+  tickerMap: Map<string, TickerMapEntry>,
+  existingSplits: DetectedSplit[],
+): Promise<DetectedSplit[]> {
+  const THRESHOLD = 0.15;
+  const detected: DetectedSplit[] = [];
+
+  // ISINs that already have splits don't need re-detection
+  const isinsWithSplits = new Set(existingSplits.map(s => s.isin));
+
+  // Find earliest transaction per ISIN (same currency only)
+  const earliestTx = new Map<string, Transaction>();
+  for (const tx of transactions) {
+    const entry = tickerMap.get(tx.isin);
+    if (!entry || tx.currency !== entry.currency) continue;
+    if (isinsWithSplits.has(tx.isin)) continue;
+    const existing = earliestTx.get(tx.isin);
+    if (!existing || tx.date < existing.date) {
+      earliestTx.set(tx.isin, tx);
+    }
+  }
+
+  // Fetch one historical price per ISIN in parallel
+  const checks = [...earliestTx.entries()].map(async ([isin, tx]) => {
+    const entry = tickerMap.get(isin);
+    if (!entry) return;
+
+    const dateKey = tx.date.split('T')[0];
+    try {
+      let data: Array<{ date: string; close: number }> = [];
+      if (entry.exchange === 'NC') {
+        data = await fetchStooqHistory(entry.ticker, dateKey);
+      } else {
+        data = await fetchYahooHistory(entry.ticker, dateKey, dateKey);
+      }
+
+      // Find price on the transaction date (or closest)
+      const priceOnDate = data.find(d => d.date === dateKey);
+      if (!priceOnDate || priceOnDate.close <= 0) return;
+
+      const discrepancy = Math.abs(tx.price / priceOnDate.close - 1);
+      if (discrepancy > THRESHOLD) {
+        detected.push({
+          ticker: entry.ticker,
+          isin,
+          date: dateKey,
+          ratio: tx.price / priceOnDate.close,
+          txPrice: tx.price,
+          providerPrice: priceOnDate.close,
+          source: 'auto',
+        });
+      }
+    } catch {
+      // Silently skip — detection will happen on dashboard visit
+    }
+  });
+
+  await Promise.all(checks);
+  return detected;
+}
+
 // ============ Position Metrics (FIFO) ============
 
 interface BuyLot {
@@ -84,9 +152,15 @@ export async function computeOpenPositions(
   transactions: Transaction[],
   tickerMap: Map<string, TickerMapEntry>,
   splits: DetectedSplit[] = [],
-): Promise<{ positions: Position[]; totalValuePln: number }> {
+): Promise<{ positions: Position[]; totalValuePln: number; detectedSplits: DetectedSplit[] }> {
+  // Lightweight split detection: for each ISIN, fetch the provider price on the
+  // earliest transaction date and compare. This catches splits even if the user
+  // hasn't visited the dashboard yet (which runs the full history-based detection).
+  const additionalSplits = await detectSplitsFromTransactions(transactions, tickerMap, splits);
+  const allSplits = mergeDetectedSplits(splits, additionalSplits);
+
   // Adjust transactions for stock splits (quantity/price correction)
-  const adjustedTxs = adjustTransactionsForSplits(transactions, splits);
+  const adjustedTxs = adjustTransactionsForSplits(transactions, allSplits);
 
   // Group by ISIN
   const byIsin = new Map<string, Transaction[]>();
@@ -207,7 +281,7 @@ export async function computeOpenPositions(
   // Sort by value descending
   positions.sort((a, b) => b.currentValuePln - a.currentValuePln);
 
-  return { positions, totalValuePln };
+  return { positions, totalValuePln, detectedSplits: allSplits };
 }
 
 // ============ Closed Trades (FIFO) ============

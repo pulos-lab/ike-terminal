@@ -42,7 +42,18 @@ router.get('/positions', asyncHandler(async (req, res) => {
   const operations = getAllOperations(pid);
   const tickerMap = getTickerMap(pid);
   const savedSplits = loadSplitsForEngine(pid);
-  const { positions, totalValuePln: stocksValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
+  const { positions, totalValuePln: stocksValuePln, detectedSplits } = await computeOpenPositions(transactions, tickerMap, savedSplits);
+
+  // Persist any newly detected splits
+  if (detectedSplits.length > savedSplits.length) {
+    upsertSplits(pid, detectedSplits.map(s => ({
+      isin: s.isin,
+      ticker: s.ticker,
+      splitDate: s.date,
+      ratio: s.ratio,
+      source: s.source,
+    })));
+  }
 
   // Compute cash balances per currency
   const balances = computeCashBalances(transactions, operations);
@@ -382,7 +393,7 @@ router.get('/metrics', asyncHandler(async (req, res) => {
   const tickerMap = getTickerMap(pid);
 
   const savedSplits = loadSplitsForEngine(pid);
-  const { positions, totalValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
+  const { totalValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
 
   // Include both deposits (positive) and withdrawals (negative) for accurate metrics
   const cashFlows = operations
