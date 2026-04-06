@@ -84,7 +84,7 @@ export function initSchema(db: Database.Database): void {
       ratio REAL NOT NULL,
       source TEXT DEFAULT 'auto',
       detected_at TEXT DEFAULT (datetime('now')),
-      UNIQUE(isin, split_date)
+      UNIQUE(isin)
     );
 
     CREATE INDEX IF NOT EXISTS idx_splits_isin ON stock_splits(isin);
@@ -109,6 +109,37 @@ export function initSchema(db: Database.Database): void {
   const txColumns = db.prepare("PRAGMA table_info(transactions)").all() as any[];
   if (!txColumns.some((c: any) => c.name === 'category')) {
     db.exec("ALTER TABLE transactions ADD COLUMN category TEXT DEFAULT 'stock'");
+  }
+
+  // Migration: tighten stock_splits UNIQUE from (isin, split_date) to (isin)
+  // SQLite doesn't support ALTER CONSTRAINT, so recreate the table
+  const splitsIndexes = db.prepare("PRAGMA index_list(stock_splits)").all() as any[];
+  const hasOldConstraint = splitsIndexes.some((idx: any) => {
+    const cols = db.prepare(`PRAGMA index_info('${idx.name}')`).all() as any[];
+    return cols.length === 2; // old constraint had 2 columns (isin, split_date)
+  });
+  if (hasOldConstraint) {
+    db.exec(`
+      -- Keep only the latest split per ISIN before migration
+      DELETE FROM stock_splits WHERE id NOT IN (
+        SELECT MAX(id) FROM stock_splits GROUP BY isin
+      );
+      -- Recreate with new constraint
+      CREATE TABLE stock_splits_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        isin TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        split_date TEXT NOT NULL,
+        ratio REAL NOT NULL,
+        source TEXT DEFAULT 'auto',
+        detected_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(isin)
+      );
+      INSERT INTO stock_splits_new SELECT * FROM stock_splits;
+      DROP TABLE stock_splits;
+      ALTER TABLE stock_splits_new RENAME TO stock_splits;
+      CREATE INDEX IF NOT EXISTS idx_splits_isin ON stock_splits(isin);
+    `);
   }
 
   // Composite indexes for duplicate detection during import

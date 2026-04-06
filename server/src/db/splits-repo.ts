@@ -38,7 +38,8 @@ export function upsertSplit(portfolioId: string, split: StockSplit): void {
   db.prepare(`
     INSERT INTO stock_splits (isin, ticker, split_date, ratio, source)
     VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(isin, split_date) DO UPDATE SET
+    ON CONFLICT(isin) DO UPDATE SET
+      split_date = excluded.split_date,
       ratio = excluded.ratio,
       ticker = excluded.ticker,
       source = excluded.source
@@ -50,7 +51,8 @@ export function upsertSplits(portfolioId: string, splits: StockSplit[]): void {
   const stmt = db.prepare(`
     INSERT INTO stock_splits (isin, ticker, split_date, ratio, source)
     VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(isin, split_date) DO UPDATE SET
+    ON CONFLICT(isin) DO UPDATE SET
+      split_date = excluded.split_date,
       ratio = excluded.ratio,
       ticker = excluded.ticker,
       source = excluded.source

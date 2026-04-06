@@ -9,10 +9,9 @@ import { getDb } from '../db/connection.js';
 /** Merge saved splits with newly detected ones, deduplicating by (isin, date). */
 function mergeDetectedSplits(saved: DetectedSplit[], detected: DetectedSplit[]): DetectedSplit[] {
   const map = new Map<string, DetectedSplit>();
-  for (const s of saved) map.set(`${s.isin}|${s.date}`, s);
+  for (const s of saved) map.set(s.isin, s);
   for (const s of detected) {
-    const key = `${s.isin}|${s.date}`;
-    if (!map.has(key)) map.set(key, s);
+    if (!map.has(s.isin)) map.set(s.isin, s);
   }
   return [...map.values()];
 }
