@@ -76,6 +76,17 @@ export function initSchema(db: Database.Database): void {
       PRIMARY KEY (ticker, date)
     );
 
+    CREATE TABLE IF NOT EXISTS stock_splits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      isin TEXT NOT NULL,
+      ticker TEXT NOT NULL,
+      split_date TEXT NOT NULL,
+      ratio REAL NOT NULL,
+      source TEXT DEFAULT 'auto',
+      detected_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(isin, split_date)
+    );
+
     CREATE TABLE IF NOT EXISTS portfolio_snapshots (
       date TEXT PRIMARY KEY,
       total_value_pln REAL NOT NULL,

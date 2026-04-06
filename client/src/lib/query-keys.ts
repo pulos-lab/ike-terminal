@@ -10,6 +10,7 @@ export const QUERY_KEYS = {
   deposits: ['portfolio', 'deposits'] as const,
   cashFlow: ['portfolio', 'cash-flow'] as const,
   fxHistory: ['portfolio', 'fx-history'] as const,
+  splits: ['portfolio', 'splits'] as const,
   livePrices: ['prices', 'live'] as const,
   importStatus: ['import', 'status'] as const,
 };
