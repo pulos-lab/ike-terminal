@@ -1,7 +1,21 @@
-import type { Transaction, CashOperation, Position, ClosedTrade, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord } from 'shared';
+import type { Transaction, CashOperation, Position, ClosedTrade, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, StockSplit } from 'shared';
 import { fetchYahooPrice, fetchFxRate, fetchYahooHistory } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
 import { getDb } from '../db/connection.js';
+import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, type DetectedSplit } from './split-detector.js';
+
+// ============ Split Helpers ============
+
+/** Merge saved splits with newly detected ones, deduplicating by (isin, date). */
+function mergeDetectedSplits(saved: DetectedSplit[], detected: DetectedSplit[]): DetectedSplit[] {
+  const map = new Map<string, DetectedSplit>();
+  for (const s of saved) map.set(`${s.isin}|${s.date}`, s);
+  for (const s of detected) {
+    const key = `${s.isin}|${s.date}`;
+    if (!map.has(key)) map.set(key, s);
+  }
+  return [...map.values()];
+}
 
 // ============ Position Metrics (FIFO) ============
 
@@ -68,11 +82,15 @@ export function computePositionMetrics(transactions: Transaction[]): PositionMet
 
 export async function computeOpenPositions(
   transactions: Transaction[],
-  tickerMap: Map<string, TickerMapEntry>
+  tickerMap: Map<string, TickerMapEntry>,
+  splits: DetectedSplit[] = [],
 ): Promise<{ positions: Position[]; totalValuePln: number }> {
+  // Adjust transactions for stock splits (quantity/price correction)
+  const adjustedTxs = adjustTransactionsForSplits(transactions, splits);
+
   // Group by ISIN
   const byIsin = new Map<string, Transaction[]>();
-  for (const tx of transactions) {
+  for (const tx of adjustedTxs) {
     const arr = byIsin.get(tx.isin) || [];
     arr.push(tx);
     byIsin.set(tx.isin, arr);
@@ -198,9 +216,13 @@ export function computeClosedTrades(
   transactions: Transaction[],
   tickerMap: Map<string, TickerMapEntry>,
   operations?: CashOperation[],
+  splits: DetectedSplit[] = [],
 ): ClosedTrade[] {
+  // Adjust transactions for stock splits (quantity/price correction)
+  const adjustedTxs = adjustTransactionsForSplits(transactions, splits);
+
   const byIsin = new Map<string, Transaction[]>();
-  for (const tx of transactions) {
+  for (const tx of adjustedTxs) {
     const arr = byIsin.get(tx.isin) || [];
     arr.push(tx);
     byIsin.set(tx.isin, arr);
@@ -435,8 +457,9 @@ export async function computePortfolioHistory(
   benchmarkTicker: string,
   benchmarkSource: 'yahoo' | 'stooq' | 'none',
   startDate?: string,
-  endDate?: string
-): Promise<{ history: PortfolioHistoryPoint[]; metrics: PortfolioMetrics }> {
+  endDate?: string,
+  splits: DetectedSplit[] = [],
+): Promise<{ history: PortfolioHistoryPoint[]; metrics: PortfolioMetrics; detectedSplits: DetectedSplit[] }> {
   // Determine date range
   const allDates = [
     ...operations.map(o => o.date.split('T')[0]),
@@ -495,17 +518,7 @@ export async function computePortfolioHistory(
     map.set(date, (map.get(date) || 0) + impact);
   }
 
-  // Build daily holdings per ISIN
-  const holdingsChanges = new Map<string, Map<string, number>>(); // date -> isin -> qty change
-  for (const tx of transactions) {
-    const date = tx.date.split('T')[0];
-    const byDate = holdingsChanges.get(date) || new Map();
-    const change = tx.side === 'K' ? tx.quantity : -tx.quantity;
-    byDate.set(tx.isin, (byDate.get(tx.isin) || 0) + change);
-    holdingsChanges.set(date, byDate);
-  }
-
-  // Get unique ISINs that were ever held
+  // Get unique ISINs that were ever held (ISINs don't change with split adjustment)
   const allIsins = new Set<string>();
   for (const tx of transactions) allIsins.add(tx.isin);
 
@@ -584,42 +597,38 @@ export async function computePortfolioHistory(
 
   await Promise.all(fetchPromises);
 
-  // Scale historical prices to match actual transaction prices.
-  // Data providers (Yahoo, Stooq) return split/dividend-adjusted prices
-  // which can be very different from the price actually paid (e.g. AVGO
-  // 10:1 split makes Yahoo show 107 instead of 1070).
-  // We detect the ratio on transaction dates and rescale all prices for that ticker.
-  // Only compare when tx currency matches ticker currency (otherwise it's an FX
-  // difference, not a split — Bossa sometimes records PLN prices for USD stocks).
-  // Process in chronological order so the earliest transaction sets the scale.
-  const sortedTxForScaling = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
-  const alreadyScaled = new Set<string>();
+  // Detect stock splits by comparing transaction prices with provider prices.
+  // Merge with any previously saved/manual splits passed in.
+  const newlyDetected = detectSplits(transactions, historicalPrices, tickerMap);
+  const allSplits = mergeDetectedSplits(splits, newlyDetected);
+
+  // Adjust transactions for splits: convert pre-split transactions to post-split scale
+  // (quantity * ratio, price / ratio). Provider prices are already split-adjusted, so
+  // after this adjustment, everything is in the same (post-split) scale.
+  const adjustedTxs = adjustTransactionsForSplits(transactions, allSplits);
+
+  // Overwrite transaction date prices with adjusted tx prices (same currency only).
+  // This ensures exact match on transaction dates even if provider data differs slightly.
+  const sortedTxForScaling = [...adjustedTxs].sort((a, b) => a.date.localeCompare(b.date));
   for (const tx of sortedTxForScaling) {
     const entry = tickerMap.get(tx.isin);
     if (!entry) continue;
+    if (tx.currency !== entry.currency) continue;
     const dateKey = tx.date.split('T')[0];
-    if (!historicalPrices.has(entry.ticker)) historicalPrices.set(entry.ticker, new Map());
-    const priceMap = historicalPrices.get(entry.ticker)!;
-
-    // Only attempt scaling if currencies match and not already scaled
-    if (tx.currency === entry.currency && !alreadyScaled.has(entry.ticker)) {
-      const providerPrice = priceMap.get(dateKey);
-      if (providerPrice && providerPrice > 0 && Math.abs(tx.price / providerPrice - 1) > 0.15) {
-        // Significant discrepancy detected — likely a split or major adjustment.
-        // Rescale ALL provider prices by this ratio so the entire history is
-        // consistent with actual transaction prices.
-        const ratio = tx.price / providerPrice;
-        for (const [d, p] of priceMap) {
-          priceMap.set(d, p * ratio);
-        }
-        alreadyScaled.add(entry.ticker);
-      }
-    }
-
-    // Overwrite transaction date price only if same currency
-    if (tx.currency === entry.currency) {
+    const priceMap = historicalPrices.get(entry.ticker);
+    if (priceMap) {
       priceMap.set(dateKey, tx.price);
     }
+  }
+
+  // Build daily holdings per ISIN (using split-adjusted quantities)
+  const holdingsChanges = new Map<string, Map<string, number>>(); // date -> isin -> qty change
+  for (const tx of adjustedTxs) {
+    const date = tx.date.split('T')[0];
+    const byDate = holdingsChanges.get(date) || new Map();
+    const change = tx.side === 'K' ? tx.quantity : -tx.quantity;
+    byDate.set(tx.isin, (byDate.get(tx.isin) || 0) + change);
+    holdingsChanges.set(date, byDate);
   }
 
   // For tickers with no provider data (blacklisted or unavailable), interpolate
@@ -631,9 +640,9 @@ export async function computePortfolioHistory(
     const priceMap = historicalPrices.get(entry.ticker);
     if (!priceMap) continue;
 
-    // Collect transaction price points for this ticker (same currency only)
+    // Collect transaction price points for this ticker (same currency only, split-adjusted)
     const txPoints: Array<{ date: string; price: number }> = [];
-    for (const tx of transactions) {
+    for (const tx of adjustedTxs) {
       if (tx.isin !== isin) continue;
       if (tx.currency !== entry.currency) continue;
       txPoints.push({ date: tx.date.split('T')[0], price: tx.price });
@@ -885,7 +894,7 @@ export async function computePortfolioHistory(
     totalDividends,
   };
 
-  return { history, metrics };
+  return { history, metrics, detectedSplits: allSplits };
 }
 
 // ============ Cash Flow History ============

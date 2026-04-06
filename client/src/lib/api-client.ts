@@ -155,6 +155,18 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // Stock Splits
+  getSplits: () => request<any>('/portfolio/splits'),
+  createSplit: (body: { isin: string; ticker: string; splitDate: string; ratio: number }) =>
+    request<{ success: boolean }>('/portfolio/splits', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deleteSplit: (id: number) =>
+    request<{ success: boolean }>(`/portfolio/splits/${id}`, {
+      method: 'DELETE',
+    }),
+
   // Prices
   getLivePrices: () => request<any>('/prices/live'),
 

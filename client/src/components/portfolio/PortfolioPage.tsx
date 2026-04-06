@@ -19,6 +19,7 @@ import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { formatCurrency, formatNumber, formatPercent, formatPLN, formatQuantity } from '@/lib/formatters';
 import { Eye, EyeOff } from 'lucide-react';
 import { PortfolioDiversification } from './PortfolioDiversification';
+import { SplitsPanel } from './SplitsPanel';
 
 interface ColumnVisibility {
   avgPrice: boolean;
@@ -267,6 +268,8 @@ export function PortfolioPage() {
           totalValuePln={data.totalValuePln}
         />
       )}
+
+      <SplitsPanel />
     </div>
   );
 }

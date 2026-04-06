@@ -3,7 +3,8 @@ import { asyncHandler } from '../middleware/async-handler.js';
 import { getAllTransactions, getTransactionById, insertTransaction, updateTransaction, deleteTransaction } from '../db/transactions-repo.js';
 import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOperation, insertOperations, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
 import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
-import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput } from 'shared';
+import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
+import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput, StockSplitInput } from 'shared';
 import { fetchYahooPrice, fetchFxRate } from '../services/yahoo-finance.js';
 import {
   computeOpenPositions,
@@ -17,8 +18,22 @@ import {
 } from '../services/portfolio-engine.js';
 import { BENCHMARKS, type BenchmarkKey } from 'shared';
 import { searchTickers } from '../services/ticker-search.js';
+import type { DetectedSplit } from '../services/split-detector.js';
 
 const router = Router();
+
+/** Load saved splits from DB and convert to DetectedSplit format for the engine. */
+function loadSplitsForEngine(pid: string): DetectedSplit[] {
+  return getSplits(pid).map(s => ({
+    ticker: s.ticker,
+    isin: s.isin,
+    date: s.splitDate,
+    ratio: s.ratio,
+    txPrice: 0,
+    providerPrice: 0,
+    source: s.source,
+  }));
+}
 
 // GET /api/portfolio/positions
 router.get('/positions', asyncHandler(async (req, res) => {
@@ -26,7 +41,8 @@ router.get('/positions', asyncHandler(async (req, res) => {
   const transactions = getAllTransactions(pid);
   const operations = getAllOperations(pid);
   const tickerMap = getTickerMap(pid);
-  const { positions, totalValuePln: stocksValuePln } = await computeOpenPositions(transactions, tickerMap);
+  const savedSplits = loadSplitsForEngine(pid);
+  const { positions, totalValuePln: stocksValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
 
   // Compute cash balances per currency
   const balances = computeCashBalances(transactions, operations);
@@ -64,7 +80,8 @@ router.get('/closed-trades', asyncHandler(async (req, res) => {
   const transactions = getAllTransactions(pid);
   const tickerMap = getTickerMap(pid);
   const operations = getAllOperations(pid);
-  const trades = computeClosedTrades(transactions, tickerMap, operations);
+  const savedSplits = loadSplitsForEngine(pid);
+  const trades = computeClosedTrades(transactions, tickerMap, operations, savedSplits);
   res.json({ trades });
 }));
 
@@ -309,6 +326,8 @@ router.post('/history', asyncHandler(async (req, res) => {
       ? (benchConfig as any).stooqTicker
       : (benchConfig as any).yahooTicker;
 
+  const savedSplits = loadSplitsForEngine(pid);
+
   // Always compute full history – client filters & rebases by date range
   const result = await computePortfolioHistory(
     transactions,
@@ -317,10 +336,22 @@ router.post('/history', asyncHandler(async (req, res) => {
     benchTicker,
     benchConfig.source,
     undefined,
-    undefined
+    undefined,
+    savedSplits,
   );
 
-  res.json(result);
+  // Persist any newly detected splits
+  if (result.detectedSplits.length > 0) {
+    upsertSplits(pid, result.detectedSplits.map(s => ({
+      isin: s.isin,
+      ticker: s.ticker,
+      splitDate: s.date,
+      ratio: s.ratio,
+      source: s.source,
+    })));
+  }
+
+  res.json({ history: result.history, metrics: result.metrics });
 }));
 
 // GET /api/portfolio/cash-flow
@@ -330,10 +361,13 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
   const transactions = getAllTransactions(pid);
   const tickerMap = getTickerMap(pid);
 
+  const savedSplits = loadSplitsForEngine(pid);
+
   // Need portfolio history to get daily values
   const { history } = await computePortfolioHistory(
     transactions, operations, tickerMap,
-    '^GSPC', 'yahoo' // default benchmark, doesn't matter for cash flow
+    '^GSPC', 'yahoo', // default benchmark, doesn't matter for cash flow
+    undefined, undefined, savedSplits,
   );
 
   const cashFlow = computeCashFlow(operations, history);
@@ -347,7 +381,8 @@ router.get('/metrics', asyncHandler(async (req, res) => {
   const operations = getAllOperations(pid);
   const tickerMap = getTickerMap(pid);
 
-  const { positions, totalValuePln } = await computeOpenPositions(transactions, tickerMap);
+  const savedSplits = loadSplitsForEngine(pid);
+  const { positions, totalValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
 
   // Include both deposits (positive) and withdrawals (negative) for accurate metrics
   const cashFlows = operations
@@ -533,6 +568,43 @@ router.delete('/transactions/:id', asyncHandler((req, res) => {
   const deleted = deleteTransaction(id, pid);
   if (!deleted) {
     return res.status(500).json({ error: 'Nie udało się usunąć' });
+  }
+  res.json({ success: true });
+}));
+
+// ============ Stock Splits ============
+
+// GET /api/portfolio/splits
+router.get('/splits', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const splits = getSplits(pid);
+  res.json({ splits });
+}));
+
+// POST /api/portfolio/splits
+router.post('/splits', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const { isin, ticker, splitDate, ratio } = req.body as StockSplitInput;
+  if (!isin || !ticker || !splitDate || !ratio) {
+    return res.status(400).json({ error: 'Wymagane pola: isin, ticker, splitDate, ratio' });
+  }
+  upsertSplits(pid, [{
+    isin,
+    ticker,
+    splitDate,
+    ratio,
+    source: 'manual',
+  }]);
+  res.json({ success: true });
+}));
+
+// DELETE /api/portfolio/splits/:id
+router.delete('/splits/:id', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const id = parseInt(req.params.id);
+  const deleted = deleteSplitFromDb(pid, id);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Split nie znaleziony' });
   }
   res.json({ success: true });
 }));
