@@ -1,5 +1,5 @@
 import type { Transaction, CashOperation, Position, ClosedTrade, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, StockSplit } from 'shared';
-import { fetchYahooPrice, fetchFxRate, fetchYahooHistory } from './yahoo-finance.js';
+import { fetchYahooPrice, fetchFxRate, fetchYahooHistory, fetchYahooHistoryDirect } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
 import { getDb } from '../db/connection.js';
 import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, detectSplitFromQuantityMismatch, isPlausibleSplitRatio, snapToKnownRatio, type DetectedSplit } from './split-detector.js';
@@ -18,9 +18,12 @@ function mergeDetectedSplits(saved: DetectedSplit[], detected: DetectedSplit[]):
 }
 
 /**
- * Lightweight split detection for open positions: fetches one provider price
- * per ISIN (at the earliest transaction date) and checks for discrepancies.
- * This ensures splits are detected even if the dashboard hasn't been visited.
+ * Lightweight split detection for open positions.
+ *
+ * Fetches one fresh historical price per ISIN directly from Yahoo (bypassing
+ * the persistent cache), because after a split Yahoo retroactively adjusts all
+ * historical prices but our cache still holds old pre-split values.
+ *
  * Skips ISINs that already have saved splits.
  */
 async function detectSplitsFromTransactions(
@@ -45,25 +48,28 @@ async function detectSplitsFromTransactions(
     }
   }
 
-  // Fetch one historical price per ISIN in parallel
+  // Fetch one fresh price per ISIN in parallel, bypassing cache
   const checks = [...earliestTx.entries()].map(async ([isin, tx]) => {
     const entry = tickerMap.get(isin);
     if (!entry) return;
 
     const dateKey = tx.date.split('T')[0];
     try {
-      let data: Array<{ date: string; close: number }> = [];
-      if (entry.exchange === 'NC') {
-        data = await fetchStooqHistory(entry.ticker, dateKey);
+      // Use cache-bypassing fetch — critical for split detection because
+      // persistent cache holds pre-split prices until manually invalidated
+      let freshPrice: number | null = null;
+      if (entry.exchange !== 'NC') {
+        freshPrice = await fetchYahooHistoryDirect(entry.ticker, dateKey);
       } else {
-        data = await fetchYahooHistory(entry.ticker, dateKey, dateKey);
+        // NC: Stooq doesn't cache the same way, less of an issue
+        const data = await fetchStooqHistory(entry.ticker, dateKey);
+        const match = data.find(d => d.date === dateKey);
+        freshPrice = match?.close ?? null;
       }
 
-      // Find price on the transaction date (or closest)
-      const priceOnDate = data.find(d => d.date === dateKey);
-      if (!priceOnDate || priceOnDate.close <= 0) return;
+      if (!freshPrice || freshPrice <= 0) return;
 
-      const rawRatio = tx.price / priceOnDate.close;
+      const rawRatio = tx.price / freshPrice;
       if (isPlausibleSplitRatio(rawRatio)) {
         detected.push({
           ticker: entry.ticker,
@@ -71,7 +77,7 @@ async function detectSplitsFromTransactions(
           date: dateKey,
           ratio: snapToKnownRatio(rawRatio),
           txPrice: tx.price,
-          providerPrice: priceOnDate.close,
+          providerPrice: freshPrice,
           source: 'auto',
         });
       }

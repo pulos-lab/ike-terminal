@@ -5,6 +5,7 @@ import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOper
 import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
 import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput, StockSplitInput } from 'shared';
+import { invalidateCachedPrices } from '../services/history-cache.js';
 import { fetchYahooPrice, fetchFxRate } from '../services/yahoo-finance.js';
 import {
   computeOpenPositions,
@@ -44,8 +45,11 @@ router.get('/positions', asyncHandler(async (req, res) => {
   const savedSplits = loadSplitsForEngine(pid);
   const { positions, totalValuePln: stocksValuePln, detectedSplits } = await computeOpenPositions(transactions, tickerMap, savedSplits);
 
-  // Persist any newly detected splits
+  // Persist any newly detected splits and invalidate stale price cache
   if (detectedSplits.length > savedSplits.length) {
+    const newSplits = detectedSplits.filter(
+      ds => !savedSplits.some(ss => ss.isin === ds.isin && ss.date === ds.date)
+    );
     upsertSplits(pid, detectedSplits.map(s => ({
       isin: s.isin,
       ticker: s.ticker,
@@ -53,6 +57,10 @@ router.get('/positions', asyncHandler(async (req, res) => {
       ratio: s.ratio,
       source: s.source,
     })));
+    // Invalidate stale pre-split prices so dashboard re-fetches from Yahoo
+    for (const s of newSplits) {
+      invalidateCachedPrices(s.ticker);
+    }
   }
 
   // Compute cash balances per currency
@@ -359,8 +367,11 @@ router.post('/history', asyncHandler(async (req, res) => {
     savedSplits,
   );
 
-  // Persist any newly detected splits
+  // Persist any newly detected splits and invalidate stale price cache
   if (result.detectedSplits.length > 0) {
+    const newSplits = result.detectedSplits.filter(
+      ds => !savedSplits.some(ss => ss.isin === ds.isin && ss.date === ds.date)
+    );
     upsertSplits(pid, result.detectedSplits.map(s => ({
       isin: s.isin,
       ticker: s.ticker,
@@ -368,6 +379,9 @@ router.post('/history', asyncHandler(async (req, res) => {
       ratio: s.ratio,
       source: s.source,
     })));
+    for (const s of newSplits) {
+      invalidateCachedPrices(s.ticker);
+    }
   }
 
   res.json({ history: result.history, metrics: result.metrics });
