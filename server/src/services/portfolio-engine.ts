@@ -2,7 +2,7 @@ import type { Transaction, CashOperation, Position, ClosedTrade, TickerMapEntry,
 import { fetchYahooPrice, fetchFxRate, fetchYahooHistory } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
 import { getDb } from '../db/connection.js';
-import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, type DetectedSplit } from './split-detector.js';
+import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, detectSplitFromQuantityMismatch, isPlausibleSplitRatio, snapToKnownRatio, type DetectedSplit } from './split-detector.js';
 
 // ============ Split Helpers ============
 
@@ -64,13 +64,14 @@ async function detectSplitsFromTransactions(
       const priceOnDate = data.find(d => d.date === dateKey);
       if (!priceOnDate || priceOnDate.close <= 0) return;
 
-      const discrepancy = Math.abs(tx.price / priceOnDate.close - 1);
-      if (discrepancy > THRESHOLD) {
+      const rawRatio = tx.price / priceOnDate.close;
+      const discrepancy = Math.abs(rawRatio - 1);
+      if (discrepancy > THRESHOLD && isPlausibleSplitRatio(rawRatio)) {
         detected.push({
           ticker: entry.ticker,
           isin,
           date: dateKey,
-          ratio: tx.price / priceOnDate.close,
+          ratio: snapToKnownRatio(rawRatio),
           txPrice: tx.price,
           providerPrice: priceOnDate.close,
           source: 'auto',
@@ -156,8 +157,26 @@ export async function computeOpenPositions(
   // Lightweight split detection: for each ISIN, fetch the provider price on the
   // earliest transaction date and compare. This catches splits even if the user
   // hasn't visited the dashboard yet (which runs the full history-based detection).
-  const additionalSplits = await detectSplitsFromTransactions(transactions, tickerMap, splits);
-  const allSplits = mergeDetectedSplits(splits, additionalSplits);
+  const priceSplits = await detectSplitsFromTransactions(transactions, tickerMap, splits);
+
+  // Additional detection: sell quantity exceeding accumulated buys
+  const qtySplits = detectSplitFromQuantityMismatch(transactions);
+  const qtySplitsAsDetected: DetectedSplit[] = qtySplits
+    .filter(qs => !splits.some(s => s.isin === qs.isin)) // skip already known
+    .map(qs => {
+      const entry = tickerMap.get(qs.isin);
+      return {
+        ticker: entry?.ticker ?? qs.isin,
+        isin: qs.isin,
+        date: qs.date,
+        ratio: qs.ratio,
+        txPrice: 0,
+        providerPrice: 0,
+        source: 'auto' as const,
+      };
+    });
+
+  const allSplits = mergeDetectedSplits(splits, [...priceSplits, ...qtySplitsAsDetected]);
 
   // Adjust transactions for stock splits (quantity/price correction)
   const adjustedTxs = adjustTransactionsForSplits(transactions, allSplits);

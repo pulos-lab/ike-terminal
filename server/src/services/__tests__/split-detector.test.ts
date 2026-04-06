@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits } from '../split-detector.js';
+import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, isPlausibleSplitRatio, snapToKnownRatio, detectSplitFromQuantityMismatch } from '../split-detector.js';
 import type { Transaction, TickerMapEntry } from 'shared';
 
 // ─── Helpers ───
@@ -273,5 +273,137 @@ describe('adjustTransactionsForSplits', () => {
     const adjusted = adjustTransactionsForSplits(txs, splits);
     expect(adjusted[0].quantity).toBe(10);
     expect(adjusted[0].price).toBe(100);
+  });
+});
+
+// ─── isPlausibleSplitRatio ───
+
+describe('isPlausibleSplitRatio', () => {
+  it('accepts exact known ratios', () => {
+    expect(isPlausibleSplitRatio(2)).toBe(true);
+    expect(isPlausibleSplitRatio(4)).toBe(true);
+    expect(isPlausibleSplitRatio(10)).toBe(true);
+    expect(isPlausibleSplitRatio(0.5)).toBe(true);   // 1:2 reverse
+    expect(isPlausibleSplitRatio(0.2)).toBe(true);   // 1:5 reverse
+    expect(isPlausibleSplitRatio(0.1)).toBe(true);   // 1:10 reverse
+  });
+
+  it('accepts ratios within 5% tolerance', () => {
+    expect(isPlausibleSplitRatio(9.85)).toBe(true);  // close to 10
+    expect(isPlausibleSplitRatio(10.3)).toBe(true);  // close to 10
+    expect(isPlausibleSplitRatio(1.98)).toBe(true);  // close to 2
+    expect(isPlausibleSplitRatio(0.198)).toBe(true);  // close to 0.2
+  });
+
+  it('rejects -40% crash (ratio ~1.67)', () => {
+    expect(isPlausibleSplitRatio(1.67)).toBe(false);
+  });
+
+  it('accepts 1:3 reverse split (ratio ~0.33)', () => {
+    expect(isPlausibleSplitRatio(0.33)).toBe(true); // close to 1/3
+  });
+
+  it('rejects +130% rally (ratio ~0.43)', () => {
+    expect(isPlausibleSplitRatio(0.43)).toBe(false);
+  });
+
+  it('rejects -20% drop (ratio ~1.25)', () => {
+    expect(isPlausibleSplitRatio(1.25)).toBe(false);
+  });
+
+  it('rejects arbitrary ratios', () => {
+    expect(isPlausibleSplitRatio(2.31)).toBe(false);
+    expect(isPlausibleSplitRatio(0.73)).toBe(false);
+    expect(isPlausibleSplitRatio(1.5)).toBe(false);
+    expect(isPlausibleSplitRatio(11)).toBe(false);
+    expect(isPlausibleSplitRatio(9)).toBe(false);
+  });
+});
+
+// ─── snapToKnownRatio ───
+
+describe('snapToKnownRatio', () => {
+  it('snaps 9.85 to 10', () => {
+    expect(snapToKnownRatio(9.85)).toBe(10);
+  });
+
+  it('snaps 0.198 to 0.2', () => {
+    expect(snapToKnownRatio(0.198)).toBe(0.2);
+  });
+
+  it('snaps 2.03 to 2', () => {
+    expect(snapToKnownRatio(2.03)).toBe(2);
+  });
+
+  it('snaps 4.9 to 5', () => {
+    expect(snapToKnownRatio(4.9)).toBe(5);
+  });
+});
+
+// ─── detectSplits with ratio validation ───
+
+describe('detectSplits — false positive prevention', () => {
+  it('does NOT detect a -40% crash as a split', () => {
+    // Stock crashed from 100 to 60 — ratio 1.67 is NOT a valid split
+    const txs = [makeTx({ side: 'K', quantity: 100, price: 100, date: '2024-01-10' })];
+    const tickerMap = makeTickerMap([{ isin: 'TEST0001', ticker: 'TEST' }]);
+    const prices = makePriceMap('TEST', { '2024-01-10': 60 });
+
+    const splits = detectSplits(txs, prices, tickerMap);
+    expect(splits).toHaveLength(0);
+  });
+
+  it('does NOT detect a +130% rally as a reverse split', () => {
+    // Stock rallied from 100 to 230 — ratio 0.43 is NOT a valid split
+    const txs = [makeTx({ side: 'K', quantity: 100, price: 100, date: '2024-01-10' })];
+    const tickerMap = makeTickerMap([{ isin: 'TEST0001', ticker: 'TEST' }]);
+    const prices = makePriceMap('TEST', { '2024-01-10': 230 });
+
+    const splits = detectSplits(txs, prices, tickerMap);
+    expect(splits).toHaveLength(0);
+  });
+
+  it('snaps detected ratio to nearest known value', () => {
+    // Ratio is 9.85 (~10:1 split with slight price variance)
+    const txs = [makeTx({ side: 'K', quantity: 10, price: 985, date: '2024-01-10' })];
+    const tickerMap = makeTickerMap([{ isin: 'TEST0001', ticker: 'TEST' }]);
+    const prices = makePriceMap('TEST', { '2024-01-10': 100 });
+
+    const splits = detectSplits(txs, prices, tickerMap);
+    expect(splits).toHaveLength(1);
+    expect(splits[0].ratio).toBe(10); // snapped from 9.85
+  });
+});
+
+// ─── detectSplitFromQuantityMismatch ───
+
+describe('detectSplitFromQuantityMismatch', () => {
+  it('detects split when sell quantity exceeds buys', () => {
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 1000, date: '2023-01-01' }),
+      makeTx({ side: 'S', quantity: 50, price: 100, date: '2024-08-01' }),
+    ];
+    const results = detectSplitFromQuantityMismatch(txs);
+    expect(results).toHaveLength(1);
+    expect(results[0].ratio).toBe(5);
+  });
+
+  it('does NOT trigger when sell is within buys', () => {
+    const txs = [
+      makeTx({ side: 'K', quantity: 100, price: 10, date: '2023-01-01' }),
+      makeTx({ side: 'S', quantity: 50, price: 15, date: '2024-01-01' }),
+    ];
+    const results = detectSplitFromQuantityMismatch(txs);
+    expect(results).toHaveLength(0);
+  });
+
+  it('does NOT trigger for non-split quantity mismatch', () => {
+    // Sell 17 shares when only 10 bought — ratio 1.7 is not a valid split
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 100, date: '2023-01-01' }),
+      makeTx({ side: 'S', quantity: 17, price: 60, date: '2024-01-01' }),
+    ];
+    const results = detectSplitFromQuantityMismatch(txs);
+    expect(results).toHaveLength(0);
   });
 });

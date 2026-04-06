@@ -20,6 +20,49 @@ export interface DetectedSplit {
 /** Minimum price discrepancy threshold to consider a split (15%) */
 const SPLIT_THRESHOLD = 0.15;
 
+/** Maximum tolerance when matching a raw ratio to a known split ratio (5%) */
+const RATIO_TOLERANCE = 0.05;
+
+/**
+ * Known real-world stock split ratios (forward and reverse).
+ * A raw ratio must be within ±5% of one of these to be considered a real split
+ * rather than a normal price movement.
+ */
+const KNOWN_SPLIT_RATIOS = [
+  // Forward splits
+  2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 50, 100,
+  // Reverse splits
+  1/2, 1/3, 1/4, 1/5, 1/6, 1/8, 1/10, 1/15, 1/20, 1/25, 1/50,
+];
+
+/**
+ * Check if a detected ratio is close to a known stock split ratio.
+ * This prevents false positives from normal price movements (e.g. -40% crash
+ * giving ratio 1.67, which is NOT a real split).
+ */
+export function isPlausibleSplitRatio(ratio: number): boolean {
+  return KNOWN_SPLIT_RATIOS.some(known =>
+    Math.abs(ratio / known - 1) < RATIO_TOLERANCE
+  );
+}
+
+/**
+ * Snap a raw ratio to the nearest known split ratio.
+ * E.g. 9.85 → 10, 0.198 → 0.2 (1/5)
+ */
+export function snapToKnownRatio(ratio: number): number {
+  let best = ratio;
+  let bestDist = Infinity;
+  for (const known of KNOWN_SPLIT_RATIOS) {
+    const dist = Math.abs(ratio / known - 1);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = known;
+    }
+  }
+  return best;
+}
+
 /**
  * Detect stock splits by comparing transaction prices with provider (Yahoo/Stooq) prices.
  *
@@ -60,17 +103,22 @@ export function detectSplits(
 
     const discrepancy = Math.abs(tx.price / scaledProviderPrice - 1);
     if (discrepancy > SPLIT_THRESHOLD) {
-      const newRatio = tx.price / scaledProviderPrice;
-      splits.push({
-        ticker: entry.ticker,
-        isin: tx.isin,
-        date: dateKey,
-        ratio: newRatio,
-        txPrice: tx.price,
-        providerPrice: scaledProviderPrice,
-        source: 'auto',
-      });
-      cumulativeRatio.set(entry.ticker, currentRatio * newRatio);
+      const rawRatio = tx.price / scaledProviderPrice;
+      // Only accept ratios that match known split values (prevents false positives
+      // from normal price movements like a -40% crash)
+      if (isPlausibleSplitRatio(rawRatio)) {
+        const snappedRatio = snapToKnownRatio(rawRatio);
+        splits.push({
+          ticker: entry.ticker,
+          isin: tx.isin,
+          date: dateKey,
+          ratio: snappedRatio,
+          txPrice: tx.price,
+          providerPrice: scaledProviderPrice,
+          source: 'auto',
+        });
+        cumulativeRatio.set(entry.ticker, currentRatio * snappedRatio);
+      }
     }
   }
 
@@ -125,6 +173,54 @@ export function rescaleHistoricalPrices(
  *
  * This ensures FIFO calculations work correctly with post-split share counts.
  */
+/**
+ * Detect a split by noticing that a sell quantity exceeds accumulated buy quantity.
+ * This is a strong signal — if you bought 10 shares and try to sell 50, a split
+ * must have happened in between.
+ *
+ * Only works when there's been a sell after the split.
+ */
+export function detectSplitFromQuantityMismatch(
+  transactions: Transaction[],
+): Array<{ isin: string; date: string; ratio: number }> {
+  // Group by ISIN
+  const byIsin = new Map<string, Transaction[]>();
+  for (const tx of transactions) {
+    const arr = byIsin.get(tx.isin) || [];
+    arr.push(tx);
+    byIsin.set(tx.isin, arr);
+  }
+
+  const results: Array<{ isin: string; date: string; ratio: number }> = [];
+
+  for (const [isin, txs] of byIsin) {
+    const sorted = [...txs].sort((a, b) => a.date.localeCompare(b.date));
+    let accumulated = 0;
+
+    for (const tx of sorted) {
+      if (tx.side === 'K') {
+        accumulated += tx.quantity;
+      } else {
+        if (accumulated > 0 && tx.quantity > accumulated * 1.5) {
+          const rawRatio = tx.quantity / accumulated;
+          if (isPlausibleSplitRatio(rawRatio)) {
+            results.push({
+              isin,
+              date: tx.date.split('T')[0],
+              ratio: snapToKnownRatio(rawRatio),
+            });
+            // Adjust accumulated as if split happened
+            accumulated = accumulated * snapToKnownRatio(rawRatio);
+          }
+        }
+        accumulated = Math.max(0, accumulated - tx.quantity);
+      }
+    }
+  }
+
+  return results;
+}
+
 export function adjustTransactionsForSplits(
   transactions: Transaction[],
   splits: DetectedSplit[],
