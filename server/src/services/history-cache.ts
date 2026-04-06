@@ -85,19 +85,19 @@ export function getLastCachedDate(ticker: string): string | null {
 }
 
 /**
- * Check if we have sufficient cached data for a ticker in a date range.
- * "Sufficient" means at least some data points exist.
- */
-/**
- * Invalidate all cached prices for a ticker.
- * Used after detecting a stock split — Yahoo retroactively adjusts all historical
- * prices, so our cached pre-split prices are stale and must be re-fetched.
+ * Remove all cached prices for a ticker from the persistent SQLite cache.
+ * Called after detecting a stock split — Yahoo retroactively adjusts historical
+ * prices, so our cached (pre-split) values are now stale.
  */
 export function invalidateCachedPrices(ticker: string): void {
   const db = getHistoryDb();
   db.prepare('DELETE FROM price_history WHERE ticker = ?').run(ticker);
 }
 
+/**
+ * Check if we have sufficient cached data for a ticker in a date range.
+ * "Sufficient" means at least some data points exist.
+ */
 export function hasCachedData(ticker: string, startDate: string): boolean {
   const db = getHistoryDb();
   const row = db

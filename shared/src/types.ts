@@ -185,6 +185,18 @@ export interface PortfolioMetrics {
   totalDividends: number;
 }
 
+// ============ Stock Split Types ============
+
+export interface DetectedSplit {
+  ticker: string;
+  isin: string;
+  date: string;        // YYYY-MM-DD — date when split was detected/occurred
+  ratio: number;       // e.g. 25 for 25:1 split
+  txPrice: number;     // transaction price (pre-split)
+  providerPrice: number; // Yahoo/Stooq price (post-split adjusted)
+  source: 'auto' | 'manual';
+}
+
 // ============ Ticker Map Types ============
 
 export interface TickerMapEntry {

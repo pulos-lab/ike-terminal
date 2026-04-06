@@ -87,6 +87,8 @@ export function initSchema(db: Database.Database): void {
       UNIQUE(isin, split_date)
     );
 
+    CREATE INDEX IF NOT EXISTS idx_splits_isin ON stock_splits(isin);
+
     CREATE TABLE IF NOT EXISTS portfolio_snapshots (
       date TEXT PRIMARY KEY,
       total_value_pln REAL NOT NULL,

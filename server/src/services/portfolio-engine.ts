@@ -1,8 +1,8 @@
-import type { Transaction, CashOperation, Position, ClosedTrade, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, StockSplit } from 'shared';
+import type { Transaction, CashOperation, Position, ClosedTrade, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, DetectedSplit } from 'shared';
 import { fetchYahooPrice, fetchFxRate, fetchYahooHistory, fetchYahooHistoryDirect } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
+import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, detectSplitFromQuantityMismatch, isPlausibleSplitRatio, snapToKnownRatio } from './split-detector.js';
 import { getDb } from '../db/connection.js';
-import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, detectSplitFromQuantityMismatch, isPlausibleSplitRatio, snapToKnownRatio, type DetectedSplit } from './split-detector.js';
 
 // ============ Split Helpers ============
 
@@ -29,7 +29,7 @@ function mergeDetectedSplits(saved: DetectedSplit[], detected: DetectedSplit[]):
 async function detectSplitsFromTransactions(
   transactions: Transaction[],
   tickerMap: Map<string, TickerMapEntry>,
-  existingSplits: DetectedSplit[],
+  existingSplits: DetectedSplit[]
 ): Promise<DetectedSplit[]> {
   const detected: DetectedSplit[] = [];
 
@@ -52,7 +52,6 @@ async function detectSplitsFromTransactions(
   const checks = [...earliestTx.entries()].map(async ([isin, tx]) => {
     const entry = tickerMap.get(isin);
     if (!entry) return;
-
     const dateKey = tx.date.split('T')[0];
     try {
       // Use cache-bypassing fetch — critical for split detection because
@@ -74,7 +73,7 @@ async function detectSplitsFromTransactions(
         detected.push({
           ticker: entry.ticker,
           isin,
-          date: dateKey,
+          date: new Date().toISOString().split('T')[0], // FIX: use today, not transaction date
           ratio: snapToKnownRatio(rawRatio),
           txPrice: tx.price,
           providerPrice: freshPrice,
@@ -718,16 +717,6 @@ export async function computePortfolioHistory(
     }
   }
 
-  // Build daily holdings per ISIN (using split-adjusted quantities)
-  const holdingsChanges = new Map<string, Map<string, number>>(); // date -> isin -> qty change
-  for (const tx of adjustedTxs) {
-    const date = tx.date.split('T')[0];
-    const byDate = holdingsChanges.get(date) || new Map();
-    const change = tx.side === 'K' ? tx.quantity : -tx.quantity;
-    byDate.set(tx.isin, (byDate.get(tx.isin) || 0) + change);
-    holdingsChanges.set(date, byDate);
-  }
-
   // For tickers with no provider data (blacklisted or unavailable), interpolate
   // linearly between transaction prices so the chart doesn't have a flat line
   // followed by a sudden jump on sell date.
@@ -780,6 +769,16 @@ export async function computePortfolioHistory(
         cur.setUTCDate(cur.getUTCDate() + 1);
       }
     }
+  }
+
+  // Build daily holdings per ISIN (using split-adjusted quantities)
+  const holdingsChanges = new Map<string, Map<string, number>>(); // date -> isin -> qty change
+  for (const tx of adjustedTxs) {
+    const date = tx.date.split('T')[0];
+    const byDate = holdingsChanges.get(date) || new Map();
+    const change = tx.side === 'K' ? tx.quantity : -tx.quantity;
+    byDate.set(tx.isin, (byDate.get(tx.isin) || 0) + change);
+    holdingsChanges.set(date, byDate);
   }
 
   // Helper to get price with forward-fill

@@ -4,7 +4,7 @@ import { getAllTransactions, getTransactionById, insertTransaction, updateTransa
 import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOperation, insertOperations, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
 import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
-import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput, StockSplitInput } from 'shared';
+import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput, StockSplitInput, DetectedSplit } from 'shared';
 import { invalidateCachedPrices } from '../services/history-cache.js';
 import { fetchYahooPrice, fetchFxRate } from '../services/yahoo-finance.js';
 import {
@@ -19,7 +19,6 @@ import {
 } from '../services/portfolio-engine.js';
 import { BENCHMARKS, type BenchmarkKey } from 'shared';
 import { searchTickers } from '../services/ticker-search.js';
-import type { DetectedSplit } from '../services/split-detector.js';
 
 const router = Router();
 
@@ -393,7 +392,6 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
   const operations = getAllOperations(pid);
   const transactions = getAllTransactions(pid);
   const tickerMap = getTickerMap(pid);
-
   const savedSplits = loadSplitsForEngine(pid);
 
   // Need portfolio history to get daily values

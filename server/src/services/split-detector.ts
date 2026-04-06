@@ -1,21 +1,4 @@
-import type { Transaction, TickerMapEntry } from 'shared';
-
-/**
- * Represents a detected or manually entered stock split event.
- */
-export interface DetectedSplit {
-  ticker: string;
-  isin: string;
-  /** Date when the split was detected (transaction date with price discrepancy) */
-  date: string;
-  /** Split ratio: e.g. 10 for 10:1 split, 0.2 for 1:5 reverse split */
-  ratio: number;
-  /** Transaction price that triggered detection */
-  txPrice: number;
-  /** Provider price on that date (before rescaling) */
-  providerPrice: number;
-  source: 'auto' | 'manual';
-}
+import type { Transaction, TickerMapEntry, DetectedSplit } from 'shared';
 
 /** Maximum tolerance when matching a raw ratio to a known split ratio (5%) */
 const RATIO_TOLERANCE = 0.05;
@@ -45,9 +28,7 @@ export function isPlausibleSplitRatio(ratio: number): boolean {
   if (ratio > 0.5 * (1 + RATIO_TOLERANCE) && ratio < 2 * (1 - RATIO_TOLERANCE)) {
     return false;
   }
-  return KNOWN_SPLIT_RATIOS.some(known =>
-    Math.abs(ratio / known - 1) < RATIO_TOLERANCE
-  );
+  return KNOWN_SPLIT_RATIOS.some(known => Math.abs(ratio / known - 1) < RATIO_TOLERANCE);
 }
 
 /**
@@ -106,6 +87,7 @@ export function detectSplits(
     const scaledProviderPrice = providerPrice * currentRatio;
 
     const rawRatio = tx.price / scaledProviderPrice;
+
     // Only accept ratios matching known splits (>=2x or <=0.5x).
     // Any discrepancy under 2x is a normal price movement, not a split.
     if (isPlausibleSplitRatio(rawRatio)) {
@@ -113,7 +95,7 @@ export function detectSplits(
       splits.push({
         ticker: entry.ticker,
         isin: tx.isin,
-        date: dateKey,
+        date: new Date().toISOString().split('T')[0], // Use today — the actual split date
         ratio: snappedRatio,
         txPrice: tx.price,
         providerPrice: scaledProviderPrice,
@@ -174,6 +156,47 @@ export function rescaleHistoricalPrices(
  *
  * This ensures FIFO calculations work correctly with post-split share counts.
  */
+export function adjustTransactionsForSplits(
+  transactions: Transaction[],
+  splits: DetectedSplit[],
+): Transaction[] {
+  if (splits.length === 0) return transactions;
+
+  // Group splits by ISIN, sorted chronologically
+  const splitsByIsin = new Map<string, DetectedSplit[]>();
+  for (const split of splits) {
+    const arr = splitsByIsin.get(split.isin) || [];
+    arr.push(split);
+    splitsByIsin.set(split.isin, arr);
+  }
+
+  return transactions.map(tx => {
+    const isinSplits = splitsByIsin.get(tx.isin);
+    if (!isinSplits) return tx;
+
+    const txDate = tx.date.split('T')[0];
+
+    // Compute cumulative ratio from splits that happened ON or AFTER this transaction.
+    // FIX: use >= instead of > — the split date from detection is today (or the actual
+    // split date), and ALL pre-existing transactions need adjustment.
+    let ratio = 1;
+    for (const split of isinSplits) {
+      if (split.date >= txDate) {
+        ratio *= split.ratio;
+      }
+    }
+
+    if (ratio === 1) return tx;
+
+    return {
+      ...tx,
+      quantity: tx.quantity * ratio,
+      price: tx.price / ratio,
+      // value stays the same (quantity * price is unchanged)
+    };
+  });
+}
+
 /**
  * Detect a split by noticing that a sell quantity exceeds accumulated buy quantity.
  * This is a strong signal — if you bought 10 shares and try to sell 50, a split
@@ -220,43 +243,4 @@ export function detectSplitFromQuantityMismatch(
   }
 
   return results;
-}
-
-export function adjustTransactionsForSplits(
-  transactions: Transaction[],
-  splits: DetectedSplit[],
-): Transaction[] {
-  if (splits.length === 0) return transactions;
-
-  // Group splits by ISIN, sorted chronologically
-  const splitsByIsin = new Map<string, DetectedSplit[]>();
-  for (const split of splits) {
-    const arr = splitsByIsin.get(split.isin) || [];
-    arr.push(split);
-    splitsByIsin.set(split.isin, arr);
-  }
-
-  return transactions.map(tx => {
-    const isinSplits = splitsByIsin.get(tx.isin);
-    if (!isinSplits) return tx;
-
-    const txDate = tx.date.split('T')[0];
-
-    // Compute cumulative ratio from splits that happened AFTER this transaction
-    let ratio = 1;
-    for (const split of isinSplits) {
-      if (split.date > txDate) {
-        ratio *= split.ratio;
-      }
-    }
-
-    if (ratio === 1) return tx;
-
-    return {
-      ...tx,
-      quantity: tx.quantity * ratio,
-      price: tx.price / ratio,
-      // value stays the same (quantity * price is unchanged)
-    };
-  });
 }

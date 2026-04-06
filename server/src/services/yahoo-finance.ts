@@ -134,6 +134,7 @@ export async function fetchYahooHistoryDirect(
       const d = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
       if (d === date && closes[i] != null) return closes[i]!;
     }
+
     // If exact date not found, return first available close
     for (const c of closes) {
       if (c != null) return c;
