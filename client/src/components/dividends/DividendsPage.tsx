@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { formatNumber, formatDate, formatPLN } from '@/lib/formatters';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { Loader2, Coins, Plus, Pencil, Trash2, Check, X } from 'lucide-react';
+import { Loader2, Coins, Plus, Pencil, Trash2, Check, X, RefreshCw } from 'lucide-react';
 import type { DividendRecord } from 'shared';
 
 interface DividendForm {
@@ -21,6 +21,24 @@ interface DividendForm {
 }
 
 const emptyForm: DividendForm = { date: '', ticker: '', amount: '', currency: 'PLN' };
+
+const SOURCE_LABELS: Record<string, { label: string; className: string }> = {
+  'auto-yahoo': { label: 'Auto', className: 'bg-blue-500/15 text-blue-500' },
+  manual: { label: 'Ręczne', className: 'bg-gray-500/15 text-gray-400' },
+  bossa: { label: 'Bossa', className: 'bg-amber-500/15 text-amber-500' },
+  mbank: { label: 'mBank', className: 'bg-amber-500/15 text-amber-500' },
+  degiro: { label: 'DEGIRO', className: 'bg-amber-500/15 text-amber-500' },
+  xtb: { label: 'XTB', className: 'bg-amber-500/15 text-amber-500' },
+};
+
+function SourceBadge({ source }: { source: string }) {
+  const info = SOURCE_LABELS[source] || { label: source, className: 'bg-gray-500/15 text-gray-400' };
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${info.className}`}>
+      {info.label}
+    </span>
+  );
+}
 
 export function DividendsPage() {
   const queryClient = useQueryClient();
@@ -68,6 +86,18 @@ export function DividendsPage() {
     onSuccess: () => invalidateDividends(queryClient),
   });
 
+  const scanMutation = useMutation({
+    mutationFn: () => api.scanDividends(),
+    onSuccess: (result) => {
+      invalidateDividends(queryClient);
+      if (result.newDividends > 0) {
+        alert(`Znaleziono ${result.newDividends} nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
+      } else {
+        alert(`Brak nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
+      }
+    },
+  });
+
   function startEdit(d: DividendRecord) {
     setEditingId(d.id);
     setEditForm({
@@ -101,13 +131,24 @@ export function DividendsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Dywidendy</h1>
-        <Button
-          size="sm"
-          onClick={() => { setShowAddForm(!showAddForm); setEditingId(null); }}
-        >
-          <Plus className="h-4 w-4" />
-          Dodaj dywidende
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => scanMutation.mutate()}
+            disabled={scanMutation.isPending}
+          >
+            {scanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Skanuj dywidendy
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => { setShowAddForm(!showAddForm); setEditingId(null); }}
+          >
+            <Plus className="h-4 w-4" />
+            Dodaj dywidende
+          </Button>
+        </div>
       </div>
 
       {data && (
@@ -171,6 +212,7 @@ export function DividendsPage() {
                     <TableHead>Opis</TableHead>
                     <TableHead className="text-right">Kwota</TableHead>
                     <TableHead>Waluta</TableHead>
+                    <TableHead>Źródło</TableHead>
                     <TableHead className="w-[80px]"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -221,6 +263,9 @@ export function DividendsPage() {
                         </Select>
                       </TableCell>
                       <TableCell>
+                        <SourceBadge source="manual" />
+                      </TableCell>
+                      <TableCell>
                         <div className="flex gap-1">
                           <Button
                             size="icon-xs"
@@ -244,7 +289,7 @@ export function DividendsPage() {
                   )}
                   {dividends.length === 0 && !showAddForm ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                      <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                         Brak danych. Kliknij &quot;Dodaj dywidende&quot; aby dodac pierwsza.
                       </TableCell>
                     </TableRow>
@@ -294,6 +339,9 @@ export function DividendsPage() {
                             </Select>
                           </TableCell>
                           <TableCell>
+                            <SourceBadge source={d.source} />
+                          </TableCell>
+                          <TableCell>
                             <div className="flex gap-1">
                               <Button
                                 size="icon-xs"
@@ -321,6 +369,9 @@ export function DividendsPage() {
                           <TableCell className="text-muted-foreground text-sm">{d.description}</TableCell>
                           <TableCell className="text-right font-medium text-green-500">{formatNumber(d.amount)}</TableCell>
                           <TableCell>{d.currency}</TableCell>
+                          <TableCell>
+                            <SourceBadge source={d.source} />
+                          </TableCell>
                           <TableCell>
                             <div className="flex gap-1">
                               <Button

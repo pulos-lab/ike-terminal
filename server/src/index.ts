@@ -18,6 +18,7 @@ import portfolioRouter from './routes/portfolio.js';
 import importRouter from './routes/import.js';
 import bugReportsRouter from './routes/bug-reports.js';
 import { updateBenchmarkPrices } from './services/benchmark-updater.js';
+import { scanAllPortfolios } from './services/dividend-scanner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -148,6 +149,19 @@ setInterval(() => {
     console.error('Benchmark update failed:', err)
   );
 }, 6 * 60 * 60 * 1000);
+
+// ── Dividend scanner (auto-detect dividends every 12h) ─────────────────────
+setTimeout(() => {
+  scanAllPortfolios().catch(err =>
+    console.error('Initial dividend scan failed:', err)
+  );
+}, 30_000);
+
+setInterval(() => {
+  scanAllPortfolios().catch(err =>
+    console.error('Dividend scan failed:', err)
+  );
+}, 12 * 60 * 60 * 1000);
 
 // ── Graceful shutdown ───────────────────────────────────────────────────────
 function shutdown(signal: string) {

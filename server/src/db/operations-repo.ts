@@ -139,6 +139,23 @@ export function deleteOperation(id: number, portfolioId: string = 'default'): bo
   return result.changes > 0;
 }
 
+/**
+ * Check if a dividend already exists for a given date and ticker (any source).
+ * Used by dividend-scanner to avoid duplicating broker-imported dividends.
+ */
+export function dividendExistsForDateAndTicker(
+  portfolioId: string,
+  date: string,
+  ticker: string
+): boolean {
+  const db = getDb(portfolioId);
+  const row = db.prepare(
+    `SELECT COUNT(*) as cnt FROM cash_operations
+     WHERE date = ? AND operation_type = 'dividend' AND ticker = ?`
+  ).get(date, ticker) as { cnt: number };
+  return row.cnt > 0;
+}
+
 function mapRow(row: any): CashOperation {
   return {
     id: row.id,

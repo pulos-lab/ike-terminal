@@ -95,6 +95,10 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
+  scanDividends: () =>
+    request<{ scanned: number; newDividends: number; errors: string[] }>('/portfolio/dividends/scan', {
+      method: 'POST',
+    }),
   deleteDividend: (id: number) =>
     request<{ success: boolean }>(`/portfolio/dividends/${id}`, {
       method: 'DELETE',

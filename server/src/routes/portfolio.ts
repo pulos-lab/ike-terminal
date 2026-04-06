@@ -17,6 +17,7 @@ import {
 } from '../services/portfolio-engine.js';
 import { BENCHMARKS, type BenchmarkKey } from 'shared';
 import { searchTickers } from '../services/ticker-search.js';
+import { scanDividends } from '../services/dividend-scanner.js';
 
 const router = Router();
 
@@ -131,6 +132,12 @@ router.delete('/dividends/:id', asyncHandler((req, res) => {
     return res.status(500).json({ error: 'Nie udało się usunąć' });
   }
   res.json({ success: true });
+}));
+
+// POST /api/portfolio/dividends/scan — trigger manual dividend scan
+router.post('/dividends/scan', asyncHandler(async (req, res) => {
+  const result = await scanDividends(req.portfolioId);
+  res.json(result);
 }));
 
 // GET /api/portfolio/deposits — returns deposits + withdrawals

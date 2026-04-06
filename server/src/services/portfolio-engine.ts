@@ -335,6 +335,23 @@ function extractTickerFromDescription(desc: string): string {
   return match ? match[1] : 'UNKNOWN';
 }
 
+/**
+ * Calculate the number of shares held for a given ISIN at a specific date.
+ * Processes K (buy) and S (sell) transactions chronologically up to and including the date.
+ */
+export function getSharesAtDate(
+  transactions: Transaction[],
+  isin: string,
+  date: string
+): number {
+  return transactions
+    .filter(t => t.isin === isin && t.date <= date)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .reduce((shares, t) => {
+      return t.side === 'K' ? shares + t.quantity : shares - t.quantity;
+    }, 0);
+}
+
 // ============ FX Exchange History ============
 
 export function extractFxExchanges(operations: CashOperation[]): FxExchangeRecord[] {

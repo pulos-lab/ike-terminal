@@ -109,6 +109,52 @@ export async function fetchYahooHistory(
 }
 
 /**
+ * Fetch dividend events from Yahoo Finance (v8 chart API)
+ * Returns per-share dividend amounts with ex-dividend dates
+ */
+export async function fetchYahooDividendEvents(
+  ticker: string,
+  startDate: string,
+  endDate?: string
+): Promise<Array<{ date: string; amount: number }>> {
+  const end = endDate || new Date().toISOString().split('T')[0];
+  const cacheKey = `yahoo_divevents_${ticker}_${startDate}_${end}`;
+  const cached = getCached<Array<{ date: string; amount: number }>>(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const period1 = String(Math.floor(new Date(startDate).getTime() / 1000));
+    const period2 = String(Math.floor(new Date(end).getTime() / 1000));
+
+    const result = await yahooChart(ticker, {
+      interval: '1d',
+      period1,
+      period2,
+      events: 'div',
+    });
+
+    if (!result?.events?.dividends) {
+      setCached(cacheKey, [], 12 * 3600);
+      return [];
+    }
+
+    const dividends: Record<string, { date: number; amount: number }> = result.events.dividends;
+    const events = Object.values(dividends)
+      .map(d => ({
+        date: new Date(d.date * 1000).toISOString().split('T')[0],
+        amount: d.amount,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    setCached(cacheKey, events, 12 * 3600);
+    return events;
+  } catch (error) {
+    console.error(`Yahoo dividend events fetch failed for ${ticker}:`, error);
+    return [];
+  }
+}
+
+/**
  * Fetch FX rate from Yahoo Finance (v8 chart API)
  */
 export async function fetchFxRate(pair: string): Promise<number | null> {
