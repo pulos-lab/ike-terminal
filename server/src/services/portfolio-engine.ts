@@ -35,12 +35,24 @@ async function detectSplitsFromTransactions(
   // ISINs that already have splits don't need re-detection
   const isinsWithSplits = new Set(existingSplits.map(s => s.isin));
 
-  // Find earliest transaction per ISIN (same currency only)
+  // Skip closed positions (net quantity = 0) — both buy and sell used the same
+  // price scale, so "correcting" them creates false positives (e.g. AVGO bought
+  // and sold post-split, but Yahoo retroactively adjusts historical prices).
+  const netQty = new Map<string, number>();
+  for (const tx of transactions) {
+    const qty = netQty.get(tx.isin) ?? 0;
+    netQty.set(tx.isin, qty + (tx.side === 'K' ? tx.quantity : -tx.quantity));
+  }
+
+  // Find earliest transaction per ISIN (same currency only, open positions only)
   const earliestTx = new Map<string, Transaction>();
   for (const tx of transactions) {
     const entry = tickerMap.get(tx.isin);
     if (!entry || tx.currency !== entry.currency) continue;
     if (isinsWithSplits.has(tx.isin)) continue;
+    // Only detect splits for open positions
+    const net = netQty.get(tx.isin) ?? 0;
+    if (net <= 0) continue;
     const existing = earliestTx.get(tx.isin);
     if (!existing || tx.date < existing.date) {
       earliestTx.set(tx.isin, tx);

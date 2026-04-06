@@ -65,12 +65,23 @@ export function detectSplits(
   const splits: DetectedSplit[] = [];
   const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
 
+  // Skip closed positions — both sides used the same price scale
+  const netQty = new Map<string, number>();
+  for (const tx of transactions) {
+    const qty = netQty.get(tx.isin) ?? 0;
+    netQty.set(tx.isin, qty + (tx.side === 'K' ? tx.quantity : -tx.quantity));
+  }
+
   // Track cumulative scaling already applied per ticker so we can detect subsequent splits
   const cumulativeRatio = new Map<string, number>();
 
   for (const tx of sorted) {
     const entry = tickerMap.get(tx.isin);
     if (!entry) continue;
+
+    // Only detect splits for open positions
+    const net = netQty.get(tx.isin) ?? 0;
+    if (net <= 0) continue;
 
     // Skip if currencies don't match (FX difference, not split)
     if (tx.currency !== entry.currency) continue;
