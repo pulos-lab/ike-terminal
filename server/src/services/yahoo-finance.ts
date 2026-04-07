@@ -155,6 +155,43 @@ export async function fetchYahooDividendEvents(
 }
 
 /**
+ * Fetch a single historical price directly from Yahoo, bypassing all caches.
+ * Used for split detection — after a split, Yahoo retroactively adjusts historical
+ * prices, but our persistent cache still holds old (pre-split) values.
+ */
+export async function fetchYahooHistoryDirect(
+  ticker: string,
+  date: string,
+): Promise<number | null> {
+  try {
+    const period1 = String(Math.floor(new Date(date).getTime() / 1000));
+    // Fetch a 5-day window to increase chance of hitting the exact date
+    const endDate = new Date(date);
+    endDate.setDate(endDate.getDate() + 5);
+    const period2 = String(Math.floor(endDate.getTime() / 1000));
+
+    const result = await yahooChart(ticker, { interval: '1d', period1, period2 });
+    if (!result) return null;
+
+    const timestamps: number[] = result.timestamp || [];
+    const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
+
+    for (let i = 0; i < timestamps.length; i++) {
+      const d = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
+      if (d === date && closes[i] != null) return closes[i]!;
+    }
+
+    // If exact date not found, return first available close
+    for (const c of closes) {
+      if (c != null) return c;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch FX rate from Yahoo Finance (v8 chart API)
  */
 export async function fetchFxRate(pair: string): Promise<number | null> {

@@ -17,7 +17,8 @@ import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { formatCurrency, formatNumber, formatPercent, formatPLN, formatQuantity } from '@/lib/formatters';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, AlertTriangle } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioDiversification } from './PortfolioDiversification';
 
 interface ColumnVisibility {
@@ -76,6 +77,14 @@ export function PortfolioPage() {
     const cashValuePln = data.cashValuePln ?? 0;
     return { totalValuePln, totalProfitLoss, totalProfitLossPct, cashValuePln };
   }, [data]);
+
+  const recentSplitMap = useMemo(() => {
+    const map = new Map<string, { ratio: number; date: string }>();
+    for (const s of data?.recentSplits ?? []) {
+      map.set(s.isin, { ratio: s.ratio, date: s.date });
+    }
+    return map;
+  }, [data?.recentSplits]);
 
   const cashPositions = data?.cashPositions ?? [];
 
@@ -165,6 +174,24 @@ export function PortfolioPage() {
                         <TableCell className="font-mono font-medium">
                           {pos.ticker}
                           <CategoryBadge category={pos.category} />
+                          {recentSplitMap.has(pos.isin) && (() => {
+                            const split = recentSplitMap.get(pos.isin)!;
+                            const isReverse = split.ratio < 1;
+                            const label = isReverse
+                              ? `1:${Math.round(1 / split.ratio)}`
+                              : `${Math.round(split.ratio)}:1`;
+                            return (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <AlertTriangle className="h-4 w-4 text-amber-500 inline ml-1 cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent side="right" className="max-w-[280px]">
+                                  Spółka przeszła {isReverse ? 'reverse split' : 'split'} {label} w dniu {split.date}.
+                                  Ilość i cena zostały automatycznie skorygowane.
+                                </TooltipContent>
+                              </Tooltip>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-muted-foreground">{pos.paperName}</TableCell>
                         <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
@@ -267,6 +294,7 @@ export function PortfolioPage() {
           totalValuePln={data.totalValuePln}
         />
       )}
+
     </div>
   );
 }
