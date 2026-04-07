@@ -2,9 +2,146 @@ import { getCached, setCached } from './price-cache.js';
 import { storeHistoricalPrices, loadHistoricalPrices, getLastCachedDate } from './history-cache.js';
 
 const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
+const YAHOO_V10_BASE = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary';
+const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+  'User-Agent': USER_AGENT,
 };
+
+// ============ Yahoo Auth (crumb + cookies for v10) ============
+
+let cachedCrumb: string | null = null;
+let cachedCookies: string | null = null;
+let crumbExpiresAt = 0;
+
+const CRUMB_TTL = 6 * 3600 * 1000; // 6 hours
+
+async function refreshYahooCrumb(): Promise<void> {
+  try {
+    // Step 1: Get cookies from fc.yahoo.com
+    const resp1 = await fetch('https://fc.yahoo.com/', {
+      headers: { 'User-Agent': USER_AGENT },
+      redirect: 'manual',
+    });
+    const setCookieHeaders = resp1.headers.getSetCookie?.() || [];
+    cachedCookies = setCookieHeaders.map(c => c.split(';')[0]).join('; ');
+
+    if (!cachedCookies) {
+      console.warn('[yahoo-auth] No cookies received from fc.yahoo.com');
+      return;
+    }
+
+    // Step 2: Get crumb with cookies
+    const resp2 = await fetch('https://query2.finance.yahoo.com/v1/test/getcrumb', {
+      headers: { 'User-Agent': USER_AGENT, 'Cookie': cachedCookies },
+    });
+    if (!resp2.ok) {
+      console.warn(`[yahoo-auth] Crumb fetch failed: HTTP ${resp2.status}`);
+      return;
+    }
+    cachedCrumb = await resp2.text();
+    crumbExpiresAt = Date.now() + CRUMB_TTL;
+    console.log('[yahoo-auth] Crumb refreshed successfully');
+  } catch (error) {
+    console.error('[yahoo-auth] Failed to refresh crumb:', error);
+  }
+}
+
+async function getYahooAuth(): Promise<{ crumb: string; cookies: string } | null> {
+  if (!cachedCrumb || !cachedCookies || Date.now() > crumbExpiresAt) {
+    await refreshYahooCrumb();
+  }
+  if (!cachedCrumb || !cachedCookies) return null;
+  return { crumb: cachedCrumb, cookies: cachedCookies };
+}
+
+// ============ v10 quoteSummary ============
+
+async function yahooQuoteSummary(ticker: string, modules: string[]): Promise<any> {
+  const auth = await getYahooAuth();
+  if (!auth) return null;
+
+  const params = new URLSearchParams({
+    modules: modules.join(','),
+    crumb: auth.crumb,
+  });
+  const url = `${YAHOO_V10_BASE}/${encodeURIComponent(ticker)}?${params}`;
+
+  const resp = await fetch(url, {
+    headers: { 'User-Agent': USER_AGENT, 'Cookie': auth.cookies },
+  });
+
+  if (resp.status === 401 || resp.status === 403) {
+    // Crumb expired — refresh and retry once
+    cachedCrumb = null;
+    const auth2 = await getYahooAuth();
+    if (!auth2) return null;
+
+    const params2 = new URLSearchParams({
+      modules: modules.join(','),
+      crumb: auth2.crumb,
+    });
+    const url2 = `${YAHOO_V10_BASE}/${encodeURIComponent(ticker)}?${params2}`;
+    const resp2 = await fetch(url2, {
+      headers: { 'User-Agent': USER_AGENT, 'Cookie': auth2.cookies },
+    });
+    if (!resp2.ok) return null;
+    const json2 = await resp2.json();
+    return json2?.quoteSummary?.result?.[0] ?? null;
+  }
+
+  if (!resp.ok) return null;
+  const json = await resp.json();
+  return json?.quoteSummary?.result?.[0] ?? null;
+}
+
+// ============ Dividend Calendar (v10) ============
+
+export interface DividendCalendar {
+  exDividendDate: string | null;
+  paymentDate: string | null;
+  dividendRate: number | null;
+  dividendYield: number | null;
+}
+
+/**
+ * Fetch upcoming dividend info from Yahoo v10 quoteSummary.
+ * Returns ex-dividend date, payment date, annual dividend rate and yield.
+ */
+export async function fetchDividendCalendar(ticker: string): Promise<DividendCalendar | null> {
+  const cacheKey = `yahoo_divcal_${ticker}`;
+  const cached = getCached<DividendCalendar>(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const result = await yahooQuoteSummary(ticker, ['calendarEvents', 'summaryDetail']);
+    if (!result) return null;
+
+    const ce = result.calendarEvents;
+    const sd = result.summaryDetail;
+
+    const toDate = (obj: any): string | null => {
+      if (!obj?.raw) return null;
+      return new Date(obj.raw * 1000).toISOString().split('T')[0];
+    };
+
+    const cal: DividendCalendar = {
+      exDividendDate: toDate(ce?.exDividendDate) || toDate(sd?.exDividendDate),
+      paymentDate: toDate(ce?.dividendDate),
+      dividendRate: sd?.dividendRate?.raw ?? null,
+      dividendYield: sd?.dividendYield?.raw ?? null,
+    };
+
+    // Cache for 12h
+    setCached(cacheKey, cal, 12 * 3600);
+    return cal;
+  } catch (error) {
+    console.error(`Yahoo dividend calendar fetch failed for ${ticker}:`, error);
+    return null;
+  }
+}
+
+// ============ v8 Chart API ============
 
 async function yahooChart(ticker: string, params: Record<string, string>): Promise<any> {
   const qs = new URLSearchParams(params).toString();

@@ -7,6 +7,7 @@ export const QUERY_KEYS = {
   metrics: ['portfolio', 'metrics'] as const,
   history: ['portfolio', 'history'] as const,
   dividends: ['portfolio', 'dividends'] as const,
+  upcomingDividends: ['portfolio', 'dividends', 'upcoming'] as const,
   deposits: ['portfolio', 'deposits'] as const,
   cashFlow: ['portfolio', 'cash-flow'] as const,
   fxHistory: ['portfolio', 'fx-history'] as const,

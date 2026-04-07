@@ -120,6 +120,18 @@ export interface DividendRecord {
   source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
 }
 
+export interface UpcomingDividend {
+  ticker: string;
+  name: string;
+  exDividendDate: string;
+  paymentDate: string | null;
+  estimatedAmount: number;
+  currency: string;
+  shares: number;
+  dividendPerShare: number | null;
+  dividendYield: number | null;
+}
+
 export interface DividendInput {
   date: string;
   ticker: string;

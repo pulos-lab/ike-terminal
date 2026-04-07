@@ -4,9 +4,9 @@ import { getAllTransactions, getTransactionById, insertTransaction, updateTransa
 import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOperation, insertOperations, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
 import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
-import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput, StockSplitInput, DetectedSplit } from 'shared';
+import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput, StockSplitInput, DetectedSplit, UpcomingDividend } from 'shared';
 import { invalidateCachedPrices } from '../services/history-cache.js';
-import { fetchYahooPrice, fetchFxRate } from '../services/yahoo-finance.js';
+import { fetchYahooPrice, fetchFxRate, fetchDividendCalendar } from '../services/yahoo-finance.js';
 import {
   computeOpenPositions,
   computeClosedTrades,
@@ -181,6 +181,58 @@ router.delete('/dividends/:id', asyncHandler((req, res) => {
 router.post('/dividends/scan', asyncHandler(async (req, res) => {
   const result = await scanDividends(req.portfolioId);
   res.json(result);
+}));
+
+// GET /api/portfolio/dividends/upcoming — upcoming dividends from v10 calendar
+router.get('/dividends/upcoming', asyncHandler(async (req, res) => {
+  const pid = req.portfolioId;
+  const transactions = getAllTransactions(pid);
+  const tickerMap = getTickerMap(pid);
+  const splits = loadSplitsForEngine(pid);
+  const { positions } = await computeOpenPositions(transactions, tickerMap, splits);
+
+  const today = new Date().toISOString().split('T')[0];
+  const upcoming: UpcomingDividend[] = [];
+
+  for (const pos of positions) {
+    if (pos.shares <= 0) continue;
+    if (pos.exchange === 'NC') continue;
+
+    try {
+      const cal = await fetchDividendCalendar(pos.ticker);
+      if (!cal?.exDividendDate) continue;
+
+      // Include if ex-date is upcoming OR payment is still pending
+      const isUpcoming = cal.exDividendDate >= today;
+      const isPendingPayment = cal.paymentDate && cal.paymentDate >= today && cal.exDividendDate < today;
+
+      if (!isUpcoming && !isPendingPayment) continue;
+
+      // Estimate per-share amount from annual rate and frequency
+      // Most stocks pay quarterly (4x/year), some semi-annual (2x), some annual (1x)
+      const annualRate = cal.dividendRate ?? 0;
+      // Heuristic: use rate/2 for semi-annual, rate/4 for quarterly
+      // Without frequency info, approximate as the latest single payment
+      const perShare = annualRate > 0 ? annualRate / 2 : null;
+
+      upcoming.push({
+        ticker: pos.ticker,
+        name: pos.paperName,
+        exDividendDate: cal.exDividendDate,
+        paymentDate: cal.paymentDate,
+        estimatedAmount: perShare ? Math.round(perShare * pos.shares * 100) / 100 : 0,
+        currency: pos.currency,
+        shares: pos.shares,
+        dividendPerShare: perShare,
+        dividendYield: cal.dividendYield,
+      });
+    } catch (err) {
+      // Skip ticker on error
+    }
+  }
+
+  upcoming.sort((a, b) => a.exDividendDate.localeCompare(b.exDividendDate));
+  res.json({ upcoming });
 }));
 
 // GET /api/portfolio/deposits — returns deposits + withdrawals
