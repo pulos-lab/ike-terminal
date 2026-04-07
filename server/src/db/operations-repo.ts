@@ -141,7 +141,9 @@ export function deleteOperation(id: number, portfolioId: string = 'default'): bo
 
 /**
  * Check if a dividend already exists for a given date and ticker (any source).
- * Used by dividend-scanner to avoid duplicating broker-imported dividends.
+ * Handles format mismatches between brokers:
+ * - Date: compares only YYYY-MM-DD prefix (Bossa adds T00:00:00, XTB adds timestamp)
+ * - Ticker: matches with and without exchange suffix (Bossa: "PLAYWAY", Yahoo: "PLAYWAY.WA")
  */
 export function dividendExistsForDateAndTicker(
   portfolioId: string,
@@ -149,11 +151,40 @@ export function dividendExistsForDateAndTicker(
   ticker: string
 ): boolean {
   const db = getDb(portfolioId);
+  const datePrefix = date.split('T')[0];
+  const baseTicker = ticker.replace(/\.\w+$/, ''); // "PLAYWAY.WA" → "PLAYWAY"
+
   const row = db.prepare(
     `SELECT COUNT(*) as cnt FROM cash_operations
-     WHERE date = ? AND operation_type = 'dividend' AND ticker = ?`
-  ).get(date, ticker) as { cnt: number };
+     WHERE substr(date, 1, 10) = ? AND operation_type = 'dividend'
+       AND (ticker = ? OR ticker = ?)`
+  ).get(datePrefix, ticker, baseTicker) as { cnt: number };
   return row.cnt > 0;
+}
+
+/**
+ * Get the date of the most recent dividend in the portfolio (any source).
+ * Used by dividend-scanner to determine scan start date.
+ */
+export function getLatestDividendDate(portfolioId: string): string | null {
+  const db = getDb(portfolioId);
+  const row = db.prepare(
+    `SELECT MAX(substr(date, 1, 10)) as latest FROM cash_operations
+     WHERE operation_type = 'dividend'`
+  ).get() as { latest: string | null };
+  return row.latest || null;
+}
+
+/**
+ * Delete all auto-yahoo dividends from a portfolio.
+ * Used to clean up stale/duplicate entries before re-scanning.
+ */
+export function deleteAutoYahooDividends(portfolioId: string): number {
+  const db = getDb(portfolioId);
+  const result = db.prepare(
+    `DELETE FROM cash_operations WHERE operation_type = 'dividend' AND source = 'auto-yahoo'`
+  ).run();
+  return result.changes;
 }
 
 function mapRow(row: any): CashOperation {
