@@ -38,6 +38,47 @@ export const NAME_ALIASES: Record<string, string> = {
   'BRU.WA': 'PLMOBRK00013',          // → Mo-BRUK (MBR.WA) — XTB format
 };
 
+// ============ Dividend Tax Tables ============
+// Łączna stawka podatku od dywidend dla polskiego rezydenta podatkowego
+
+/** Zwykłe konto maklerskie: WHT u źródła (Poziom 1) + polski podatek (Poziom 3) */
+export const DIVIDEND_TAX_REGULAR: Record<string, number> = {
+  PL: 0.19,    // 0% WHT + 19% PL tax
+  US: 0.34,    // 30% WHT + 4% PL tax
+  GB: 0.19,    // 0% WHT + 19% PL tax
+  DE: 0.304,   // 26.4% WHT + 4% PL tax
+  BE: 0.19,    // 15% WHT + 4% PL tax
+  CH: 0.19,    // 15% WHT + 4% PL tax
+  FR: 0.19,    // 15% WHT + 4% PL tax
+  JP: 0.19,    // 15% WHT + 4% PL tax
+  AU: 0.19,    // 15% WHT + 4% PL tax
+  HK: 0.19,    // 0% WHT + 19% PL tax
+  SG: 0.19,    // 0% WHT + 19% PL tax
+  CA: 0.19,    // 15% WHT + 4% PL tax
+  NL: 0.19,    // 15% WHT + 4% PL tax
+  IE: 0.19,    // 15% WHT + 4% PL tax
+  NO: 0.19,    // 15% WHT + 4% PL tax
+};
+
+/** IKE / IKZE: tylko WHT u źródła (Poziom 1), Poziom 3 = 0% */
+export const DIVIDEND_TAX_IKE_IKZE: Record<string, number> = {
+  PL: 0,       // 0% WHT + 0% = zwolnienie
+  US: 0.30,    // 30% WHT + 0%
+  GB: 0,       // 0% WHT + 0%
+  DE: 0.264,   // 26.4% WHT + 0%
+  BE: 0.15,    // 15% WHT + 0%
+  CH: 0.15,    // 15% WHT + 0%
+  FR: 0.15,    // 15% WHT + 0%
+  JP: 0.15,    // 15% WHT + 0%
+  AU: 0.15,    // 15% WHT + 0%
+  HK: 0,       // 0% WHT + 0%
+  SG: 0,       // 0% WHT + 0%
+  CA: 0.15,    // 15% WHT + 0%
+  NL: 0.15,    // 15% WHT + 0%
+  IE: 0.15,    // 15% WHT + 0%
+  NO: 0.15,    // 15% WHT + 0%
+};
+
 export const OPERATION_TYPES = {
   deposit: 'Wpłata',
   withdrawal: 'Wypłata',

@@ -27,7 +27,7 @@ export interface Transaction {
   total: number; // po prowizji
   currency: string;
   category?: InstrumentCategory;
-  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual';
+  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
   importBatch?: string;
 }
 
@@ -46,7 +46,7 @@ export interface CashOperation {
   ticker?: string; // for dividends
   fxRate?: number; // for fx exchanges
   fxPair?: string; // e.g., 'PLN/USD'
-  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual';
+  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
   importBatch?: string;
 }
 
@@ -104,7 +104,7 @@ export interface ClosedTrade {
   holdingDays: number;
   currency: string;
   sellTransactionId: number;
-  sellSource: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual';
+  sellSource: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
   category?: InstrumentCategory;
   fees?: ClosedTradeFee[];
   totalCost?: number;
@@ -117,7 +117,7 @@ export interface DividendRecord {
   description: string;
   amount: number;
   currency: string;
-  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual';
+  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
 }
 
 export interface DividendInput {
