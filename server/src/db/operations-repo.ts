@@ -141,8 +141,8 @@ export function deleteOperation(id: number, portfolioId: string = 'default'): bo
 
 /**
  * Check if a dividend already exists for a given date and ticker (any source).
- * Handles format mismatches between brokers:
- * - Date: compares only YYYY-MM-DD prefix (Bossa adds T00:00:00, XTB adds timestamp)
+ * Handles mismatches between broker imports and auto-scanner:
+ * - Date: ±30 day window (ex-dividend date vs payment date can differ by weeks)
  * - Ticker: matches with and without exchange suffix (Bossa: "PLAYWAY", Yahoo: "PLAYWAY.WA")
  */
 export function dividendExistsForDateAndTicker(
@@ -156,9 +156,10 @@ export function dividendExistsForDateAndTicker(
 
   const row = db.prepare(
     `SELECT COUNT(*) as cnt FROM cash_operations
-     WHERE substr(date, 1, 10) = ? AND operation_type = 'dividend'
-       AND (ticker = ? OR ticker = ?)`
-  ).get(datePrefix, ticker, baseTicker) as { cnt: number };
+     WHERE operation_type = 'dividend'
+       AND (ticker = ? OR ticker = ?)
+       AND abs(julianday(substr(date, 1, 10)) - julianday(?)) <= 30`
+  ).get(ticker, baseTicker, datePrefix) as { cnt: number };
   return row.cnt > 0;
 }
 

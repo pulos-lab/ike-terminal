@@ -99,6 +99,8 @@ export const api = {
     request<{ scanned: number; newDividends: number; errors: string[] }>('/portfolio/dividends/scan', {
       method: 'POST',
     }),
+  getUpcomingDividends: () =>
+    request<{ upcoming: import('shared').UpcomingDividend[] }>('/portfolio/dividends/upcoming'),
   deleteDividend: (id: number) =>
     request<{ success: boolean }>(`/portfolio/dividends/${id}`, {
       method: 'DELETE',

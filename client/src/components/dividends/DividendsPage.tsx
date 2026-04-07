@@ -10,8 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { formatNumber, formatDate, formatPLN } from '@/lib/formatters';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { Loader2, Coins, Plus, Pencil, Trash2, Check, X, RefreshCw } from 'lucide-react';
-import type { DividendRecord } from 'shared';
+import { Loader2, Coins, Plus, Pencil, Trash2, Check, X, RefreshCw, Calendar, Clock } from 'lucide-react';
+import type { DividendRecord, UpcomingDividend } from 'shared';
 
 interface DividendForm {
   date: string;
@@ -39,6 +39,90 @@ function SourceBadge({ source }: { source: string }) {
     </span>
   );
 }
+
+function StatusBadge({ exDate, payDate }: { exDate: string; payDate: string | null }) {
+  const today = new Date().toISOString().split('T')[0];
+  if (exDate > today) {
+    return (
+      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-yellow-500/15 text-yellow-500">
+        Nadchodzi
+      </span>
+    );
+  }
+  if (payDate && payDate >= today) {
+    return (
+      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-blue-500/15 text-blue-500">
+        Oczekuje wypłaty
+      </span>
+    );
+  }
+  return null;
+}
+
+// ============ Upcoming Dividends Panel ============
+
+function UpcomingDividendsPanel() {
+  const { data, isLoading } = useQuery({
+    queryKey: QUERY_KEYS.upcomingDividends,
+    queryFn: api.getUpcomingDividends,
+    staleTime: 5 * 60 * 1000, // 5 min
+  });
+
+  const upcoming = data?.upcoming || [];
+
+  if (isLoading) return <LoadingSpinner />;
+  if (upcoming.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Calendar className="h-4 w-4" />
+          Nadchodzące dywidendy
+          <span className="text-muted-foreground font-normal">({upcoming.length})</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Ticker</TableHead>
+                <TableHead>Nazwa</TableHead>
+                <TableHead>Ex-date</TableHead>
+                <TableHead>Data wypłaty</TableHead>
+                <TableHead>Akcje</TableHead>
+                <TableHead className="text-right">Szac. kwota</TableHead>
+                <TableHead>Waluta</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {upcoming.map((d: UpcomingDividend) => (
+                <TableRow key={d.ticker}>
+                  <TableCell className="font-mono font-medium">{d.ticker}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{d.name}</TableCell>
+                  <TableCell>{formatDate(d.exDividendDate)}</TableCell>
+                  <TableCell>{d.paymentDate ? formatDate(d.paymentDate) : '—'}</TableCell>
+                  <TableCell>{d.shares}</TableCell>
+                  <TableCell className="text-right font-medium text-green-500">
+                    {d.estimatedAmount > 0 ? formatNumber(d.estimatedAmount) : '—'}
+                  </TableCell>
+                  <TableCell>{d.currency}</TableCell>
+                  <TableCell>
+                    <StatusBadge exDate={d.exDividendDate} payDate={d.paymentDate} />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============ Main Page ============
 
 export function DividendsPage() {
   const queryClient = useQueryClient();
@@ -90,6 +174,7 @@ export function DividendsPage() {
     mutationFn: () => api.scanDividends(),
     onSuccess: (result) => {
       invalidateDividends(queryClient);
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.upcomingDividends });
       if (result.newDividends > 0) {
         alert(`Znaleziono ${result.newDividends} nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
       } else {
@@ -190,12 +275,15 @@ export function DividendsPage() {
         </div>
       )}
 
+      <UpcomingDividendsPanel />
+
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Clock className="h-4 w-4" />
             Historia dywidend
             {dividends.length > 0 && (
-              <span className="text-muted-foreground font-normal ml-2">({dividends.length})</span>
+              <span className="text-muted-foreground font-normal">({dividends.length})</span>
             )}
           </CardTitle>
         </CardHeader>

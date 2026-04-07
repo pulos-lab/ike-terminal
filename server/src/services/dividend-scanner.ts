@@ -11,7 +11,7 @@ import { getAllTransactions } from '../db/transactions-repo.js';
 import { getTickerMap } from '../db/ticker-map-repo.js';
 import { dividendExistsForDateAndTicker, insertOperationsWithDedup, getLatestDividendDate, deleteAutoYahooDividends } from '../db/operations-repo.js';
 import { getSharesAtDate } from './portfolio-engine.js';
-import { fetchYahooDividendEvents } from './yahoo-finance.js';
+import { fetchYahooDividendEvents, fetchDividendCalendar } from './yahoo-finance.js';
 import { DIVIDEND_TAX_REGULAR, DIVIDEND_TAX_IKE_IKZE } from 'shared';
 import type { CashOperation, PortfolioSettings, TickerMapEntry } from 'shared';
 
@@ -109,12 +109,22 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
   const errors: string[] = [];
   let scanned = 0;
 
+  const today = new Date().toISOString().split('T')[0];
+
   for (const [isin, entry] of isinEntries) {
     try {
       const events = await fetchYahooDividendEvents(entry.ticker, startDate);
       scanned++;
 
+      // Fetch v10 calendar to check if payment date is still pending
+      const calendar = await fetchDividendCalendar(entry.ticker).catch(() => null);
+
       for (const event of events) {
+        // Skip if payment date hasn't passed yet (dividend not yet paid out)
+        if (calendar?.paymentDate && calendar.exDividendDate === event.date && calendar.paymentDate > today) {
+          continue;
+        }
+
         // Skip if dividend already exists (from any source)
         if (dividendExistsForDateAndTicker(portfolioId, event.date, entry.ticker)) {
           continue;
