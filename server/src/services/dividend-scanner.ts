@@ -9,7 +9,7 @@
 import { getAllPortfolios, getPortfolio } from '../db/portfolio-registry.js';
 import { getAllTransactions } from '../db/transactions-repo.js';
 import { getTickerMap } from '../db/ticker-map-repo.js';
-import { dividendExistsForDateAndTicker, insertOperationsWithDedup } from '../db/operations-repo.js';
+import { dividendExistsForDateAndTicker, insertOperationsWithDedup, getLatestDividendDate, deleteAutoYahooDividends } from '../db/operations-repo.js';
 import { getSharesAtDate } from './portfolio-engine.js';
 import { fetchYahooDividendEvents } from './yahoo-finance.js';
 import { DIVIDEND_TAX_REGULAR, DIVIDEND_TAX_IKE_IKZE } from 'shared';
@@ -21,7 +21,7 @@ export interface ScanResult {
   errors: string[];
 }
 
-const SCAN_LOOKBACK_DAYS = 365;
+const DEFAULT_LOOKBACK_DAYS = 90;
 
 function getCountryFromExchange(exchange: string, ticker: string): string {
   if (exchange === 'GPW' || exchange === 'NC') return 'PL';
@@ -75,17 +75,27 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
     return { scanned: 0, newDividends: 0, errors: [] };
   }
 
-  // Determine scan start date
-  const lookbackDate = new Date();
-  lookbackDate.setDate(lookbackDate.getDate() - SCAN_LOOKBACK_DAYS);
-  const lookbackStr = lookbackDate.toISOString().split('T')[0];
+  // Clean up previous auto-yahoo dividends (may contain duplicates from broken dedup)
+  const deleted = deleteAutoYahooDividends(portfolioId);
+  if (deleted > 0) {
+    console.log(`[dividend-scanner] ${portfolioId}: cleaned up ${deleted} old auto-yahoo dividends`);
+  }
 
-  // Find earliest transaction date
-  const earliestTx = transactions.reduce(
-    (min, t) => t.date < min ? t.date : min,
-    transactions[0].date
-  );
-  const startDate = earliestTx > lookbackStr ? lookbackStr : earliestTx;
+  // Determine scan start date: from last broker-imported dividend, or 90 days back
+  const latestDiv = getLatestDividendDate(portfolioId);
+  let startDate: string;
+  if (latestDiv) {
+    startDate = latestDiv;
+  } else {
+    const lookbackDate = new Date();
+    lookbackDate.setDate(lookbackDate.getDate() - DEFAULT_LOOKBACK_DAYS);
+    const lookbackStr = lookbackDate.toISOString().split('T')[0];
+    const earliestTx = transactions.reduce(
+      (min, t) => t.date < min ? t.date : min,
+      transactions[0].date
+    );
+    startDate = earliestTx > lookbackStr ? lookbackStr : earliestTx;
+  }
 
   // Collect unique ISINs with their ticker map entries (exclude NC — Stooq only, no dividend data)
   const isinEntries = new Map<string, TickerMapEntry>();
