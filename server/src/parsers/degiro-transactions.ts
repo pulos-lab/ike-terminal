@@ -5,48 +5,44 @@ import { parseNumber, roundTo2 } from './utils.js';
 /**
  * Parse DEGIRO Transactions CSV.
  *
- * Format: comma-delimited, UTF-8 encoding.
+ * Supports two format variants:
  *
- * Headers (Polish locale):
+ * OLD format (19 columns, ~2021):
  *   Data,Czas,Produkt,ISIN,Giełda referenc,Miejsce wykonania,Liczba,Kurs,,
  *   Wartość lokalna,,Wartość,,Kurs wymian,Opłata transakcyjna,,Razem,,
  *   Identyfikator zlecenia
  *
- * Empty-name columns are currency columns that follow their corresponding value column.
- * E.g. col[7]=Kurs (price), col[8]=currency of price (PLN/USD/EUR/etc.)
+ * NEW format (17-18 columns, ~2022+):
+ *   Data,Czas,Produkt,ISIN,Giełda referencyjna,Miejsce wykonania,Liczba,Kurs,,
+ *   Wartość lokalna,,Wartość EUR,Kurs wymiany,Opłaty AutoFX,
+ *   Opłata transakcyjna DEGIRO i/lub opłata stron,Razem EUR,
+ *   Identyfikator zlecenia,
  *
- * Column layout (0-indexed):
+ * Common columns (same position in both formats):
  *   0  Data                    - date DD-MM-YYYY
  *   1  Czas                    - time HH:MM
  *   2  Produkt                 - product name
- *   3  ISIN                    - ISIN (directly provided!)
- *   4  Giełda referenc         - reference exchange (WSE, NDQ, NSY, EPA, etc.)
- *   5  Miejsce wykonania       - execution venue (XWAR, CDED, ARCX, etc.)
+ *   3  ISIN                    - ISIN
+ *   4  Giełda referenc(yjna)   - reference exchange
+ *   5  Miejsce wykonania       - execution venue
  *   6  Liczba                  - quantity (negative=sell, positive=buy)
  *   7  Kurs                    - price per share
  *   8  (currency)              - currency of price
  *   9  Wartość lokalna         - local value (qty * price)
  *  10  (currency)              - currency of local value
- *  11  Wartość                 - value in EUR (account currency)
- *  12  (currency)              - always EUR
- *  13  Kurs wymian             - FX rate (empty for EUR trades)
- *  14  Opłata transakcyjna     - transaction fee (negative or zero)
- *  15  (currency)              - currency of fee
- *  16  Razem                   - total (value + fee) in EUR
- *  17  (currency)              - always EUR
- *  18  Identyfikator zlecenia  - order ID (UUID)
+ *
+ * Fee column differs:
+ *   OLD: col[14] = Opłata transakcyjna (value), col[15] = currency
+ *   NEW: dynamically found by header name containing "opłata transakcyjna"
  *
  * Side detection:
- *   - Liczba > 0 AND Wartość lokalna < 0 → BUY (K)  (money going out)
- *   - Liczba < 0 AND Wartość lokalna > 0 → SELL (S)  (money coming in)
- *   - Corporate actions (e.g. SPAC mergers): Liczba sign + Wartość lokalna sign
- *
- * Short selling: DEGIRO allows short selling — a sell (negative Liczba) before
- * a buy is a short sale. Our K/S model handles this correctly.
- *
- * Partial fills: Same order ID may appear across multiple rows.
- * We import each row as a separate transaction (preserving the actual fills).
+ *   - Liczba > 0 → BUY (K)
+ *   - Liczba < 0 → SELL (S) (includes short sells)
  */
+
+interface ColumnMap {
+  fee: number;       // index of fee column
+}
 
 export function parseDegiroTransactions(csvContent: string, importBatch: string): ParseResult<Transaction> {
   const result = Papa.parse(csvContent.trim(), {
@@ -58,9 +54,11 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
   const rows = result.data as string[][];
   if (rows.length < 2) return { data: [], skipped: [] };
 
-  // Validate header row
   const header = rows[0];
   if (!isDegiroHeader(header)) return { data: [], skipped: [] };
+
+  // Dynamically find fee column by header name
+  const colMap = mapColumns(header);
 
   const transactions: Transaction[] = [];
   const skipped: SkippedRow[] = [];
@@ -70,7 +68,7 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
     const rowNum = i + 1; // 1-based
     const product = row ? row[2]?.trim() : undefined;
 
-    if (!row || row.length < 16) { skipped.push({ row: rowNum, reason: 'short_row', paperName: product }); continue; }
+    if (!row || row.length < 14) { skipped.push({ row: rowNum, reason: 'short_row', paperName: product }); continue; }
 
     const dateStr = row[0]?.trim();
     const timeStr = row[1]?.trim();
@@ -79,7 +77,7 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
     const price = parseNumber(row[7]);
     const priceCurrency = row[8]?.trim();
     const localValue = parseNumber(row[9]);
-    const fee = parseNumber(row[14]);
+    const fee = parseNumber(row[colMap.fee]);
 
     if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date', paperName: product }); continue; }
     if (!product) { skipped.push({ row: rowNum, reason: 'missing_name' }); continue; }
@@ -94,22 +92,27 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
 
     // Determine side from sign of Liczba
     const side: 'K' | 'S' = liczba > 0 ? 'K' : 'S';
-    const quantity = Math.abs(Math.round(liczba));
+    const quantity = Math.abs(liczba); // keep fractional shares
     const absPrice = Math.abs(price);
 
     if (quantity <= 0) { skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName: product }); continue; }
     if (absPrice <= 0) { skipped.push({ row: rowNum, reason: 'invalid_price', paperName: product }); continue; }
 
-    const value = roundTo2(quantity * absPrice);
-    const commission = Math.abs(fee); // fee is negative in DEGIRO
-
-    // Total: for buy = value + commission, for sell = value - commission
-    const total = side === 'K'
-      ? roundTo2(value + commission)
-      : roundTo2(value - commission);
-
     // Use the trade currency (from the price column), not the account EUR
     const currency = normalizeCurrency(priceCurrency || 'EUR');
+    const isGbx = (priceCurrency || '').toUpperCase().trim() === 'GBX';
+
+    // GBX prices are in pence — convert to GBP (÷100) for consistent cash balances
+    const effectivePrice = isGbx ? roundTo2(absPrice / 100) : absPrice;
+    const value = roundTo2(quantity * effectivePrice);
+
+    // DEGIRO charges commission separately in EUR (via "DEGIRO Opłata Transakcyjna"
+    // entries in Account.csv), NOT in the trade currency. Setting commission=0 here
+    // prevents double-counting; the EUR fee is imported as a fee operation instead.
+    const commission = 0;
+
+    // Total = value only (commission is tracked separately in EUR)
+    const total = value;
 
     const isoDate = parseDegiroDate(dateStr, timeStr);
 
@@ -119,7 +122,7 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
       isin,
       quantity,
       side,
-      price: absPrice,
+      price: effectivePrice,
       value,
       commission,
       total,
@@ -134,25 +137,44 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
 
 /**
  * Detect if CSV content looks like DEGIRO Transactions format.
+ * Supports both old and new header variants.
  */
 export function isDegiroFormat(csvContent: string): boolean {
   const firstLine = csvContent.split('\n')[0] || '';
   const lower = firstLine.toLowerCase();
-  // DEGIRO-specific: comma-delimited, has 'isin', 'produkt', 'kurs wymian'
-  return lower.includes('produkt') &&
-    lower.includes('isin') &&
-    lower.includes('kurs wymian');
+  // Must have DEGIRO-specific columns
+  if (!lower.includes('produkt') || !lower.includes('isin')) return false;
+  // Old format: "kurs wymian" (abbreviated), new format: "kurs wymiany" or "opłaty autofx"
+  return lower.includes('kurs wymian') || lower.includes('opłaty autofx');
 }
 
 /**
  * Validate the header row contains expected DEGIRO column names.
  */
 function isDegiroHeader(header: string[]): boolean {
-  if (!header || header.length < 16) return false;
+  if (!header || header.length < 14) return false;
   const h0 = header[0]?.trim().toLowerCase();
   const h2 = header[2]?.trim().toLowerCase();
   const h3 = header[3]?.trim().toLowerCase();
   return h0 === 'data' && h2 === 'produkt' && h3 === 'isin';
+}
+
+/**
+ * Dynamically map column indices by searching header names.
+ * Falls back to fixed index 14 (old format) if no match found.
+ */
+function mapColumns(header: string[]): ColumnMap {
+  let feeIdx = 14; // default for old format
+
+  for (let i = 0; i < header.length; i++) {
+    const name = header[i]?.trim().toLowerCase() || '';
+    if (name.includes('opłata transakcyjna') || name.includes('oplata transakcyjna')) {
+      feeIdx = i;
+      break;
+    }
+  }
+
+  return { fee: feeIdx };
 }
 
 /**
@@ -170,11 +192,11 @@ function parseDegiroDate(dateStr: string, timeStr?: string): string {
 
 /**
  * Normalize currency codes.
- * Handles GBX (pence) → GBX (kept as-is, price is in pence).
+ * GBX (pence) → GBP, NO → NOK.
  */
 function normalizeCurrency(currency: string): string {
   const upper = currency.toUpperCase().trim();
-  // GBX = British pence — keep as-is since price is in pence
+  if (upper === 'GBX') return 'GBP';
+  if (upper === 'NO') return 'NOK';
   return upper || 'EUR';
 }
-

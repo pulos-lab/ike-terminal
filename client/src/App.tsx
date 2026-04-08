@@ -15,6 +15,7 @@ import { TradesPage } from '@/components/transactions/TradesPage';
 import { DividendsPage } from '@/components/dividends/DividendsPage';
 import { CurrencyExchangePage } from '@/components/currency/CurrencyExchangePage';
 import { CashFlowPage } from '@/components/cash/CashFlowPage';
+import { CostsPage } from '@/components/costs/CostsPage';
 import { BugReportsPage } from '@/components/admin/BugReportsPage';
 
 const queryClient = new QueryClient({
@@ -52,6 +53,7 @@ function App() {
                       <Route path="/dividends" element={<DividendsPage />} />
                       <Route path="/currency" element={<CurrencyExchangePage />} />
                       <Route path="/cash" element={<CashFlowPage />} />
+                      <Route path="/costs" element={<CostsPage />} />
                       <Route path="/admin/bugs" element={<BugReportsPage />} />
                       <Route path="*" element={<Navigate to="/app" replace />} />
                     </Routes>

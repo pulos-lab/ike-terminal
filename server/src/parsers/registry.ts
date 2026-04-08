@@ -1,7 +1,9 @@
 import type { Transaction, CashOperation, BrokerType, ParseResult } from 'shared';
+import type { TransactionTax } from './degiro-operations.js';
 import { parseBossaTransactions, isBossaFormat } from './bossa-transactions.js';
 import { parseMbankTransactions, isMbankFormat } from './mbank-transactions.js';
 import { parseDegiroTransactions, isDegiroFormat } from './degiro-transactions.js';
+import { parseDegiroOperations, isDegiroAccountFormat, parseDegiroTransactionTaxes } from './degiro-operations.js';
 import { parseXtbFile, isXtbFormat } from './xtb-transactions.js';
 
 /**
@@ -21,6 +23,12 @@ export interface BrokerParser {
   parse: (content: string, importBatch: string) => ParseResult<Transaction>;
   /** Whether this broker supports cash operations import */
   supportsOperations: boolean;
+  /** Detect if CSV is an operations file (not transactions) for this broker */
+  detectOperations?: (content: string) => boolean;
+  /** Parse cash operations CSV */
+  parseOperations?: (content: string, importBatch: string) => ParseResult<CashOperation>;
+  /** Extract transaction-specific taxes to add to transaction commissions */
+  parseTransactionTaxes?: (content: string) => TransactionTax[];
   /** Whether the parser needs post-import ISIN resolution by name (mBank) */
   needsNameResolution: boolean;
 }
@@ -31,7 +39,10 @@ export const PARSER_REGISTRY: BrokerParser[] = [
     label: 'DEGIRO',
     detect: isDegiroFormat,
     parse: parseDegiroTransactions,
-    supportsOperations: false,
+    supportsOperations: true,
+    detectOperations: isDegiroAccountFormat,
+    parseOperations: parseDegiroOperations,
+    parseTransactionTaxes: parseDegiroTransactionTaxes,
     needsNameResolution: false,
   },
   {

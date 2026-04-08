@@ -143,6 +143,9 @@ export const api = {
       method: 'DELETE',
     }),
 
+  // Fees
+  getFees: () => request<{ fees: any[]; total: number }>('/portfolio/fees'),
+
   getFxHistory: () => request<any>('/portfolio/fx-history'),
   createFxExchange: (body: { date: string; currencyFrom: string; currencyTo: string; amountFrom: number; rate: number }) =>
     request<{ success: boolean }>('/portfolio/fx-exchanges', {

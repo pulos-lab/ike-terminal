@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { randomUUID } from 'crypto';
-import type { BrokerType } from 'shared';
+import type { BrokerType, CashOperation, SkippedRow } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
 import { parseBossaOperations } from '../parsers/bossa-operations.js';
-import { detectBroker, getParserById, detectBinaryBroker, getBinaryParserById } from '../parsers/registry.js';
-import { insertTransactionsWithDedup, getTransactionsCount, clearTransactions, getLastImportDate } from '../db/transactions-repo.js';
+import { detectBroker, getParserById, detectBinaryBroker, getBinaryParserById, PARSER_REGISTRY } from '../parsers/registry.js';
+import { insertTransactionsWithDedup, getTransactionsCount, clearTransactions, getLastImportDate, getTransactionsByIsin, updateTransaction } from '../db/transactions-repo.js';
 import { insertOperationsWithDedup, getOperationsCount, clearOperations } from '../db/operations-repo.js';
 import { seedTickerMap, findIsinByName } from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from '../services/isin-resolver.js';
@@ -94,6 +94,13 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
       ? await resolveUnknownIsins(txResult.data, pid)
       : { resolved: [], unresolved: [] };
 
+    // Filter unresolved: skip ISINs with net 0 shares (fully closed positions)
+    const unresolvedWithOpenPositions = unresolved.filter(u => {
+      const isinTxs = txResult.data.filter(t => t.isin === u.isin);
+      const net = isinTxs.reduce((sum, t) => sum + (t.side === 'K' ? t.quantity : -t.quantity), 0);
+      return Math.abs(net) > 0.001;
+    });
+
     return res.json({
       success: true,
       transactionsImported: txDedup.inserted,
@@ -102,7 +109,7 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
       total: getTransactionsCount(pid),
       detectedSource: binaryParser.id,
       tickersResolved: resolved.length,
-      tickersUnresolved: unresolved.map(u => u.paperName),
+      tickersUnresolved: unresolvedWithOpenPositions.map(u => u.paperName),
       skipped: allSkipped.length > 0 ? allSkipped : undefined,
       duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
     });
@@ -110,6 +117,61 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
 
   // ── CSV path (Bossa, mBank, DEGIRO) ──
   const content = decodeCSVBuffer(req.file.buffer);
+
+  // Check if this CSV is an operations file (e.g. DEGIRO Account CSV) — redirect to operations flow
+  if (requestedBroker === 'auto') {
+    const opsParser = PARSER_REGISTRY.find(p => p.detectOperations?.(content));
+    if (opsParser && opsParser.parseOperations) {
+      const { data: operations, skipped: opsSkipped } = opsParser.parseOperations(content, importBatch);
+
+      if (operations.length === 0) {
+        const skippedInfo = opsSkipped.length > 0
+          ? ` Pominięto ${opsSkipped.length} wierszy.`
+          : '';
+        return res.status(400).json({
+          error: `Plik nie zawiera rozpoznawalnych operacji ${opsParser.label}.${skippedInfo}`,
+          skipped: opsSkipped.length > 0 ? opsSkipped : undefined,
+        });
+      }
+
+      const pid = req.portfolioId;
+      const { inserted, duplicates } = insertOperationsWithDedup(operations, pid);
+
+      // Apply transaction-specific taxes (Stamp Duty, French tax) to matching transactions
+      let taxesApplied = 0;
+      if (opsParser.parseTransactionTaxes) {
+        const taxes = opsParser.parseTransactionTaxes(content);
+        for (const tax of taxes) {
+          const txs = getTransactionsByIsin(tax.isin, pid);
+          // Find transaction on the same date
+          const taxDate = tax.date.split('T')[0];
+          const match = txs.find(t => t.date.startsWith(taxDate));
+          if (match && match.id) {
+            const newCommission = Math.round((match.commission + tax.amount) * 100) / 100;
+            const newTotal = match.side === 'K'
+              ? Math.round((match.value + newCommission) * 100) / 100
+              : Math.round((match.value - newCommission) * 100) / 100;
+            updateTransaction(match.id, { commission: newCommission, total: newTotal }, pid);
+            taxesApplied++;
+          }
+        }
+      }
+
+      const allSkipped = [...opsSkipped, ...duplicates];
+
+      return res.json({
+        success: true,
+        transactionsImported: 0,
+        operationsImported: inserted,
+        taxesApplied: taxesApplied > 0 ? taxesApplied : undefined,
+        importBatch,
+        total: getTransactionsCount(pid),
+        detectedSource: opsParser.id,
+        skipped: allSkipped.length > 0 ? allSkipped : undefined,
+        duplicatesSkipped: duplicates.length > 0 ? duplicates.length : undefined,
+      });
+    }
+  }
 
   const parser = requestedBroker === 'auto'
     ? detectBroker(content)
@@ -147,6 +209,13 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
   const { inserted, duplicates } = insertTransactionsWithDedup(transactions, pid);
   const { resolved, unresolved } = await resolveUnknownIsins(transactions, pid);
 
+  // Filter unresolved: skip ISINs with net 0 shares (fully closed positions)
+  const unresolvedWithOpenPositions = unresolved.filter(u => {
+    const isinTxs = transactions.filter(t => t.isin === u.isin);
+    const net = isinTxs.reduce((sum, t) => sum + (t.side === 'K' ? t.quantity : -t.quantity), 0);
+    return Math.abs(net) > 0.001; // only show unresolved ISINs with open positions
+  });
+
   const allSkipped = [...skipped, ...duplicates];
   const duplicatesSkipped = duplicates.length;
 
@@ -157,7 +226,7 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
     total: getTransactionsCount(pid),
     detectedSource: parser.id,
     tickersResolved: resolved.length,
-    tickersUnresolved: unresolved.map(u => u.paperName),
+    tickersUnresolved: unresolvedWithOpenPositions.map(u => u.paperName),
     skipped: allSkipped.length > 0 ? allSkipped : undefined,
     duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
   });
@@ -172,21 +241,51 @@ router.post('/operations', upload.single('file'), asyncHandler((req, res) => {
   const content = decodeCSVBuffer(req.file.buffer);
   const importBatch = randomUUID();
 
-  // Parse operations (Bossa format)
-  const { data: operations, skipped } = parseBossaOperations(content, importBatch);
+  // Auto-detect operations format: try DEGIRO Account first, then Bossa
+  let parseResult: { data: CashOperation[]; skipped: SkippedRow[] };
+  let detectedSource: string = 'bossa';
+
+  const opsParser = PARSER_REGISTRY.find(p => p.detectOperations?.(content));
+  if (opsParser && opsParser.parseOperations) {
+    parseResult = opsParser.parseOperations(content, importBatch);
+    detectedSource = opsParser.id;
+  } else {
+    parseResult = parseBossaOperations(content, importBatch);
+  }
+
+  const { data: operations, skipped } = parseResult;
 
   if (operations.length === 0) {
     const skippedInfo = skipped.length > 0
       ? ` Pominięto ${skipped.length} wierszy.`
       : '';
     return res.status(400).json({
-      error: `Plik nie zawiera rozpoznawalnych operacji.${skippedInfo} Sprawdź czy to plik CSV z operacjami gotówkowymi z Bossy.`,
+      error: `Plik nie zawiera rozpoznawalnych operacji.${skippedInfo} Sprawdź czy to plik CSV z operacjami gotówkowymi.`,
       skipped: skipped.length > 0 ? skipped : undefined,
     });
   }
 
   const pid = req.portfolioId;
   const { inserted, duplicates } = insertOperationsWithDedup(operations, pid);
+
+  // Apply transaction-specific taxes to matching transactions (DEGIRO)
+  let taxesApplied = 0;
+  if (opsParser && opsParser.parseTransactionTaxes) {
+    const taxes = opsParser.parseTransactionTaxes(content);
+    for (const tax of taxes) {
+      const txs = getTransactionsByIsin(tax.isin, pid);
+      const taxDate = tax.date.split('T')[0];
+      const match = txs.find(t => t.date.startsWith(taxDate));
+      if (match && match.id) {
+        const newCommission = Math.round((match.commission + tax.amount) * 100) / 100;
+        const newTotal = match.side === 'K'
+          ? Math.round((match.value + newCommission) * 100) / 100
+          : Math.round((match.value - newCommission) * 100) / 100;
+        updateTransaction(match.id, { commission: newCommission, total: newTotal }, pid);
+        taxesApplied++;
+      }
+    }
+  }
 
   const allSkipped = [...skipped, ...duplicates];
   const duplicatesSkipped = duplicates.length;

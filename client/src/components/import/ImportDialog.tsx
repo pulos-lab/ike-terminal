@@ -23,6 +23,8 @@ const SKIP_REASON_LABELS: Record<SkipReason, string> = {
   summary_row: 'wiersz podsumowania',
   unparseable_comment: 'nierozpoznany format komentarza',
   close_trade_entry: 'wpis P/L (pominięty)',
+  missing_description: 'brak opisu operacji',
+  unmatched_fx_credit: 'niesparowana wymiana walut',
   duplicate: 'duplikat (już zaimportowano)',
 };
 
@@ -163,10 +165,10 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             />
           </div>
 
-          {(selectedBroker === 'auto' || selectedBroker === 'bossa') && (
+          {(selectedBroker === 'auto' || selectedBroker === 'bossa' || selectedBroker === 'degiro') && (
             <div className="flex flex-col gap-1">
               <label className="text-sm font-medium">Operacje gotówkowe</label>
-              <span className="text-xs text-muted-foreground">Tylko format Bossa.</span>
+              <span className="text-xs text-muted-foreground">Format Bossa lub DEGIRO Account.</span>
               <Input
                 type="file"
                 accept=".csv"
