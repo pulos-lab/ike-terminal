@@ -2,6 +2,11 @@ import { getCached, setCached } from './price-cache.js';
 import { storeHistoricalPrices, loadHistoricalPrices, getLastCachedDate } from './history-cache.js';
 import { config } from '../config.js';
 
+/** Detect Stooq block/rate-limit responses */
+function isStooqBlocked(text: string): boolean {
+  return text.includes('Przekroczony') || text.includes('limit') || text.includes('www@stooq.pl');
+}
+
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 
 // Concurrency limiter for Stooq requests (max 3 simultaneous)
@@ -98,9 +103,33 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
       const url = `https://stooq.pl/q/d/l/?s=${stooqTicker}&i=d&d1=${d1}&d2=${d2}`;
       const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
       const text = await response.text();
-      if (text.includes('Przekroczony') || text.includes('limit')) return null;
+      if (isStooqBlocked(text)) {
+        // Fallback to SQLite cache
+        const tenDaysAgo = new Date();
+        tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+        const cachedRows = loadHistoricalPrices(stooqTicker, tenDaysAgo.toISOString().split('T')[0]);
+        if (cachedRows.length >= 2) {
+          cachedRows.sort((a, b) => a.date.localeCompare(b.date));
+          const prevCloseVal = cachedRows[cachedRows.length - 2].close;
+          setCached(cacheKey, prevCloseVal, config.cache.stooqLiveTtl);
+          return prevCloseVal;
+        }
+        return null;
+      }
       const lines = text.trim().split('\n');
-      if (lines.length < 3) return null; // need at least header + 2 data rows
+      if (lines.length < 3) {
+        // Not enough data from API — fallback to SQLite cache
+        const tenDaysAgo = new Date();
+        tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+        const cachedRows = loadHistoricalPrices(stooqTicker, tenDaysAgo.toISOString().split('T')[0]);
+        if (cachedRows.length >= 2) {
+          cachedRows.sort((a, b) => a.date.localeCompare(b.date));
+          const prevCloseVal = cachedRows[cachedRows.length - 2].close;
+          setCached(cacheKey, prevCloseVal, config.cache.stooqLiveTtl);
+          return prevCloseVal;
+        }
+        return null;
+      }
 
       const headers = lines[0].split(',');
       const closeIdx = headers.findIndex(h => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close');
@@ -143,8 +172,11 @@ export async function fetchStooqHistory(ticker: string, startDate?: string): Pro
   const lastCached = getLastCachedDate(stooqTicker);
   const today = new Date().toISOString().split('T')[0];
 
-  // If we have cached data and it's recent (within 2 days), use it
-  if (cachedData.length > 10 && lastCached && lastCached >= today.slice(0, 8)) {
+  // If we have cached data and it's recent (within 3 days — covers weekends), use it
+  const daysDiff = lastCached
+    ? Math.floor((new Date(today).getTime() - new Date(lastCached).getTime()) / 86_400_000)
+    : Infinity;
+  if (cachedData.length > 10 && daysDiff <= 3) {
     setCached(cacheKey, cachedData, 12 * 3600);
     return cachedData;
   }
@@ -167,8 +199,8 @@ export async function fetchStooqHistory(ticker: string, startDate?: string): Pro
         headers: { 'User-Agent': USER_AGENT },
       });
       const text = await response.text();
-      if (text.includes('Przekroczony') || text.includes('limit')) {
-        console.warn(`Stooq rate limit hit for ${stooqTicker}, using SQLite cache (${cachedData.length} points)`);
+      if (isStooqBlocked(text)) {
+        console.warn(`Stooq blocked/rate-limited for ${stooqTicker}, using SQLite cache (${cachedData.length} points)`);
         // Fall back to whatever we have in persistent cache
         if (cachedData.length > 0) {
           setCached(cacheKey, cachedData, 12 * 3600);

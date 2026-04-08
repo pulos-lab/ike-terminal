@@ -199,8 +199,11 @@ export async function fetchYahooHistory(
   // Check if cache covers the requested start date
   const cacheCoversStart = firstCached != null && firstCached <= startDate;
 
-  // If we have cached data that covers the start, is recent, use it
-  if (cachedData.length > 10 && lastCached && lastCached >= today.slice(0, 8) && cacheCoversStart) {
+  // If we have cached data that covers the start and is recent (within 3 days), use it
+  const daysDiff = lastCached
+    ? Math.floor((new Date(today).getTime() - new Date(lastCached).getTime()) / 86_400_000)
+    : Infinity;
+  if (cachedData.length > 10 && daysDiff <= 3 && cacheCoversStart) {
     setCached(cacheKey, cachedData, 12 * 3600);
     return cachedData;
   }
