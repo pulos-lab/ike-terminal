@@ -1,5 +1,5 @@
 import { getCached, setCached } from './price-cache.js';
-import { storeHistoricalPrices, loadHistoricalPrices, getLastCachedDate } from './history-cache.js';
+import { storeHistoricalPrices, loadHistoricalPrices, getLastCachedDate, getFirstCachedDate } from './history-cache.js';
 
 const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const YAHOO_V10_BASE = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary';
@@ -193,43 +193,68 @@ export async function fetchYahooHistory(
   // Check persistent SQLite cache first
   const cachedData = loadHistoricalPrices(ticker, startDate);
   const lastCached = getLastCachedDate(ticker);
+  const firstCached = getFirstCachedDate(ticker);
   const today = new Date().toISOString().split('T')[0];
 
-  // If we have cached data and it's recent (within 2 days), use it
-  if (cachedData.length > 10 && lastCached && lastCached >= today.slice(0, 8)) {
+  // Check if cache covers the requested start date
+  const cacheCoversStart = firstCached != null && firstCached <= startDate;
+
+  // If we have cached data that covers the start, is recent, use it
+  if (cachedData.length > 10 && lastCached && lastCached >= today.slice(0, 8) && cacheCoversStart) {
     setCached(cacheKey, cachedData, 12 * 3600);
     return cachedData;
   }
 
-  // Fetch only missing data (from last cached date or startDate)
-  const fetchFrom = lastCached && lastCached > startDate
-    ? lastCached
-    : startDate;
+  // Determine what ranges to fetch
+  // 1. Backfill: if cache starts later than requested startDate, fetch the gap
+  // 2. Forward: if cache doesn't cover recent dates, fetch from lastCached to end
+  const fetchRanges: Array<{ from: string; to: string }> = [];
+
+  if (!cacheCoversStart) {
+    // Need to backfill from startDate to firstCached (or end if no cache)
+    const backfillEnd = firstCached && firstCached > startDate ? firstCached : end;
+    fetchRanges.push({ from: startDate, to: backfillEnd });
+  }
+
+  if (!lastCached || lastCached < end) {
+    // Need forward fetch from lastCached (or startDate) to end
+    const forwardFrom = lastCached && lastCached > startDate ? lastCached : startDate;
+    // Avoid duplicate range if backfill already covers this
+    if (fetchRanges.length === 0 || forwardFrom > fetchRanges[0].to) {
+      fetchRanges.push({ from: forwardFrom, to: end });
+    }
+  }
+
+  if (fetchRanges.length === 0) {
+    // Cache is complete — return it
+    const mergedData = loadHistoricalPrices(ticker, startDate);
+    mergedData.sort((a, b) => a.date.localeCompare(b.date));
+    setCached(cacheKey, mergedData, 12 * 3600);
+    return mergedData;
+  }
 
   try {
-    const period1 = String(Math.floor(new Date(fetchFrom).getTime() / 1000));
-    const period2 = String(Math.floor(new Date(end).getTime() / 1000));
+    for (const range of fetchRanges) {
+      const period1 = String(Math.floor(new Date(range.from).getTime() / 1000));
+      const period2 = String(Math.floor(new Date(range.to).getTime() / 1000));
 
-    const result = await yahooChart(ticker, { interval: '1d', period1, period2 });
-    if (!result) {
-      if (cachedData.length > 0) return cachedData;
-      return [];
-    }
+      const result = await yahooChart(ticker, { interval: '1d', period1, period2 });
+      if (!result) continue;
 
-    const timestamps: number[] = result.timestamp || [];
-    const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
+      const timestamps: number[] = result.timestamp || [];
+      const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
 
-    const freshData = timestamps
-      .map((ts, i) => ({
-        date: new Date(ts * 1000).toISOString().split('T')[0],
-        close: closes[i],
-      }))
-      .filter((r): r is { date: string; close: number } => r.close != null)
-      .sort((a, b) => a.date.localeCompare(b.date));
+      const freshData = timestamps
+        .map((ts, i) => ({
+          date: new Date(ts * 1000).toISOString().split('T')[0],
+          close: closes[i],
+        }))
+        .filter((r): r is { date: string; close: number } => r.close != null)
+        .sort((a, b) => a.date.localeCompare(b.date));
 
-    // Store fresh data in persistent cache
-    if (freshData.length > 0) {
-      storeHistoricalPrices(ticker, freshData, 'yahoo');
+      if (freshData.length > 0) {
+        storeHistoricalPrices(ticker, freshData, 'yahoo');
+      }
     }
 
     // Merge: load full range from persistent cache (now includes fresh data)
@@ -239,7 +264,6 @@ export async function fetchYahooHistory(
     return mergedData;
   } catch (error) {
     console.error(`Yahoo history fetch failed for ${ticker}:`, error);
-    // Fall back to persistent cache
     if (cachedData.length > 0) return cachedData;
     return [];
   }

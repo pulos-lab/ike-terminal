@@ -287,6 +287,7 @@ export type SkipReason =
   | 'invalid_date' | 'corporate_action' | 'short_row'
   | 'zero_amount' | 'settlement_record'
   | 'summary_row' | 'unparseable_comment' | 'close_trade_entry'
+  | 'missing_description' | 'unmatched_fx_credit'
   | 'duplicate';
 
 export interface SkippedRow {

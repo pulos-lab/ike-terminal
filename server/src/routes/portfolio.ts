@@ -235,6 +235,22 @@ router.get('/dividends/upcoming', asyncHandler(async (req, res) => {
   res.json({ upcoming });
 }));
 
+// GET /api/portfolio/fees — returns fee operations (interest, payment charges, etc.)
+router.get('/fees', asyncHandler((req, res) => {
+  const fees = getOperationsByType('fee', req.portfolioId)
+    .map(op => ({
+      id: op.id,
+      date: op.date,
+      amount: op.amount,
+      currency: op.currency,
+      description: op.description,
+      source: op.source,
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const total = fees.reduce((s, f) => s + f.amount, 0);
+  res.json({ fees, total });
+}));
+
 // GET /api/portfolio/deposits — returns deposits + withdrawals
 router.get('/deposits', asyncHandler((req, res) => {
   const deposits = getOperationsByTypes(['deposit', 'withdrawal'], req.portfolioId)

@@ -85,6 +85,18 @@ export function getLastCachedDate(ticker: string): string | null {
 }
 
 /**
+ * Get the earliest date we have cached for a ticker.
+ * Returns null if no data cached.
+ */
+export function getFirstCachedDate(ticker: string): string | null {
+  const db = getHistoryDb();
+  const row = db
+    .prepare('SELECT MIN(date) as minDate FROM price_history WHERE ticker = ?')
+    .get(ticker) as { minDate: string | null } | undefined;
+  return row?.minDate || null;
+}
+
+/**
  * Remove all cached prices for a ticker from the persistent SQLite cache.
  * Called after detecting a stock split — Yahoo retroactively adjusts historical
  * prices, so our cached (pre-split) values are now stale.

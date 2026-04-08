@@ -123,20 +123,45 @@ interface PositionMetrics {
 export function computePositionMetrics(transactions: Transaction[]): PositionMetrics {
   const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
   const buyLots: BuyLot[] = [];
+  const shortLots: BuyLot[] = []; // tracks open short positions
   let totalCommission = 0;
 
   for (const tx of sorted) {
     totalCommission += tx.commission;
     if (tx.side === 'K') {
-      buyLots.push({
-        quantity: tx.quantity,
-        price: tx.price,
-        commission: tx.commission,
-        date: tx.date,
-        currency: tx.currency,
-      });
+      // If there are open short positions, this buy covers the short (FIFO)
+      if (shortLots.length > 0) {
+        let remaining = tx.quantity;
+        while (remaining > 0 && shortLots.length > 0) {
+          if (shortLots[0].quantity <= remaining) {
+            remaining -= shortLots[0].quantity;
+            shortLots.shift();
+          } else {
+            shortLots[0].quantity -= remaining;
+            remaining = 0;
+          }
+        }
+        // Any leftover after covering shorts becomes a regular buy lot
+        if (remaining > 0) {
+          buyLots.push({
+            quantity: remaining,
+            price: tx.price,
+            commission: tx.commission * (remaining / tx.quantity),
+            date: tx.date,
+            currency: tx.currency,
+          });
+        }
+      } else {
+        buyLots.push({
+          quantity: tx.quantity,
+          price: tx.price,
+          commission: tx.commission,
+          date: tx.date,
+          currency: tx.currency,
+        });
+      }
     } else {
-      // FIFO sell
+      // FIFO sell — consume buy lots first
       let remaining = tx.quantity;
       while (remaining > 0 && buyLots.length > 0) {
         if (buyLots[0].quantity <= remaining) {
@@ -146,6 +171,16 @@ export function computePositionMetrics(transactions: Transaction[]): PositionMet
           buyLots[0].quantity -= remaining;
           remaining = 0;
         }
+      }
+      // Any remaining sell quantity with no buy lots = short sell
+      if (remaining > 0) {
+        shortLots.push({
+          quantity: remaining,
+          price: tx.price,
+          commission: tx.commission * (remaining / tx.quantity),
+          date: tx.date,
+          currency: tx.currency,
+        });
       }
     }
   }
@@ -203,11 +238,30 @@ export async function computeOpenPositions(
     byIsin.set(tx.isin, arr);
   }
 
-  // Get FX rates
-  const usdPln = await fetchFxRate('USDPLN') || 4.0;
-  const cadPln = await fetchFxRate('CADPLN') || 2.95;
-  const eurPln = await fetchFxRate('EURPLN') || 4.3;
-  const fxRates: Record<string, number> = { USD: usdPln, CAD: cadPln, EUR: eurPln, PLN: 1 };
+  // Get FX rates — collect all currencies from ticker map and transactions
+  const liveCurrencies = new Set<string>();
+  for (const entry of tickerMap.values()) {
+    if (entry.currency) {
+      const u = entry.currency.toUpperCase();
+      liveCurrencies.add(u === 'GBX' || u === 'GBP' ? 'GBP' : u);
+    }
+  }
+  for (const tx of transactions) {
+    const u = tx.currency.toUpperCase();
+    liveCurrencies.add(u === 'GBX' ? 'GBP' : u);
+  }
+  liveCurrencies.delete('PLN');
+  const fxRates: Record<string, number> = { PLN: 1 };
+  const defaultFx: Record<string, number> = {
+    USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
+    CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
+  };
+  await Promise.all([...liveCurrencies].map(async (cur) => {
+    const rate = await fetchFxRate(`${cur}PLN`);
+    fxRates[cur] = rate || defaultFx[cur] || 1;
+    // Also store GBp → GBP alias so ticker map entries with 'GBp' currency work
+    if (cur === 'GBP') fxRates['GBp'] = fxRates[cur];
+  }));
 
   const positions: Position[] = [];
   let totalValuePln = 0;
@@ -238,8 +292,14 @@ export async function computeOpenPositions(
       ? ((currentPrice - previousClose) / previousClose) * 100
       : null;
 
-    const priceInNative = currentPrice || 0;
-    const fxNativeToPln = fxRates[entry.currency] || 1;
+    let priceInNative = currentPrice || 0;
+    // Yahoo returns London-listed prices in GBX (pence) — convert to GBP
+    const entCurUpper = entry.currency.toUpperCase();
+    if ((entCurUpper === 'GBP' || entCurUpper === 'GBX') && entry.ticker.endsWith('.L')) {
+      priceInNative = priceInNative / 100;
+    }
+    const fxKey = entCurUpper === 'GBX' ? 'GBP' : entCurUpper;
+    const fxNativeToPln = fxRates[fxKey] || fxRates[entry.currency] || 1;
     const currentValueNative = metrics.shares * priceInNative;
     const currentValuePln = currentValueNative * fxNativeToPln;
 
@@ -340,17 +400,79 @@ export function computeClosedTrades(
   for (const [isin, txs] of byIsin) {
     const sorted = [...txs].sort((a, b) => a.date.localeCompare(b.date));
     const buyQueue: Array<{ quantity: number; price: number; commission: number; date: string }> = [];
+    const shortQueue: Array<{ quantity: number; price: number; commission: number; date: string; sellTx: Transaction }> = [];
     const entry = tickerMap.get(isin);
 
     for (const tx of sorted) {
       if (tx.side === 'K') {
-        buyQueue.push({
-          quantity: tx.quantity,
-          price: tx.price,
-          commission: tx.commission,
-          date: tx.date,
-        });
+        // If there are open short positions, this buy covers them (FIFO)
+        if (shortQueue.length > 0) {
+          let remaining = tx.quantity;
+          const commissionPerShare = tx.commission / tx.quantity;
+
+          while (remaining > 0 && shortQueue.length > 0) {
+            const shortLot = shortQueue[0];
+            const matched = Math.min(remaining, shortLot.quantity);
+
+            const shortDate = new Date(shortLot.date);
+            const coverDate = new Date(tx.date);
+            const holdingDays = Math.floor((coverDate.getTime() - shortDate.getTime()) / (1000 * 60 * 60 * 24));
+
+            const sellValue = matched * shortLot.price;
+            const coverValue = matched * tx.price;
+            const sellComm = matched * (shortLot.commission / (shortLot.quantity + (shortLot.quantity === matched ? 0 : matched)));
+            const coverComm = matched * commissionPerShare;
+            // Short P/L: profit when sell price > cover price
+            const pl = sellValue - coverValue - sellComm - coverComm;
+            const plPct = coverValue > 0 ? (pl / coverValue) * 100 : 0;
+
+            closedTrades.push({
+              paperName: entry?.name || tx.paperName,
+              isin,
+              ticker: entry?.ticker || isin,
+              quantity: matched,
+              buyDate: shortLot.date,    // short sell date
+              buyPrice: shortLot.price,  // short sell price
+              buyCommission: sellComm,
+              sellDate: tx.date,         // cover date
+              sellPrice: tx.price,       // cover price
+              sellCommission: coverComm,
+              profitLoss: pl,
+              profitLossPct: plPct,
+              holdingDays,
+              currency: tx.currency,
+              sellTransactionId: shortLot.sellTx.id!,
+              sellSource: shortLot.sellTx.source,
+              category: tx.category,
+            });
+
+            if (shortLot.quantity <= remaining) {
+              remaining -= shortLot.quantity;
+              shortQueue.shift();
+            } else {
+              shortLot.quantity -= remaining;
+              remaining = 0;
+            }
+          }
+          // Any leftover after covering shorts becomes a regular buy lot
+          if (remaining > 0) {
+            buyQueue.push({
+              quantity: remaining,
+              price: tx.price,
+              commission: tx.commission * (remaining / tx.quantity),
+              date: tx.date,
+            });
+          }
+        } else {
+          buyQueue.push({
+            quantity: tx.quantity,
+            price: tx.price,
+            commission: tx.commission,
+            date: tx.date,
+          });
+        }
       } else {
+        // FIFO sell — consume buy lots first
         let remaining = tx.quantity;
         const commissionPerShare = tx.commission / tx.quantity;
 
@@ -397,6 +519,16 @@ export function computeClosedTrades(
             lot.quantity -= remaining;
             remaining = 0;
           }
+        }
+        // Any remaining sell quantity with no buy lots = short sell
+        if (remaining > 0) {
+          shortQueue.push({
+            quantity: remaining,
+            price: tx.price,
+            commission: tx.commission * (remaining / tx.quantity),
+            date: tx.date,
+            sellTx: tx,
+          });
         }
       }
     }
@@ -615,17 +747,17 @@ export async function computePortfolioHistory(
     }
   }
 
-  // Build daily cash flow per currency (PLN + USD + CAD + EUR)
-  const dailyCashFlowPln = new Map<string, number>();
-  const dailyCashFlowUsd = new Map<string, number>();
-  const dailyCashFlowCad = new Map<string, number>();
-  const dailyCashFlowEur = new Map<string, number>();
+  // Build daily cash flow per currency (generic — handles any currency)
+  const dailyCashFlowByCurrency = new Map<string, Map<string, number>>();
 
-  function getCashFlowMap(currency: string) {
-    if (currency === 'USD') return dailyCashFlowUsd;
-    if (currency === 'CAD') return dailyCashFlowCad;
-    if (currency === 'EUR') return dailyCashFlowEur;
-    return dailyCashFlowPln;
+  function getCashFlowMap(currency: string): Map<string, number> {
+    const upper = currency.toUpperCase() || 'PLN';
+    let map = dailyCashFlowByCurrency.get(upper);
+    if (!map) {
+      map = new Map<string, number>();
+      dailyCashFlowByCurrency.set(upper, map);
+    }
+    return map;
   }
 
   for (const op of operations) {
@@ -682,27 +814,31 @@ export async function computePortfolioHistory(
     historicalPrices.set(ticker, priceMap);
   });
 
-  // Fetch FX rates
-  fetchPromises.push((async () => {
-    const data = await fetchYahooHistory('USDPLN=X', start, end);
-    const priceMap = new Map<string, number>();
-    for (const d of data) priceMap.set(d.date, d.close);
-    historicalPrices.set('USDPLN=X', priceMap);
-  })());
+  // Collect all currencies from operations and transactions
+  // Normalize GBX/GBp → GBP (Yahoo reports London prices in pence but FX pair is GBPPLN=X)
+  function normalizeCurrency(c: string): string {
+    const u = c.toUpperCase();
+    return u === 'GBX' || u === 'GBP' ? 'GBP' : u;
+  }
+  const allCurrencies = new Set<string>();
+  for (const op of operations) allCurrencies.add(normalizeCurrency(op.currency));
+  for (const tx of transactions) allCurrencies.add(normalizeCurrency(tx.currency));
+  // Also include currencies from ticker map (stock prices in foreign currency)
+  for (const entry of tickerMap.values()) {
+    if (entry.currency) allCurrencies.add(normalizeCurrency(entry.currency));
+  }
+  allCurrencies.delete('PLN'); // PLN doesn't need FX rate
 
-  fetchPromises.push((async () => {
-    const data = await fetchYahooHistory('CADPLN=X', start, end);
-    const priceMap = new Map<string, number>();
-    for (const d of data) priceMap.set(d.date, d.close);
-    historicalPrices.set('CADPLN=X', priceMap);
-  })());
-
-  fetchPromises.push((async () => {
-    const data = await fetchYahooHistory('EURPLN=X', start, end);
-    const priceMap = new Map<string, number>();
-    for (const d of data) priceMap.set(d.date, d.close);
-    historicalPrices.set('EURPLN=X', priceMap);
-  })());
+  // Fetch FX rates for all currencies
+  for (const cur of allCurrencies) {
+    const fxTicker = `${cur}PLN=X`;
+    fetchPromises.push((async () => {
+      const data = await fetchYahooHistory(fxTicker, start, end);
+      const priceMap = new Map<string, number>();
+      for (const d of data) priceMap.set(d.date, d.close);
+      historicalPrices.set(fxTicker, priceMap);
+    })());
+  }
 
   // Fetch benchmark (skip when disabled)
   if (benchmarkSource !== 'none') {
@@ -737,11 +873,18 @@ export async function computePortfolioHistory(
   for (const tx of sortedTxForScaling) {
     const entry = tickerMap.get(tx.isin);
     if (!entry) continue;
-    if (tx.currency !== entry.currency) continue;
+    // Normalize currencies for comparison (GBX/GBp/GBP are all equivalent)
+    const txCurNorm = tx.currency.toUpperCase() === 'GBX' ? 'GBP' : tx.currency.toUpperCase();
+    const entryCurNorm = entry.currency.toUpperCase() === 'GBX' ? 'GBP' : entry.currency.toUpperCase();
+    if (txCurNorm !== entryCurNorm) continue;
     const dateKey = tx.date.split('T')[0];
     const priceMap = historicalPrices.get(entry.ticker);
     if (priceMap) {
-      priceMap.set(dateKey, tx.price);
+      // Yahoo stores .L prices in GBX (pence) — convert adjusted GBP price back to GBX
+      const priceForMap = (txCurNorm === 'GBP' && entry.ticker.endsWith('.L'))
+        ? tx.price * 100
+        : tx.price;
+      priceMap.set(dateKey, priceForMap);
     }
   }
 
@@ -829,31 +972,34 @@ export async function computePortfolioHistory(
   // Compute daily values
   const history: PortfolioHistoryPoint[] = [];
   let firstDepositSeen = false;
-  let cashPln = 0;
-  let cashUsd = 0;
-  let cashCad = 0;
-  let cashEur = 0;
+  const cashByCurrency = new Map<string, number>(); // currency -> balance
   let investedCumulative = 0;
+  let totalDeposited = 0;   // sum of all deposits (always positive, for MWR base)
+  let totalWithdrawn = 0;   // sum of all withdrawals (always positive, for MWR)
   const holdings = new Map<string, number>(); // isin -> shares
   let benchShares = 0;
   let benchPriceAvailable = false; // true once we have real benchmark data
   let pendingBenchDeposit = 0; // deposits before benchmark data is available
+  let benchTotalWithdrawn = 0; // benchmark's own withdrawn total (may differ from portfolio)
 
   // TWR tracking: chain daily sub-period returns
   let twrCumulative = 1; // product of (1 + daily return)
-  let benchTwrCumulative = 1;
   let prevTotalValue = 0; // previous day's total value
   let prevBenchValue = 0;
+  let peakTotalValue = 0; // highest portfolio value seen (for liquidation detection)
+  let firstBenchPrice = 0; // first available benchmark price (for pure TWR calculation)
 
   // Track previous prices for forward-fill
   const prevPrices = new Map<string, number>();
 
   for (const date of dates) {
     // Update cash balances per currency
-    cashPln += dailyCashFlowPln.get(date) || 0;
-    cashUsd += dailyCashFlowUsd.get(date) || 0;
-    cashCad += dailyCashFlowCad.get(date) || 0;
-    cashEur += dailyCashFlowEur.get(date) || 0;
+    for (const [cur, flowMap] of dailyCashFlowByCurrency) {
+      const flow = flowMap.get(date) || 0;
+      if (flow !== 0) {
+        cashByCurrency.set(cur, (cashByCurrency.get(cur) || 0) + flow);
+      }
+    }
 
     // Update holdings
     const changes = holdingsChanges.get(date);
@@ -868,6 +1014,8 @@ export async function computePortfolioHistory(
     const withdrawal = dailyWithdrawal.get(date) || 0;
     investedCumulative += deposit;
     investedCumulative -= withdrawal;
+    totalDeposited += deposit;
+    totalWithdrawn += withdrawal;
 
     // Track first deposit
     if (deposit > 0) firstDepositSeen = true;
@@ -875,13 +1023,19 @@ export async function computePortfolioHistory(
     // Skip days before first deposit (no money in account yet)
     if (!firstDepositSeen) continue;
 
-    // Get FX rates for the day
-    const usdPln = getPrice('USDPLN=X', date, prevPrices.get('USDPLN=X') || 4.0);
-    const cadPln = getPrice('CADPLN=X', date, prevPrices.get('CADPLN=X') || 2.95);
-    const eurPln = getPrice('EURPLN=X', date, prevPrices.get('EURPLN=X') || 4.3);
-    prevPrices.set('USDPLN=X', usdPln);
-    prevPrices.set('CADPLN=X', cadPln);
-    prevPrices.set('EURPLN=X', eurPln);
+    // Get FX rates for the day (generic — all non-PLN currencies)
+    const fxRates = new Map<string, number>(); // currency -> PLN rate
+    fxRates.set('PLN', 1);
+    const defaultFxRates: Record<string, number> = {
+      USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
+      CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
+    };
+    for (const cur of allCurrencies) {
+      const fxTicker = `${cur}PLN=X`;
+      const rate = getPrice(fxTicker, date, prevPrices.get(fxTicker) || defaultFxRates[cur] || 1);
+      prevPrices.set(fxTicker, rate);
+      fxRates.set(cur, rate);
+    }
 
     // Compute stock value in PLN
     let stockValuePln = 0;
@@ -891,22 +1045,26 @@ export async function computePortfolioHistory(
       const entry = tickerMap.get(isin);
       if (!entry) continue;
 
-      const price = getPrice(entry.ticker, date, prevPrices.get(entry.ticker) || 0);
+      let price = getPrice(entry.ticker, date, prevPrices.get(entry.ticker) || 0);
       prevPrices.set(entry.ticker, price);
 
-      let fx = 1;
-      if (entry.currency === 'USD') fx = usdPln;
-      else if (entry.currency === 'CAD') fx = cadPln;
-      else if (entry.currency === 'EUR') fx = eurPln;
+      // Yahoo returns London-listed prices in GBX (pence) — convert to GBP
+      const upperCur = entry.currency.toUpperCase();
+      const isGbx = upperCur === 'GBP' || upperCur === 'GBX';
+      if (isGbx && entry.ticker.endsWith('.L')) {
+        price = price / 100;
+      }
 
+      const fx = fxRates.get(upperCur === 'GBX' ? 'GBP' : upperCur) || 1;
       stockValuePln += shares * price * fx;
     }
 
-    // Total cash in PLN (convert foreign currency balances)
-    const totalCashPln = cashPln
-      + cashUsd * usdPln
-      + cashCad * cadPln
-      + cashEur * eurPln;
+    // Total cash in PLN (convert all foreign currency balances)
+    let totalCashPln = 0;
+    for (const [cur, balance] of cashByCurrency) {
+      const fx = fxRates.get(cur) || 1;
+      totalCashPln += balance * fx;
+    }
 
     const totalValue = stockValuePln + totalCashPln;
 
@@ -917,6 +1075,7 @@ export async function computePortfolioHistory(
       const benchPriceMap = historicalPrices.get(benchKey);
       if (benchPriceMap && benchPriceMap.has(date)) {
         benchPriceAvailable = true;
+        firstBenchPrice = benchRawPrice;
       }
     }
     const benchPrice = benchPriceAvailable ? benchRawPrice : 0;
@@ -928,49 +1087,60 @@ export async function computePortfolioHistory(
     } else if (deposit > 0) {
       pendingBenchDeposit += deposit;
     }
-    // Sell benchmark proportionally on withdrawal
-    const benchValueBeforeWithdraw = benchShares * benchPrice;
-    if (withdrawal > 0 && benchValueBeforeWithdraw > 0 && benchPrice > 0) {
-      const pctWithdrawn = Math.min(withdrawal / benchValueBeforeWithdraw, 1);
-      benchShares *= (1 - pctWithdrawn);
+    // Sell benchmark shares for the same PLN withdrawal amount.
+    // This simulates "what if I withdrew the same cash from the benchmark?"
+    // If benchmark doesn't have enough value, withdraw everything it has.
+    if (withdrawal > 0 && benchShares > 0 && benchPrice > 0) {
+      const benchValueNow = benchShares * benchPrice;
+      const actualBenchWithdraw = Math.min(withdrawal, benchValueNow);
+      benchShares -= actualBenchWithdraw / benchPrice;
+      benchTotalWithdrawn += actualBenchWithdraw;
     }
     const benchValue = benchShares * benchPrice;
 
-    const returnPct = investedCumulative > 0
-      ? ((totalValue - investedCumulative) / investedCumulative) * 100
+    // MWR: use total deposited (not net) as the base for return calculation.
+    // This avoids the formula breaking when withdrawals exceed deposits.
+    const returnPct = totalDeposited > 0
+      ? ((totalValue + totalWithdrawn - totalDeposited) / totalDeposited) * 100
       : 0;
 
-    const benchReturnPct = (investedCumulative > 0 && benchPriceAvailable)
-      ? ((benchValue - investedCumulative) / investedCumulative) * 100
+    const benchReturnPct = (totalDeposited > 0 && benchPriceAvailable)
+      ? ((benchValue + benchTotalWithdrawn - totalDeposited) / totalDeposited) * 100
       : 0;
 
     // TWR: chain daily returns, adjusting denominator for cash flows
     // dailyReturn = V_today / (V_yesterday + netCashFlow_today) - 1
+    // When a large cash flow makes the denominator very small (< 5% of prevValue),
+    // use mid-day timing (Modified Dietz) to prevent near-zero division artifacts.
+    // When portfolio is essentially liquidated (totalValue < 1% of peak),
+    // freeze TWR to avoid meaningless ratios on residual cash.
     const netCashFlow = deposit - withdrawal;
-    if (prevTotalValue > 0) {
-      const denominator = prevTotalValue + netCashFlow;
+    if (prevTotalValue > 0 && totalValue > peakTotalValue * 0.01) {
+      let denominator = prevTotalValue + netCashFlow;
+      if (Math.abs(netCashFlow) > 0 && denominator < prevTotalValue * 0.05) {
+        // Modified Dietz: assume cash flow happens mid-day (weight = 0.5)
+        denominator = prevTotalValue + 0.5 * netCashFlow;
+      }
       if (denominator > 0) {
         twrCumulative *= totalValue / denominator;
       }
-    } else if (totalValue > 0) {
+    } else if (totalValue > 0 && prevTotalValue === 0) {
       // First day with value — TWR starts at 1 (0%)
       twrCumulative = 1;
     }
 
-    if (prevBenchValue > 0 && benchPrice > 0) {
-      const benchDenom = prevBenchValue + netCashFlow;
-      if (benchDenom > 0) {
-        benchTwrCumulative *= benchValue / benchDenom;
-      }
-    } else if (benchValue > 0) {
-      benchTwrCumulative = 1;
-    }
+    if (totalValue > peakTotalValue) peakTotalValue = totalValue;
 
     prevTotalValue = totalValue;
     prevBenchValue = benchValue;
 
     const twrPct = (twrCumulative - 1) * 100;
-    const benchmarkTwrPct = (benchTwrCumulative - 1) * 100;
+    // Benchmark TWR = pure price return (no cash flow influence).
+    // TWR by definition eliminates the impact of cash flows, so benchmark TWR
+    // is simply the percentage change in the benchmark price since inception.
+    const benchmarkTwrPct = (benchPriceAvailable && firstBenchPrice > 0)
+      ? ((benchPrice / firstBenchPrice) - 1) * 100
+      : 0;
 
     history.push({
       date,
@@ -984,9 +1154,9 @@ export async function computePortfolioHistory(
     });
 
     // Stop generating history when portfolio is fully and permanently closed:
-    // no holdings, negative net invested, and on or past last activity date
+    // no holdings and on or past last activity date, or portfolio value near zero
     const hasHoldings = Array.from(holdings.values()).some(qty => qty > 0);
-    if (!hasHoldings && investedCumulative <= 0 && date >= lastActivityDate && history.length > 1) {
+    if (!hasHoldings && date >= lastActivityDate && history.length > 1) {
       break;
     }
   }

@@ -5,18 +5,19 @@ import { api } from '@/lib/api-client';
 import { useSession, signOut } from '@/lib/auth-client';
 import {
   LayoutDashboard, Briefcase, ArrowLeftRight, Coins,
-  DollarSign, Wallet, Upload, Moon, Sun, Menu, LogOut,
+  DollarSign, Wallet, Receipt, Upload, Moon, Sun, Menu, LogOut,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Separator } from '@/components/ui/separator';
+import { QUERY_KEYS } from '@/lib/query-keys';
 import { MetricsBar } from '@/components/dashboard/MetricsBar';
 import { ImportDialog } from '@/components/import/ImportDialog';
 import { BugReportDialog } from '@/components/shared/BugReportDialog';
 import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog';
 import { PortfolioSelector } from './PortfolioSelector';
 
-const navItems = [
+const baseNavItems = [
   { to: '/app', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/app/portfolio', label: 'Portfel', icon: Briefcase },
   { to: '/app/trades', label: 'Transakcje', icon: ArrowLeftRight },
@@ -26,6 +27,17 @@ const navItems = [
 ];
 
 function NavContent({ onNavigate }: { onNavigate?: () => void }) {
+  const { data: feesData } = useQuery({
+    queryKey: QUERY_KEYS.fees,
+    queryFn: () => api.getFees(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const hasFees = (feesData?.fees?.length ?? 0) > 0;
+  const navItems = hasFees
+    ? [...baseNavItems, { to: '/app/costs', label: 'Inne koszty', icon: Receipt }]
+    : baseNavItems;
+
   return (
     <nav className="flex flex-col gap-1 p-3">
       <div className="px-3 py-2 mb-2">
