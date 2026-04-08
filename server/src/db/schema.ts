@@ -148,5 +148,10 @@ export function initSchema(db: Database.Database): void {
       ON transactions(date, isin, side, quantity, price);
     CREATE INDEX IF NOT EXISTS idx_operations_dedup
       ON cash_operations(date, operation_type, amount, currency, ticker);
+
+    CREATE TABLE IF NOT EXISTS portfolio_metadata (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 }

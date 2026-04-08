@@ -188,6 +188,19 @@ export function deleteAutoYahooDividends(portfolioId: string): number {
   return result.changes;
 }
 
+// ── Portfolio metadata (key-value store per portfolio) ──────────────────────
+
+export function getMetadata(portfolioId: string, key: string): string | null {
+  const db = getDb(portfolioId);
+  const row = db.prepare('SELECT value FROM portfolio_metadata WHERE key = ?').get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function setMetadata(portfolioId: string, key: string, value: string): void {
+  const db = getDb(portfolioId);
+  db.prepare('INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)').run(key, value);
+}
+
 function mapRow(row: any): CashOperation {
   return {
     id: row.id,

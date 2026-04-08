@@ -1,15 +1,16 @@
 /**
  * Automatic dividend scanner.
  *
- * Periodically checks open positions for dividend events via Yahoo Finance
+ * Periodically checks OPEN positions for dividend events via Yahoo Finance
  * and inserts them as cash_operations with source='auto-yahoo'.
  *
+ * Runs at most once per day per portfolio (tracked via portfolio_metadata).
  * Tax rates depend on portfolio account type (IKE/IKZE vs regular).
  */
 import { getAllPortfolios, getPortfolio } from '../db/portfolio-registry.js';
 import { getAllTransactions } from '../db/transactions-repo.js';
 import { getTickerMap } from '../db/ticker-map-repo.js';
-import { dividendExistsForDateAndTicker, insertOperationsWithDedup, getLatestDividendDate, deleteAutoYahooDividends } from '../db/operations-repo.js';
+import { dividendExistsForDateAndTicker, insertOperationsWithDedup, getLatestDividendDate, getMetadata, setMetadata } from '../db/operations-repo.js';
 import { getSharesAtDate } from './portfolio-engine.js';
 import { fetchYahooDividendEvents, fetchDividendCalendar } from './yahoo-finance.js';
 import { DIVIDEND_TAX_REGULAR, DIVIDEND_TAX_IKE_IKZE } from 'shared';
@@ -22,6 +23,7 @@ export interface ScanResult {
 }
 
 const DEFAULT_LOOKBACK_DAYS = 90;
+const PAYMENT_DATE_GRACE_DAYS = 30;
 
 function getCountryFromExchange(exchange: string, ticker: string): string {
   if (exchange === 'GPW' || exchange === 'NC') return 'PL';
@@ -60,11 +62,20 @@ function roundTo2(n: number): number {
 
 /**
  * Scan a single portfolio for new dividend events.
+ * Only scans tickers with currently open positions (shares > 0).
+ * Runs at most once per day (tracked in portfolio_metadata).
  */
 export async function scanDividends(portfolioId: string): Promise<ScanResult> {
   const portfolio = getPortfolio(portfolioId);
   if (!portfolio) {
     return { scanned: 0, newDividends: 0, errors: [`Portfolio ${portfolioId} not found`] };
+  }
+
+  // Skip if already scanned today
+  const today = new Date().toISOString().split('T')[0];
+  const lastScan = getMetadata(portfolioId, 'last_dividend_scan');
+  if (lastScan === today) {
+    return { scanned: 0, newDividends: 0, errors: [] };
   }
 
   const settings = portfolio.settings;
@@ -73,12 +84,6 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
 
   if (transactions.length === 0) {
     return { scanned: 0, newDividends: 0, errors: [] };
-  }
-
-  // Clean up previous auto-yahoo dividends (may contain duplicates from broken dedup)
-  const deleted = deleteAutoYahooDividends(portfolioId);
-  if (deleted > 0) {
-    console.log(`[dividend-scanner] ${portfolioId}: cleaned up ${deleted} old auto-yahoo dividends`);
   }
 
   // Determine scan start date: from last broker-imported dividend, or 90 days back
@@ -98,10 +103,13 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
   }
 
   // Collect unique ISINs with their ticker map entries (exclude NC — Stooq only, no dividend data)
+  // Only include tickers with currently open positions (shares > 0)
   const isinEntries = new Map<string, TickerMapEntry>();
   for (const [isin, entry] of tickerMap) {
     if (entry.exchange === 'NC') continue;
     if (entry.priceSource === 'stooq') continue;
+    const shares = getSharesAtDate(transactions, isin, today);
+    if (shares <= 0) continue;
     isinEntries.set(isin, entry);
   }
 
@@ -109,26 +117,35 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
   const errors: string[] = [];
   let scanned = 0;
 
-  const today = new Date().toISOString().split('T')[0];
-
   for (const [isin, entry] of isinEntries) {
     try {
       const events = await fetchYahooDividendEvents(entry.ticker, startDate);
       scanned++;
 
-      // Fetch v10 calendar to check if payment date is still pending
-      const calendar = await fetchDividendCalendar(entry.ticker).catch(() => null);
-
       for (const event of events) {
-        // Skip if payment date hasn't passed yet (dividend not yet paid out)
-        if (calendar?.paymentDate && calendar.exDividendDate === event.date && calendar.paymentDate > today) {
-          continue;
-        }
-
         // Skip if dividend already exists (from any source)
         if (dividendExistsForDateAndTicker(portfolioId, event.date, entry.ticker)) {
           continue;
         }
+
+        const daysSinceEvent = Math.floor(
+          (Date.now() - new Date(event.date).getTime()) / 86_400_000
+        );
+
+        // For recent dividends (< 30 days), check if payment has actually occurred
+        if (daysSinceEvent < PAYMENT_DATE_GRACE_DAYS) {
+          const calendar = await fetchDividendCalendar(entry.ticker).catch(() => null);
+
+          // Payment date known and in the future → not yet paid, skip
+          if (calendar?.paymentDate && calendar.exDividendDate === event.date && calendar.paymentDate > today) {
+            continue;
+          }
+          // No payment date available for this recent ex-date → skip, wait for next scan
+          if (!calendar?.paymentDate && calendar?.exDividendDate === event.date) {
+            continue;
+          }
+        }
+        // daysSinceEvent >= 30 → payment certainly occurred, no calendar check needed
 
         const shares = getSharesAtDate(transactions, isin, event.date);
         if (shares <= 0) continue;
@@ -163,10 +180,13 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
   if (newOperations.length > 0) {
     const result = insertOperationsWithDedup(newOperations, portfolioId);
     inserted = result.inserted;
-    console.log(`[dividend-scanner] ${portfolioId}: scanned ${scanned} tickers, inserted ${inserted} new dividends`);
+    console.log(`[dividend-scanner] ${portfolioId}: scanned ${scanned} tickers (open positions), inserted ${inserted} new dividends`);
   } else if (scanned > 0) {
-    console.log(`[dividend-scanner] ${portfolioId}: scanned ${scanned} tickers, no new dividends`);
+    console.log(`[dividend-scanner] ${portfolioId}: scanned ${scanned} tickers (open positions), no new dividends`);
   }
+
+  // Mark scan as done for today
+  setMetadata(portfolioId, 'last_dividend_scan', today);
 
   return { scanned, newDividends: inserted, errors };
 }
