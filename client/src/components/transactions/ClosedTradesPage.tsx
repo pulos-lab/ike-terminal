@@ -10,6 +10,7 @@ import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { formatNumber, formatDate, formatCurrency, formatQuantity } from '@/lib/formatters';
 import { useToggleSet } from '@/hooks/useToggleSet';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
 import type { ClosedTrade } from 'shared';
 
@@ -32,6 +33,46 @@ interface TradeGroup {
   sellTransactionId: number;
   sellSource: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
   trades: ClosedTrade[];
+}
+
+function CostCell({ trade, muted }: { trade: ClosedTrade; muted?: boolean }) {
+  const totalCost = trade.totalCost || 0;
+  if (totalCost <= 0) return <span>—</span>;
+
+  const commission = trade.buyCommission + trade.sellCommission;
+  const hasFees = trade.fees && trade.fees.length > 0;
+
+  if (!hasFees) {
+    return <span>{formatNumber(totalCost)}</span>;
+  }
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className={`cursor-help underline decoration-dotted ${muted ? '' : ''}`}>
+            {formatNumber(totalCost)}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="left" className="text-left">
+          <div className="space-y-0.5">
+            {commission > 0 && (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">prowizja:</span>
+                <span>{formatNumber(commission)}</span>
+              </div>
+            )}
+            {trade.fees!.map((fee, i) => (
+              <div key={i} className="flex justify-between gap-4">
+                <span className="text-muted-foreground">{fee.type}:</span>
+                <span>{formatNumber(fee.amount)}</span>
+              </div>
+            ))}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 export function ClosedTradesPage() {
@@ -66,8 +107,10 @@ export function ClosedTradesPage() {
       const first = trades[0];
       const totalQuantity = trades.reduce((s, t) => s + t.quantity, 0);
       const totalProfitLoss = trades.reduce((s, t) => s + t.profitLoss, 0);
-      const totalBuyValue = trades.reduce((s, t) => s + t.quantity * t.buyPrice, 0);
-      const weightedProfitLossPct = totalBuyValue > 0 ? (totalProfitLoss / totalBuyValue) * 100 : 0;
+      // Use quantity-weighted average of individual P/L% (correct for both stocks and CFD)
+      const weightedProfitLossPct = totalQuantity > 0
+        ? trades.reduce((s, t) => s + t.profitLossPct * t.quantity, 0) / totalQuantity
+        : 0;
 
       const buyDates = trades.map(t => t.buyDate).sort();
       const buyPrices = trades.map(t => t.buyPrice);
@@ -148,6 +191,7 @@ export function ClosedTradesPage() {
                           <TableCell className="font-mono font-medium">
                             {trade.ticker}
                             <CategoryBadge category={trade.category} />
+                            {trade.isShort && <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">SHORT</span>}
                           </TableCell>
                           <TableCell className="text-right">{formatQuantity(trade.quantity)}</TableCell>
                           <TableCell className="text-muted-foreground">{formatDate(trade.buyDate)}</TableCell>
@@ -161,7 +205,7 @@ export function ClosedTradesPage() {
                             <PLBadge value={trade.profitLossPct} />
                           </TableCell>
                           <TableCell className="text-right text-muted-foreground text-xs">
-                            {(trade.totalCost || 0) > 0 ? formatNumber(trade.totalCost!) : '—'}
+                            <CostCell trade={trade} />
                           </TableCell>
                           <TableCell className="text-right text-muted-foreground">{trade.holdingDays}d</TableCell>
                           <TableCell>
@@ -204,6 +248,7 @@ export function ClosedTradesPage() {
                               }
                               {group.ticker}
                               <CategoryBadge category={group.trades[0]?.category} />
+                              {group.trades.some(t => t.isShort) && <span className="text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">{group.trades.every(t => t.isShort) ? 'SHORT' : `${group.trades.filter(t => t.isShort).length}S`}</span>}
                               <span className="text-xs text-muted-foreground ml-1">({group.trades.length})</span>
                             </div>
                           </TableCell>
@@ -252,6 +297,7 @@ export function ClosedTradesPage() {
                             <TableRow key={`${group.key}-${j}`} className="bg-muted/30">
                               <TableCell className="font-mono text-muted-foreground pl-9 text-sm">
                                 └ lot {j + 1}
+                                {trade.isShort && <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">S</span>}
                               </TableCell>
                               <TableCell className="text-right text-muted-foreground">{formatQuantity(trade.quantity)}</TableCell>
                               <TableCell className="text-muted-foreground">{formatDate(trade.buyDate)}</TableCell>
@@ -265,7 +311,7 @@ export function ClosedTradesPage() {
                                 <PLBadge value={trade.profitLossPct} muted />
                               </TableCell>
                               <TableCell className="text-right text-muted-foreground text-xs">
-                                {(trade.totalCost || 0) > 0 ? formatNumber(trade.totalCost!) : '—'}
+                                <CostCell trade={trade} muted />
                               </TableCell>
                               <TableCell className="text-right text-muted-foreground">{trade.holdingDays}d</TableCell>
                               <TableCell />

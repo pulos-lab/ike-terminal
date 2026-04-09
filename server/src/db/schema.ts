@@ -110,6 +110,16 @@ export function initSchema(db: Database.Database): void {
   if (!txColumns.some((c: any) => c.name === 'category')) {
     db.exec("ALTER TABLE transactions ADD COLUMN category TEXT DEFAULT 'stock'");
   }
+  if (!txColumns.some((c: any) => c.name === 'swap')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN swap REAL");
+    db.exec("ALTER TABLE transactions ADD COLUMN rollover REAL");
+  }
+  if (!txColumns.some((c: any) => c.name === 'cfd_position_id')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN cfd_position_id TEXT");
+  }
+  if (!txColumns.some((c: any) => c.name === 'cfd_gross_profit')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN cfd_gross_profit REAL");
+  }
 
   // Migration: tighten stock_splits UNIQUE from (isin, split_date) to (isin)
   // SQLite doesn't support ALTER CONSTRAINT, so recreate the table

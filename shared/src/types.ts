@@ -29,11 +29,15 @@ export interface Transaction {
   category?: InstrumentCategory;
   source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
   importBatch?: string;
+  swap?: number;       // CFD: swap cost (from Closed Positions sheet)
+  rollover?: number;   // CFD: rollover cost (from Closed Positions sheet)
+  cfdPositionId?: string; // CFD: unique position ID for FIFO grouping (prevents mixing overlapping positions)
+  cfdGrossProfit?: number; // CFD: gross profit from XTB (includes contract multiplier + FX, before fees)
 }
 
 // ============ Cash Operation Types ============
 
-export type OperationType = 'deposit' | 'withdrawal' | 'dividend' | 'fx_exchange' | 'fee' | 'commission_refund' | 'other';
+export type OperationType = 'deposit' | 'withdrawal' | 'dividend' | 'fx_exchange' | 'fee' | 'trade_fee' | 'commission_refund' | 'other';
 
 export interface CashOperation {
   id?: number;
@@ -108,6 +112,7 @@ export interface ClosedTrade {
   category?: InstrumentCategory;
   fees?: ClosedTradeFee[];
   totalCost?: number;
+  isShort?: boolean;
 }
 
 export interface DividendRecord {
