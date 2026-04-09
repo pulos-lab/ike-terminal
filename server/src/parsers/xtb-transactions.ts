@@ -654,13 +654,16 @@ export async function parseXtbFile(
       });
 
     } else if (raw.type === 'swap' || raw.type === 'tax iftt' || raw.type === 'rollover') {
+      // Skip for CFD instruments — handled by extractCfdTransactions with authoritative values
+      if (categoryMap.get(raw.symbol) === 'cfd') continue;
+
       const isoTime = parseXtbTime(raw.time);
       if (!isoTime) continue;
 
       operations.push({
         date: isoTime,
-        operationType: 'fee',
-        description: raw.comment || raw.type,
+        operationType: 'trade_fee',
+        description: `${raw.type}: ${raw.comment || raw.symbol || ''}`.trim(),
         amount: raw.amount,
         currency: accountCurrency,
         ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup).paperName : undefined,
@@ -709,6 +712,7 @@ export async function parseXtbFile(
   // CFD instruments have no Stock purchase/Stock sell in Cash Operations.
   // Build a set of existing transaction keys for deduplication.
   const existingTxKeys = new Set(txBySymbolTime.keys());
+
   const cfdTransactions = extractCfdTransactions(wb, accountCurrency, importBatch, existingTxKeys);
   transactions.push(...cfdTransactions);
 
@@ -743,7 +747,8 @@ function extractAccountCurrency(rows: any[][]): string {
  *   Type=BUY (long):  K @ OpenTime/OpenPrice  +  S @ CloseTime/ClosePrice
  *   Type=SELL (short): S @ OpenTime/OpenPrice  +  K @ CloseTime/ClosePrice
  *
- * Swap + Rollover + Commission are summed and attached to the closing transaction. */
+ * Commission is attached to the closing transaction.
+ * Swap + Rollover are read directly from Closed Positions sheet columns. */
 function extractCfdTransactions(
   wb: ExcelJS.Workbook,
   accountCurrency: string,
@@ -756,7 +761,7 @@ function extractCfdTransactions(
   // Find header row and column indices
   let headerIdx = -1;
   const cols: Record<string, number> = {};
-  const NEEDED = ['Instrument', 'Category', 'Type', 'Volume', 'Open Price', 'Open Time (UTC)', 'Close Price', 'Close Time (UTC)', 'Commission', 'Swap', 'Rollover'];
+  const NEEDED = ['Instrument', 'Category', 'Type', 'Volume', 'Open Price', 'Open Time (UTC)', 'Close Price', 'Close Time (UTC)', 'Commission', 'Swap', 'Rollover', 'Position ID', 'Gross Profit'];
 
   ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
     if (headerIdx !== -1) return;
@@ -793,11 +798,19 @@ function extractCfdTransactions(
     const closeTime = parseXtbTime(closeTimeRaw);
     if (!openTime || !closeTime) return;
 
-    // Fees: commission + swap + rollover (all typically negative or zero)
     const commission = Math.abs(typeof vals[cols['Commission']] === 'number' ? vals[cols['Commission']] : parseFloat(vals[cols['Commission']]?.toString() || '0') || 0);
+
+    // Read swap/rollover directly from Closed Positions sheet columns
     const swap = Math.abs(typeof vals[cols['Swap']] === 'number' ? vals[cols['Swap']] : parseFloat(vals[cols['Swap']]?.toString() || '0') || 0);
     const rollover = Math.abs(typeof vals[cols['Rollover']] === 'number' ? vals[cols['Rollover']] : parseFloat(vals[cols['Rollover']]?.toString() || '0') || 0);
-    const totalFees = roundTo2(commission + swap + rollover);
+
+    // Position ID for unique FIFO grouping (prevents mixing overlapping CFD positions)
+    const positionId = cols['Position ID'] !== undefined ? vals[cols['Position ID']]?.toString?.().trim() : undefined;
+
+    // Gross Profit — actual P/L from price movement (includes contract multiplier + FX conversion, before swap/rollover/commission)
+    const grossProfit = cols['Gross Profit'] !== undefined
+      ? (typeof vals[cols['Gross Profit']] === 'number' ? vals[cols['Gross Profit']] : parseFloat(vals[cols['Gross Profit']]?.toString() || '0') || 0)
+      : undefined;
 
     // Deduplicate: skip if Cash Operations already has a transaction for this instrument+time
     const openKey = `${instrument}|${openTime}`;
@@ -827,9 +840,10 @@ function extractCfdTransactions(
       category: 'cfd',
       source: 'xtb',
       importBatch,
+      cfdPositionId: positionId,
     });
 
-    // Closing transaction (fees attached here)
+    // Closing transaction (commission + swap/rollover embedded)
     transactions.push({
       date: closeTime,
       paperName: instrument,
@@ -838,14 +852,18 @@ function extractCfdTransactions(
       side: closeSide,
       price: closePrice,
       value: closeValue,
-      commission: totalFees,
+      commission,
       total: closeSide === 'S'
-        ? roundTo2(closeValue - totalFees)
-        : roundTo2(closeValue + totalFees),
+        ? roundTo2(closeValue - commission)
+        : roundTo2(closeValue + commission),
       currency: accountCurrency,
       category: 'cfd',
       source: 'xtb',
       importBatch,
+      swap: swap > 0 ? swap : undefined,
+      rollover: rollover > 0 ? rollover : undefined,
+      cfdPositionId: positionId,
+      cfdGrossProfit: grossProfit,
     });
   });
 

@@ -1,4 +1,4 @@
-import type { Transaction, CashOperation, Position, ClosedTrade, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, DetectedSplit } from 'shared';
+import type { Transaction, CashOperation, Position, ClosedTrade, ClosedTradeFee, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, DetectedSplit } from 'shared';
 import { fetchYahooPrice, fetchFxRate, fetchYahooHistory, fetchYahooHistoryDirect } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
 import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, detectSplitFromQuantityMismatch, isPlausibleSplitRatio, snapToKnownRatio } from './split-detector.js';
@@ -268,7 +268,7 @@ export async function computeOpenPositions(
 
   for (const [isin, txs] of byIsin) {
     const metrics = computePositionMetrics(txs);
-    if (metrics.shares <= 0) continue;
+    if (metrics.shares < EPSILON) continue;
 
     const entry = tickerMap.get(isin);
     if (!entry) continue;
@@ -379,6 +379,11 @@ export async function computeOpenPositions(
 
 // ============ Closed Trades (FIFO) ============
 
+/** Epsilon for floating-point comparison in FIFO matching (prevents ghost lots from fractional shares) */
+const EPSILON = 1e-9;
+
+function roundTo2(n: number): number { return Math.round(n * 100) / 100; }
+
 export function computeClosedTrades(
   transactions: Transaction[],
   tickerMap: Map<string, TickerMapEntry>,
@@ -388,16 +393,19 @@ export function computeClosedTrades(
   // Adjust transactions for stock splits (quantity/price correction)
   const adjustedTxs = adjustTransactionsForSplits(transactions, splits);
 
-  const byIsin = new Map<string, Transaction[]>();
+  // Group transactions by ISIN (or ISIN + positionId for CFD to prevent mixing overlapping positions)
+  const byGroup = new Map<string, Transaction[]>();
   for (const tx of adjustedTxs) {
-    const arr = byIsin.get(tx.isin) || [];
+    const groupKey = tx.cfdPositionId ? `${tx.isin}|cfd|${tx.cfdPositionId}` : tx.isin;
+    const arr = byGroup.get(groupKey) || [];
     arr.push(tx);
-    byIsin.set(tx.isin, arr);
+    byGroup.set(groupKey, arr);
   }
 
   const closedTrades: ClosedTrade[] = [];
 
-  for (const [isin, txs] of byIsin) {
+  for (const [groupKey, txs] of byGroup) {
+    const isin = txs[0].isin; // clean ISIN for display/lookup
     const sorted = [...txs].sort((a, b) => a.date.localeCompare(b.date));
     const buyQueue: Array<{ quantity: number; price: number; commission: number; date: string }> = [];
     const shortQueue: Array<{ quantity: number; price: number; commission: number; date: string; sellTx: Transaction }> = [];
@@ -410,21 +418,41 @@ export function computeClosedTrades(
           let remaining = tx.quantity;
           const commissionPerShare = tx.commission / tx.quantity;
 
-          while (remaining > 0 && shortQueue.length > 0) {
+          while (remaining > EPSILON && shortQueue.length > 0) {
             const shortLot = shortQueue[0];
             const matched = Math.min(remaining, shortLot.quantity);
+            if (matched < EPSILON) { shortQueue.shift(); continue; }
 
             const shortDate = new Date(shortLot.date);
             const coverDate = new Date(tx.date);
             const holdingDays = Math.floor((coverDate.getTime() - shortDate.getTime()) / (1000 * 60 * 60 * 24));
 
-            const sellValue = matched * shortLot.price;
-            const coverValue = matched * tx.price;
-            const sellComm = matched * (shortLot.commission / (shortLot.quantity + (shortLot.quantity === matched ? 0 : matched)));
+            const sellComm = shortLot.commission * (matched / shortLot.quantity);
             const coverComm = matched * commissionPerShare;
-            // Short P/L: profit when sell price > cover price
-            const pl = sellValue - coverValue - sellComm - coverComm;
-            const plPct = coverValue > 0 ? (pl / coverValue) * 100 : 0;
+
+            // Proportional swap/rollover from cover transaction (CFD shorts)
+            const lotSwap = tx.swap ? roundTo2(tx.swap * (matched / tx.quantity)) : 0;
+            const lotRollover = tx.rollover ? roundTo2(tx.rollover * (matched / tx.quantity)) : 0;
+            const tradeFees: ClosedTradeFee[] = [];
+            if (lotSwap > 0) tradeFees.push({ type: 'swap', amount: lotSwap, description: `swap: ${tx.paperName}` });
+            if (lotRollover > 0) tradeFees.push({ type: 'rollover', amount: lotRollover, description: `rollover: ${tx.paperName}` });
+            const feesTotal = lotSwap + lotRollover;
+
+            // Short P/L: use XTB gross profit when available (includes contract multiplier + FX)
+            const grossProfitPortion = tx.cfdGrossProfit !== undefined
+              ? roundTo2(tx.cfdGrossProfit * (matched / tx.quantity))
+              : (matched * shortLot.price) - (matched * tx.price);
+            const pl = grossProfitPortion - sellComm - coverComm - feesTotal;
+            // Percentage: derive notional value from gross profit + price change for CFD
+            let plPct: number;
+            if (tx.cfdGrossProfit !== undefined) {
+              const priceChange = shortLot.price > 0 ? (shortLot.price - tx.price) / shortLot.price : 0;
+              const notional = Math.abs(priceChange) > 1e-6 ? Math.abs(grossProfitPortion / priceChange) : 0;
+              plPct = notional > 0 ? (pl / notional) * 100 : 0;
+            } else {
+              const coverValue = matched * tx.price;
+              plPct = coverValue > 0 ? (pl / coverValue) * 100 : 0;
+            }
 
             closedTrades.push({
               paperName: entry?.name || tx.paperName,
@@ -444,18 +472,22 @@ export function computeClosedTrades(
               sellTransactionId: shortLot.sellTx.id!,
               sellSource: shortLot.sellTx.source,
               category: tx.category,
+              isShort: true,
+              fees: tradeFees.length > 0 ? tradeFees : undefined,
+              totalCost: sellComm + coverComm + feesTotal,
             });
 
-            if (shortLot.quantity <= remaining) {
-              remaining -= shortLot.quantity;
+            if (shortLot.quantity <= remaining + EPSILON) {
+              remaining = Math.max(0, remaining - shortLot.quantity);
               shortQueue.shift();
             } else {
               shortLot.quantity -= remaining;
+              if (shortLot.quantity < EPSILON) shortQueue.shift();
               remaining = 0;
             }
           }
           // Any leftover after covering shorts becomes a regular buy lot
-          if (remaining > 0) {
+          if (remaining > EPSILON) {
             buyQueue.push({
               quantity: remaining,
               price: tx.price,
@@ -476,21 +508,41 @@ export function computeClosedTrades(
         let remaining = tx.quantity;
         const commissionPerShare = tx.commission / tx.quantity;
 
-        while (remaining > 0 && buyQueue.length > 0) {
+        while (remaining > EPSILON && buyQueue.length > 0) {
           const lot = buyQueue[0];
           const matched = Math.min(remaining, lot.quantity);
-          const buyCommPerShare = lot.commission / (lot.quantity + matched - lot.quantity); // approximation
+          if (matched < EPSILON) { buyQueue.shift(); continue; }
 
           const buyDate = new Date(lot.date);
           const sellDate = new Date(tx.date);
           const holdingDays = Math.floor((sellDate.getTime() - buyDate.getTime()) / (1000 * 60 * 60 * 24));
 
-          const buyValue = matched * lot.price;
-          const sellValue = matched * tx.price;
-          const buyComm = matched * (lot.commission / (lot.quantity + (lot.quantity === matched ? 0 : matched)));
+          const buyComm = lot.commission * (matched / lot.quantity);
           const sellComm = matched * commissionPerShare;
-          const pl = sellValue - buyValue - buyComm - sellComm;
-          const plPct = buyValue > 0 ? (pl / buyValue) * 100 : 0;
+
+          // Proportional swap/rollover from sell transaction (CFD)
+          const lotSwap = tx.swap ? roundTo2(tx.swap * (matched / tx.quantity)) : 0;
+          const lotRollover = tx.rollover ? roundTo2(tx.rollover * (matched / tx.quantity)) : 0;
+          const tradeFees: ClosedTradeFee[] = [];
+          if (lotSwap > 0) tradeFees.push({ type: 'swap', amount: lotSwap, description: `swap: ${tx.paperName}` });
+          if (lotRollover > 0) tradeFees.push({ type: 'rollover', amount: lotRollover, description: `rollover: ${tx.paperName}` });
+          const feesTotal = lotSwap + lotRollover;
+
+          // P/L: use XTB gross profit when available (CFD: includes contract multiplier + FX)
+          const grossProfitPortion = tx.cfdGrossProfit !== undefined
+            ? roundTo2(tx.cfdGrossProfit * (matched / tx.quantity))
+            : (matched * tx.price) - (matched * lot.price);
+          const pl = grossProfitPortion - buyComm - sellComm - feesTotal;
+          // Percentage: derive notional value from gross profit + price change for CFD
+          let plPct: number;
+          if (tx.cfdGrossProfit !== undefined) {
+            const priceChange = lot.price > 0 ? (tx.price - lot.price) / lot.price : 0;
+            const notional = Math.abs(priceChange) > 1e-6 ? Math.abs(grossProfitPortion / priceChange) : 0;
+            plPct = notional > 0 ? (pl / notional) * 100 : 0;
+          } else {
+            const buyValue = matched * lot.price;
+            plPct = buyValue > 0 ? (pl / buyValue) * 100 : 0;
+          }
 
           closedTrades.push({
             paperName: entry?.name || tx.paperName,
@@ -510,18 +562,21 @@ export function computeClosedTrades(
             sellTransactionId: tx.id!,
             sellSource: tx.source,
             category: tx.category,
+            fees: tradeFees.length > 0 ? tradeFees : undefined,
+            totalCost: buyComm + sellComm + feesTotal,
           });
 
-          if (lot.quantity <= remaining) {
-            remaining -= lot.quantity;
+          if (lot.quantity <= remaining + EPSILON) {
+            remaining = Math.max(0, remaining - lot.quantity);
             buyQueue.shift();
           } else {
             lot.quantity -= remaining;
+            if (lot.quantity < EPSILON) buyQueue.shift();
             remaining = 0;
           }
         }
         // Any remaining sell quantity with no buy lots = short sell
-        if (remaining > 0) {
+        if (remaining > EPSILON) {
           shortQueue.push({
             quantity: remaining,
             price: tx.price,
@@ -534,38 +589,70 @@ export function computeClosedTrades(
     }
   }
 
-  // ── Match fee operations to closed trades by ticker + date range ──
+  // ── Match fee operations to closed trades by ticker/isin + date range ──
+  // Only operationType='fee' is matched here (e.g. DEGIRO exchange fees, Sec Fee).
+  // CFD swap/rollover is embedded directly on the sell transaction (via Position ID).
   if (operations?.length) {
-    const feeOps = operations.filter(op =>
-      op.operationType === 'fee' && op.ticker
-    );
+    const feeOps = operations.filter(op => op.operationType === 'fee' && op.ticker);
 
+    // Pass 1: sum total matching quantity per fee (for proportional split by quantity)
+    const feeMatchQty = new Map<number, number>();
+    for (let i = 0; i < feeOps.length; i++) {
+      const fee = feeOps[i];
+      const feeDate = fee.date.slice(0, 10);
+      let totalQty = 0;
+      for (const trade of closedTrades) {
+        const tickerMatch = fee.ticker === trade.ticker || fee.ticker === trade.isin;
+        if (tickerMatch && feeDate >= trade.buyDate.slice(0, 10) && feeDate <= trade.sellDate.slice(0, 10)) {
+          totalQty += trade.quantity;
+        }
+      }
+      feeMatchQty.set(i, totalQty);
+    }
+
+    // Pass 2: assign proportional fee amounts (by quantity) to each trade
     for (const trade of closedTrades) {
       const buyDate = trade.buyDate.slice(0, 10);
       const sellDate = trade.sellDate.slice(0, 10);
-      const fees: { type: string; amount: number; description: string }[] = [];
+      const matchedFees: ClosedTradeFee[] = [];
 
-      for (const fee of feeOps) {
+      for (let i = 0; i < feeOps.length; i++) {
+        const fee = feeOps[i];
         const feeDate = fee.date.slice(0, 10);
-        if (fee.ticker === trade.ticker && feeDate >= buyDate && feeDate <= sellDate) {
-          fees.push({
+        const tickerMatch = fee.ticker === trade.ticker || fee.ticker === trade.isin;
+        if (tickerMatch && feeDate >= buyDate && feeDate <= sellDate) {
+          const totalQty = feeMatchQty.get(i) || trade.quantity;
+          const proportion = totalQty > 0 ? trade.quantity / totalQty : 1;
+          matchedFees.push({
             type: fee.description.split(':')[0]?.trim() || 'fee',
-            amount: Math.abs(fee.amount),
+            amount: roundTo2(Math.abs(fee.amount) * proportion),
             description: fee.description,
           });
         }
       }
 
-      if (fees.length) {
-        trade.fees = fees;
+      if (matchedFees.length) {
+        // Merge with existing fees (swap/rollover from FIFO)
+        trade.fees = [...(trade.fees || []), ...matchedFees];
       }
       const feesTotal = (trade.fees || []).reduce((s, f) => s + f.amount, 0);
       trade.totalCost = trade.buyCommission + trade.sellCommission + feesTotal;
+
+      // Recalculate P/L if there are non-FIFO fees (matched here, not already in P/L)
+      const extraFeesTotal = matchedFees.reduce((s, f) => s + f.amount, 0);
+      if (extraFeesTotal > 0) {
+        trade.profitLoss -= extraFeesTotal;
+        const buyValue = trade.quantity * trade.buyPrice;
+        trade.profitLossPct = buyValue > 0 ? (trade.profitLoss / buyValue) * 100 : 0;
+      }
     }
-  } else {
-    // No operations — just set totalCost from commissions
-    for (const trade of closedTrades) {
-      trade.totalCost = trade.buyCommission + trade.sellCommission;
+  }
+
+  // Set totalCost for trades that didn't go through fee matching
+  for (const trade of closedTrades) {
+    if (trade.totalCost === undefined) {
+      const feesTotal = (trade.fees || []).reduce((s, f) => s + f.amount, 0);
+      trade.totalCost = trade.buyCommission + trade.sellCommission + feesTotal;
     }
   }
 
@@ -1041,7 +1128,7 @@ export async function computePortfolioHistory(
     let stockValuePln = 0;
 
     for (const [isin, shares] of holdings) {
-      if (shares <= 0) continue;
+      if (shares < EPSILON) continue;
       const entry = tickerMap.get(isin);
       if (!entry) continue;
 
@@ -1117,8 +1204,12 @@ export async function computePortfolioHistory(
     const netCashFlow = deposit - withdrawal;
     if (prevTotalValue > 0 && totalValue > peakTotalValue * 0.01) {
       let denominator = prevTotalValue + netCashFlow;
-      if (Math.abs(netCashFlow) > 0 && denominator < prevTotalValue * 0.05) {
-        // Modified Dietz: assume cash flow happens mid-day (weight = 0.5)
+      // Modified Dietz: when a large cash flow makes the denominator significantly
+      // different from prevTotalValue (>30% change), assume cash flow happens mid-day
+      // (weight = 0.5) to dampen the distortion. This handles both large withdrawals
+      // (denominator too small → inflated return) and large deposits (denominator too
+      // large → deflated return).
+      if (Math.abs(netCashFlow) > prevTotalValue * 0.3) {
         denominator = prevTotalValue + 0.5 * netCashFlow;
       }
       if (denominator > 0) {

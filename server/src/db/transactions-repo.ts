@@ -4,14 +4,14 @@ import type { Transaction, SkippedRow } from 'shared';
 export function insertTransactions(transactions: Transaction[], portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
   const stmt = db.prepare(`
-    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, category, source, import_batch)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertMany = db.transaction((txs: Transaction[]) => {
     let count = 0;
     for (const tx of txs) {
-      stmt.run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.category || 'stock', tx.source, tx.importBatch);
+      stmt.run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.category || 'stock', tx.source, tx.importBatch, tx.swap ?? null, tx.rollover ?? null, tx.cfdPositionId ?? null, tx.cfdGrossProfit ?? null);
       count++;
     }
     return count;
@@ -37,8 +37,8 @@ export function insertTransactionsWithDedup(
     WHERE date = ? AND isin = ? AND side = ? AND quantity = ? AND price = ?
   `);
   const insertStmt = db.prepare(`
-    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, category, source, import_batch)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   // Group by dedup key
@@ -64,7 +64,7 @@ export function insertTransactionsWithDedup(
 
       for (let i = 0; i < toInsert; i++) {
         const tx = txGroup[i];
-        insertStmt.run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.category || 'stock', tx.source, tx.importBatch);
+        insertStmt.run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.category || 'stock', tx.source, tx.importBatch, tx.swap ?? null, tx.rollover ?? null, tx.cfdPositionId ?? null, tx.cfdGrossProfit ?? null);
         inserted++;
       }
 
@@ -122,9 +122,9 @@ export function getTransactionById(id: number, portfolioId: string = 'default'):
 export function insertTransaction(tx: Transaction, portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
   const result = db.prepare(`
-    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, category, source, import_batch)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.category || 'stock', tx.source, tx.importBatch || null);
+    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.category || 'stock', tx.source, tx.importBatch || null, tx.swap ?? null, tx.rollover ?? null, tx.cfdPositionId ?? null, tx.cfdGrossProfit ?? null);
   return Number(result.lastInsertRowid);
 }
 
@@ -169,5 +169,9 @@ function mapRow(row: any): Transaction {
     category: row.category || 'stock',
     source: row.source,
     importBatch: row.import_batch,
+    swap: row.swap || undefined,
+    rollover: row.rollover || undefined,
+    cfdPositionId: row.cfd_position_id || undefined,
+    cfdGrossProfit: row.cfd_gross_profit ?? undefined,
   };
 }

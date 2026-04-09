@@ -28,11 +28,18 @@ export function CostsPage() {
   const fees: FeeEntry[] = data?.fees || [];
   const total = data?.total || 0;
 
-  // Group by description for summary (normalize DEGIRO Exchange Connection Fee variants)
+  // Group by cost type for summary tiles (e.g. "swap", "rollover", "Withholding tax")
   const summary = fees.reduce<Record<string, { count: number; total: number; currency: string }>>((acc, f) => {
-    const key = f.description.startsWith('DEGIRO Exchange Connection Fee')
-      ? 'DEGIRO Exchange Connection Fee'
-      : f.description;
+    let key: string;
+    if (f.description.startsWith('DEGIRO Exchange Connection Fee')) {
+      key = 'DEGIRO Exchange Connection Fee';
+    } else if (f.description.startsWith('Free-funds Interest Tax')) {
+      key = 'Free-funds Interest Tax';
+    } else if (f.description.includes(':')) {
+      key = f.description.split(':')[0].trim();
+    } else {
+      key = f.description;
+    }
     if (!acc[key]) acc[key] = { count: 0, total: 0, currency: f.currency };
     acc[key].count++;
     acc[key].total += f.amount;
