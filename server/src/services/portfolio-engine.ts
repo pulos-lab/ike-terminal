@@ -747,7 +747,7 @@ export function extractFxExchanges(operations: CashOperation[]): FxExchangeRecor
 export function computeXirr(deposits: Array<{ date: string; amount: number }>, currentValue: number): number {
   const cashflows: Array<{ date: Date; amount: number }> = deposits.map(d => ({
     date: new Date(d.date),
-    amount: -Math.abs(d.amount), // deposits are negative (outflow)
+    amount: -d.amount, // deposits (positive) become outflows (negative), withdrawals (negative) become inflows (positive)
   }));
 
   // Terminal cashflow: current portfolio value (inflow)
