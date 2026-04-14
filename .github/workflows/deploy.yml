@@ -55,7 +55,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
             cd /opt/ike-terminal/app &&
             npm ci --omit=dev &&
-            node server/dist/seed-benchmarks.js &&
+            DATA_DIR=/opt/ike-terminal/data node server/dist/seed-benchmarks.js &&
             sudo systemctl restart ike-terminal
           '
 
