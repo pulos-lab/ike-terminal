@@ -488,7 +488,24 @@ router.get('/metrics', asyncHandler(async (req, res) => {
   const tickerMap = getTickerMap(pid);
 
   const savedSplits = loadSplitsForEngine(pid);
-  const { totalValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
+  const { totalValuePln: stockValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
+
+  // Add cash balances (all currencies converted to PLN)
+  const cashBalances = computeCashBalances(transactions, operations);
+  const defaultFx: Record<string, number> = {
+    USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
+    CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
+  };
+  let cashValuePln = 0;
+  for (const [currency, balance] of Object.entries(cashBalances)) {
+    if (currency === 'PLN') {
+      cashValuePln += balance;
+    } else {
+      const rate = await fetchFxRate(`${currency}PLN`) || defaultFx[currency] || 1;
+      cashValuePln += balance * rate;
+    }
+  }
+  const totalValuePln = stockValuePln + cashValuePln;
 
   // Include both deposits (positive) and withdrawals (negative) for accurate metrics
   const cashFlows = operations
