@@ -2,9 +2,17 @@ import { getCached, setCached } from './price-cache.js';
 import { storeHistoricalPrices, loadHistoricalPrices, getLastCachedDate } from './history-cache.js';
 import { config } from '../config.js';
 
-/** Detect Stooq block/rate-limit responses */
+/** Stooq ticker → Yahoo ticker mapping for benchmark live fallback */
+const BENCHMARK_YAHOO_FALLBACK: Record<string, string> = {
+  wig: 'WIG.WA',
+  wig20: 'WIG20.WA',
+  mwig40: 'MWIG40.WA',
+  swig80: 'SWIG80.WA',
+};
+
+/** Detect Stooq block/rate-limit responses (including new API key requirement) */
 function isStooqBlocked(text: string): boolean {
-  return text.includes('Przekroczony') || text.includes('limit') || text.includes('www@stooq.pl');
+  return text.includes('Przekroczony') || text.includes('limit') || text.includes('www@stooq.pl') || text.includes('apikey');
 }
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
@@ -158,6 +166,54 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
 }
 
 /**
+ * Try to fetch today's close via Stooq live API, falling back to Yahoo.
+ * Used when Stooq historical API is blocked but we need the latest data point.
+ */
+async function fetchLiveClose(stooqTicker: string): Promise<{ date: string; close: number } | null> {
+  try {
+    // Try Stooq live quote API first
+    const url = `https://stooq.pl/q/l/?s=${stooqTicker}&f=sd2t2ohlcv&h&e=csv`;
+    const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+    const text = await response.text();
+
+    if (!isStooqBlocked(text)) {
+      const lines = text.trim().split('\n');
+      if (lines.length >= 2) {
+        const headers = lines[0].split(',');
+        const values = lines[1].split(',');
+        const dateIdx = headers.findIndex(h => h.toLowerCase() === 'data' || h.toLowerCase() === 'date');
+        const closeIdx = headers.findIndex(h => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close');
+        if (dateIdx !== -1 && closeIdx !== -1) {
+          const date = values[dateIdx]?.trim();
+          const close = parseFloat(values[closeIdx]?.trim());
+          if (date && !isNaN(close)) return { date, close };
+        }
+      }
+    }
+  } catch { /* fall through to Yahoo */ }
+
+  // Fallback: Yahoo Finance live
+  const yahooTicker = BENCHMARK_YAHOO_FALLBACK[stooqTicker];
+  if (!yahooTicker) return null;
+
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1d&range=1d`;
+    const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+    const json = await response.json() as any;
+    const result = json.chart?.result?.[0];
+    if (!result?.timestamp?.length) return null;
+    const lastIdx = result.timestamp.length - 1;
+    const ts = result.timestamp[lastIdx];
+    const close = result.indicators?.quote?.[0]?.close?.[lastIdx];
+    if (!ts || close == null || isNaN(close)) return null;
+    const date = new Date(ts * 1000).toISOString().split('T')[0];
+    return { date, close };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch historical daily data from Stooq
  */
 export async function fetchStooqHistory(ticker: string, startDate?: string): Promise<Array<{ date: string; close: number }>> {
@@ -200,7 +256,18 @@ export async function fetchStooqHistory(ticker: string, startDate?: string): Pro
       });
       const text = await response.text();
       if (isStooqBlocked(text)) {
-        console.warn(`Stooq blocked/rate-limited for ${stooqTicker}, using SQLite cache (${cachedData.length} points)`);
+        console.warn(`Stooq historical API blocked for ${stooqTicker}, trying live fallback`);
+        // Try to supplement cache with today's live data point
+        const liveData = await fetchLiveClose(stooqTicker);
+        if (liveData && (!lastCached || liveData.date > lastCached)) {
+          storeHistoricalPrices(stooqTicker, [liveData], 'stooq-live');
+          console.log(`[stooq] ${stooqTicker}: added live data point (${liveData.date}, close=${liveData.close})`);
+          // Reload merged data from cache
+          const mergedData = loadHistoricalPrices(stooqTicker, startDate);
+          mergedData.sort((a, b) => a.date.localeCompare(b.date));
+          setCached(cacheKey, mergedData, 12 * 3600);
+          return mergedData;
+        }
         // Fall back to whatever we have in persistent cache
         if (cachedData.length > 0) {
           setCached(cacheKey, cachedData, 12 * 3600);

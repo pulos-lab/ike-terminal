@@ -20,9 +20,9 @@ const YAHOO_FALLBACK: Record<string, string> = {
   swig80: 'SWIG80.WA',
 };
 
-/** Detect Stooq block/rate-limit responses */
+/** Detect Stooq block/rate-limit responses (including new API key requirement) */
 function isStooqBlocked(text: string): boolean {
-  return text.includes('Przekroczony') || text.includes('limit') || text.includes('www@stooq.pl');
+  return text.includes('Przekroczony') || text.includes('limit') || text.includes('www@stooq.pl') || text.includes('apikey');
 }
 
 /**

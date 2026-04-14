@@ -2,10 +2,10 @@ export const BENCHMARKS = {
   none: { label: 'Brak', source: 'none' as const },
   sp500: { label: 'S&P 500', yahooTicker: '^GSPC', source: 'yahoo' as const },
   nasdaq: { label: 'NASDAQ', yahooTicker: '^IXIC', source: 'yahoo' as const },
-  wig: { label: 'WIG', stooqTicker: 'wig', source: 'stooq' as const },
-  wig20: { label: 'WIG20', stooqTicker: 'wig20', source: 'stooq' as const },
-  mwig40: { label: 'mWIG40', stooqTicker: 'mwig40', source: 'stooq' as const },
-  swig80: { label: 'sWIG80', stooqTicker: 'swig80', source: 'stooq' as const },
+  wig: { label: 'WIG', stooqTicker: 'wig', yahooTicker: 'WIG.WA', source: 'stooq' as const },
+  wig20: { label: 'WIG20', stooqTicker: 'wig20', yahooTicker: 'WIG20.WA', source: 'stooq' as const },
+  mwig40: { label: 'mWIG40', stooqTicker: 'mwig40', yahooTicker: 'MWIG40.WA', source: 'stooq' as const },
+  swig80: { label: 'sWIG80', stooqTicker: 'swig80', yahooTicker: 'SWIG80.WA', source: 'stooq' as const },
 } as const;
 
 export type BenchmarkKey = keyof typeof BENCHMARKS;
