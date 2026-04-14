@@ -48,11 +48,14 @@ jobs:
           rsync -az -e "$SSH" shared/package.json $USER@$HOST:$REMOTE/shared/
           rsync -az -e "$SSH" client/package.json $USER@$HOST:$REMOTE/client/
 
-      - name: Install deps & restart
+          rsync -az -e "$SSH" benchmark/ $USER@$HOST:$REMOTE/benchmark/
+
+      - name: Install deps, seed benchmarks & restart
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
             cd /opt/ike-terminal/app &&
             npm ci --omit=dev &&
+            node server/dist/seed-benchmarks.js &&
             sudo systemctl restart ike-terminal
           '
 
