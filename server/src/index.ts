@@ -98,6 +98,19 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+// ── Benchmark diagnostics (public, temporary) ─────────────────────────────
+app.get('/api/benchmark-diag', async (_req, res) => {
+  const { loadHistoricalPrices, getLastCachedDate } = await import('./services/history-cache.js');
+  const tickers = ['wig', 'wig20', 'mwig40', 'swig80'];
+  const result: Record<string, any> = { dataDir: config.dataDir };
+  for (const t of tickers) {
+    const last = getLastCachedDate(t);
+    const data = loadHistoricalPrices(t);
+    result[t] = { count: data.length, first: data[0]?.date, last: last };
+  }
+  res.json(result);
+});
+
 // ── Database initialization ─────────────────────────────────────────────────
 initRegistry();
 
