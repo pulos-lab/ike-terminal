@@ -559,7 +559,7 @@ router.get('/transactions', asyncHandler((req, res) => {
 router.post('/transactions', asyncHandler(async (req, res) => {
   const pid = req.portfolioId;
   const { date, ticker, side, quantity, price, commission, currency: overrideCurrency, fxRate, category } = req.body as TransactionInput;
-  if (!date || !ticker || !side || !quantity || !price) {
+  if (!date || !ticker || !side || !quantity || price == null) {
     return res.status(400).json({ error: 'Wymagane pola: date, ticker, side, quantity, price' });
   }
   if (side !== 'K' && side !== 'S') {

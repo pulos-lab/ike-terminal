@@ -334,6 +334,15 @@ export interface LivePricesResponse {
   timestamp: string;
 }
 
+export interface OrphanedSell {
+  paperName: string;
+  isin: string;
+  ticker: string;
+  missingQuantity: number;
+  firstSellDate: string;
+  currency: string;
+}
+
 export interface ImportResult {
   success: boolean;
   transactionsImported: number;
@@ -344,6 +353,7 @@ export interface ImportResult {
   tickersUnresolved?: string[];
   skipped?: SkippedRow[];
   duplicatesSkipped?: number;
+  orphanedSells?: OrphanedSell[];
 }
 
 // ============ Portfolio Management ============

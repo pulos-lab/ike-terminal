@@ -5,7 +5,7 @@ import type { BrokerType, CashOperation, SkippedRow } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
 import { parseBossaOperations } from '../parsers/bossa-operations.js';
 import { detectBroker, getParserById, detectBinaryBroker, getBinaryParserById, PARSER_REGISTRY } from '../parsers/registry.js';
-import { insertTransactionsWithDedup, getTransactionsCount, clearTransactions, getLastImportDate, getTransactionsByIsin, updateTransaction } from '../db/transactions-repo.js';
+import { insertTransactionsWithDedup, getTransactionsCount, clearTransactions, getLastImportDate, getTransactionsByIsin, updateTransaction, detectOrphanedSells } from '../db/transactions-repo.js';
 import { insertOperationsWithDedup, getOperationsCount, clearOperations } from '../db/operations-repo.js';
 import { seedTickerMap, findIsinByName } from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from '../services/isin-resolver.js';
@@ -219,6 +219,8 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
   const allSkipped = [...skipped, ...duplicates];
   const duplicatesSkipped = duplicates.length;
 
+  const orphanedSells = detectOrphanedSells(pid);
+
   res.json({
     success: true,
     transactionsImported: inserted,
@@ -229,6 +231,7 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
     tickersUnresolved: unresolvedWithOpenPositions.map(u => u.paperName),
     skipped: allSkipped.length > 0 ? allSkipped : undefined,
     duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
+    orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
   });
 }));
 

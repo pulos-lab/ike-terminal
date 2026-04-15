@@ -6,7 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api } from '@/lib/api-client';
 import { CheckCircle, AlertCircle, AlertTriangle, Loader2 } from 'lucide-react';
-import { type BrokerType, type SkipReason, BROKER_LABELS } from 'shared';
+import { formatDate, formatQuantity } from '@/lib/formatters';
+import { type BrokerType, type SkipReason, type OrphanedSell, BROKER_LABELS } from 'shared';
 
 const SKIP_REASON_LABELS: Record<SkipReason, string> = {
   missing_date: 'brak daty',
@@ -38,6 +39,8 @@ export function ImportDialog({ open, onOpenChange }: Props) {
   const [uploading, setUploading] = useState(false);
   const [results, setResults] = useState<string[]>([]);
   const [selectedBroker, setSelectedBroker] = useState<BrokerType>('auto');
+  const [orphanedSells, setOrphanedSells] = useState<OrphanedSell[]>([]);
+  const [resolving, setResolving] = useState<string | null>(null);
 
   const handleUpload = useCallback(async (file: File, type: 'transactions' | 'operations') => {
     setUploading(true);
@@ -65,6 +68,12 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         }
         if (result.tickersUnresolved && result.tickersUnresolved.length > 0) {
           messages.push(`WARN:Nie rozpoznano: ${result.tickersUnresolved.join(', ')}`);
+        }
+
+        if (result.orphanedSells && result.orphanedSells.length > 0) {
+          setOrphanedSells(prev => [...prev, ...result.orphanedSells!.filter(
+            o => !prev.some(p => p.isin === o.isin)
+          )]);
         }
 
         if (result.duplicatesSkipped && result.duplicatesSkipped > 0) {
@@ -122,6 +131,33 @@ export function ImportDialog({ open, onOpenChange }: Props) {
       await handleUpload(file, type);
     }
   }, [handleUpload]);
+
+  const handleAddSpinoffBuy = useCallback(async (orphan: OrphanedSell) => {
+    setResolving(orphan.isin);
+    try {
+      const buyDate = new Date(orphan.firstSellDate);
+      buyDate.setDate(buyDate.getDate() - 1);
+      const dateStr = buyDate.toISOString().split('T')[0] + 'T00:00:00';
+
+      await api.createTransaction({
+        date: dateStr,
+        ticker: orphan.ticker,
+        side: 'K',
+        quantity: orphan.missingQuantity,
+        price: 0,
+        commission: 0,
+        currency: orphan.currency,
+      });
+
+      setOrphanedSells(prev => prev.filter(o => o.isin !== orphan.isin));
+      setResults(prev => [...prev, `Dodano kupno spin-off: ${orphan.paperName} (${orphan.missingQuantity} szt. @ 0)`]);
+      queryClient.invalidateQueries();
+    } catch (err) {
+      setResults(prev => [...prev, `Błąd: Nie udało się dodać kupna dla ${orphan.paperName}: ${(err as Error).message}`]);
+    } finally {
+      setResolving(null);
+    }
+  }, [queryClient]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -207,11 +243,55 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             );
           })}
 
+          {orphanedSells.length > 0 && (
+            <div className="rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3 space-y-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+                <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
+                  Wykryto sprzedaż bez kupna
+                </span>
+              </div>
+              {orphanedSells.map(o => (
+                <div key={o.isin} className="ml-6 space-y-1.5">
+                  <div className="text-sm">
+                    <span className="font-medium">{o.paperName}</span>
+                    <span className="text-muted-foreground"> ({o.ticker})</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Brak kupna dla {formatQuantity(o.missingQuantity)} szt. ({o.currency}) · Pierwsza sprzedaż: {formatDate(o.firstSellDate)}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs"
+                      disabled={resolving === o.isin}
+                      onClick={() => handleAddSpinoffBuy(o)}
+                    >
+                      {resolving === o.isin ? (
+                        <><Loader2 className="h-3 w-3 animate-spin mr-1" />Dodawanie...</>
+                      ) : 'Dodaj kupno — spin-off (cena 0)'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs"
+                      onClick={() => setOrphanedSells(prev => prev.filter(x => x.isin !== o.isin))}
+                    >
+                      Pomiń
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           <Button
             variant="outline"
             className="w-full"
             onClick={() => {
               setResults([]);
+              setOrphanedSells([]);
               onOpenChange(false);
             }}
           >

@@ -1,5 +1,5 @@
 import { getDb } from './connection.js';
-import type { Transaction, SkippedRow } from 'shared';
+import type { Transaction, SkippedRow, OrphanedSell } from 'shared';
 
 export function insertTransactions(transactions: Transaction[], portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
@@ -151,6 +151,31 @@ export function getLastImportDate(portfolioId: string = 'default'): string | nul
   const db = getDb(portfolioId);
   const row = db.prepare('SELECT MAX(created_at) as last_import FROM transactions WHERE import_batch IS NOT NULL').get() as any;
   return row?.last_import || null;
+}
+
+/** Detect ISINs where total sold > total bought (excluding CFD positions). */
+export function detectOrphanedSells(portfolioId: string = 'default'): OrphanedSell[] {
+  const db = getDb(portfolioId);
+  const rows = db.prepare(`
+    SELECT t.paper_name, t.isin, t.currency,
+      SUM(CASE WHEN t.side = 'K' THEN t.quantity ELSE 0 END) as bought,
+      SUM(CASE WHEN t.side = 'S' THEN t.quantity ELSE 0 END) as sold,
+      MIN(CASE WHEN t.side = 'S' THEN t.date END) as first_sell,
+      tm.ticker
+    FROM transactions t
+    LEFT JOIN ticker_map tm ON t.isin = tm.isin
+    WHERE t.category != 'cfd'
+    GROUP BY t.isin
+    HAVING sold > bought + 0.001
+  `).all() as any[];
+  return rows.map(r => ({
+    paperName: r.paper_name,
+    isin: r.isin,
+    ticker: r.ticker || r.isin,
+    missingQuantity: Math.round((r.sold - r.bought) * 10000) / 10000,
+    firstSellDate: r.first_sell,
+    currency: r.currency,
+  }));
 }
 
 function mapRow(row: any): Transaction {
