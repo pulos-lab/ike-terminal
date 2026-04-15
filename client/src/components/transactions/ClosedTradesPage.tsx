@@ -1,10 +1,12 @@
-import { useMemo, Fragment } from 'react';
+import { useMemo, useState, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
@@ -85,16 +87,62 @@ export function ClosedTradesPage() {
 
   const [expandedGroups, toggleGroup] = useToggleSet<string>();
 
+  const [plFilter, setPlFilter] = useState<'all' | 'profit' | 'loss'>('all');
+  const [currencyFilter, setCurrencyFilter] = useState<string>('ALL');
+  const [dateRange, setDateRange] = useState<string>('ALL');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.deleteTransaction(id),
     onSuccess: () => invalidatePortfolio(queryClient),
   });
 
-  const groups = useMemo(() => {
+  const availableCurrencies = useMemo(() => {
     if (!data?.trades?.length) return [];
+    const set = new Set<string>();
+    for (const trade of data.trades as ClosedTrade[]) set.add(trade.currency);
+    return Array.from(set).sort();
+  }, [data]);
+
+  const availableYears = useMemo(() => {
+    if (!data?.trades?.length) return [];
+    const set = new Set<number>();
+    for (const trade of data.trades as ClosedTrade[]) set.add(new Date(trade.sellDate).getFullYear());
+    return Array.from(set).sort((a, b) => b - a);
+  }, [data]);
+
+  const filteredTrades = useMemo(() => {
+    if (!data?.trades?.length) return [];
+    let trades = data.trades as ClosedTrade[];
+
+    if (plFilter === 'profit') trades = trades.filter(t => t.profitLoss > 0);
+    else if (plFilter === 'loss') trades = trades.filter(t => t.profitLoss < 0);
+
+    if (currencyFilter !== 'ALL') trades = trades.filter(t => t.currency === currencyFilter);
+
+    if (dateRange !== 'ALL') {
+      let fromDate: string | undefined;
+      let toDate: string | undefined;
+      if (dateRange === 'CUSTOM') {
+        fromDate = customFrom || undefined;
+        toDate = customTo || undefined;
+      } else {
+        fromDate = `${dateRange}-01-01`;
+        toDate = `${dateRange}-12-31`;
+      }
+      if (fromDate) trades = trades.filter(t => t.sellDate.slice(0, 10) >= fromDate!);
+      if (toDate) trades = trades.filter(t => t.sellDate.slice(0, 10) <= toDate!);
+    }
+
+    return trades;
+  }, [data, plFilter, currencyFilter, dateRange, customFrom, customTo]);
+
+  const groups = useMemo(() => {
+    if (!filteredTrades.length) return [];
 
     const map = new Map<string, ClosedTrade[]>();
-    for (const trade of data.trades as ClosedTrade[]) {
+    for (const trade of filteredTrades) {
       const sellDay = trade.sellDate.slice(0, 10);
       const key = `${trade.ticker}|${sellDay}`;
       const arr = map.get(key) || [];
@@ -142,9 +190,23 @@ export function ClosedTradesPage() {
 
     result.sort((a, b) => b.sellDate.localeCompare(a.sellDate));
     return result;
-  }, [data]);
+  }, [filteredTrades]);
+
+  const plSummary = useMemo(() => {
+    const map = new Map<string, { currency: string; totalPL: number; count: number; wins: number; losses: number }>();
+    for (const group of groups) {
+      const s = map.get(group.currency) || { currency: group.currency, totalPL: 0, count: 0, wins: 0, losses: 0 };
+      s.totalPL += group.totalProfitLoss;
+      s.count += 1;
+      if (group.totalProfitLoss > 0) s.wins += 1;
+      else if (group.totalProfitLoss < 0) s.losses += 1;
+      map.set(group.currency, s);
+    }
+    return Array.from(map.values()).sort((a, b) => a.currency.localeCompare(b.currency));
+  }, [groups]);
 
   const totalTrades = data?.trades?.length ?? 0;
+  const isFiltered = plFilter !== 'all' || currencyFilter !== 'ALL' || dateRange !== 'ALL';
 
   return (
     <div>
@@ -154,12 +216,54 @@ export function ClosedTradesPage() {
             Historia zamkniętych pozycji (FIFO)
             {groups.length > 0 && (
               <span className="ml-2 text-muted-foreground font-normal">
-                ({groups.length} pozycji, {totalTrades} transakcji)
+                ({groups.length} pozycji, {filteredTrades.length} transakcji{isFiltered && ` z ${totalTrades}`})
               </span>
             )}
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {!isLoading && data?.trades?.length ? (
+            <div className="flex flex-wrap items-center gap-3 mb-4">
+              <div className="flex items-center rounded-md border">
+                <Button size="sm" variant={plFilter === 'all' ? 'default' : 'ghost'} className="h-7 px-2.5 text-xs rounded-r-none" onClick={() => setPlFilter('all')}>Wszystkie</Button>
+                <Button size="sm" variant={plFilter === 'profit' ? 'default' : 'ghost'} className="h-7 px-2.5 text-xs rounded-none border-x" onClick={() => setPlFilter('profit')}>Zyski</Button>
+                <Button size="sm" variant={plFilter === 'loss' ? 'default' : 'ghost'} className="h-7 px-2.5 text-xs rounded-l-none" onClick={() => setPlFilter('loss')}>Straty</Button>
+              </div>
+
+              {availableCurrencies.length > 1 && (
+                <Select value={currencyFilter} onValueChange={setCurrencyFilter}>
+                  <SelectTrigger className="h-7 w-[140px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">Wszystkie waluty</SelectItem>
+                    {availableCurrencies.map(c => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              <div className="ml-auto flex flex-wrap items-center gap-3">
+                <div className="flex items-center rounded-md border">
+                  <Button size="sm" variant={dateRange === 'ALL' ? 'default' : 'ghost'} className="h-7 px-2.5 text-xs rounded-r-none" onClick={() => setDateRange('ALL')}>Wszystko</Button>
+                  {availableYears.slice(0, 4).map((year, i) => (
+                    <Button key={year} size="sm" variant={dateRange === String(year) ? 'default' : 'ghost'} className={`h-7 px-2.5 text-xs rounded-none border-l ${i === availableYears.slice(0, 4).length - 1 && dateRange !== 'CUSTOM' ? 'rounded-r-md' : ''}`} onClick={() => setDateRange(String(year))}>{year}</Button>
+                  ))}
+                  <Button size="sm" variant={dateRange === 'CUSTOM' ? 'default' : 'ghost'} className="h-7 px-2.5 text-xs rounded-l-none border-l" onClick={() => setDateRange('CUSTOM')}>Zakres</Button>
+                </div>
+
+                {dateRange === 'CUSTOM' && (
+                  <div className="flex items-center gap-1.5">
+                    <Input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className="h-7 text-xs w-[130px]" />
+                    <span className="text-muted-foreground text-xs">—</span>
+                    <Input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="h-7 text-xs w-[130px]" />
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
+
           {isLoading ? (
             <LoadingSpinner />
           ) : groups.length ? (
@@ -322,7 +426,24 @@ export function ClosedTradesPage() {
                   })}
                 </TableBody>
               </Table>
+              {plSummary.length > 0 && (
+                <div className="mt-4 flex flex-wrap items-center gap-4 border-t pt-4">
+                  <span className="text-sm font-medium text-muted-foreground">Podsumowanie P/L:</span>
+                  {plSummary.map(s => (
+                    <div key={s.currency} className="flex items-center gap-2">
+                      <span className={`text-sm font-semibold ${s.totalPL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                        {formatCurrency(s.totalPL, s.currency)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        ({s.count} poz: {s.wins}Z / {s.losses}S)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
+          ) : data?.trades?.length ? (
+            <EmptyState message="Brak transakcji dla wybranych filtrów." />
           ) : (
             <EmptyState message="Brak danych." />
           )}
