@@ -99,6 +99,12 @@ export function ImportDialog({ open, onOpenChange }: Props) {
           }
         }
 
+        if (result.warnings && result.warnings.length > 0) {
+          for (const w of result.warnings) {
+            messages.push(`WARN:${w}`);
+          }
+        }
+
         setResults(prev => [...prev, ...messages]);
         queryClient.invalidateQueries();
       } else {

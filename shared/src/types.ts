@@ -354,6 +354,7 @@ export interface ImportResult {
   skipped?: SkippedRow[];
   duplicatesSkipped?: number;
   orphanedSells?: OrphanedSell[];
+  warnings?: string[];
 }
 
 // ============ Portfolio Management ============

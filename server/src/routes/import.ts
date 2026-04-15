@@ -55,7 +55,9 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
       });
     }
 
-    const { transactions: txResult, operations: opsResult } = await binaryParser.parse(req.file.buffer, importBatch);
+    const parseResult = await binaryParser.parse(req.file.buffer, importBatch);
+    const { transactions: txResult, operations: opsResult } = parseResult;
+    const parserWarnings: string[] = (parseResult as any).warnings ?? [];
 
     if (txResult.data.length === 0 && opsResult.data.length === 0) {
       const skippedInfo = txResult.skipped.length > 0
@@ -115,6 +117,7 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
       skipped: allSkipped.length > 0 ? allSkipped : undefined,
       duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
       orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
+      warnings: parserWarnings.length > 0 ? parserWarnings : undefined,
     });
   }
 

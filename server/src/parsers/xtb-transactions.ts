@@ -1,6 +1,18 @@
 import ExcelJS from 'exceljs';
 import type { Transaction, CashOperation, ParseResult, SkippedRow, InstrumentCategory } from 'shared';
+import { findCfdTicker } from 'shared';
 import { roundTo2 } from './utils.js';
+
+/** Infer CFD category from instrument name using static CFD_TICKER_MAP.
+ *  Used as fallback when Closed Positions sheet is missing. */
+function inferCategoryFromSymbol(symbol: string): InstrumentCategory | null {
+  // Try full symbol first (e.g. "OIL.WTI", "AU200.cash")
+  if (findCfdTicker(symbol)) return 'cfd';
+  // Try base name without country suffix (e.g. "GOLD" from "GOLD", but NOT "CDR" from "CDR.PL")
+  const base = symbol.includes('.') ? symbol.split('.')[0] : symbol;
+  if (base !== symbol && findCfdTicker(base)) return 'cfd';
+  return null;
+}
 
 /**
  * XTB XLSX parser — reads CASH OPERATION HISTORY sheet
@@ -222,13 +234,20 @@ interface RawRow {
 export async function parseXtbFile(
   buffer: Buffer,
   importBatch: string,
-): Promise<{ transactions: ParseResult<Transaction>; operations: ParseResult<CashOperation> }> {
+): Promise<{ transactions: ParseResult<Transaction>; operations: ParseResult<CashOperation>; warnings?: string[] }> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer as unknown as ArrayBuffer);
 
   // ── Extract instrument categories and ticker lookup from Closed Positions sheet ──
   const categoryMap = extractCategoryMap(wb);
   const tickerLookup = extractTickerLookup(wb);
+  const warnings: string[] = [];
+  if (categoryMap.size === 0) {
+    const hasClosedSheet = wb.worksheets.some(s => s.name.toUpperCase().includes('CLOSED'));
+    if (!hasClosedSheet) {
+      warnings.push('Brak arkusza "Closed Positions" — kategorie instrumentów (CFD/ETF) wykryte heurystycznie z mapy CFD');
+    }
+  }
 
   const worksheet = wb.worksheets.find(ws =>
     ws.name.toUpperCase().includes('CASH OPERATION')
@@ -415,7 +434,7 @@ export async function parseXtbFile(
 
       const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup);
       const value = roundTo2(qty * price);
-      const category = categoryMap.get(raw.symbol) || 'stock';
+      const category = categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol) ?? 'stock';
 
       const idx = transactions.length;
       transactions.push({
@@ -474,7 +493,7 @@ export async function parseXtbFile(
 
       const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup);
       const value = roundTo2(qty * price);
-      const category = categoryMap.get(raw.symbol) || 'stock';
+      const category = categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol) ?? 'stock';
 
       const idx = transactions.length;
       transactions.push({
@@ -655,7 +674,8 @@ export async function parseXtbFile(
 
     } else if (raw.type === 'swap' || raw.type === 'tax iftt' || raw.type === 'rollover') {
       // Skip for CFD instruments — handled by extractCfdTransactions with authoritative values
-      if (categoryMap.get(raw.symbol) === 'cfd') continue;
+      const swapCategory = categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol);
+      if (swapCategory === 'cfd') continue;
 
       const isoTime = parseXtbTime(raw.time);
       if (!isoTime) continue;
@@ -719,6 +739,7 @@ export async function parseXtbFile(
   return {
     transactions: { data: transactions, skipped: txSkipped },
     operations: { data: operations, skipped: opsSkipped },
+    warnings: warnings.length > 0 ? warnings : undefined,
   };
 }
 
