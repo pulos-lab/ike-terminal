@@ -101,6 +101,8 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
       return Math.abs(net) > 0.001;
     });
 
+    const orphanedSells = detectOrphanedSells(pid);
+
     return res.json({
       success: true,
       transactionsImported: txDedup.inserted,
@@ -112,6 +114,7 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
       tickersUnresolved: unresolvedWithOpenPositions.map(u => u.paperName),
       skipped: allSkipped.length > 0 ? allSkipped : undefined,
       duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
+      orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
     });
   }
 
