@@ -71,8 +71,8 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         }
 
         if (result.orphanedSells && result.orphanedSells.length > 0) {
-          setOrphanedSells(prev => [...prev, ...result.orphanedSells!.filter(
-            o => !prev.some(p => p.isin === o.isin)
+          setOrphanedSells(prev => [...prev, ...(result.orphanedSells as OrphanedSell[]).filter(
+            (o: OrphanedSell) => !prev.some(p => p.isin === o.isin)
           )]);
         }
 
