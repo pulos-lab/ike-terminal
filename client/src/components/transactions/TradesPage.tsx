@@ -237,14 +237,14 @@ export function TradesPage() {
         </Button>
       </div>
 
-      {!posLoading && positions.length > 0 && <TradesSummary positions={positions} />}
-
       {/* Tab switcher — Wszystkie / Otwarte / Zamknięte */}
       <div className="flex items-center gap-1 border-b border-border overflow-x-auto">
         <TabButton active={tab === 'all'} onClick={() => setTab('all')} label="Wszystkie" count={txCount} />
         <TabButton active={tab === 'open'} onClick={() => setTab('open')} label="Otwarte" count={positions.length} />
         <TabButton active={tab === 'closed'} onClick={() => setTab('closed')} label="Zamknięte" count={closedCount} />
       </div>
+
+      <TradesSummary tab={tab} positions={positions} />
 
       {error && (
         <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
