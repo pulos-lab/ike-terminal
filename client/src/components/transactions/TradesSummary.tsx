@@ -19,11 +19,21 @@ interface Position {
 interface Props {
   tab: 'all' | 'open' | 'closed';
   positions: Position[];
+  /** Closed tab date filter (mirrored from ClosedTradesPage, lifted up in TradesPage) */
+  closedDateRange?: string;
+  closedCustomFrom?: string;
+  closedCustomTo?: string;
 }
 
-export function TradesSummary({ tab, positions }: Props) {
+export function TradesSummary({ tab, positions, closedDateRange, closedCustomFrom, closedCustomTo }: Props) {
   if (tab === 'all') return <AllTilesView />;
-  if (tab === 'closed') return <ClosedTilesView />;
+  if (tab === 'closed') return (
+    <ClosedTilesView
+      dateRange={closedDateRange ?? 'ALL'}
+      customFrom={closedCustomFrom ?? ''}
+      customTo={closedCustomTo ?? ''}
+    />
+  );
   return <OpenTilesView positions={positions} />;
 }
 
@@ -156,14 +166,36 @@ function BestWorstTile({ best, worst }: { best: Position | null; worst: Position
 
 // ═══════════════════════ ZAMKNIĘTE ═══════════════════════
 
-function ClosedTilesView() {
+function ClosedTilesView({
+  dateRange,
+  customFrom,
+  customTo,
+}: {
+  dateRange: string;
+  customFrom: string;
+  customTo: string;
+}) {
   const { data } = useQuery({
     queryKey: QUERY_KEYS.closedTrades,
     queryFn: () => api.getClosedTrades(),
   });
 
   const stats = useMemo(() => {
-    const trades = data?.trades || [];
+    let trades = data?.trades || [];
+    // Apply the same date filter used by ClosedTradesPage (file linie ~124-148)
+    if (dateRange !== 'ALL') {
+      let fromDate: string | undefined;
+      let toDate: string | undefined;
+      if (dateRange === 'CUSTOM') {
+        fromDate = customFrom || undefined;
+        toDate = customTo || undefined;
+      } else {
+        fromDate = `${dateRange}-01-01`;
+        toDate = `${dateRange}-12-31`;
+      }
+      if (fromDate) trades = trades.filter((t: any) => t.sellDate.slice(0, 10) >= fromDate!);
+      if (toDate) trades = trades.filter((t: any) => t.sellDate.slice(0, 10) <= toDate!);
+    }
     const totalPnl = trades.reduce((s: number, t: any) => s + t.profitLoss, 0);
     // Cost basis = actual invested capital (buyPrice × quantity + buyCommission).
     // Note: aggregated in mixed currency when trades span PLN/USD/EUR etc — FX conversion
@@ -184,7 +216,7 @@ function ClosedTilesView() {
     const maxHold = holdDays.length > 0 ? Math.max(...holdDays) : 0;
     const uniqueTickers = new Set(trades.map((t: any) => t.ticker)).size;
     return { count: trades.length, uniqueTickers, totalPnl, pnlPct, profitable, losers, winRate, avgHold, minHold, maxHold };
-  }, [data]);
+  }, [data, dateRange, customFrom, customTo]);
 
   return (
     <Grid>

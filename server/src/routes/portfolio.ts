@@ -545,11 +545,19 @@ router.get('/transactions', asyncHandler((req, res) => {
   const tickerMap = getTickerMap(pid);
   const enriched = transactions.map(tx => {
     const entry = tickerMap.get(tx.isin);
+    // PR14: normalizacja semantyki walut w response:
+    //   - currency (quote): preferuj ticker_map (autorytet dla waluty notowania);
+    //     fallback do wartości z transaction (co parser zapisał).
+    //   - paymentCurrency: z DB (parser mógł zapisać; fallback = tx.currency = payment wg starych parserów Bossa/mBank).
+    const quoteCurrency = entry?.currency || tx.currency;
+    const paymentCurrency = tx.paymentCurrency || tx.currency;
     return {
       ...tx,
       ticker: entry?.ticker || tx.isin,
       name: entry?.name || tx.paperName,
       exchange: entry?.exchange || '',
+      currency: quoteCurrency,
+      paymentCurrency,
     };
   });
   res.json({ transactions: enriched });

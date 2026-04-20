@@ -21,7 +21,10 @@ interface TxItem {
   value: number;
   commission: number;
   total: number;
+  /** Quote currency (waluta notowania papieru) */
   currency: string;
+  /** Payment currency (waluta rozliczenia) — może być != currency gdy broker auto-konwertował */
+  paymentCurrency?: string;
   category?: 'stock' | 'etf' | 'cfd';
   fxRate?: number;
 }
@@ -80,17 +83,20 @@ export function TradesFeed() {
             <tr className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold border-b border-border">
               <th className="text-left py-2 pr-4">Data</th>
               <th className="text-left py-2 pr-4">Ticker</th>
-              <th className="text-left py-2 pr-4">Kat.</th>
+              <th className="text-left py-2 pr-4" title="Waluta rozliczenia — co zapłaciłeś">Waluta zakupu</th>
               <th className="text-left py-2 pr-4">Strona</th>
               <th className="text-right py-2 pr-4">Ilość</th>
               <th className="text-right py-2 pr-4">Cena</th>
-              <th className="text-left py-2 pr-4">CCY</th>
+              <th className="text-left py-2 pr-4" title="Waluta kwotowania papieru na giełdzie">Kwotowanie</th>
               <th className="text-right py-2 pr-4">Prow.</th>
               <th className="text-right py-2">Wartość PLN</th>
             </tr>
           </thead>
           <tbody>
-            {sorted.map((tx, i) => (
+            {sorted.map((tx, i) => {
+              const paymentCcy = tx.paymentCurrency || tx.currency;
+              const autoFx = paymentCcy !== tx.currency;
+              return (
               <tr
                 key={tx.id ?? i}
                 className="border-b border-border/50 hover:bg-accent/40 transition-colors"
@@ -100,7 +106,8 @@ export function TradesFeed() {
                 </td>
                 <td className="py-2.5 pr-4 font-mono font-semibold">{tx.ticker}</td>
                 <td className="py-2.5 pr-4">
-                  <CategoryChip category={tx.category} />
+                  <CcyChip ccy={paymentCcy} />
+                  {autoFx && <span className="ml-1 text-[9px] text-amber-500/80" title="Auto-konwersja walut">⇋</span>}
                 </td>
                 <td className="py-2.5 pr-4">
                   <SideChip side={tx.side} />
@@ -121,20 +128,32 @@ export function TradesFeed() {
                   {formatNumber(valuePln(tx))}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
 
       {/* Mobile cards */}
       <div className="md:hidden flex flex-col gap-2">
-        {sorted.map((tx, i) => (
+        {sorted.map((tx, i) => {
+          const paymentCcy = tx.paymentCurrency || tx.currency;
+          const autoFx = paymentCcy !== tx.currency;
+          return (
           <div key={tx.id ?? i} className="flex items-center gap-3 rounded-xl bg-card border border-border p-3">
             <SideChip side={tx.side} size="lg" />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 mb-0.5">
                 <span className="font-mono font-semibold text-sm">{tx.ticker}</span>
-                <CategoryChip category={tx.category} />
+                {autoFx ? (
+                  <span className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground">
+                    <CcyChip ccy={paymentCcy} />
+                    <span className="text-amber-500/80">⇋</span>
+                    <CcyChip ccy={tx.currency} />
+                  </span>
+                ) : (
+                  <CcyChip ccy={tx.currency} />
+                )}
               </div>
               <p className="text-[11px] text-muted-foreground tabular-nums">
                 {formatDate(tx.date)} · {formatQuantity(tx.quantity)} × {formatNumber(tx.price)}
@@ -149,7 +168,8 @@ export function TradesFeed() {
               </p>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

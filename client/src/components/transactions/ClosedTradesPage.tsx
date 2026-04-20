@@ -77,7 +77,16 @@ function CostCell({ trade, muted }: { trade: ClosedTrade; muted?: boolean }) {
   );
 }
 
-export function ClosedTradesPage() {
+interface ClosedTradesPageProps {
+  dateRange?: string;
+  onDateRangeChange?: (v: string) => void;
+  customFrom?: string;
+  onCustomFromChange?: (v: string) => void;
+  customTo?: string;
+  onCustomToChange?: (v: string) => void;
+}
+
+export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -89,9 +98,25 @@ export function ClosedTradesPage() {
 
   const [plFilter, setPlFilter] = useState<'all' | 'profit' | 'loss'>('all');
   const [currencyFilter, setCurrencyFilter] = useState<string>('ALL');
-  const [dateRange, setDateRange] = useState<string>('ALL');
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
+  // Date range: use controlled props if provided, else internal state (backward compat)
+  const [internalDateRange, setInternalDateRange] = useState<string>('ALL');
+  const [internalCustomFrom, setInternalCustomFrom] = useState('');
+  const [internalCustomTo, setInternalCustomTo] = useState('');
+  const dateRange = props.dateRange ?? internalDateRange;
+  const setDateRange = (v: string) => {
+    if (props.onDateRangeChange) props.onDateRangeChange(v);
+    else setInternalDateRange(v);
+  };
+  const customFrom = props.customFrom ?? internalCustomFrom;
+  const setCustomFrom = (v: string) => {
+    if (props.onCustomFromChange) props.onCustomFromChange(v);
+    else setInternalCustomFrom(v);
+  };
+  const customTo = props.customTo ?? internalCustomTo;
+  const setCustomTo = (v: string) => {
+    if (props.onCustomToChange) props.onCustomToChange(v);
+    else setInternalCustomTo(v);
+  };
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.deleteTransaction(id),

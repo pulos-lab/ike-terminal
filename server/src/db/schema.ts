@@ -120,6 +120,16 @@ export function initSchema(db: Database.Database): void {
   if (!txColumns.some((c: any) => c.name === 'cfd_gross_profit')) {
     db.exec("ALTER TABLE transactions ADD COLUMN cfd_gross_profit REAL");
   }
+  // PR14 — payment currency (waluta rozliczenia, może być != quote currency)
+  if (!txColumns.some((c: any) => c.name === 'payment_currency')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN payment_currency TEXT");
+    // Backfill istniejących wierszy — payment = dotychczasowe currency (najlepsza estymacja)
+    db.exec("UPDATE transactions SET payment_currency = currency WHERE payment_currency IS NULL");
+  }
+  // PR14 — fx rate (kurs wymiany pamiętany przy rozliczeniu foreign → payment)
+  if (!txColumns.some((c: any) => c.name === 'fx_rate')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN fx_rate REAL");
+  }
 
   // Migration: tighten stock_splits UNIQUE from (isin, split_date) to (isin)
   // SQLite doesn't support ALTER CONSTRAINT, so recreate the table

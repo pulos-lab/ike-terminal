@@ -110,6 +110,12 @@ export function TradesPage() {
   // Tab switcher: all transactions / open positions / closed trades
   const [tab, setTab] = useState<'all' | 'open' | 'closed'>('open');
 
+  // Closed tab date filter — lifted here so TradesSummary (tile values)
+  // and ClosedTradesPage (table) stay in sync when user changes the year / custom range.
+  const [closedDateRange, setClosedDateRange] = useState<string>('ALL');
+  const [closedCustomFrom, setClosedCustomFrom] = useState('');
+  const [closedCustomTo, setClosedCustomTo] = useState('');
+
   const invalidateAll = () => invalidatePortfolio(queryClient);
 
   // Auto-calculate commission based on portfolio settings
@@ -244,7 +250,13 @@ export function TradesPage() {
         <TabButton active={tab === 'closed'} onClick={() => setTab('closed')} label="Zamknięte" count={closedCount} />
       </div>
 
-      <TradesSummary tab={tab} positions={positions} />
+      <TradesSummary
+        tab={tab}
+        positions={positions}
+        closedDateRange={closedDateRange}
+        closedCustomFrom={closedCustomFrom}
+        closedCustomTo={closedCustomTo}
+      />
 
       {error && (
         <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
@@ -616,7 +628,16 @@ export function TradesPage() {
       )}
 
       {/* Closed trades */}
-      {tab === 'closed' && <ClosedTradesPage />}
+      {tab === 'closed' && (
+        <ClosedTradesPage
+          dateRange={closedDateRange}
+          onDateRangeChange={setClosedDateRange}
+          customFrom={closedCustomFrom}
+          onCustomFromChange={setClosedCustomFrom}
+          customTo={closedCustomTo}
+          onCustomToChange={setClosedCustomTo}
+        />
+      )}
     </div>
   );
 }
