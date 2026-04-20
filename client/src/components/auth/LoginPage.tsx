@@ -3,7 +3,8 @@ import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { signIn, signUp, useSession } from '@/lib/auth-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardDescription } from '@/components/ui/card';
+import { Logo } from '@/components/ui/Logo';
 
 export function LoginPage() {
   const { data: session, isPending } = useSession();
@@ -73,11 +74,19 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4">
-      <Card className="w-full max-w-md bg-[#111] border-zinc-800">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl text-white">TIX Terminal</CardTitle>
-          <CardDescription className="text-zinc-400">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 relative overflow-hidden">
+      {/* Amber glow backdrop */}
+      <div
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none"
+        style={{
+          background: 'radial-gradient(circle, rgba(245,158,11,0.06) 0%, transparent 70%)',
+        }}
+      />
+
+      <Card className="w-full max-w-md relative z-10">
+        <CardHeader className="text-center items-center gap-2 pb-4">
+          <Logo size="lg" className="mb-1" />
+          <CardDescription>
             {isRegister ? 'Utwórz nowe konto' : 'Zaloguj się do portfela'}
           </CardDescription>
         </CardHeader>
@@ -87,7 +96,7 @@ export function LoginPage() {
             <>
               <Button
                 variant="outline"
-                className="w-full border-zinc-700 text-white hover:bg-zinc-800"
+                className="w-full"
                 onClick={handleGoogleSignIn}
                 type="button"
               >
@@ -102,10 +111,10 @@ export function LoginPage() {
 
               <div className="relative">
                 <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t border-zinc-700" />
+                  <span className="w-full border-t border-border" />
                 </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-[#111] px-2 text-zinc-500">lub</span>
+                <div className="relative flex justify-center text-[10px] uppercase tracking-wider">
+                  <span className="bg-card px-2 text-muted-foreground font-semibold">lub</span>
                 </div>
               </div>
             </>
@@ -119,7 +128,6 @@ export function LoginPage() {
                 placeholder="Imię (opcjonalne)"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="bg-[#1a1a1a] border-zinc-700 text-white placeholder:text-zinc-500"
               />
             )}
             <Input
@@ -128,7 +136,6 @@ export function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="bg-[#1a1a1a] border-zinc-700 text-white placeholder:text-zinc-500"
             />
             <Input
               type="password"
@@ -137,16 +144,15 @@ export function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={8}
-              className="bg-[#1a1a1a] border-zinc-700 text-white placeholder:text-zinc-500"
             />
 
             {error && (
-              <p className="text-sm text-red-400">{error}</p>
+              <p className="text-sm text-destructive">{error}</p>
             )}
 
             <Button
               type="submit"
-              className="w-full bg-green-600 hover:bg-green-700 text-white"
+              className="w-full"
               disabled={loading}
             >
               {loading
@@ -162,19 +168,19 @@ export function LoginPage() {
               <button
                 type="button"
                 onClick={() => navigate('/forgot-password')}
-                className="text-zinc-500 hover:text-zinc-300 hover:underline"
+                className="text-muted-foreground hover:text-foreground hover:underline transition-colors"
               >
                 Zapomniałeś hasła?
               </button>
             </p>
           )}
 
-          <p className="text-center text-sm text-zinc-500">
+          <p className="text-center text-sm text-muted-foreground">
             {isRegister ? 'Masz już konto?' : 'Nie masz konta?'}{' '}
             <button
               type="button"
               onClick={() => { setIsRegister(!isRegister); setError(''); }}
-              className="text-green-400 hover:underline"
+              className="text-primary font-medium hover:underline"
             >
               {isRegister ? 'Zaloguj się' : 'Zarejestruj się'}
             </button>
