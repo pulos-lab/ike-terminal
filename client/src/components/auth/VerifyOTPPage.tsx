@@ -163,8 +163,8 @@ export function VerifyOTPPage() {
       />
 
       <Card className="w-full max-w-md relative z-10">
-        <CardHeader className="text-center items-center gap-2 pb-4">
-          <Logo size="lg" className="mb-1" />
+        <CardHeader className="text-center justify-items-center gap-2 pb-4">
+          <Logo size="lg" className="mb-1 mx-auto" />
           <CardTitle className="text-lg font-semibold">Weryfikacja email</CardTitle>
           <CardDescription>
             Wysłaliśmy 6-cyfrowy kod na<br />

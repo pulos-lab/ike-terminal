@@ -84,8 +84,8 @@ export function LoginPage() {
       />
 
       <Card className="w-full max-w-md relative z-10">
-        <CardHeader className="text-center items-center gap-2 pb-4">
-          <Logo size="lg" className="mb-1" />
+        <CardHeader className="text-center justify-items-center gap-2 pb-4">
+          <Logo size="lg" className="mb-1 mx-auto" />
           <CardDescription>
             {isRegister ? 'Utwórz nowe konto' : 'Zaloguj się do portfela'}
           </CardDescription>
