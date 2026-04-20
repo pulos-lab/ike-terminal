@@ -1,8 +1,7 @@
 import { useMemo } from 'react';
-import { Info } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPercent, formatNumber } from '@/lib/formatters';
+import { cn } from '@/lib/utils';
 
 interface ChartDataPoint {
   date: string;
@@ -145,39 +144,6 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   };
 }
 
-function StatCard({ label, value, subtext, color, tooltip }: {
-  label: string;
-  value: string;
-  subtext?: string;
-  color?: 'green' | 'red' | 'default';
-  tooltip?: string;
-}) {
-  const colorClass = color === 'green'
-    ? 'text-green-500'
-    : color === 'red'
-      ? 'text-red-500'
-      : 'text-foreground';
-
-  return (
-    <div className="space-y-0.5">
-      <p className="text-xs text-muted-foreground flex items-center gap-1">
-        {label}
-        {tooltip && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Info className="h-3 w-3 cursor-help text-muted-foreground/60 hover:text-muted-foreground transition-colors" />
-            </TooltipTrigger>
-            <TooltipContent className="max-w-[220px] text-xs">
-              {tooltip}
-            </TooltipContent>
-          </Tooltip>
-        )}
-      </p>
-      <p className={`text-sm font-semibold ${colorClass}`}>{value}</p>
-      {subtext && <p className="text-xs text-muted-foreground">{subtext}</p>}
-    </div>
-  );
-}
 
 export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }: Props) {
   const metrics = useMemo(() => computeMetrics(data), [data]);
@@ -187,77 +153,115 @@ export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }:
   }
 
   const returnColor = (v: number) => v > 0 ? 'green' as const : v < 0 ? 'red' as const : 'default' as const;
+  const hasBenchmark = showBenchmark && metrics.benchmarkReturn !== 0;
+
+  const shortBenchLabel = (benchmarkLabel || '')
+    .replace('S&P 500', 'SPY')
+    .replace('NASDAQ', 'NDQ')
+    .toUpperCase();
 
   return (
-    <Card>
-      <CardContent className="pt-4 pb-4">
-        <TooltipProvider>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-x-6 gap-y-3">
-          <StatCard
-            label="Stopa zwrotu"
-            value={formatPercent(metrics.totalReturn)}
-            color={returnColor(metrics.totalReturn)}
-          />
-          {showBenchmark && metrics.benchmarkReturn !== 0 && (
-            <StatCard
-              label={`vs ${benchmarkLabel}`}
-              value={formatPercent(metrics.benchmarkReturn)}
-              color={returnColor(metrics.benchmarkReturn)}
-            />
-          )}
-          <StatCard
-            label="CAGR"
-            value={formatPercent(metrics.cagr)}
-            color={returnColor(metrics.cagr)}
-            tooltip="Skumulowana roczna stopa wzrostu. Pokazuje, o ile % rocznie rósł portfel przy założeniu równomiernego wzrostu przez cały okres."
-          />
-          <StatCard
-            label="Volatility"
-            value={`${metrics.volatility.toFixed(2)}%`}
-            tooltip="Zmienność — odchylenie standardowe rocznych zwrotów. Im wyższa, tym większe wahania wartości portfela i ryzyko."
-          />
-          <StatCard
-            label="Sharpe Ratio"
-            value={formatNumber(metrics.sharpeRatio)}
-            subtext="rf = 5%"
-            tooltip="Zwrot ponad stopę wolną od ryzyka (rf = 5%) na jednostkę zmienności. Wartość >1 dobra, >2 bardzo dobra. Uwzględnia wszystkie wahania — zarówno wzrosty, jak i spadki."
-          />
-          <StatCard
-            label="Sortino Ratio"
-            value={formatNumber(metrics.sortinoRatio)}
-            tooltip="Podobny do Sharpe, ale mierzy tylko ryzyko spadkowe (downside deviation). Nie karze za wzrosty — lepiej oddaje rzeczywiste ryzyko straty."
-          />
-          <StatCard
-            label="Max Drawdown"
-            value={formatPercent(-metrics.maxDrawdown)}
-            color="red"
-          />
-          <StatCard
-            label="Max DD Duration"
-            value={`${metrics.maxDrawdownDuration} dni`}
-          />
-          <StatCard
-            label="Calmar Ratio"
-            value={formatNumber(metrics.calmarRatio)}
-            tooltip="Roczny zwrot podzielony przez maksymalne obsunięcie (Max Drawdown). Mierzy, ile zysku portfel generuje w stosunku do najgorszego możliwego scenariusza straty."
-          />
-          <StatCard
-            label="Najlepszy dzień"
-            value={formatPercent(metrics.bestDay)}
-            color="green"
-          />
-          <StatCard
-            label="Najgorszy dzień"
-            value={formatPercent(metrics.worstDay)}
-            color="red"
-          />
-          <StatCard
-            label="Win Rate"
-            value={`${formatNumber(metrics.winRate, 1)}%`}
-          />
-        </div>
-        </TooltipProvider>
-      </CardContent>
-    </Card>
+    <TooltipProvider>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+        <StatTile
+          label="Zwrot total"
+          value={formatPercent(metrics.totalReturn)}
+          color={returnColor(metrics.totalReturn)}
+        />
+        <StatTile
+          label={`vs ${shortBenchLabel || 'benchmark'}`}
+          value={hasBenchmark ? formatPercent(metrics.benchmarkReturn) : '—'}
+          color={hasBenchmark ? returnColor(metrics.benchmarkReturn) : 'default'}
+          disabled={!hasBenchmark}
+        />
+        <StatTile
+          label="CAGR"
+          value={formatPercent(metrics.cagr)}
+          color={returnColor(metrics.cagr)}
+          tooltip="Skumulowana roczna stopa wzrostu."
+        />
+        <StatTile
+          label="Volatility"
+          value={`${metrics.volatility.toFixed(1)}%`}
+          tooltip="Zmienność — odchylenie standardowe rocznych zwrotów."
+        />
+        <StatTile
+          label="Sharpe"
+          value={formatNumber(metrics.sharpeRatio)}
+          tooltip="Zwrot ponad stopę wolną od ryzyka (rf = 5%) na jednostkę zmienności."
+        />
+        <StatTile
+          label="Sortino"
+          value={formatNumber(metrics.sortinoRatio)}
+          tooltip="Jak Sharpe, ale mierzy tylko ryzyko spadkowe (downside)."
+        />
+        <StatTile
+          label="Max DD"
+          value={formatPercent(-metrics.maxDrawdown)}
+          color="red"
+        />
+        <StatTile
+          label="DD dni"
+          value={`${metrics.maxDrawdownDuration}`}
+        />
+        <StatTile
+          label="Calmar"
+          value={formatNumber(metrics.calmarRatio)}
+          tooltip="Roczny zwrot / Max Drawdown."
+        />
+        <StatTile
+          label="Best day"
+          value={formatPercent(metrics.bestDay)}
+          color="green"
+        />
+        <StatTile
+          label="Worst day"
+          value={formatPercent(metrics.worstDay)}
+          color="red"
+        />
+        <StatTile
+          label="Win rate"
+          value={`${formatNumber(metrics.winRate, 0)}%`}
+        />
+      </div>
+    </TooltipProvider>
+  );
+}
+
+interface StatTileProps {
+  label: string;
+  value: string;
+  color?: 'default' | 'green' | 'red';
+  tooltip?: string;
+  disabled?: boolean;
+}
+
+function StatTile({ label, value, color = 'default', tooltip, disabled }: StatTileProps) {
+  const colorClass =
+    color === 'green' ? 'text-green-500' : color === 'red' ? 'text-red-500' : 'text-foreground';
+
+  const content = (
+    <div
+      className={cn(
+        'rounded-xl bg-card border border-border px-3 py-2.5',
+        disabled && 'opacity-50',
+      )}
+    >
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
+        {label}
+      </p>
+      <p className={cn('text-base font-bold tabular-nums tracking-tight', colorClass)}>
+        {value}
+      </p>
+    </div>
+  );
+
+  if (!tooltip) return content;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{content}</TooltipTrigger>
+      <TooltipContent className="max-w-[260px] text-xs">{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }

@@ -5,6 +5,7 @@ import { QUERY_KEYS } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import { CcyChip } from '@/components/ui/ccy-chip';
 import { formatCurrency, formatDate } from '@/lib/formatters';
 
 interface FeeEntry {
@@ -47,28 +48,28 @@ export function CostsPage() {
   }, {});
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Inne koszty</h1>
-
-      <div className="grid gap-4 md:grid-cols-3">
+    <div className="space-y-4">
+      <div className="grid gap-2 md:grid-cols-3">
         {Object.entries(summary).map(([desc, s]) => (
-          <Card key={desc}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">{desc}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl font-bold">{formatCurrency(s.total, s.currency)}</div>
-              <p className="text-xs text-muted-foreground">{s.count} operacji</p>
-            </CardContent>
-          </Card>
+          <div key={desc} className="rounded-xl bg-card border border-border px-4 py-3">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
+              {desc}
+            </p>
+            <p className="text-base font-bold tabular-nums tracking-tight">
+              {formatCurrency(s.total, s.currency)}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums">
+              {s.count} operacji
+            </p>
+          </div>
         ))}
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
-            <span>Historia kosztow</span>
-            <span className="text-sm font-normal text-muted-foreground">
+            <span className="text-base">Historia kosztów</span>
+            <span className="text-sm font-normal text-muted-foreground tabular-nums">
               Razem: {formatCurrency(total, 'EUR')}
             </span>
           </CardTitle>
@@ -84,17 +85,17 @@ export function CostsPage() {
                   <TableHead>Opis</TableHead>
                   <TableHead className="text-right">Kwota</TableHead>
                   <TableHead>Waluta</TableHead>
-                  <TableHead>Zrodlo</TableHead>
+                  <TableHead>Źródło</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {fees.map((f) => (
                   <TableRow key={f.id}>
-                    <TableCell>{formatDate(f.date)}</TableCell>
-                    <TableCell>{f.description}</TableCell>
+                    <TableCell className="tabular-nums">{formatDate(f.date)}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{f.description}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatCurrency(f.amount, f.currency)}</TableCell>
-                    <TableCell>{f.currency}</TableCell>
-                    <TableCell className="text-muted-foreground">{f.source}</TableCell>
+                    <TableCell><CcyChip ccy={f.currency} /></TableCell>
+                    <TableCell className="text-muted-foreground text-xs">{f.source}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

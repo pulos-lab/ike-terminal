@@ -207,8 +207,7 @@ export function CashFlowPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Gotówka vs Wartość portfela</h1>
+      <div className="flex items-center justify-end">
         <Button
           size="sm"
           onClick={() => {
@@ -245,7 +244,7 @@ export function CashFlowPage() {
                   ]}
                   labelFormatter={(label) => `Data: ${label}`}
                 />
-                <Area type="monotone" dataKey="portfolioValue" stroke="#22c55e" fill="#22c55e" fillOpacity={0.1} strokeWidth={2} name="portfolioValue" />
+                <Area type="monotone" dataKey="portfolioValue" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.12} strokeWidth={2} name="portfolioValue" />
                 <Area type="stepAfter" dataKey="netCashFlow" stroke="#71717a" fill="#71717a" fillOpacity={0.05} strokeWidth={1} strokeDasharray="4 4" name="netCashFlow" />
               </AreaChart>
             </ResponsiveContainer>

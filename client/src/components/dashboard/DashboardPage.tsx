@@ -2,13 +2,14 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Info } from 'lucide-react';
 import { api } from '@/lib/api-client';
+import { usePortfolio } from '@/lib/portfolio-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioChart } from './PortfolioChart';
 import { PerformanceStats } from './PerformanceStats';
+import { HeroKPI } from './HeroKPI';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 
 const BENCHMARKS = [
@@ -23,6 +24,41 @@ const BENCHMARKS = [
 
 const PRESET_RANGES = ['1M', '3M', '6M', 'YTD', '1Y', '3Y', 'ALL'] as const;
 
+function ChartLegend({
+  portfolioPct,
+  benchmarkPct,
+  benchmarkLabel,
+}: {
+  portfolioPct: number;
+  benchmarkPct: number | null;
+  benchmarkLabel: string;
+}) {
+  const pfmt = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+  return (
+    <div className="flex items-center gap-3 text-xs tabular-nums">
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block w-3 h-0.5 rounded-full bg-primary" />
+        <span className="text-muted-foreground">{pfmt(portfolioPct)} portfel</span>
+      </span>
+      {benchmarkPct !== null && (
+        <span className="flex items-center gap-1.5">
+          <span
+            className="inline-block w-3 h-[2px]"
+            style={{
+              background:
+                'repeating-linear-gradient(90deg, currentColor 0 3px, transparent 3px 6px)',
+              color: 'var(--muted-foreground)',
+            }}
+          />
+          <span className="text-muted-foreground">
+            {pfmt(benchmarkPct)} {benchmarkLabel}
+          </span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 function getPresetStartDate(range: string): string | undefined {
   const now = new Date();
   if (range === 'ALL') return undefined;
@@ -33,6 +69,7 @@ function getPresetStartDate(range: string): string | undefined {
 }
 
 export function DashboardPage() {
+  const { activeName } = usePortfolio();
   const [benchmark, setBenchmark] = useState('sp500');
   const [timeRange, setTimeRange] = useState<string>('ALL');
   const [customFrom, setCustomFrom] = useState('');
@@ -102,59 +139,76 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex gap-1 rounded-lg border p-0.5">
-            {PRESET_RANGES.map((r) => (
-              <Button
-                key={r}
-                variant={timeRange === r ? 'default' : 'ghost'}
-                size="sm"
-                className="h-7 px-2.5 text-xs"
-                onClick={() => selectPreset(r)}
-              >
-                {r}
-              </Button>
-            ))}
-            <Button
-              variant={isCustom ? 'default' : 'ghost'}
-              size="sm"
-              className="h-7 px-2.5 text-xs"
-              onClick={selectCustom}
-            >
-              Custom
-            </Button>
-          </div>
-          {isCustom && (
-            <div className="flex items-center gap-1.5">
-              <Input
-                type="date"
-                value={customFrom}
-                onChange={e => setCustomFrom(e.target.value)}
-                className="h-8 w-[140px] text-xs"
-              />
-              <span className="text-xs text-muted-foreground">—</span>
-              <Input
-                type="date"
-                value={customTo}
-                onChange={e => setCustomTo(e.target.value)}
-                className="h-8 w-[140px] text-xs"
-              />
-            </div>
-          )}
+      {/* Mobile-only hero KPI (desktop uses MetricsBar) */}
+      <div className="md:hidden">
+        <HeroKPI history={filteredHistory} />
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2">
           <TooltipProvider>
-            <div className="flex gap-1 rounded-lg border p-0.5">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
+              <CardTitle className="text-sm font-semibold">
+                {activeName}{showBenchmark ? ` vs ${benchmarkLabel}` : ''}
+              </CardTitle>
+              {filteredHistory.length > 1 && (
+                <ChartLegend
+                  portfolioPct={
+                    chartMode === 'twr'
+                      ? filteredHistory[filteredHistory.length - 1].twrPct
+                      : filteredHistory[filteredHistory.length - 1].returnPct
+                  }
+                  benchmarkPct={
+                    showBenchmark
+                      ? chartMode === 'twr'
+                        ? filteredHistory[filteredHistory.length - 1].benchmarkTwrPct
+                        : filteredHistory[filteredHistory.length - 1].benchmarkReturnPct
+                      : null
+                  }
+                  benchmarkLabel={benchmarkLabel}
+                />
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              {PRESET_RANGES.map((r) => (
+                <button
+                  key={r}
+                  className={`px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+                    timeRange === r
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  onClick={() => selectPreset(r)}
+                >
+                  {r}
+                </button>
+              ))}
+              <button
+                className={`px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+                  isCustom
+                    ? 'bg-primary/10 text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                onClick={selectCustom}
+              >
+                Custom
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <div className="flex items-center bg-muted rounded-md p-0.5">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    variant={chartMode === 'mwr' ? 'default' : 'ghost'}
-                    size="sm"
-                    className="h-7 px-2.5 text-xs"
+                  <button
+                    className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+                      chartMode === 'mwr' ? 'bg-background text-foreground' : 'text-muted-foreground'
+                    }`}
                     onClick={() => setChartMode('mwr')}
                   >
                     MWR
-                  </Button>
+                  </button>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-[260px] text-xs">
                   Money-Weighted Return — uwzględnia wpłaty/wypłaty, pokazuje realną stopę zwrotu inwestora
@@ -162,49 +216,57 @@ export function DashboardPage() {
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    variant={chartMode === 'twr' ? 'default' : 'ghost'}
-                    size="sm"
-                    className="h-7 px-2.5 text-xs"
+                  <button
+                    className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+                      chartMode === 'twr' ? 'bg-background text-foreground' : 'text-muted-foreground'
+                    }`}
                     onClick={() => setChartMode('twr')}
                   >
                     TWR
-                  </Button>
+                  </button>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-[260px] text-xs">
                   Time-Weighted Return — eliminuje wpływ wpłat/wypłat, pokazuje czystą efektywność strategii
                 </TooltipContent>
               </Tooltip>
             </div>
-            <div className="flex items-center gap-1">
-              <Select value={benchmark} onValueChange={setBenchmark}>
-                <SelectTrigger className="w-36 h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {BENCHMARKS.map((b) => (
-                    <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-4 w-4 cursor-help text-muted-foreground/60 hover:text-muted-foreground transition-colors" />
-                </TooltipTrigger>
-                <TooltipContent className="max-w-[280px] text-xs">
-                  Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy przy tych samych wpłatach/wypłatach (strategia DCA)
-                </TooltipContent>
-              </Tooltip>
-            </div>
+            <Select value={benchmark} onValueChange={setBenchmark}>
+              <SelectTrigger className="h-7 text-xs w-32 bg-muted border-transparent">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {BENCHMARKS.map((b) => (
+                  <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/60 hover:text-muted-foreground transition-colors" />
+              </TooltipTrigger>
+              <TooltipContent className="max-w-[280px] text-xs">
+                Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy przy tych samych wpłatach/wypłatach (strategia DCA)
+              </TooltipContent>
+            </Tooltip>
+            {isCustom && (
+              <div className="flex items-center gap-1.5 ml-auto">
+                <Input
+                  type="date"
+                  value={customFrom}
+                  onChange={e => setCustomFrom(e.target.value)}
+                  className="h-7 w-[130px] text-xs"
+                />
+                <span className="text-xs text-muted-foreground">—</span>
+                <Input
+                  type="date"
+                  value={customTo}
+                  onChange={e => setCustomTo(e.target.value)}
+                  className="h-7 w-[130px] text-xs"
+                />
+              </div>
+            )}
+          </div>
           </TooltipProvider>
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">
-            {chartMode === 'twr' ? 'TWR' : 'MWR'} portfela{showBenchmark ? ` vs ${benchmarkLabel}` : ''}
-          </CardTitle>
         </CardHeader>
         <CardContent>
           {isLoading ? (

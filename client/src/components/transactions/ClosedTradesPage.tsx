@@ -225,9 +225,9 @@ export function ClosedTradesPage() {
           {!isLoading && data?.trades?.length ? (
             <div className="flex flex-wrap items-center gap-3 mb-4">
               <div className="flex items-center rounded-md border">
-                <Button size="sm" variant={plFilter === 'all' ? 'default' : 'ghost'} className="h-7 px-2.5 text-xs rounded-r-none" onClick={() => setPlFilter('all')}>Wszystkie</Button>
-                <Button size="sm" variant={plFilter === 'profit' ? 'default' : 'ghost'} className="h-7 px-2.5 text-xs rounded-none border-x" onClick={() => setPlFilter('profit')}>Zyski</Button>
-                <Button size="sm" variant={plFilter === 'loss' ? 'default' : 'ghost'} className="h-7 px-2.5 text-xs rounded-l-none" onClick={() => setPlFilter('loss')}>Straty</Button>
+                <Button size="sm" variant={plFilter === 'all' ? 'secondary' : 'ghost'} className="h-7 px-2.5 text-xs rounded-r-none" onClick={() => setPlFilter('all')}>Wszystkie</Button>
+                <Button size="sm" variant={plFilter === 'profit' ? 'secondary' : 'ghost'} className="h-7 px-2.5 text-xs rounded-none border-x" onClick={() => setPlFilter('profit')}>Zyski</Button>
+                <Button size="sm" variant={plFilter === 'loss' ? 'secondary' : 'ghost'} className="h-7 px-2.5 text-xs rounded-l-none" onClick={() => setPlFilter('loss')}>Straty</Button>
               </div>
 
               {availableCurrencies.length > 1 && (
@@ -246,11 +246,11 @@ export function ClosedTradesPage() {
 
               <div className="ml-auto flex flex-wrap items-center gap-3">
                 <div className="flex items-center rounded-md border">
-                  <Button size="sm" variant={dateRange === 'ALL' ? 'default' : 'ghost'} className="h-7 px-2.5 text-xs rounded-r-none" onClick={() => setDateRange('ALL')}>Wszystko</Button>
+                  <Button size="sm" variant={dateRange === 'ALL' ? 'secondary' : 'ghost'} className="h-7 px-2.5 text-xs rounded-r-none" onClick={() => setDateRange('ALL')}>Wszystko</Button>
                   {availableYears.slice(0, 4).map((year, i) => (
-                    <Button key={year} size="sm" variant={dateRange === String(year) ? 'default' : 'ghost'} className={`h-7 px-2.5 text-xs rounded-none border-l ${i === availableYears.slice(0, 4).length - 1 && dateRange !== 'CUSTOM' ? 'rounded-r-md' : ''}`} onClick={() => setDateRange(String(year))}>{year}</Button>
+                    <Button key={year} size="sm" variant={dateRange === String(year) ? 'secondary' : 'ghost'} className={`h-7 px-2.5 text-xs rounded-none border-l ${i === availableYears.slice(0, 4).length - 1 && dateRange !== 'CUSTOM' ? 'rounded-r-md' : ''}`} onClick={() => setDateRange(String(year))}>{year}</Button>
                   ))}
-                  <Button size="sm" variant={dateRange === 'CUSTOM' ? 'default' : 'ghost'} className="h-7 px-2.5 text-xs rounded-l-none border-l" onClick={() => setDateRange('CUSTOM')}>Zakres</Button>
+                  <Button size="sm" variant={dateRange === 'CUSTOM' ? 'secondary' : 'ghost'} className="h-7 px-2.5 text-xs rounded-l-none border-l" onClick={() => setDateRange('CUSTOM')}>Zakres</Button>
                 </div>
 
                 {dateRange === 'CUSTOM' && (

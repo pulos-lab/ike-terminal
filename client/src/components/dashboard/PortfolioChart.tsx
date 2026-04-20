@@ -60,7 +60,7 @@ export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr', showBenchma
 
     const isTwr = mode === 'twr';
     const portfolioSeries = chart.addSeries(LineSeries, {
-      color: '#22c55e',
+      color: '#f59e0b',
       lineWidth: 2,
       title: isTwr ? 'Portfel TWR %' : 'Portfel %',
       priceFormat: { type: 'custom', formatter: (v: number) => `${v.toFixed(2)}%` },

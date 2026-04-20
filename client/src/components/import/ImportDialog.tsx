@@ -176,8 +176,10 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium">Dom maklerski</label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+              Dom maklerski
+            </label>
             <Select value={selectedBroker} onValueChange={(v) => setSelectedBroker(v as BrokerType)}>
               <SelectTrigger>
                 <SelectValue />
@@ -190,16 +192,17 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             </Select>
           </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
               {selectedBroker === 'xtb' ? 'Eksport XTB (XLSX)' : 'Transakcje'}
             </label>
-            <span className="text-xs text-muted-foreground">Można wybrać wiele plików naraz.</span>
+            <span className="text-xs text-muted-foreground -mt-0.5">Można wybrać wiele plików naraz.</span>
             <Input
               type="file"
               accept={selectedBroker === 'xtb' ? '.xlsx' : selectedBroker === 'auto' ? '.csv,.xlsx' : '.csv'}
               multiple
               disabled={uploading}
+              className="file:bg-muted file:border-0 file:mr-3 file:py-1.5 file:px-3 file:rounded file:text-xs file:font-semibold file:text-foreground hover:file:bg-accent file:cursor-pointer text-xs text-muted-foreground"
               onChange={(e) => {
                 const files = e.target.files;
                 if (files?.length) handleMultipleFiles(files, 'transactions');
@@ -208,14 +211,17 @@ export function ImportDialog({ open, onOpenChange }: Props) {
           </div>
 
           {(selectedBroker === 'auto' || selectedBroker === 'bossa' || selectedBroker === 'degiro') && (
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium">Operacje gotówkowe</label>
-              <span className="text-xs text-muted-foreground">Format Bossa lub DEGIRO Account.</span>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                Operacje gotówkowe
+              </label>
+              <span className="text-xs text-muted-foreground -mt-0.5">Format Bossa lub DEGIRO Account.</span>
               <Input
                 type="file"
                 accept=".csv"
                 multiple
                 disabled={uploading}
+                className="file:bg-muted file:border-0 file:mr-3 file:py-1.5 file:px-3 file:rounded file:text-xs file:font-semibold file:text-foreground hover:file:bg-accent file:cursor-pointer text-xs text-muted-foreground"
                 onChange={(e) => {
                   const files = e.target.files;
                   if (files?.length) handleMultipleFiles(files, 'operations');

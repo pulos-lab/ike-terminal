@@ -1,21 +1,34 @@
 import { useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useMatch } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { useSession, signOut } from '@/lib/auth-client';
 import {
   LayoutDashboard, Briefcase, ArrowLeftRight, Coins,
-  DollarSign, Wallet, Receipt, Upload, Moon, Sun, Menu, LogOut,
+  DollarSign, Wallet, Receipt, Upload, Moon, Sun, LogOut, MoreHorizontal,
+  KeyRound, Bug, ChevronUp, PanelLeftClose,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Separator } from '@/components/ui/separator';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { useLocalStorage } from '@/lib/use-local-storage';
+import { cn } from '@/lib/utils';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { MetricsBar } from '@/components/dashboard/MetricsBar';
 import { ImportDialog } from '@/components/import/ImportDialog';
 import { BugReportDialog } from '@/components/shared/BugReportDialog';
 import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog';
 import { PortfolioSelector } from './PortfolioSelector';
+import { BottomTabBar } from './BottomTabBar';
+import { Logo } from '@/components/ui/Logo';
 
 const baseNavItems = [
   { to: '/app', label: 'Dashboard', icon: LayoutDashboard },
@@ -26,7 +39,52 @@ const baseNavItems = [
   { to: '/app/cash', label: 'Gotówka', icon: Wallet },
 ];
 
-function NavContent({ onNavigate }: { onNavigate?: () => void }) {
+function NavItem({
+  to,
+  label,
+  Icon,
+  collapsed,
+  onNavigate,
+}: {
+  to: string;
+  label: string;
+  Icon: React.ComponentType<{ className?: string }>;
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
+  const match = useMatch({ path: to, end: to === '/app' });
+  const isActive = !!match;
+  const classes = cn(
+    'relative flex items-center rounded-lg transition-colors',
+    collapsed ? 'justify-center w-10 h-10' : 'gap-3 px-3 py-2 text-sm',
+    isActive
+      ? 'bg-primary/10 text-primary font-medium'
+      : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+  );
+
+  const link = (
+    <NavLink to={to} end={to === '/app'} onClick={onNavigate} className={classes}>
+      {isActive && !collapsed && (
+        <span className="absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-r-full bg-primary" />
+      )}
+      <Icon className="h-4 w-4" />
+      {!collapsed && label}
+    </NavLink>
+  );
+
+  if (!collapsed) return link;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{link}</TooltipTrigger>
+      <TooltipContent side="right" className="text-xs">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function NavContent({ onNavigate, collapsed = false }: { onNavigate?: () => void; collapsed?: boolean }) {
   const { data: feesData } = useQuery({
     queryKey: QUERY_KEYS.fees,
     queryFn: () => api.getFees(),
@@ -39,34 +97,31 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
     : baseNavItems;
 
   return (
-    <nav className="flex flex-col gap-1 p-3">
-      <div className="px-3 py-2 mb-2">
-        <h2 className="text-lg font-bold tracking-tight">TIX Terminal</h2>
-        <p className="text-xs text-muted-foreground">Portfel inwestycyjny</p>
-      </div>
-      <div className="px-1 mb-2">
-        <PortfolioSelector />
-      </div>
-      <Separator className="mb-2" />
-      {navItems.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.to === '/app'}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            `flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
-              isActive
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-            }`
-          }
-        >
-          <item.icon className="h-4 w-4" />
-          {item.label}
-        </NavLink>
-      ))}
-    </nav>
+    <TooltipProvider delayDuration={0}>
+      <nav className={cn('flex flex-col gap-1', collapsed ? 'p-2 items-center' : 'p-3')}>
+        {!collapsed && (
+          <>
+            <div className="px-3 py-1 mb-2">
+              <p className="text-xs text-muted-foreground">Portfel inwestycyjny</p>
+            </div>
+            <div className="px-1 mb-2">
+              <PortfolioSelector />
+            </div>
+            <Separator className="mb-2" />
+          </>
+        )}
+        {navItems.map((item) => (
+          <NavItem
+            key={item.to}
+            to={item.to}
+            label={item.label}
+            Icon={item.icon}
+            collapsed={collapsed}
+            onNavigate={onNavigate}
+          />
+        ))}
+      </nav>
+    </TooltipProvider>
   );
 }
 
@@ -75,7 +130,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession();
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
   const [importOpen, setImportOpen] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [bugReportOpen, setBugReportOpen] = useState(false);
+  const [collapsed, setCollapsed] = useLocalStorage('sidebar-collapsed', false);
 
   const handleLogout = async () => {
     await signOut();
@@ -99,17 +156,62 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <aside className="hidden md:flex w-60 flex-col border-r bg-card">
-        <NavContent />
-        <div className="mt-auto p-3 space-y-1">
-          <div className="flex gap-2">
-            <Button variant="ghost" size="sm" onClick={toggleTheme}>
-              {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)}>
-              <Upload className="h-4 w-4 mr-1" />
+      <aside
+        className={cn(
+          'hidden md:flex flex-col border-r bg-card transition-[width] duration-200 ease-in-out',
+          collapsed ? 'w-14' : 'w-60',
+        )}
+      >
+        <div className="flex items-center justify-between gap-1 p-2 border-b border-border">
+          {collapsed ? (
+            <TooltipProvider delayDuration={0}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setCollapsed(false)}
+                    aria-label="Rozwiń sidebar"
+                    className="w-full flex items-center justify-center py-1 rounded-md hover:bg-accent transition-colors cursor-pointer"
+                  >
+                    <Logo size="md" showWord={false} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="text-xs">
+                  Rozwiń sidebar
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : (
+            <>
+              <Logo size="md" className="ml-2" />
+              <button
+                onClick={() => setCollapsed(true)}
+                title="Zwiń sidebar"
+                aria-label="Zwiń sidebar"
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-shrink-0"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </button>
+            </>
+          )}
+        </div>
+        <NavContent collapsed={collapsed} />
+        {!collapsed && (
+        <div className="mt-auto p-3 space-y-2">
+          <div className="grid grid-cols-2 gap-1.5">
+            <button
+              onClick={toggleTheme}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border hover:border-border-hover hover:bg-accent text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+              {dark ? 'Light' : 'Dark'}
+            </button>
+            <button
+              onClick={() => setImportOpen(true)}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border hover:border-border-hover hover:bg-accent text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Upload className="h-3.5 w-3.5" />
               Import
-            </Button>
+            </button>
           </div>
           {lastImport && (
             <p className="text-[10px] text-muted-foreground px-1">
@@ -117,53 +219,101 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </p>
           )}
           {session?.user && (
-            <div className="flex items-center justify-between pt-2 border-t border-border">
-              <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">
-                {session.user.email}
-              </span>
-              <div className="flex gap-0.5">
-                <ChangePasswordDialog />
-                <BugReportDialog />
-                <Button variant="ghost" size="sm" onClick={handleLogout} title="Wyloguj">
-                  <LogOut className="h-3 w-3" />
-                </Button>
-              </div>
-            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="w-full flex items-center justify-between pt-2 border-t border-border text-xs text-muted-foreground hover:text-foreground transition-colors group">
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-semibold text-foreground flex-shrink-0">
+                      {session.user.email?.[0]?.toUpperCase() ?? '?'}
+                    </span>
+                    <span className="truncate">{session.user.email}</span>
+                  </span>
+                  <ChevronUp className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" side="top" className="w-52">
+                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal truncate">
+                  {session.user.email}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setChangePasswordOpen(true)}>
+                  <KeyRound className="h-4 w-4" />
+                  Zmień hasło
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setBugReportOpen(true)}>
+                  <Bug className="h-4 w-4" />
+                  Zgłoś błąd
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={handleLogout} variant="destructive">
+                  <LogOut className="h-4 w-4" />
+                  Wyloguj
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
+        )}
       </aside>
 
       <div className="flex flex-col flex-1 overflow-hidden">
-        <header className="flex md:hidden items-center justify-between border-b px-4 py-2">
-          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-            <SheetTrigger asChild>
-              <Button variant="ghost" size="icon">
-                <Menu className="h-5 w-5" />
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="left" className="w-60 p-0">
-              <NavContent onNavigate={() => setMobileOpen(false)} />
-            </SheetContent>
-          </Sheet>
-          <h1 className="font-bold">TIX Terminal</h1>
-          <div className="flex gap-1">
-            <Button variant="ghost" size="icon" onClick={toggleTheme}>
-              {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-            <Button variant="ghost" size="icon" onClick={() => setImportOpen(true)}>
-              <Upload className="h-4 w-4" />
-            </Button>
+        <header className="flex md:hidden items-center justify-between border-b px-3 py-2 gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Logo size="md" showWord={false} />
+            <div className="min-w-0 flex-1">
+              <PortfolioSelector />
+            </div>
           </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="Menu">
+                <MoreHorizontal className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem onSelect={() => setImportOpen(true)}>
+                <Upload className="h-4 w-4" />
+                Import transakcji
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={toggleTheme}>
+                {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                {dark ? 'Tryb jasny' : 'Tryb ciemny'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setChangePasswordOpen(true)}>
+                <KeyRound className="h-4 w-4" />
+                Zmień hasło
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setBugReportOpen(true)}>
+                <Bug className="h-4 w-4" />
+                Zgłoś błąd
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {session?.user && (
+                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal truncate">
+                  {session.user.email}
+                </DropdownMenuLabel>
+              )}
+              <DropdownMenuItem onSelect={handleLogout} variant="destructive">
+                <LogOut className="h-4 w-4" />
+                Wyloguj
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </header>
 
         <MetricsBar />
 
-        <main className="flex-1 overflow-auto p-4 md:p-6">
+        <main className="flex-1 overflow-auto p-4 md:p-6 pb-20 md:pb-6">
           {children}
         </main>
       </div>
 
+      <BottomTabBar />
+
       <ImportDialog open={importOpen} onOpenChange={setImportOpen} />
+      <ChangePasswordDialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen} hideTrigger />
+      <BugReportDialog open={bugReportOpen} onOpenChange={setBugReportOpen} hideTrigger />
     </div>
   );
 }

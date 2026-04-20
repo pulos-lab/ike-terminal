@@ -108,8 +108,8 @@ function DashboardView() {
           <AreaChart data={filteredData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
             <defs>
               <linearGradient id="gradPortfolio" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#22c55e" stopOpacity={0.15} />
-                <stop offset="100%" stopColor="#22c55e" stopOpacity={0} />
+                <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.15} />
+                <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
@@ -146,7 +146,7 @@ function DashboardView() {
             <Area
               type="monotone"
               dataKey="portfolio"
-              stroke="#22c55e"
+              stroke="#f59e0b"
               strokeWidth={2}
               fill="url(#gradPortfolio)"
             />
@@ -440,7 +440,7 @@ function DividendsView() {
                 }}
                 formatter={(value) => [formatPLN(Number(value)), 'Dywidendy']}
               />
-              <Bar dataKey="amount" fill="#22c55e" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="amount" fill="#f59e0b" radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -514,8 +514,8 @@ function CashFlowView() {
           <AreaChart data={DEMO_CASHFLOW_CHART} margin={{ top: 5, right: 5, left: -5, bottom: 0 }}>
             <defs>
               <linearGradient id="gradCashPortfolio" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#22c55e" stopOpacity={0.12} />
-                <stop offset="100%" stopColor="#22c55e" stopOpacity={0} />
+                <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.12} />
+                <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
@@ -552,7 +552,7 @@ function CashFlowView() {
             <Area
               type="monotone"
               dataKey="portfolioValue"
-              stroke="#22c55e"
+              stroke="#f59e0b"
               strokeWidth={2}
               fill="url(#gradCashPortfolio)"
             />
@@ -627,7 +627,7 @@ export function AppDemo() {
   };
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-[#111] overflow-hidden shadow-2xl shadow-green-900/5">
+    <div className="rounded-xl border border-stone-800 bg-[#141210] overflow-hidden shadow-2xl shadow-amber-900/5">
       {/* Browser chrome */}
       <div className="flex items-center gap-2 px-4 py-2.5 bg-[#0a0a0a] border-b border-zinc-800">
         <div className="flex gap-1.5">
@@ -666,8 +666,8 @@ export function AppDemo() {
                   onClick={() => setActiveTab(item.id)}
                   className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs transition-colors ${
                     isActive
-                      ? 'bg-green-600 text-white'
-                      : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                      ? 'bg-amber-500 text-stone-950 font-semibold'
+                      : 'text-stone-400 hover:bg-stone-800 hover:text-stone-200'
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5" />
@@ -694,8 +694,8 @@ export function AppDemo() {
                   onClick={() => setActiveTab(item.id)}
                   className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] transition-colors ${
                     isActive
-                      ? 'text-green-500 border-b-2 border-green-500'
-                      : 'text-zinc-500'
+                      ? 'text-amber-500 border-b-2 border-amber-500'
+                      : 'text-stone-500'
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5" />
