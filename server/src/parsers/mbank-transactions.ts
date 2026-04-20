@@ -70,7 +70,8 @@ export function parseMbankTransactions(csvContent: string, importBatch: string):
       value,
       commission,
       total,
-      currency,
+      currency,                   // quote — priceCurrency (waluta notowania papieru)
+      paymentCurrency: 'PLN',     // mBank eMakler IKE/IKZE: account w PLN → glyph ⇋ gdy currency != PLN
       source: 'mbank',
       importBatch,
     });

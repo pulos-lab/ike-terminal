@@ -545,26 +545,25 @@ router.get('/transactions', asyncHandler((req, res) => {
   const tickerMap = getTickerMap(pid);
   const enriched = transactions.map(tx => {
     const entry = tickerMap.get(tx.isin);
-    // PR14: semantyka walut w response.
-    // Polskie brokerzy (Bossa/mBank) obsługują IKE/IKZE wyłącznie w PLN —
-    // nawet zagraniczne papiery są rozliczane po przewalutowaniu na PLN.
-    // Z perspektywy użytkownika waluta zakupu i "kwotowanie w jego walucie"
-    // są tym samym: PLN. Pokazywanie ticker_map.currency (USD dla FIG, AUD
-    // dla GRX.AX) jest semantycznie niespójne z tym co user widzi w aplikacji
-    // brokera. Dlatego dla Bossa/mBank quote = payment.
-    // DEGIRO/XTB mogą mieć multi-currency accounts — ufamy wtedy parserowi.
-    const paymentCurrency = tx.paymentCurrency || tx.currency;
+    // PR15 (revised): Bossa/mBank CSV zapisują `waluta` = PLN dla WSZYSTKICH trade'ów
+    // IKE/IKZE (auto-FX po stronie brokera). Z CSV nie rozróżnimy GPW od zagranicznego
+    // auto-konwertowanego trade'u. Dlatego quote currency bierzemy z ticker_map (autorytet
+    // dla waluty notowania papieru na jego macierzystej giełdzie).
+    //
+    //   - FIG (US) → ticker_map.currency = USD → kwotowanie=USD, zakup=PLN → glyph ⇋
+    //   - NFLX (US) → USD / PLN → glyph ⇋
+    //   - CDR.WA (PL) → PLN / PLN → brak glyph
+    //   - GRX.AX (AU ISIN, dual-listed GPW) → ticker_map.currency=AUD → kwotowanie=AUD,
+    //     zakup=PLN → glyph. (Note: ticker_map data quality issue dla dual-listings —
+    //     osobny problem do rozwiązania przez ręczny override ticker_map.)
+    //
+    // Dla DEGIRO/XTB parser zapisał już jawnie `currency` = quote i `paymentCurrency` = base
+    // account. Ufamy parserowi, ticker_map tylko jako fallback.
     const isPolishBroker = tx.source === 'bossa' || tx.source === 'mbank';
-    let quoteCurrency: string;
-    if (isPolishBroker) {
-      quoteCurrency = paymentCurrency;
-    } else if (tx.currency) {
-      quoteCurrency = tx.currency;
-    } else if (entry?.currency) {
-      quoteCurrency = entry.currency;
-    } else {
-      quoteCurrency = 'PLN';
-    }
+    const quoteCurrency = isPolishBroker
+      ? (entry?.currency || tx.currency || 'PLN')
+      : (tx.currency || entry?.currency || 'PLN');
+    const paymentCurrency = tx.paymentCurrency || tx.currency;
     return {
       ...tx,
       ticker: entry?.ticker || tx.isin,

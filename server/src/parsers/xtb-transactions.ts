@@ -447,7 +447,8 @@ export async function parseXtbFile(
         value,
         commission: 0,
         total: value,
-        currency: ids.currency,
+        currency: ids.currency,               // quote — z suffixu symbolu (.US→USD, .PL→PLN, .DE→EUR)
+        paymentCurrency: accountCurrency,     // XTB account base — z metadanych XLSX
         category,
         source: 'xtb',
         importBatch,
@@ -506,7 +507,8 @@ export async function parseXtbFile(
         value,
         commission: 0,
         total: value,
-        currency: ids.currency,
+        currency: ids.currency,               // quote — z suffixu symbolu
+        paymentCurrency: accountCurrency,     // XTB account base
         category,
         source: 'xtb',
         importBatch,
@@ -846,7 +848,7 @@ function extractCfdTransactions(
     const openSide: 'K' | 'S' = posType === 'BUY' ? 'K' : 'S';
     const closeSide: 'K' | 'S' = posType === 'BUY' ? 'S' : 'K';
 
-    // Opening transaction (no fees)
+    // Opening transaction (no fees) — CFD: quote = payment (rozliczenie = denomination w accountCurrency)
     transactions.push({
       date: openTime,
       paperName: instrument,
@@ -858,6 +860,7 @@ function extractCfdTransactions(
       commission: 0,
       total: openValue,
       currency: accountCurrency,
+      paymentCurrency: accountCurrency,
       category: 'cfd',
       source: 'xtb',
       importBatch,
@@ -878,6 +881,7 @@ function extractCfdTransactions(
         ? roundTo2(closeValue - commission)
         : roundTo2(closeValue + commission),
       currency: accountCurrency,
+      paymentCurrency: accountCurrency,
       category: 'cfd',
       source: 'xtb',
       importBatch,

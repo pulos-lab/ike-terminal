@@ -68,7 +68,8 @@ export function parseBossaTransactions(csvContent: string, importBatch: string):
       value,
       commission,
       total,
-      currency: currency || 'PLN',
+      currency: currency || 'PLN',   // quote — co CSV `waluta` mówi o tym trade'ie
+      paymentCurrency: 'PLN',         // Bossa IKE/IKZE: account zawsze w PLN → auto-FX widoczny jako glyph gdy currency != PLN
       source: 'bossa',
       importBatch,
     });

@@ -42,6 +42,7 @@ import { parseNumber, roundTo2 } from './utils.js';
 
 interface ColumnMap {
   fee: number;       // index of fee column
+  fxRate: number;    // index of "Kurs wymiany" (NEW format), -1 if not present
 }
 
 export function parseDegiroTransactions(csvContent: string, importBatch: string): ParseResult<Transaction> {
@@ -78,6 +79,7 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
     const priceCurrency = row[8]?.trim();
     const localValue = parseNumber(row[9]);
     const fee = parseNumber(row[colMap.fee]);
+    const fxRateRaw = colMap.fxRate >= 0 ? parseNumber(row[colMap.fxRate]) : 0;
 
     if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date', paperName: product }); continue; }
     if (!product) { skipped.push({ row: rowNum, reason: 'missing_name' }); continue; }
@@ -126,7 +128,9 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
       value,
       commission,
       total,
-      currency,
+      currency,                                      // quote — z kolumny 8 (priceCurrency)
+      paymentCurrency: 'EUR',                        // DEGIRO base account (standard)
+      fxRate: fxRateRaw > 0 ? fxRateRaw : undefined, // z NEW format "Kurs wymiany"; undefined dla OLD format
       source: 'degiro',
       importBatch,
     });
@@ -165,16 +169,20 @@ function isDegiroHeader(header: string[]): boolean {
  */
 function mapColumns(header: string[]): ColumnMap {
   let feeIdx = 14; // default for old format
+  let fxRateIdx = -1;
 
   for (let i = 0; i < header.length; i++) {
     const name = header[i]?.trim().toLowerCase() || '';
-    if (name.includes('opłata transakcyjna') || name.includes('oplata transakcyjna')) {
+    if ((name.includes('opłata transakcyjna') || name.includes('oplata transakcyjna')) && feeIdx === 14) {
       feeIdx = i;
-      break;
+    }
+    // NEW format: "Kurs wymiany" / "Exchange Rate"
+    if (fxRateIdx === -1 && (name.includes('kurs wymiany') || name.includes('exchange rate'))) {
+      fxRateIdx = i;
     }
   }
 
-  return { fee: feeIdx };
+  return { fee: feeIdx, fxRate: fxRateIdx };
 }
 
 /**

@@ -123,8 +123,6 @@ export function initSchema(db: Database.Database): void {
   // PR14 — payment currency (waluta rozliczenia, może być != quote currency)
   if (!txColumns.some((c: any) => c.name === 'payment_currency')) {
     db.exec("ALTER TABLE transactions ADD COLUMN payment_currency TEXT");
-    // Backfill istniejących wierszy — payment = dotychczasowe currency (najlepsza estymacja)
-    db.exec("UPDATE transactions SET payment_currency = currency WHERE payment_currency IS NULL");
   }
   // PR14 — fx rate (kurs wymiany pamiętany przy rozliczeniu foreign → payment)
   if (!txColumns.some((c: any) => c.name === 'fx_rate')) {
@@ -174,4 +172,20 @@ export function initSchema(db: Database.Database): void {
       value TEXT NOT NULL
     );
   `);
+
+  // PR15 — one-time backfill paymentCurrency per source (runs once, gated przez flag w metadata).
+  // Pokrywa rekordy zbackfillowane w PR14 jako paymentCurrency=currency oraz świeże NULL.
+  // Po wykonaniu nie nadpisuje ponownie (user manual edits są bezpieczne).
+  const migrationFlag = db.prepare("SELECT value FROM portfolio_metadata WHERE key = ?").get('pr15_backfill_done') as any;
+  if (!migrationFlag) {
+    db.exec(`
+      UPDATE transactions SET payment_currency = CASE
+        WHEN source IN ('bossa', 'mbank') THEN 'PLN'
+        WHEN source = 'degiro' THEN 'EUR'
+        ELSE currency
+      END
+      WHERE payment_currency IS NULL OR payment_currency = currency;
+    `);
+    db.prepare("INSERT INTO portfolio_metadata (key, value) VALUES (?, ?)").run('pr15_backfill_done', new Date().toISOString());
+  }
 }
