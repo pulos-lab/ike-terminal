@@ -181,27 +181,6 @@ function valuePln(tx: TxItem): number {
   return tx.total; // fallback — we do not always have fx, best-effort
 }
 
-const CAT_STYLES: Record<string, string> = {
-  stock: 'text-muted-foreground bg-muted',
-  etf: 'text-purple-400 bg-purple-500/10',
-  cfd: 'text-cyan-400 bg-cyan-500/10',
-};
-
-function CategoryChip({ category }: { category?: string }) {
-  const cat = category || 'stock';
-  const cls = CAT_STYLES[cat] || CAT_STYLES.stock;
-  return (
-    <span
-      className={cn(
-        'inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider',
-        cls,
-      )}
-    >
-      {cat}
-    </span>
-  );
-}
-
 function SideChip({ side, size = 'sm' }: { side: 'K' | 'S'; size?: 'sm' | 'lg' }) {
   const isBuy = side === 'K';
   const base = isBuy
