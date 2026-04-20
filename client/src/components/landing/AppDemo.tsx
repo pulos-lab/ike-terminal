@@ -108,8 +108,8 @@ function DashboardView() {
           <AreaChart data={filteredData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
             <defs>
               <linearGradient id="gradPortfolio" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.15} />
-                <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.15} />
+                <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
@@ -146,7 +146,7 @@ function DashboardView() {
             <Area
               type="monotone"
               dataKey="portfolio"
-              stroke="#f59e0b"
+              stroke="var(--primary)"
               strokeWidth={2}
               fill="url(#gradPortfolio)"
             />
@@ -170,9 +170,9 @@ function DashboardView() {
             <p
               className={`text-sm font-semibold ${
                 s.positive === true
-                  ? 'text-green-500'
+                  ? 'text-gain'
                   : s.positive === false
-                    ? 'text-red-500'
+                    ? 'text-loss'
                     : 'text-white'
               }`}
             >
@@ -226,13 +226,13 @@ function PortfolioView() {
                 <td className="py-2 px-2 text-right font-medium text-white">
                   {formatPLN(p.valuePLN)}
                 </td>
-                <td className={`py-2 px-2 text-right hidden md:table-cell ${p.pl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                <td className={`py-2 px-2 text-right hidden md:table-cell ${p.pl >= 0 ? 'text-gain' : 'text-loss'}`}>
                   {p.pl >= 0 ? '+' : ''}{formatPLN(p.pl)}
                 </td>
                 <td className="py-2 px-2 text-right">
                   <span
                     className={`inline-block text-xs px-1.5 py-0.5 rounded ${
-                      p.plPct >= 0 ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'
+                      p.plPct >= 0 ? 'bg-gain/10 text-gain' : 'bg-loss/15 text-loss'
                     }`}
                   >
                     {formatPct(p.plPct)}
@@ -250,11 +250,11 @@ function PortfolioView() {
               <td />
               <td />
               <td className="py-2 px-2 text-right text-white">{formatPLN(total.valuePLN)}</td>
-              <td className={`py-2 px-2 text-right hidden md:table-cell ${total.pl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+              <td className={`py-2 px-2 text-right hidden md:table-cell ${total.pl >= 0 ? 'text-gain' : 'text-loss'}`}>
                 +{formatPLN(total.pl)}
               </td>
               <td className="py-2 px-2 text-right">
-                <span className="inline-block text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-500">
+                <span className="inline-block text-xs px-1.5 py-0.5 rounded bg-gain/10 text-gain">
                   {formatPct(total.plPct)}
                 </span>
               </td>
@@ -355,7 +355,7 @@ function TradesView() {
                     <td className="py-2 px-2 text-right">
                       <span
                         className={`inline-block text-xs px-1.5 py-0.5 rounded ${
-                          g.weightedProfitLossPct >= 0 ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'
+                          g.weightedProfitLossPct >= 0 ? 'bg-gain/10 text-gain' : 'bg-loss/15 text-loss'
                         }`}
                       >
                         {formatPct(g.weightedProfitLossPct)}
@@ -384,7 +384,7 @@ function TradesView() {
                       <td className="py-1.5 px-2 text-right">
                         <span
                           className={`inline-block text-[11px] px-1 py-0.5 rounded ${
-                            t.profitLossPct >= 0 ? 'bg-green-500/10 text-green-500' : 'bg-red-500/15 text-red-400'
+                            t.profitLossPct >= 0 ? 'bg-gain/10 text-gain' : 'bg-loss/15 text-loss'
                           }`}
                         >
                           {formatPct(t.profitLossPct)}
@@ -417,7 +417,7 @@ function DividendsView() {
             <Coins className="w-4 h-4 text-zinc-500" />
             <p className="text-xs text-zinc-500">Suma dywidend</p>
           </div>
-          <p className="text-xl font-bold text-green-500">{formatPLN(DEMO_DIVIDEND_TOTAL)}</p>
+          <p className="text-xl font-bold text-gain">{formatPLN(DEMO_DIVIDEND_TOTAL)}</p>
         </div>
 
         <div className="bg-[#0d0d0d] border border-zinc-800/50 rounded-lg p-3">
@@ -440,7 +440,7 @@ function DividendsView() {
                 }}
                 formatter={(value) => [formatPLN(Number(value)), 'Dywidendy']}
               />
-              <Bar dataKey="amount" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="amount" fill="var(--primary)" radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -468,7 +468,7 @@ function DividendsView() {
                 <td className="py-2 px-2 text-zinc-500 text-xs hidden sm:table-cell">
                   Wypłata dywidendy {d.ticker}
                 </td>
-                <td className="py-2 px-2 text-right font-semibold text-green-500">
+                <td className="py-2 px-2 text-right font-semibold text-gain">
                   +{d.amount.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
                 </td>
                 <td className="py-2 px-2 text-right text-zinc-400">{d.currency}</td>
@@ -490,10 +490,10 @@ function CashFlowView() {
       {/* Summary header */}
       <div className="flex items-center gap-4 flex-wrap text-xs text-zinc-400">
         <span>
-          Wpłaty: <span className="text-green-500 font-medium">{formatPLN(summary.totalDeposits)}</span>
+          Wpłaty: <span className="text-gain font-medium">{formatPLN(summary.totalDeposits)}</span>
         </span>
         <span>
-          Wypłaty: <span className="text-red-500 font-medium">{formatPLN(summary.totalWithdrawals)}</span>
+          Wypłaty: <span className="text-loss font-medium">{formatPLN(summary.totalWithdrawals)}</span>
         </span>
         <span>
           Netto: <span className="text-white font-medium">{formatPLN(summary.net)}</span>
@@ -504,7 +504,7 @@ function CashFlowView() {
       <div className="bg-[#0d0d0d] rounded-lg border border-zinc-800/50 p-3">
         <div className="flex items-center gap-4 mb-2 text-[10px] text-zinc-500">
           <span className="flex items-center gap-1">
-            <span className="w-3 h-0.5 bg-green-500 inline-block rounded" /> Wartość portfela
+            <span className="w-3 h-0.5 bg-primary inline-block rounded" /> Wartość portfela
           </span>
           <span className="flex items-center gap-1">
             <span className="w-3 h-0.5 bg-zinc-500 inline-block rounded border-dashed" /> Wpłaty netto
@@ -514,8 +514,8 @@ function CashFlowView() {
           <AreaChart data={DEMO_CASHFLOW_CHART} margin={{ top: 5, right: 5, left: -5, bottom: 0 }}>
             <defs>
               <linearGradient id="gradCashPortfolio" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.12} />
-                <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.12} />
+                <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
@@ -552,7 +552,7 @@ function CashFlowView() {
             <Area
               type="monotone"
               dataKey="portfolioValue"
-              stroke="#f59e0b"
+              stroke="var(--primary)"
               strokeWidth={2}
               fill="url(#gradCashPortfolio)"
             />
@@ -590,16 +590,16 @@ function CashFlowView() {
                   <td className="py-2 px-2">
                     <span className="flex items-center gap-1.5">
                       {isDeposit ? (
-                        <ArrowUp className="w-3 h-3 text-green-500" />
+                        <ArrowUp className="w-3 h-3 text-gain" />
                       ) : (
-                        <ArrowDown className="w-3 h-3 text-red-500" />
+                        <ArrowDown className="w-3 h-3 text-loss" />
                       )}
-                      <span className={isDeposit ? 'text-green-500' : 'text-red-500'}>
+                      <span className={isDeposit ? 'text-gain' : 'text-loss'}>
                         {isDeposit ? 'Wpłata' : 'Wypłata'}
                       </span>
                     </span>
                   </td>
-                  <td className={`py-2 px-2 text-right font-semibold ${isDeposit ? 'text-green-500' : 'text-red-500'}`}>
+                  <td className={`py-2 px-2 text-right font-semibold ${isDeposit ? 'text-gain' : 'text-loss'}`}>
                     {isDeposit ? '+' : '-'}{entry.amount.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
                   </td>
                   <td className="py-2 px-2 text-right text-zinc-400">PLN</td>
@@ -633,7 +633,7 @@ export function AppDemo() {
         <div className="flex gap-1.5">
           <div className="w-3 h-3 rounded-full bg-red-500/80" />
           <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
-          <div className="w-3 h-3 rounded-full bg-green-500/80" />
+          <div className="w-3 h-3 rounded-full bg-primary/80" />
         </div>
         <div className="flex-1 flex justify-center">
           <div className="bg-zinc-800 rounded-md px-4 py-1 text-xs text-zinc-500 max-w-xs w-full text-center">
@@ -716,11 +716,11 @@ export function AppDemo() {
               Wpłaty: <span className="text-white font-medium">{formatPLN(total.invested)}</span>
             </span>
             <span className="flex items-center gap-1 text-zinc-400">
-              <TrendingUp className="w-3 h-3 text-green-500" />
-              Zysk: <span className="text-green-500 font-medium">+{formatPLN(total.pl)}</span>
+              <TrendingUp className="w-3 h-3 text-gain" />
+              Zysk: <span className="text-gain font-medium">+{formatPLN(total.pl)}</span>
             </span>
             <span className="text-zinc-400">
-              XIRR: <span className="text-green-500 font-medium">+28,1%</span>
+              XIRR: <span className="text-gain font-medium">+28,1%</span>
             </span>
           </div>
 

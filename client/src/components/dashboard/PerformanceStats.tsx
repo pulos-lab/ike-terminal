@@ -236,7 +236,7 @@ interface StatTileProps {
 
 function StatTile({ label, value, color = 'default', tooltip, subtext, disabled }: StatTileProps) {
   const colorClass =
-    color === 'green' ? 'text-green-500' : color === 'red' ? 'text-red-500' : 'text-foreground';
+    color === 'green' ? 'text-gain' : color === 'red' ? 'text-loss' : 'text-foreground';
 
   const content = (
     <div

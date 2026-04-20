@@ -149,13 +149,13 @@ function BestWorstTile({ best, worst }: { best: Position | null; worst: Position
       <div className="grid grid-cols-2 gap-2">
         <div>
           <p className="font-mono text-xs font-semibold truncate">{best.ticker}</p>
-          <p className="text-sm md:text-base font-bold tabular-nums tracking-tight text-green-500">
+          <p className="text-sm md:text-base font-bold tabular-nums tracking-tight text-gain">
             +{best.profitLossPct.toFixed(2)}%
           </p>
         </div>
         <div className="border-l border-border/60 pl-2">
           <p className="font-mono text-xs font-semibold truncate">{worst.ticker}</p>
-          <p className="text-sm md:text-base font-bold tabular-nums tracking-tight text-red-500">
+          <p className="text-sm md:text-base font-bold tabular-nums tracking-tight text-loss">
             {worst.profitLossPct.toFixed(2)}%
           </p>
         </div>
@@ -235,7 +235,7 @@ function ClosedTilesView({
       <Tile
         label="Win rate"
         value={`${stats.winRate.toFixed(0)}%`}
-        valueClass={stats.winRate >= 50 ? 'text-green-500' : stats.winRate >= 40 ? 'text-foreground' : 'text-red-500'}
+        valueClass={stats.winRate >= 50 ? 'text-gain' : stats.winRate >= 40 ? 'text-foreground' : 'text-loss'}
         sub={`${stats.profitable} zyskownych · ${stats.losers} stratnych`}
       />
       <Tile

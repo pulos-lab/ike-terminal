@@ -204,8 +204,8 @@ function valuePln(tx: TxItem): number {
 function SideChip({ side, size = 'sm' }: { side: 'K' | 'S'; size?: 'sm' | 'lg' }) {
   const isBuy = side === 'K';
   const base = isBuy
-    ? 'bg-green-500/15 text-green-500'
-    : 'bg-red-500/15 text-red-500';
+    ? 'bg-gain/15 text-gain'
+    : 'bg-loss/15 text-loss';
   return (
     <span
       className={cn(

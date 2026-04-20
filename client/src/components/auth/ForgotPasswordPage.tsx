@@ -243,7 +243,7 @@ export function ForgotPasswordPage() {
               {error && <p className="text-sm text-destructive text-center">{error}</p>}
 
               {success && (
-                <p className="text-sm text-green-500 text-center">
+                <p className="text-sm text-success text-center">
                   Hasło zmienione! Przekierowywanie na stronę logowania...
                 </p>
               )}

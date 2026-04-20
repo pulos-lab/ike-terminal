@@ -74,7 +74,7 @@ export function PositionCardMobile({ position, onSell }: Props) {
         size="icon-sm"
         variant="ghost"
         onClick={onSell}
-        className="text-muted-foreground hover:text-red-500 flex-shrink-0"
+        className="text-muted-foreground hover:text-destructive flex-shrink-0"
         aria-label="Sprzedaj"
       >
         <TrendingDown className="h-4 w-4" />

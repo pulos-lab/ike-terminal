@@ -244,7 +244,7 @@ export function CashFlowPage() {
                   ]}
                   labelFormatter={(label) => `Data: ${label}`}
                 />
-                <Area type="monotone" dataKey="portfolioValue" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.12} strokeWidth={2} name="portfolioValue" />
+                <Area type="monotone" dataKey="portfolioValue" stroke="var(--primary)" fill="var(--primary)" fillOpacity={0.12} strokeWidth={2} name="portfolioValue" />
                 <Area type="stepAfter" dataKey="netCashFlow" stroke="#71717a" fill="#71717a" fillOpacity={0.05} strokeWidth={1} strokeDasharray="4 4" name="netCashFlow" />
               </AreaChart>
             </ResponsiveContainer>
@@ -328,7 +328,7 @@ export function CashFlowPage() {
                             variant="ghost"
                             onClick={() => createMutation.mutate(addForm)}
                             disabled={!isAddValid || createMutation.isPending}
-                            className="text-green-500 hover:text-green-600"
+                            className="text-gain hover:text-gain/80"
                           >
                             {createMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                           </Button>
@@ -374,10 +374,10 @@ export function CashFlowPage() {
                                 <span className="text-xs text-muted-foreground ml-1">({group.entries.length})</span>
                               </div>
                             </TableCell>
-                            <TableCell className="text-right font-medium text-green-500">
+                            <TableCell className="text-right font-medium text-gain">
                               {group.totalDeposits > 0 ? formatPLN(group.totalDeposits) : '—'}
                             </TableCell>
-                            <TableCell className="text-right font-medium text-red-500">
+                            <TableCell className="text-right font-medium text-loss">
                               {group.totalWithdrawals > 0 ? formatPLN(group.totalWithdrawals) : '—'}
                             </TableCell>
                             {showIKE && (
@@ -391,7 +391,7 @@ export function CashFlowPage() {
                               </TableCell>
                             )}
                             {showLimits && (
-                              <TableCell className={`text-right font-medium ${isFull ? 'text-green-500' : 'text-yellow-500'}`}>
+                              <TableCell className={`text-right font-medium ${isFull ? 'text-gain' : 'text-yellow-500'}`}>
                                 {getYearLimit(group) > 0 ? formatPLN(remaining) : '—'}
                               </TableCell>
                             )}
@@ -400,7 +400,7 @@ export function CashFlowPage() {
                                 {getYearLimit(group) > 0 && (
                                   <Badge
                                     variant={isFull ? 'default' : 'secondary'}
-                                    className={`text-xs ${isFull ? 'bg-green-500/10 text-green-500' : 'bg-muted text-muted-foreground'}`}
+                                    className={`text-xs ${isFull ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}
                                   >
                                     {usagePct.toFixed(0)}%
                                   </Badge>
@@ -439,7 +439,7 @@ export function CashFlowPage() {
                                       variant="ghost"
                                       onClick={() => updateMutation.mutate({ id: entry.id, form: editForm })}
                                       disabled={!isEditValid || updateMutation.isPending}
-                                      className="text-green-500 hover:text-green-600"
+                                      className="text-gain hover:text-gain/80"
                                     >
                                       {updateMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                                     </Button>
@@ -458,16 +458,16 @@ export function CashFlowPage() {
                                 <TableCell className="text-muted-foreground pl-9 text-sm">
                                   <div className="flex items-center gap-1.5">
                                     {entry.type === 'deposit'
-                                      ? <ArrowUp className="h-3 w-3 text-green-500 shrink-0" />
-                                      : <ArrowDown className="h-3 w-3 text-red-500 shrink-0" />
+                                      ? <ArrowUp className="h-3 w-3 text-gain shrink-0" />
+                                      : <ArrowDown className="h-3 w-3 text-loss shrink-0" />
                                     }
                                     {formatDate(entry.date)}
                                   </div>
                                 </TableCell>
-                                <TableCell className={`text-right ${entry.type === 'deposit' ? 'text-green-500' : ''}`}>
+                                <TableCell className={`text-right ${entry.type === 'deposit' ? 'text-gain' : ''}`}>
                                   {entry.type === 'deposit' ? formatPLN(Math.abs(entry.amount)) : ''}
                                 </TableCell>
-                                <TableCell className={`text-right ${entry.type === 'withdrawal' ? 'text-red-500' : ''}`}>
+                                <TableCell className={`text-right ${entry.type === 'withdrawal' ? 'text-loss' : ''}`}>
                                   {entry.type === 'withdrawal' ? formatPLN(Math.abs(entry.amount)) : ''}
                                 </TableCell>
                                 <TableCell colSpan={limitColCount > 0 ? limitColCount - 1 : 0} />

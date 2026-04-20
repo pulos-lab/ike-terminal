@@ -244,11 +244,11 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             return (
               <div key={i} className="flex items-start gap-2 text-sm">
                 {isError ? (
-                  <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                  <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
                 ) : isWarn ? (
                   <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
                 ) : (
-                  <CheckCircle className="h-4 w-4 text-green-500 shrink-0 mt-0.5" />
+                  <CheckCircle className="h-4 w-4 text-success shrink-0 mt-0.5" />
                 )}
                 <span className={isWarn ? 'text-yellow-600 dark:text-yellow-400 whitespace-pre-line' : ''}>{displayText}</span>
               </div>

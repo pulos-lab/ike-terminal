@@ -106,7 +106,7 @@ function UpcomingDividendsPanel() {
                   <TableCell>{formatDate(d.exDividendDate)}</TableCell>
                   <TableCell>{d.paymentDate ? formatDate(d.paymentDate) : '—'}</TableCell>
                   <TableCell>{d.shares}</TableCell>
-                  <TableCell className="text-right font-medium text-green-500 tabular-nums">
+                  <TableCell className="text-right font-medium text-gain tabular-nums">
                     {d.estimatedAmount > 0 ? formatNumber(d.estimatedAmount) : '—'}
                   </TableCell>
                   <TableCell><CcyChip ccy={d.currency} /></TableCell>
@@ -244,7 +244,7 @@ export function DividendsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-500">{formatPLN(data.totalPln)}</div>
+              <div className="text-2xl font-bold text-gain">{formatPLN(data.totalPln)}</div>
               {data.totalUsd > 0 && (
                 <div className="text-sm text-muted-foreground mt-1">
                   + {formatNumber(data.totalUsd)} USD
@@ -264,7 +264,7 @@ export function DividendsPage() {
                     <XAxis dataKey="year" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} />
                     <Tooltip formatter={(v: number | undefined) => formatPLN(v ?? 0)} />
-                    <Bar dataKey="amount" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="amount" fill="var(--primary)" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -358,7 +358,7 @@ export function DividendsPage() {
                             variant="ghost"
                             onClick={() => createMutation.mutate(addForm)}
                             disabled={!isAddValid || createMutation.isPending}
-                            className="text-green-500 hover:text-green-600"
+                            className="text-gain hover:text-gain/80"
                           >
                             {createMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                           </Button>
@@ -434,7 +434,7 @@ export function DividendsPage() {
                                 variant="ghost"
                                 onClick={() => updateMutation.mutate({ id: d.id, form: editForm })}
                                 disabled={!isEditValid || updateMutation.isPending}
-                                className="text-green-500 hover:text-green-600"
+                                className="text-gain hover:text-gain/80"
                               >
                                 {updateMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                               </Button>
@@ -453,7 +453,7 @@ export function DividendsPage() {
                           <TableCell>{formatDate(d.date)}</TableCell>
                           <TableCell className="font-mono font-medium">{d.ticker}</TableCell>
                           <TableCell className="text-muted-foreground text-sm">{d.description}</TableCell>
-                          <TableCell className="text-right font-medium text-green-500 tabular-nums">{formatNumber(d.amount)}</TableCell>
+                          <TableCell className="text-right font-medium text-gain tabular-nums">{formatNumber(d.amount)}</TableCell>
                           <TableCell><CcyChip ccy={d.currency} /></TableCell>
                           <TableCell>
                             <SourceBadge source={d.source} />

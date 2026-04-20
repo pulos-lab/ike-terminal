@@ -262,7 +262,7 @@ export function PortfolioSelector() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                className="text-destructive hover:text-destructive/80 hover:bg-destructive/10"
                 onClick={() => setPurgeConfirmOpen(true)}
               >
                 <Trash2 className="h-4 w-4 mr-1" />

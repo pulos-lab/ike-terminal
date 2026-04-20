@@ -53,7 +53,7 @@ export function HeroKPI({ history }: HeroKPIProps) {
         <div
           className={cn(
             'flex items-center gap-2 text-sm font-semibold',
-            isPositive ? 'text-green-500' : 'text-red-500',
+            isPositive ? 'text-gain' : 'text-loss',
           )}
         >
           <DeltaIcon className="h-4 w-4" />
@@ -71,15 +71,15 @@ export function HeroKPI({ history }: HeroKPIProps) {
         >
           <defs>
             <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.35} />
-              <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+              <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.35} />
+              <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
             </linearGradient>
           </defs>
           <path d={`${sparkPath} L 110 42 L 0 42 Z`} fill="url(#sparkFill)" />
           <path
             d={sparkPath}
             fill="none"
-            stroke="#f59e0b"
+            stroke="var(--primary)"
             strokeWidth={1.5}
             strokeLinejoin="round"
             strokeLinecap="round"

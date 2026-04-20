@@ -380,7 +380,7 @@ export function TradesPage() {
                   variant="ghost"
                   onClick={() => createMutation.mutate(addForm)}
                   disabled={!isAddValid || createMutation.isPending}
-                  className="text-green-500 hover:text-green-600"
+                  className="text-gain hover:text-gain/80"
                 >
                   {createMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                 </Button>
@@ -514,7 +514,7 @@ export function TradesPage() {
                               size="xs"
                               variant="ghost"
                               onClick={(e) => { e.stopPropagation(); isSelling ? setSellingTicker(null) : startSell(pos); }}
-                              className="text-muted-foreground hover:text-red-500"
+                              className="text-muted-foreground hover:text-destructive"
                             >
                               <TrendingDown className="h-3 w-3 mr-1" />
                               Sprzedaj
@@ -597,7 +597,7 @@ export function TradesPage() {
                                     variant="ghost"
                                     onClick={() => sellMutation.mutate({ ticker: pos.ticker, form: sellForm, category: pos.category })}
                                     disabled={!isSellValid || sellMutation.isPending}
-                                    className="text-green-500 hover:text-green-600"
+                                    className="text-gain hover:text-gain/80"
                                   >
                                     {sellMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                                   </Button>

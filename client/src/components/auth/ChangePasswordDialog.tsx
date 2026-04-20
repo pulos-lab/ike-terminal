@@ -92,7 +92,7 @@ export function ChangePasswordDialog({ open: controlledOpen, onOpenChange, hideT
         </DialogHeader>
 
         {success ? (
-          <p className="text-sm text-green-500 py-4">Hasło zostało zmienione ✓</p>
+          <p className="text-sm text-success py-4">Hasło zostało zmienione ✓</p>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">

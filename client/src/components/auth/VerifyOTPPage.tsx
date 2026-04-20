@@ -194,7 +194,7 @@ export function VerifyOTPPage() {
           )}
 
           {success && (
-            <p className="text-sm text-green-500 text-center">Email zweryfikowany! Przekierowywanie...</p>
+            <p className="text-sm text-success text-center">Email zweryfikowany! Przekierowywanie...</p>
           )}
 
           <Button
