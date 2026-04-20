@@ -462,6 +462,9 @@ export function CashFlowPage() {
                                       : <ArrowDown className="h-3 w-3 text-red-500 shrink-0" />
                                     }
                                     {formatDate(entry.date)}
+                                    {entry.description && (
+                                      <span className="text-xs text-muted-foreground/70 ml-1">{entry.description}</span>
+                                    )}
                                   </div>
                                 </TableCell>
                                 <TableCell className={`text-right ${entry.type === 'deposit' ? 'text-green-500' : ''}`}>

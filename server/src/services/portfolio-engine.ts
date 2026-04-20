@@ -271,11 +271,71 @@ export async function computeOpenPositions(
     if (metrics.shares < EPSILON) continue;
 
     const entry = tickerMap.get(isin);
-    if (!entry) continue;
+    if (!entry) {
+      // No ticker_map entry — use transaction data as fallback
+      const lastTx = [...txs].sort((a, b) => b.date.localeCompare(a.date))[0];
+      if (!lastTx) continue;
+      // Create a synthetic entry from transaction data
+      const fallbackEntry = {
+        name: lastTx.paperName,
+        ticker: lastTx.paperName,
+        exchange: 'OTHER' as const,
+        currency: lastTx.currency || 'PLN',
+        priceSource: 'stooq' as const,
+        sector: undefined,
+      };
+      // Use last transaction price as current price
+      const fallbackPrice = lastTx.price;
+      const fxKey = fallbackEntry.currency.toUpperCase();
+      const fxNativeToPln = fxRates[fxKey] || 1;
+      const currentValueNative = metrics.shares * fallbackPrice;
+      const currentValuePln = currentValueNative * fxNativeToPln;
+      let costBasisPln = 0;
+      for (const lot of metrics.buyLots) {
+        const lotFx = fxRates[lot.currency] || 1;
+        costBasisPln += lot.quantity * lot.price * lotFx;
+      }
+      const profitLossPln = currentValuePln - costBasisPln;
+      const profitLossPct = costBasisPln > 0 ? (profitLossPln / costBasisPln) * 100 : 0;
+      const avgBuyPriceNative = metrics.shares > 0 ? costBasisPln / fxNativeToPln / metrics.shares : 0;
+      const costBasisNative = metrics.shares * avgBuyPriceNative;
+      const profitLossNative = currentValueNative - costBasisNative;
+      totalValuePln += currentValuePln;
+      const category = txs[0]?.category || 'stock';
+      positions.push({
+        paperName: fallbackEntry.name,
+        isin,
+        ticker: fallbackEntry.ticker,
+        shares: metrics.shares,
+        avgBuyPrice: avgBuyPriceNative,
+        totalCommission: metrics.totalCommission,
+        currentPrice: fallbackPrice,
+        currentValue: currentValueNative,
+        currentValuePln,
+        profitLoss: profitLossNative,
+        profitLossPln,
+        profitLossPct,
+        currency: fallbackEntry.currency,
+        weight: 0,
+        exchange: fallbackEntry.exchange,
+        dailyChangePct: null,
+        category,
+        priceManual: true,
+        buyLots: metrics.buyLots.map(lot => ({
+          date: lot.date,
+          quantity: lot.quantity,
+          price: lot.price,
+          commission: lot.commission,
+          currency: lot.currency,
+        })),
+      });
+      continue;
+    }
 
     // Fetch current price (in the paper's native currency)
     let currentPrice: number | null = null;
     let previousClose: number | null = null;
+    let priceManual = false;
     if (entry.exchange === 'NC') {
       // NewConnect: Stooq only (Yahoo doesn't list all NC stocks)
       currentPrice = await fetchStooqPrice(entry.ticker);
@@ -285,6 +345,13 @@ export async function computeOpenPositions(
       const yp = await fetchYahooPrice(entry.ticker);
       currentPrice = yp?.price || null;
       previousClose = yp?.previousClose ?? null;
+    }
+
+    // Fallback: if live price unavailable, use last transaction price
+    if (currentPrice === null) {
+      const lastTx = [...txs].sort((a, b) => b.date.localeCompare(a.date))[0];
+      currentPrice = lastTx?.price || 0;
+      priceManual = true;
     }
 
     // Daily change %
@@ -349,6 +416,7 @@ export async function computeOpenPositions(
       sector: entry.sector,
       dailyChangePct,
       category,
+      priceManual: priceManual || undefined,
       buyLots: metrics.buyLots.map(lot => {
         // Convert lot price to the paper's native currency for consistent display
         const lotFx = fxRates[lot.currency] || 1;
