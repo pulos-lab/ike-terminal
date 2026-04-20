@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import { CcyChip } from '@/components/ui/ccy-chip';
 import { formatNumber, formatDate } from '@/lib/formatters';
 import { Loader2, Plus, Trash2, Check, X } from 'lucide-react';
 import type { FxExchangeRecord } from 'shared';
@@ -118,9 +119,8 @@ export function CurrencyExchangePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Waluty</h1>
-        {!showAddForm && (
+      {!showAddForm && (
+        <div className="flex items-center justify-end">
           <Button size="sm" onClick={() => {
             const form = { ...emptyForm, date: new Date().toISOString().slice(0, 10) };
             form.rate = getLiveRate(form.currencyFrom, form.currencyTo);
@@ -129,8 +129,8 @@ export function CurrencyExchangePage() {
           }}>
             <Plus className="h-4 w-4 mr-1" /> Dodaj wymianę
           </Button>
-        )}
-      </div>
+        </div>
+      )}
 
       {fx && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -256,13 +256,19 @@ export function CurrencyExchangePage() {
                   {data?.exchanges?.length ? (
                     data.exchanges.map((ex: FxExchangeRecord, i: number) => (
                       <TableRow key={i}>
-                        <TableCell>{formatDate(ex.date)}</TableCell>
-                        <TableCell className="font-mono">{ex.pair}</TableCell>
-                        <TableCell className="text-right font-medium">{formatNumber(ex.rate, 4)}</TableCell>
-                        <TableCell className="text-right text-red-400">
-                          -{formatNumber(ex.amountFrom)} {ex.currencyFrom}
+                        <TableCell className="tabular-nums">{formatDate(ex.date)}</TableCell>
+                        <TableCell>
+                          <span className="inline-flex items-center gap-1">
+                            <CcyChip ccy={ex.currencyFrom} />
+                            <span className="text-muted-foreground text-xs">→</span>
+                            <CcyChip ccy={ex.currencyTo} />
+                          </span>
                         </TableCell>
-                        <TableCell className="text-right text-green-500">
+                        <TableCell className="text-right font-medium tabular-nums">{formatNumber(ex.rate, 4)}</TableCell>
+                        <TableCell className="text-right text-red-400 tabular-nums">
+                          −{formatNumber(ex.amountFrom)} {ex.currencyFrom}
+                        </TableCell>
+                        <TableCell className="text-right text-green-500 tabular-nums">
                           +{formatNumber(ex.amountTo)} {ex.currencyTo}
                         </TableCell>
                         <TableCell>

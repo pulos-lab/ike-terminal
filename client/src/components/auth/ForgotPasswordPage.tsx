@@ -4,6 +4,7 @@ import { authClient } from '@/lib/auth-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Logo } from '@/components/ui/Logo';
 
 const OTP_LENGTH = 6;
 const RESEND_COOLDOWN = 60;
@@ -157,20 +158,27 @@ export function ForgotPasswordPage() {
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4">
-      <Card className="w-full max-w-md bg-[#111] border-zinc-800">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl text-white">Reset hasła</CardTitle>
-          <CardDescription className="text-zinc-400">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 relative overflow-hidden">
+      <div
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none"
+        style={{
+          background: 'radial-gradient(circle, rgba(245,158,11,0.06) 0%, transparent 70%)',
+        }}
+      />
+
+      <Card className="w-full max-w-md relative z-10">
+        <CardHeader className="text-center justify-items-center gap-2 pb-4">
+          <Logo size="xl" className="mb-2 mx-auto" />
+          <CardTitle className="text-lg font-semibold">Reset hasła</CardTitle>
+          <CardDescription>
             {step === 'email'
               ? 'Podaj adres email powiązany z kontem'
-              : <>Wysłaliśmy kod na <span className="text-white font-medium">{email}</span></>
+              : <>Wysłaliśmy kod na <span className="text-foreground font-medium">{email}</span></>
             }
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {step === 'email' ? (
-            // ── Step 1: Email form ──
             <form onSubmit={handleRequestOTP} className="space-y-4">
               <Input
                 type="email"
@@ -179,25 +187,20 @@ export function ForgotPasswordPage() {
                 onChange={(e) => { setEmail(e.target.value); setError(''); }}
                 required
                 autoFocus
-                className="bg-[#1a1a1a] border-zinc-700 text-white placeholder:text-zinc-500"
               />
 
-              {error && <p className="text-sm text-red-400">{error}</p>}
+              {error && <p className="text-sm text-destructive">{error}</p>}
 
-              <Button
-                type="submit"
-                className="w-full bg-green-600 hover:bg-green-700 text-white"
-                disabled={loading}
-              >
+              <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? 'Wysyłanie...' : 'Wyślij kod'}
               </Button>
             </form>
           ) : (
-            // ── Step 2: OTP + new password ──
             <form onSubmit={handleResetPassword} className="space-y-4">
-              {/* OTP input */}
               <div>
-                <label className="block text-sm text-zinc-400 mb-2">Kod weryfikacyjny</label>
+                <label className="block text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-2">
+                  Kod weryfikacyjny
+                </label>
                 <div className="flex justify-center gap-2" onPaste={handleOtpPaste}>
                   {otp.map((digit, index) => (
                     <Input
@@ -210,13 +213,12 @@ export function ForgotPasswordPage() {
                       onChange={(e) => handleOtpChange(index, e.target.value)}
                       onKeyDown={(e) => handleOtpKeyDown(index, e)}
                       disabled={loading || success}
-                      className="w-12 h-14 text-center text-2xl font-bold bg-[#1a1a1a] border-zinc-700 text-white focus:border-green-500 focus:ring-green-500/20"
+                      className="w-12 h-14 text-center text-2xl font-bold tabular-nums"
                     />
                   ))}
                 </div>
               </div>
 
-              {/* New password */}
               <div className="space-y-3">
                 <Input
                   type="password"
@@ -226,7 +228,6 @@ export function ForgotPasswordPage() {
                   required
                   minLength={8}
                   disabled={loading || success}
-                  className="bg-[#1a1a1a] border-zinc-700 text-white placeholder:text-zinc-500"
                 />
                 <Input
                   type="password"
@@ -236,36 +237,30 @@ export function ForgotPasswordPage() {
                   required
                   minLength={8}
                   disabled={loading || success}
-                  className="bg-[#1a1a1a] border-zinc-700 text-white placeholder:text-zinc-500"
                 />
               </div>
 
-              {error && <p className="text-sm text-red-400 text-center">{error}</p>}
+              {error && <p className="text-sm text-destructive text-center">{error}</p>}
 
               {success && (
-                <p className="text-sm text-green-400 text-center">
+                <p className="text-sm text-green-500 text-center">
                   Hasło zmienione! Przekierowywanie na stronę logowania...
                 </p>
               )}
 
-              <Button
-                type="submit"
-                className="w-full bg-green-600 hover:bg-green-700 text-white"
-                disabled={loading || success}
-              >
+              <Button type="submit" className="w-full" disabled={loading || success}>
                 {loading ? 'Zmiana hasła...' : 'Zmień hasło'}
               </Button>
 
-              {/* Resend */}
               <div className="text-center">
-                <p className="text-sm text-zinc-500">
+                <p className="text-sm text-muted-foreground">
                   Nie otrzymałeś kodu?{' '}
                   {resendCooldown > 0 ? (
-                    <span className="text-zinc-600">
+                    <span className="text-muted-foreground/70 tabular-nums">
                       Wyślij ponownie za {resendCooldown}s
                     </span>
                   ) : (
-                    <button type="button" onClick={handleResend} className="text-green-400 hover:underline">
+                    <button type="button" onClick={handleResend} className="text-primary font-medium hover:underline">
                       Wyślij ponownie
                     </button>
                   )}
@@ -274,14 +269,13 @@ export function ForgotPasswordPage() {
             </form>
           )}
 
-          {/* Back to login */}
-          <p className="text-center text-sm text-zinc-500">
+          <p className="text-center text-sm">
             <button
               type="button"
               onClick={() => navigate('/login')}
-              className="text-zinc-400 hover:underline"
+              className="text-muted-foreground hover:text-foreground hover:underline transition-colors"
             >
-              Wróć do logowania
+              ← Wróć do logowania
             </button>
           </p>
         </CardContent>

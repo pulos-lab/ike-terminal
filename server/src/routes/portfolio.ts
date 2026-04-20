@@ -545,11 +545,38 @@ router.get('/transactions', asyncHandler((req, res) => {
   const tickerMap = getTickerMap(pid);
   const enriched = transactions.map(tx => {
     const entry = tickerMap.get(tx.isin);
+    // PR14: rozstrzyganie quote currency — heurystyk godzi dwa przypadki:
+    //   (a) Foreign trade przez DEGIRO/XTB: parser zapisuje walutę kwotowania (USD/EUR) w
+    //       tx.currency → używamy jej bezpośrednio.
+    //   (b) Polish broker (Bossa/mBank) handlujący na GPW dual-listing obcej spółki
+    //       (np. GreenX Metals GRX.AX): parser zapisuje PLN jako payment, ticker_map wskazuje
+    //       AUD (primary listing ASX) — ale user handlował na GPW w PLN, więc quote też PLN.
+    //   (c) Polish broker kupujący obce papiery z auto-konwersją PLN (rzadkie dla mBank):
+    //       bez dedykowanej kolumny w CSV nie rozróżnimy — traktujemy jak (b).
+    //   (d) Foreign paper z ticker_map gdy parser nie zapisał explicit quote: użyj ticker_map.
+    const isPolishBroker = tx.source === 'bossa' || tx.source === 'mbank';
+    const isPolishBrokerPln = isPolishBroker && tx.currency === 'PLN';
+    let quoteCurrency: string;
+    if (isPolishBrokerPln) {
+      // Polish broker + PLN → handel na GPW (dual-listing OK nawet dla non-PL ISIN)
+      quoteCurrency = 'PLN';
+    } else if (tx.currency && tx.currency !== 'PLN') {
+      // Parser explicit foreign (DEGIRO USD, XTB EUR etc.)
+      quoteCurrency = tx.currency;
+    } else if (entry?.currency && entry.currency !== 'PLN') {
+      // Paper oznaczony jako foreign w ticker_map
+      quoteCurrency = entry.currency;
+    } else {
+      quoteCurrency = tx.currency || 'PLN';
+    }
+    const paymentCurrency = tx.paymentCurrency || tx.currency;
     return {
       ...tx,
       ticker: entry?.ticker || tx.isin,
       name: entry?.name || tx.paperName,
       exchange: entry?.exchange || '',
+      currency: quoteCurrency,
+      paymentCurrency,
     };
   });
   res.json({ transactions: enriched });

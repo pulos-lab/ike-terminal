@@ -25,7 +25,20 @@ export interface Transaction {
   value: number;
   commission: number;
   total: number; // po prowizji
+  /**
+   * QUOTE currency — waluta kwotowania papieru na giełdzie (np. USD dla AAPL, PLN dla CDR.WA).
+   * Od PR14: `currency` ma zawsze oznaczać quote currency. Historycznie w parserach
+   * Bossa/mBank trzymano tu payment currency; po migracji pole jest znormalizowane.
+   */
   currency: string;
+  /**
+   * PAYMENT currency — waluta faktycznego rozliczenia (co user zapłacił).
+   * Może być inna niż `currency` gdy broker przewalutował (np. PLN → USD przy Bossa Zagranica).
+   * Opcjonalne dla backward compat ze starymi rekordami; fallback = `currency`.
+   */
+  paymentCurrency?: string;
+  /** Kurs wymiany user'a: paymentCurrency × fxRate ≈ quote currency amount. */
+  fxRate?: number;
   category?: InstrumentCategory;
   source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
   importBatch?: string;

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import { CcyChip } from '@/components/ui/ccy-chip';
 import { formatNumber, formatDate, formatPLN } from '@/lib/formatters';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loader2, Coins, Plus, Pencil, Trash2, Check, X, RefreshCw, Calendar, Clock } from 'lucide-react';
@@ -105,10 +106,10 @@ function UpcomingDividendsPanel() {
                   <TableCell>{formatDate(d.exDividendDate)}</TableCell>
                   <TableCell>{d.paymentDate ? formatDate(d.paymentDate) : '—'}</TableCell>
                   <TableCell>{d.shares}</TableCell>
-                  <TableCell className="text-right font-medium text-green-500">
+                  <TableCell className="text-right font-medium text-green-500 tabular-nums">
                     {d.estimatedAmount > 0 ? formatNumber(d.estimatedAmount) : '—'}
                   </TableCell>
-                  <TableCell>{d.currency}</TableCell>
+                  <TableCell><CcyChip ccy={d.currency} /></TableCell>
                   <TableCell>
                     <StatusBadge exDate={d.exDividendDate} payDate={d.paymentDate} />
                   </TableCell>
@@ -214,26 +215,23 @@ export function DividendsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Dywidendy</h1>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => scanMutation.mutate()}
-            disabled={scanMutation.isPending}
-          >
-            {scanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Skanuj dywidendy
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => { setShowAddForm(!showAddForm); setEditingId(null); }}
-          >
-            <Plus className="h-4 w-4" />
-            Dodaj dywidende
-          </Button>
-        </div>
+      <div className="flex items-center justify-end gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => scanMutation.mutate()}
+          disabled={scanMutation.isPending}
+        >
+          {scanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Skanuj dywidendy
+        </Button>
+        <Button
+          size="sm"
+          onClick={() => { setShowAddForm(!showAddForm); setEditingId(null); }}
+        >
+          <Plus className="h-4 w-4" />
+          Dodaj dywidende
+        </Button>
       </div>
 
       {data && (
@@ -266,7 +264,7 @@ export function DividendsPage() {
                     <XAxis dataKey="year" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} />
                     <Tooltip formatter={(v: number | undefined) => formatPLN(v ?? 0)} />
-                    <Bar dataKey="amount" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="amount" fill="#f59e0b" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -455,8 +453,8 @@ export function DividendsPage() {
                           <TableCell>{formatDate(d.date)}</TableCell>
                           <TableCell className="font-mono font-medium">{d.ticker}</TableCell>
                           <TableCell className="text-muted-foreground text-sm">{d.description}</TableCell>
-                          <TableCell className="text-right font-medium text-green-500">{formatNumber(d.amount)}</TableCell>
-                          <TableCell>{d.currency}</TableCell>
+                          <TableCell className="text-right font-medium text-green-500 tabular-nums">{formatNumber(d.amount)}</TableCell>
+                          <TableCell><CcyChip ccy={d.currency} /></TableCell>
                           <TableCell>
                             <SourceBadge source={d.source} />
                           </TableCell>

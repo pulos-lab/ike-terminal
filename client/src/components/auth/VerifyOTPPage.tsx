@@ -4,6 +4,7 @@ import { authClient, useSession } from '@/lib/auth-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Logo } from '@/components/ui/Logo';
 
 const OTP_LENGTH = 6;
 const RESEND_COOLDOWN = 60; // seconds
@@ -153,17 +154,24 @@ export function VerifyOTPPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4">
-      <Card className="w-full max-w-md bg-[#111] border-zinc-800">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl text-white">Weryfikacja email</CardTitle>
-          <CardDescription className="text-zinc-400">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 relative overflow-hidden">
+      <div
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none"
+        style={{
+          background: 'radial-gradient(circle, rgba(245,158,11,0.06) 0%, transparent 70%)',
+        }}
+      />
+
+      <Card className="w-full max-w-md relative z-10">
+        <CardHeader className="text-center justify-items-center gap-2 pb-4">
+          <Logo size="xl" className="mb-2 mx-auto" />
+          <CardTitle className="text-lg font-semibold">Weryfikacja email</CardTitle>
+          <CardDescription>
             Wysłaliśmy 6-cyfrowy kod na<br />
-            <span className="text-white font-medium">{email}</span>
+            <span className="text-foreground font-medium">{email}</span>
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* OTP input */}
           <div className="flex justify-center gap-2" onPaste={handlePaste}>
             {otp.map((digit, index) => (
               <Input
@@ -176,41 +184,39 @@ export function VerifyOTPPage() {
                 onChange={(e) => handleInputChange(index, e.target.value)}
                 onKeyDown={(e) => handleKeyDown(index, e)}
                 disabled={loading || success}
-                className="w-12 h-14 text-center text-2xl font-bold bg-[#1a1a1a] border-zinc-700 text-white focus:border-green-500 focus:ring-green-500/20"
+                className="w-12 h-14 text-center text-2xl font-bold tabular-nums"
               />
             ))}
           </div>
 
           {error && (
-            <p className="text-sm text-red-400 text-center">{error}</p>
+            <p className="text-sm text-destructive text-center">{error}</p>
           )}
 
           {success && (
-            <p className="text-sm text-green-400 text-center">Email zweryfikowany! Przekierowywanie...</p>
+            <p className="text-sm text-green-500 text-center">Email zweryfikowany! Przekierowywanie...</p>
           )}
 
-          {/* Verify button */}
           <Button
             onClick={() => handleVerify()}
-            className="w-full bg-green-600 hover:bg-green-700 text-white"
+            className="w-full"
             disabled={loading || success || otp.join('').length !== OTP_LENGTH}
           >
             {loading ? 'Weryfikacja...' : 'Zweryfikuj'}
           </Button>
 
-          {/* Resend */}
           <div className="text-center">
-            <p className="text-sm text-zinc-500">
+            <p className="text-sm text-muted-foreground">
               Nie otrzymałeś kodu?{' '}
               {resendCooldown > 0 ? (
-                <span className="text-zinc-600">
+                <span className="text-muted-foreground/70 tabular-nums">
                   Wyślij ponownie za {resendCooldown}s
                 </span>
               ) : (
                 <button
                   type="button"
                   onClick={handleResend}
-                  className="text-green-400 hover:underline"
+                  className="text-primary font-medium hover:underline"
                 >
                   Wyślij ponownie
                 </button>
@@ -218,14 +224,13 @@ export function VerifyOTPPage() {
             </p>
           </div>
 
-          {/* Back to login */}
-          <p className="text-center text-sm text-zinc-500">
+          <p className="text-center text-sm">
             <button
               type="button"
               onClick={() => navigate('/login')}
-              className="text-zinc-400 hover:underline"
+              className="text-muted-foreground hover:text-foreground hover:underline transition-colors"
             >
-              Wróć do logowania
+              ← Wróć do logowania
             </button>
           </p>
         </CardContent>

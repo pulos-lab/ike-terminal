@@ -16,6 +16,7 @@ import {
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
+import { CcyChip } from '@/components/ui/ccy-chip';
 import { formatCurrency, formatNumber, formatPercent, formatPLN, formatQuantity } from '@/lib/formatters';
 import { Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -93,8 +94,6 @@ export function PortfolioPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Struktura portfela</h1>
-
       <Card>
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
@@ -199,8 +198,8 @@ export function PortfolioPage() {
                           <TableCell className="text-right">{formatNumber(pos.avgBuyPrice)}</TableCell>
                         )}
                         <TableCell className="text-right">
-                          {pos.currentPrice ? formatNumber(pos.currentPrice) : '—'}
-                          <span className="text-xs text-muted-foreground ml-1">{pos.currency}</span>
+                          <span className="tabular-nums">{pos.currentPrice ? formatNumber(pos.currentPrice) : '—'}</span>
+                          <CcyChip ccy={pos.currency} className="ml-1.5" />
                         </TableCell>
                         {colVis.dailyChange && (
                           <TableCell className="text-right">
@@ -274,10 +273,10 @@ export function PortfolioPage() {
               <TableBody>
                 {cashPositions.map((cp: any) => (
                   <TableRow key={cp.currency}>
-                    <TableCell className="font-mono font-medium">{cp.currency}</TableCell>
-                    <TableCell className="text-right">{formatNumber(cp.balance)} {cp.currency}</TableCell>
-                    <TableCell className="text-right font-medium">{formatPLN(cp.valuePln)}</TableCell>
-                    <TableCell className="text-right text-muted-foreground">
+                    <TableCell><CcyChip ccy={cp.currency} /></TableCell>
+                    <TableCell className="text-right tabular-nums">{formatNumber(cp.balance)} {cp.currency}</TableCell>
+                    <TableCell className="text-right font-medium tabular-nums">{formatPLN(cp.valuePln)}</TableCell>
+                    <TableCell className="text-right text-muted-foreground tabular-nums">
                       {formatPercent(cp.weight).replace('+', '')}
                     </TableCell>
                   </TableRow>

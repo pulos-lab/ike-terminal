@@ -15,8 +15,20 @@ const CATEGORIES = [
   { value: 'inne', label: 'Inne' },
 ];
 
-export function BugReportDialog() {
-  const [open, setOpen] = useState(false);
+interface BugReportDialogProps {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+}
+
+export function BugReportDialog({ open: controlledOpen, onOpenChange, hideTrigger }: BugReportDialogProps = {}) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+  const setOpen = (v: boolean) => {
+    if (isControlled) onOpenChange?.(v);
+    else setInternalOpen(v);
+  };
   const [category, setCategory] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
@@ -48,11 +60,13 @@ export function BugReportDialog() {
 
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setSuccess(false); setError(''); } }}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="sm" title="Zgłoś błąd">
-          <Bug className="h-3 w-3" />
-        </Button>
-      </DialogTrigger>
+      {!hideTrigger && (
+        <DialogTrigger asChild>
+          <Button variant="ghost" size="sm" title="Zgłoś błąd">
+            <Bug className="h-3 w-3" />
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Zgłoś błąd</DialogTitle>

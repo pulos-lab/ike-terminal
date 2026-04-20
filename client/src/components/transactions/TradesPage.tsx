@@ -16,6 +16,9 @@ import { formatNumber, formatCurrency, formatQuantity, formatDate } from '@/lib/
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { Loader2, Plus, Check, X, TrendingDown, ChevronRight, ChevronDown } from 'lucide-react';
 import { ClosedTradesPage } from './ClosedTradesPage';
+import { TradesSummary } from './TradesSummary';
+import { PositionCardMobile } from './PositionCardMobile';
+import { TradesFeed } from './TradesFeed';
 
 interface BuyLot {
   quantity: number;
@@ -80,6 +83,18 @@ export function TradesPage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: txData } = useQuery({
+    queryKey: QUERY_KEYS.transactions,
+    queryFn: () => api.getTransactions(),
+  });
+  const txCount = txData?.transactions?.length ?? 0;
+
+  const { data: closedData } = useQuery({
+    queryKey: QUERY_KEYS.closedTrades,
+    queryFn: () => api.getClosedTrades(),
+  });
+  const closedCount = closedData?.trades?.length ?? 0;
+
   // Add transaction form state
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState<TxForm>(emptyTxForm);
@@ -91,6 +106,15 @@ export function TradesPage() {
 
   // Expand/collapse lot details
   const [expandedPositions, togglePosition] = useToggleSet<string>();
+
+  // Tab switcher: all transactions / open positions / closed trades
+  const [tab, setTab] = useState<'all' | 'open' | 'closed'>('open');
+
+  // Closed tab date filter — lifted here so TradesSummary (tile values)
+  // and ClosedTradesPage (table) stay in sync when user changes the year / custom range.
+  const [closedDateRange, setClosedDateRange] = useState<string>('ALL');
+  const [closedCustomFrom, setClosedCustomFrom] = useState('');
+  const [closedCustomTo, setClosedCustomTo] = useState('');
 
   const invalidateAll = () => invalidatePortfolio(queryClient);
 
@@ -212,13 +236,27 @@ export function TradesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Transakcje</h1>
+      <div className="flex items-center justify-end">
         <Button size="sm" onClick={openAddForm}>
           <Plus className="h-4 w-4" />
           Dodaj transakcję
         </Button>
       </div>
+
+      {/* Tab switcher — Wszystkie / Otwarte / Zamknięte */}
+      <div className="flex items-center gap-1 border-b border-border overflow-x-auto">
+        <TabButton active={tab === 'all'} onClick={() => setTab('all')} label="Wszystkie" count={txCount} />
+        <TabButton active={tab === 'open'} onClick={() => setTab('open')} label="Otwarte" count={positions.length} />
+        <TabButton active={tab === 'closed'} onClick={() => setTab('closed')} label="Zamknięte" count={closedCount} />
+      </div>
+
+      <TradesSummary
+        tab={tab}
+        positions={positions}
+        closedDateRange={closedDateRange}
+        closedCustomFrom={closedCustomFrom}
+        closedCustomTo={closedCustomTo}
+      />
 
       {error && (
         <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
@@ -364,7 +402,17 @@ export function TradesPage() {
         </Card>
       )}
 
+      {/* All transactions feed */}
+      {tab === 'all' && (
+        <Card>
+          <CardContent className="pt-4">
+            <TradesFeed />
+          </CardContent>
+        </Card>
+      )}
+
       {/* Open positions */}
+      {tab === 'open' && (
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Otwarte pozycje</CardTitle>
@@ -373,7 +421,20 @@ export function TradesPage() {
           {posLoading ? (
             <LoadingSpinner />
           ) : positions.length ? (
-            <div className="overflow-x-auto">
+            <>
+              {/* Mobile cards */}
+              <div className="md:hidden flex flex-col gap-2">
+                {positions.map((pos) => (
+                  <PositionCardMobile
+                    key={pos.ticker}
+                    position={pos}
+                    onSell={() => sellingTicker === pos.ticker ? setSellingTicker(null) : startSell(pos)}
+                  />
+                ))}
+              </div>
+
+              {/* Desktop table */}
+              <div className="hidden md:block overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -557,15 +618,60 @@ export function TradesPage() {
                   })}
                 </TableBody>
               </Table>
-            </div>
+              </div>
+            </>
           ) : (
             <EmptyState message="Brak otwartych pozycji." />
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Closed trades */}
-      <ClosedTradesPage />
+      {tab === 'closed' && (
+        <ClosedTradesPage
+          dateRange={closedDateRange}
+          onDateRangeChange={setClosedDateRange}
+          customFrom={closedCustomFrom}
+          onCustomFromChange={setClosedCustomFrom}
+          customTo={closedCustomTo}
+          onCustomToChange={setClosedCustomTo}
+        />
+      )}
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative px-3 py-2 text-sm font-medium transition-colors ${
+        active
+          ? 'text-foreground'
+          : 'text-muted-foreground hover:text-foreground'
+      }`}
+    >
+      <span className="inline-flex items-center gap-1.5">
+        {label}
+        <span className={`text-[10px] font-semibold tabular-nums ${active ? 'text-primary' : 'text-muted-foreground/70'}`}>
+          {count}
+        </span>
+      </span>
+      {active && (
+        <span className="absolute left-2 right-2 -bottom-[1px] h-0.5 rounded-full bg-primary" />
+      )}
+    </button>
   );
 }
