@@ -545,31 +545,26 @@ router.get('/transactions', asyncHandler((req, res) => {
   const tickerMap = getTickerMap(pid);
   const enriched = transactions.map(tx => {
     const entry = tickerMap.get(tx.isin);
-    // PR14: rozstrzyganie quote currency — heurystyk godzi dwa przypadki:
-    //   (a) Foreign trade przez DEGIRO/XTB: parser zapisuje walutę kwotowania (USD/EUR) w
-    //       tx.currency → używamy jej bezpośrednio.
-    //   (b) Polish broker (Bossa/mBank) handlujący na GPW dual-listing obcej spółki
-    //       (np. GreenX Metals GRX.AX): parser zapisuje PLN jako payment, ticker_map wskazuje
-    //       AUD (primary listing ASX) — ale user handlował na GPW w PLN, więc quote też PLN.
-    //   (c) Polish broker kupujący obce papiery z auto-konwersją PLN (rzadkie dla mBank):
-    //       bez dedykowanej kolumny w CSV nie rozróżnimy — traktujemy jak (b).
-    //   (d) Foreign paper z ticker_map gdy parser nie zapisał explicit quote: użyj ticker_map.
+    // PR14: semantyka walut w response.
+    // Polskie brokerzy (Bossa/mBank) obsługują IKE/IKZE wyłącznie w PLN —
+    // nawet zagraniczne papiery są rozliczane po przewalutowaniu na PLN.
+    // Z perspektywy użytkownika waluta zakupu i "kwotowanie w jego walucie"
+    // są tym samym: PLN. Pokazywanie ticker_map.currency (USD dla FIG, AUD
+    // dla GRX.AX) jest semantycznie niespójne z tym co user widzi w aplikacji
+    // brokera. Dlatego dla Bossa/mBank quote = payment.
+    // DEGIRO/XTB mogą mieć multi-currency accounts — ufamy wtedy parserowi.
+    const paymentCurrency = tx.paymentCurrency || tx.currency;
     const isPolishBroker = tx.source === 'bossa' || tx.source === 'mbank';
-    const isPolishBrokerPln = isPolishBroker && tx.currency === 'PLN';
     let quoteCurrency: string;
-    if (isPolishBrokerPln) {
-      // Polish broker + PLN → handel na GPW (dual-listing OK nawet dla non-PL ISIN)
-      quoteCurrency = 'PLN';
-    } else if (tx.currency && tx.currency !== 'PLN') {
-      // Parser explicit foreign (DEGIRO USD, XTB EUR etc.)
+    if (isPolishBroker) {
+      quoteCurrency = paymentCurrency;
+    } else if (tx.currency) {
       quoteCurrency = tx.currency;
-    } else if (entry?.currency && entry.currency !== 'PLN') {
-      // Paper oznaczony jako foreign w ticker_map
+    } else if (entry?.currency) {
       quoteCurrency = entry.currency;
     } else {
-      quoteCurrency = tx.currency || 'PLN';
+      quoteCurrency = 'PLN';
     }
-    const paymentCurrency = tx.paymentCurrency || tx.currency;
     return {
       ...tx,
       ticker: entry?.ticker || tx.isin,
