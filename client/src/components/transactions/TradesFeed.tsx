@@ -6,6 +6,7 @@ import { formatNumber, formatDate, formatQuantity } from '@/lib/formatters';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { Input } from '@/components/ui/input';
 import { CcyChip } from '@/components/ui/ccy-chip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { Search } from 'lucide-react';
 
@@ -60,6 +61,7 @@ export function TradesFeed() {
   if (!rows.length) return <EmptyState message="Brak transakcji." />;
 
   return (
+    <TooltipProvider delayDuration={150}>
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <div className="relative flex-1 max-w-xs">
@@ -107,7 +109,17 @@ export function TradesFeed() {
                 <td className="py-2.5 pr-4 font-mono font-semibold">{tx.ticker}</td>
                 <td className="py-2.5 pr-4">
                   <CcyChip ccy={paymentCcy} />
-                  {autoFx && <span className="ml-1 text-[9px] text-amber-500/80" title="Auto-konwersja walut">⇋</span>}
+                  {autoFx && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="ml-1 text-[9px] text-amber-500/80 cursor-help" aria-label="Auto-przewalutowanie">⇋</span>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[260px] text-xs leading-relaxed">
+                        Auto-przewalutowanie — broker zamienił {paymentCcy} na {tx.currency} przy realizacji zlecenia.
+                        Papier jest notowany w {tx.currency}, Ty zapłaciłeś w {paymentCcy}.
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
                 </td>
                 <td className="py-2.5 pr-4">
                   <SideChip side={tx.side} />
@@ -146,11 +158,18 @@ export function TradesFeed() {
               <div className="flex items-center gap-1.5 mb-0.5">
                 <span className="font-mono font-semibold text-sm">{tx.ticker}</span>
                 {autoFx ? (
-                  <span className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground">
-                    <CcyChip ccy={paymentCcy} />
-                    <span className="text-amber-500/80">⇋</span>
-                    <CcyChip ccy={tx.currency} />
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground cursor-help">
+                        <CcyChip ccy={paymentCcy} />
+                        <span className="text-amber-500/80">⇋</span>
+                        <CcyChip ccy={tx.currency} />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-[240px] text-xs leading-relaxed">
+                      Auto-przewalutowanie — broker zamienił {paymentCcy} na {tx.currency} przy realizacji zlecenia.
+                    </TooltipContent>
+                  </Tooltip>
                 ) : (
                   <CcyChip ccy={tx.currency} />
                 )}
@@ -172,6 +191,7 @@ export function TradesFeed() {
         })}
       </div>
     </div>
+    </TooltipProvider>
   );
 }
 
