@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPercent, formatNumber } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
@@ -155,21 +156,16 @@ export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }:
   const returnColor = (v: number) => v > 0 ? 'green' as const : v < 0 ? 'red' as const : 'default' as const;
   const hasBenchmark = showBenchmark && metrics.benchmarkReturn !== 0;
 
-  const shortBenchLabel = (benchmarkLabel || '')
-    .replace('S&P 500', 'SPY')
-    .replace('NASDAQ', 'NDQ')
-    .toUpperCase();
-
   return (
     <TooltipProvider>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
         <StatTile
-          label="Zwrot total"
+          label="Stopa zwrotu"
           value={formatPercent(metrics.totalReturn)}
           color={returnColor(metrics.totalReturn)}
         />
         <StatTile
-          label={`vs ${shortBenchLabel || 'benchmark'}`}
+          label={`vs ${benchmarkLabel || 'benchmark'}`}
           value={hasBenchmark ? formatPercent(metrics.benchmarkReturn) : '—'}
           color={hasBenchmark ? returnColor(metrics.benchmarkReturn) : 'default'}
           disabled={!hasBenchmark}
@@ -178,50 +174,51 @@ export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }:
           label="CAGR"
           value={formatPercent(metrics.cagr)}
           color={returnColor(metrics.cagr)}
-          tooltip="Skumulowana roczna stopa wzrostu."
+          tooltip="Skumulowana roczna stopa wzrostu. Pokazuje, o ile % rocznie rósł portfel przy założeniu równomiernego wzrostu przez cały okres."
         />
         <StatTile
           label="Volatility"
-          value={`${metrics.volatility.toFixed(1)}%`}
-          tooltip="Zmienność — odchylenie standardowe rocznych zwrotów."
+          value={`${metrics.volatility.toFixed(2)}%`}
+          tooltip="Zmienność — odchylenie standardowe rocznych zwrotów. Im wyższa, tym większe wahania wartości portfela i ryzyko."
         />
         <StatTile
-          label="Sharpe"
+          label="Sharpe Ratio"
           value={formatNumber(metrics.sharpeRatio)}
-          tooltip="Zwrot ponad stopę wolną od ryzyka (rf = 5%) na jednostkę zmienności."
+          subtext="rf = 5%"
+          tooltip="Zwrot ponad stopę wolną od ryzyka (rf = 5%) na jednostkę zmienności. Wartość >1 dobra, >2 bardzo dobra. Uwzględnia wszystkie wahania — zarówno wzrosty, jak i spadki."
         />
         <StatTile
-          label="Sortino"
+          label="Sortino Ratio"
           value={formatNumber(metrics.sortinoRatio)}
-          tooltip="Jak Sharpe, ale mierzy tylko ryzyko spadkowe (downside)."
+          tooltip="Miara efektywności inwestycji oparta na stopie zwrotu skorygowanej o ryzyko spadkowe (downside deviation). W odróżnieniu od wskaźnika Sharpe, uwzględnia wyłącznie zmienność ujemnych odchyleń od docelowej stopy zwrotu, dokładniej odzwierciedlając realne ryzyko straty. Wartości > 1 uznaje się za dobre, > 2 — za bardzo dobre."
         />
         <StatTile
-          label="Max DD"
+          label="Max Drawdown"
           value={formatPercent(-metrics.maxDrawdown)}
           color="red"
         />
         <StatTile
-          label="DD dni"
-          value={`${metrics.maxDrawdownDuration}`}
+          label="Max DD Duration"
+          value={`${metrics.maxDrawdownDuration} dni`}
         />
         <StatTile
-          label="Calmar"
+          label="Calmar Ratio"
           value={formatNumber(metrics.calmarRatio)}
-          tooltip="Roczny zwrot / Max Drawdown."
+          tooltip="Roczny zwrot podzielony przez maksymalne obsunięcie (Max Drawdown). Mierzy, ile zysku portfel generuje w stosunku do najgorszego możliwego scenariusza straty."
         />
         <StatTile
-          label="Best day"
+          label="Najlepszy dzień"
           value={formatPercent(metrics.bestDay)}
           color="green"
         />
         <StatTile
-          label="Worst day"
+          label="Najgorszy dzień"
           value={formatPercent(metrics.worstDay)}
           color="red"
         />
         <StatTile
-          label="Win rate"
-          value={`${formatNumber(metrics.winRate, 0)}%`}
+          label="Win Rate"
+          value={`${formatNumber(metrics.winRate, 1)}%`}
         />
       </div>
     </TooltipProvider>
@@ -233,10 +230,11 @@ interface StatTileProps {
   value: string;
   color?: 'default' | 'green' | 'red';
   tooltip?: string;
+  subtext?: string;
   disabled?: boolean;
 }
 
-function StatTile({ label, value, color = 'default', tooltip, disabled }: StatTileProps) {
+function StatTile({ label, value, color = 'default', tooltip, subtext, disabled }: StatTileProps) {
   const colorClass =
     color === 'green' ? 'text-green-500' : color === 'red' ? 'text-red-500' : 'text-foreground';
 
@@ -247,12 +245,16 @@ function StatTile({ label, value, color = 'default', tooltip, disabled }: StatTi
         disabled && 'opacity-50',
       )}
     >
-      <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1 flex items-center gap-1">
         {label}
+        {tooltip && <Info className="h-3 w-3 text-muted-foreground/60" />}
       </p>
       <p className={cn('text-base font-bold tabular-nums tracking-tight', colorClass)}>
         {value}
       </p>
+      {subtext && (
+        <p className="text-[10px] text-muted-foreground mt-0.5 tabular-nums">{subtext}</p>
+      )}
     </div>
   );
 
@@ -261,7 +263,7 @@ function StatTile({ label, value, color = 'default', tooltip, disabled }: StatTi
   return (
     <Tooltip>
       <TooltipTrigger asChild>{content}</TooltipTrigger>
-      <TooltipContent className="max-w-[260px] text-xs">{tooltip}</TooltipContent>
+      <TooltipContent className="max-w-[320px] text-xs leading-relaxed">{tooltip}</TooltipContent>
     </Tooltip>
   );
 }
