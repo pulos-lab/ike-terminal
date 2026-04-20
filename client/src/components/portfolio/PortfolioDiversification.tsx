@@ -52,18 +52,22 @@ const REGION_MAP: Record<string, string> = {
   OTHER: 'Inne',
 };
 
-function groupBy(positions: Position[], keyFn: (p: Position) => string, colors: string[], total: number): SliceData[] {
+function groupBy(positions: Position[], keyFn: (p: Position) => string, colors: string[], _total: number): SliceData[] {
   const map = new Map<string, number>();
   for (const pos of positions) {
     const key = keyFn(pos);
     map.set(key, (map.get(key) || 0) + pos.currentValuePln);
   }
+  // Percent każdego slice'a względem SUMY SLICES (suma positions), żeby pie chart summował się do 100%.
+  // Wcześniejsze `value/totalValuePln` dawało mniejsze liczby gdy total zawierał cash, co powodowało
+  // że legendy nie sumowały się do 100% i pojedyncze slice'y wyglądały na niepełne.
+  const sliceTotal = Array.from(map.values()).reduce((s, v) => s + v, 0);
   return Array.from(map.entries())
     .sort((a, b) => b[1] - a[1])
     .map(([name, value], i) => ({
       name,
       value,
-      pct: total > 0 ? (value / total) * 100 : 0,
+      pct: sliceTotal > 0 ? (value / sliceTotal) * 100 : 0,
       color: colors[i % colors.length],
     }));
 }
@@ -79,14 +83,20 @@ function DonutChart({ data, size = 160 }: { data: SliceData[]; size?: number }) 
   const total = data.reduce((s, d) => s + d.value, 0);
   if (total === 0) return null;
 
-  // Build arc paths
+  // Build arc paths. SVG arc z start == end (pełne koło, np. pojedynczy slice 100%) degeneruje,
+  // dlatego clampujemy angle do Math.PI * 2 - 0.001 i — jeśli slice jest faktycznie pełnym kołem —
+  // składamy go z dwóch półłuków.
   let cumAngle = -Math.PI / 2; // start from top
+  const EPSILON = 0.0001;
+  const TWO_PI = Math.PI * 2;
   const arcs = data.map((slice, i) => {
-    const angle = (slice.value / total) * Math.PI * 2;
+    const rawAngle = (slice.value / total) * TWO_PI;
+    const angle = Math.min(rawAngle, TWO_PI - EPSILON);
     const startAngle = cumAngle;
     const endAngle = cumAngle + angle;
     cumAngle = endAngle;
 
+    const isFullCircle = rawAngle >= TWO_PI - EPSILON;
     const largeArc = angle > Math.PI ? 1 : 0;
 
     const x1Outer = cx + outerR * Math.cos(startAngle);
@@ -99,13 +109,24 @@ function DonutChart({ data, size = 160 }: { data: SliceData[]; size?: number }) 
     const x2Inner = cx + innerR * Math.cos(startAngle);
     const y2Inner = cy + innerR * Math.sin(startAngle);
 
-    const d = [
-      `M ${x1Outer} ${y1Outer}`,
-      `A ${outerR} ${outerR} 0 ${largeArc} 1 ${x2Outer} ${y2Outer}`,
-      `L ${x1Inner} ${y1Inner}`,
-      `A ${innerR} ${innerR} 0 ${largeArc} 0 ${x2Inner} ${y2Inner}`,
-      'Z',
-    ].join(' ');
+    // Dla 100% używamy dwóch półłuków (outer i inner circles) zamiast path z start==end
+    const d = isFullCircle
+      ? [
+          `M ${cx} ${cy - outerR}`,
+          `A ${outerR} ${outerR} 0 1 1 ${cx} ${cy + outerR}`,
+          `A ${outerR} ${outerR} 0 1 1 ${cx} ${cy - outerR}`,
+          `M ${cx} ${cy - innerR}`,
+          `A ${innerR} ${innerR} 0 1 0 ${cx} ${cy + innerR}`,
+          `A ${innerR} ${innerR} 0 1 0 ${cx} ${cy - innerR}`,
+          'Z',
+        ].join(' ')
+      : [
+          `M ${x1Outer} ${y1Outer}`,
+          `A ${outerR} ${outerR} 0 ${largeArc} 1 ${x2Outer} ${y2Outer}`,
+          `L ${x1Inner} ${y1Inner}`,
+          `A ${innerR} ${innerR} 0 ${largeArc} 0 ${x2Inner} ${y2Inner}`,
+          'Z',
+        ].join(' ');
 
     // Label position at middle of arc
     const midAngle = startAngle + angle / 2;
@@ -113,16 +134,17 @@ function DonutChart({ data, size = 160 }: { data: SliceData[]; size?: number }) 
     const lx = cx + labelR * Math.cos(midAngle);
     const ly = cy + labelR * Math.sin(midAngle);
 
-    return { d, midAngle, lx, ly, slice, idx: i, angle };
+    return { d, midAngle, lx, ly, slice, idx: i, angle, isFullCircle };
   });
 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="mx-auto">
-      {arcs.map(({ d, lx, ly, slice, idx, angle }) => (
+      {arcs.map(({ d, lx, ly, slice, idx, angle, isFullCircle }) => (
         <g key={idx}>
           <path
             d={d}
             fill={slice.color}
+            fillRule={isFullCircle ? 'evenodd' : 'nonzero'}
             stroke="hsl(var(--card))"
             strokeWidth={2}
             opacity={hovered === null || hovered === idx ? 1 : 0.4}
