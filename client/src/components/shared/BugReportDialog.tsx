@@ -74,7 +74,7 @@ export function BugReportDialog({ open: controlledOpen, onOpenChange, hideTrigge
 
         {success ? (
           <div className="flex flex-col items-center gap-3 py-6">
-            <CheckCircle className="h-10 w-10 text-green-500" />
+            <CheckCircle className="h-10 w-10 text-success" />
             <p className="text-sm text-muted-foreground">Dziękujemy za zgłoszenie!</p>
           </div>
         ) : (
@@ -108,7 +108,7 @@ export function BugReportDialog({ open: controlledOpen, onOpenChange, hideTrigge
             </div>
 
             {error && (
-              <p className="text-sm text-red-400">{error}</p>
+              <p className="text-sm text-destructive">{error}</p>
             )}
 
             <Button

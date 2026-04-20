@@ -227,7 +227,7 @@ export function CurrencyExchangePage() {
                           className="w-[110px] text-right"
                         />
                       </TableCell>
-                      <TableCell className="text-right text-green-500 font-mono">
+                      <TableCell className="text-right text-gain font-mono">
                         {computedAmountTo !== '—' ? `+${computedAmountTo}` : '—'} {addForm.currencyTo}
                       </TableCell>
                       <TableCell>
@@ -265,10 +265,10 @@ export function CurrencyExchangePage() {
                           </span>
                         </TableCell>
                         <TableCell className="text-right font-medium tabular-nums">{formatNumber(ex.rate, 4)}</TableCell>
-                        <TableCell className="text-right text-red-400 tabular-nums">
+                        <TableCell className="text-right text-loss tabular-nums">
                           −{formatNumber(ex.amountFrom)} {ex.currencyFrom}
                         </TableCell>
-                        <TableCell className="text-right text-green-500 tabular-nums">
+                        <TableCell className="text-right text-gain tabular-nums">
                           +{formatNumber(ex.amountTo)} {ex.currencyTo}
                         </TableCell>
                         <TableCell>
@@ -276,7 +276,7 @@ export function CurrencyExchangePage() {
                             <Button
                               size="icon"
                               variant="ghost"
-                              className="h-7 w-7 text-muted-foreground hover:text-red-500"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
                               disabled={deleteMutation.isPending}
                               onClick={() => deleteMutation.mutate({ fromId: ex.fromOperationId!, toId: ex.toOperationId! })}
                             >

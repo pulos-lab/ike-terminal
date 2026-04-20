@@ -158,10 +158,9 @@ function DonutChart({ data, size = 160 }: { data: SliceData[]; size?: number }) 
               y={ly}
               textAnchor="middle"
               dominantBaseline="central"
-              fill="white"
               fontSize={11}
               fontWeight={600}
-              className="pointer-events-none"
+              className="fill-foreground pointer-events-none"
             >
               {slice.pct.toFixed(0)}%
             </text>

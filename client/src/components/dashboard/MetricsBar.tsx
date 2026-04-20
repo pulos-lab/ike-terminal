@@ -37,9 +37,9 @@ export function MetricsBar() {
       </div>
       <div className="flex items-center gap-2">
         {data.totalReturn >= 0 ? (
-          <TrendingUp className="h-3.5 w-3.5 text-green-500" />
+          <TrendingUp className="h-3.5 w-3.5 text-gain" />
         ) : (
-          <TrendingDown className="h-3.5 w-3.5 text-red-500" />
+          <TrendingDown className="h-3.5 w-3.5 text-loss" />
         )}
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
           Zysk

@@ -344,7 +344,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                 variant="ghost"
                                 onClick={() => deleteMutation.mutate(trade.sellTransactionId)}
                                 disabled={deleteMutation.isPending}
-                                className="text-muted-foreground hover:text-red-500"
+                                className="text-muted-foreground hover:text-destructive"
                                 title="Usuń transakcję sprzedaży"
                               >
                                 <Trash2 className="h-3 w-3" />
@@ -413,7 +413,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                 variant="ghost"
                                 onClick={(e) => { e.stopPropagation(); deleteMutation.mutate(group.sellTransactionId); }}
                                 disabled={deleteMutation.isPending}
-                                className="text-muted-foreground hover:text-red-500"
+                                className="text-muted-foreground hover:text-destructive"
                                 title="Usuń transakcję sprzedaży"
                               >
                                 <Trash2 className="h-3 w-3" />
@@ -433,7 +433,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                               <TableCell className="text-right text-muted-foreground">{formatNumber(trade.buyPrice)}</TableCell>
                               <TableCell className="text-muted-foreground">{formatDate(trade.sellDate)}</TableCell>
                               <TableCell className="text-right text-muted-foreground">{formatNumber(trade.sellPrice)}</TableCell>
-                              <TableCell className={`text-right text-sm ${trade.profitLossPct >= 0 ? 'text-green-500/70' : 'text-red-500/70'}`}>
+                              <TableCell className={`text-right text-sm ${trade.profitLossPct >= 0 ? 'text-gain/70' : 'text-loss/70'}`}>
                                 {formatCurrency(trade.profitLoss, trade.currency)}
                               </TableCell>
                               <TableCell className="text-right">
@@ -456,7 +456,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                   <span className="text-sm font-medium text-muted-foreground">Podsumowanie P/L:</span>
                   {plSummary.map(s => (
                     <div key={s.currency} className="flex items-center gap-2">
-                      <span className={`text-sm font-semibold ${s.totalPL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      <span className={`text-sm font-semibold ${s.totalPL >= 0 ? 'text-gain' : 'text-loss'}`}>
                         {formatCurrency(s.totalPL, s.currency)}
                       </span>
                       <span className="text-xs text-muted-foreground">

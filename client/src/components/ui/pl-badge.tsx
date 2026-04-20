@@ -3,7 +3,7 @@ import { formatPercent } from '@/lib/formatters';
 
 /** Returns Tailwind color class for profit/loss text */
 export function plColor(value: number): string {
-  return value >= 0 ? 'text-green-500' : 'text-red-500';
+  return value >= 0 ? 'text-gain' : 'text-loss';
 }
 
 interface PLBadgeProps {
@@ -17,11 +17,11 @@ export function PLBadge({ value, formatter = formatPercent, muted }: PLBadgeProp
   const isPositive = value >= 0;
   const cls = muted
     ? isPositive
-      ? 'bg-green-500/10 text-green-500/70'
-      : 'bg-red-500/15 text-red-400/70'
+      ? 'bg-gain/10 text-gain/70'
+      : 'bg-loss/15 text-loss/70'
     : isPositive
-      ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20'
-      : 'bg-red-500/15 text-red-400 hover:bg-red-500/25';
+      ? 'bg-gain/10 text-gain hover:bg-gain/20'
+      : 'bg-loss/15 text-loss hover:bg-loss/25';
 
   return (
     <Badge
