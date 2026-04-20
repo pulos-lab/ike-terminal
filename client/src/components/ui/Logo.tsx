@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils';
 
 interface LogoProps {
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   showWord?: boolean;
   className?: string;
 }
@@ -10,12 +10,14 @@ const markSize = {
   sm: 'text-base',
   md: 'text-lg',
   lg: 'text-xl',
+  xl: 'text-2xl',
 };
 
 const wordSize = {
   sm: 'text-sm',
   md: 'text-base',
   lg: 'text-lg',
+  xl: 'text-xl',
 };
 
 export function Logo({ size = 'md', showWord = true, className }: LogoProps) {
