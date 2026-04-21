@@ -244,7 +244,7 @@ export function TradesPage() {
       </div>
 
       {/* Tab switcher — Wszystkie / Otwarte / Zamknięte */}
-      <div className="flex items-center gap-1 border-b border-border overflow-x-auto">
+      <div className="flex items-center gap-1 border-b border-border overflow-x-auto overflow-y-hidden">
         <TabButton active={tab === 'all'} onClick={() => setTab('all')} label="Wszystkie" count={txCount} />
         <TabButton active={tab === 'open'} onClick={() => setTab('open')} label="Otwarte" count={positions.length} />
         <TabButton active={tab === 'closed'} onClick={() => setTab('closed')} label="Zamknięte" count={closedCount} />
