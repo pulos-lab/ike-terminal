@@ -71,14 +71,20 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
   }
 
   // Parowanie prowizji wezwań skupu: `Rozliczenie oferty - prowizja TICKER` z `Rozliczenie oferty TICKER`
-  // na tę samą datę. Klucz: ticker+date.
-  const offerCommissions = new Map<string, { amount: number; consumed: boolean }>();
+  // na tę samą datę. Klucz: ticker+date. Pre-scan obu stron — żeby kolejność wierszy w CSV
+  // (prowizja może iść przed głównym albo po) nie wpływała na wynik klasyfikacji.
+  const offerCommissions = new Map<string, { amount: number }>();
+  const offerMainKeys = new Set<string>(); // klucze (ticker|date), dla których mamy główny wiersz "Rozliczenie oferty"
   for (const pr of parsedRows) {
-    if (!pr.title.includes('Rozliczenie oferty - prowizja')) continue;
-    const tickerMatch = pr.title.match(/Rozliczenie oferty - prowizja\s+(\S+)/);
-    if (!tickerMatch) continue;
-    const key = `${tickerMatch[1]}|${pr.dateStr}`;
-    offerCommissions.set(key, { amount: Math.abs(pr.amount), consumed: false });
+    if (pr.title.includes('Rozliczenie oferty - prowizja')) {
+      const tickerMatch = pr.title.match(/Rozliczenie oferty - prowizja\s+(\S+)/);
+      if (tickerMatch) {
+        offerCommissions.set(`${tickerMatch[1]}|${pr.dateStr}`, { amount: Math.abs(pr.amount) });
+      }
+    } else {
+      const mainMatch = pr.title.match(/^Rozliczenie oferty\s+(\S+)/);
+      if (mainMatch) offerMainKeys.add(`${mainMatch[1]}|${pr.dateStr}`);
+    }
   }
 
   const redemptions: RedemptionMarker[] = [];
@@ -90,10 +96,8 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
     if (redemptionKind) {
       // Wykup certyfikatów lub główny wiersz Rozliczenie oferty → redemption marker, NIE CashOperation.
       const ticker = redemptionKind.ticker;
-      const key = `${ticker}|${dateStr}`;
-      const commissionEntry = offerCommissions.get(key);
+      const commissionEntry = offerCommissions.get(`${ticker}|${dateStr}`);
       const commission = commissionEntry ? commissionEntry.amount : 0;
-      if (commissionEntry) commissionEntry.consumed = true;
 
       redemptions.push({
         date: `${dateStr}T00:00:00`,
@@ -108,18 +112,14 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
       continue;
     }
 
-    // Prowizja od Rozliczenie oferty — jeśli już sparowana z redemption markerem, pomijamy.
+    // Prowizja od Rozliczenie oferty — skip jeśli istnieje główny wiersz z tym samym ticker+date
+    // (niezależnie od kolejności w CSV). Jeśli nie ma głównego wiersza — edge case, wpada jako fee niżej.
     if (title.includes('Rozliczenie oferty - prowizja')) {
       const tickerMatch = title.match(/Rozliczenie oferty - prowizja\s+(\S+)/);
-      if (tickerMatch) {
-        const key = `${tickerMatch[1]}|${dateStr}`;
-        const commissionEntry = offerCommissions.get(key);
-        if (commissionEntry?.consumed) {
-          skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
-          continue;
-        }
+      if (tickerMatch && offerMainKeys.has(`${tickerMatch[1]}|${dateStr}`)) {
+        skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
+        continue;
       }
-      // Nie ma pasującego redemption markera (edge case) → wpada jako zwykła opłata niżej.
     }
 
     const operationType = classifyOperation(title);
