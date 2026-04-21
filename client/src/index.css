@@ -148,4 +148,32 @@
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     margin: 0;
   }
+
+  /* Scrollbar styling — dopasowany do dark theme.
+     Firefox: scrollbar-* properties. WebKit/Chromium: ::-webkit-scrollbar pseudo-elements.
+     Track transparent, thumb = kolor border z hoverem na muted-foreground. Cienki (10px) +
+     padding dookoła thumb żeby wyglądał jak cienka pigułka, a nie gruby szary prostokąt. */
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--muted-foreground);
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }
