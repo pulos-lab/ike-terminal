@@ -37,18 +37,21 @@ jobs:
           USER="${{ secrets.DEPLOY_USER }}"
           SSH="ssh -i ~/.ssh/deploy_key"
           REMOTE="/opt/ike-terminal/app"
+          # Deploy user is root; without --chown rsync preserves the runner's
+          # uid (1001) which is orphaned on the VPS, breaking later npm ci.
+          CHOWN="--chown=ike-terminal:ike-terminal"
 
-          rsync -az --delete -e "$SSH" server/dist/ $USER@$HOST:$REMOTE/server/dist/
-          rsync -az --delete -e "$SSH" client/dist/ $USER@$HOST:$REMOTE/client/dist/
-          rsync -az --delete -e "$SSH" shared/dist/ $USER@$HOST:$REMOTE/shared/dist/
+          rsync -az $CHOWN --delete -e "$SSH" server/dist/ $USER@$HOST:$REMOTE/server/dist/
+          rsync -az $CHOWN --delete -e "$SSH" client/dist/ $USER@$HOST:$REMOTE/client/dist/
+          rsync -az $CHOWN --delete -e "$SSH" shared/dist/ $USER@$HOST:$REMOTE/shared/dist/
 
-          rsync -az -e "$SSH" package.json package-lock.json $USER@$HOST:$REMOTE/
+          rsync -az $CHOWN -e "$SSH" package.json package-lock.json $USER@$HOST:$REMOTE/
           $SSH $USER@$HOST "mkdir -p $REMOTE/server $REMOTE/shared $REMOTE/client"
-          rsync -az -e "$SSH" server/package.json $USER@$HOST:$REMOTE/server/
-          rsync -az -e "$SSH" shared/package.json $USER@$HOST:$REMOTE/shared/
-          rsync -az -e "$SSH" client/package.json $USER@$HOST:$REMOTE/client/
+          rsync -az $CHOWN -e "$SSH" server/package.json $USER@$HOST:$REMOTE/server/
+          rsync -az $CHOWN -e "$SSH" shared/package.json $USER@$HOST:$REMOTE/shared/
+          rsync -az $CHOWN -e "$SSH" client/package.json $USER@$HOST:$REMOTE/client/
 
-          rsync -az -e "$SSH" benchmark/ $USER@$HOST:$REMOTE/benchmark/
+          rsync -az $CHOWN -e "$SSH" benchmark/ $USER@$HOST:$REMOTE/benchmark/
 
       - name: Install deps, seed benchmarks & restart
         run: |
