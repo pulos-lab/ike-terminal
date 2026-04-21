@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useLayoutEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
@@ -192,15 +192,8 @@ export function PortfolioPage() {
                             );
                           })()}
                         </TableCell>
-                        <TableCell className="text-muted-foreground max-w-[280px]">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="block truncate cursor-help">{pos.paperName}</span>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="max-w-[420px] text-xs">
-                              {pos.paperName}
-                            </TooltipContent>
-                          </Tooltip>
+                        <TableCell className="text-muted-foreground max-w-[180px]">
+                          <TruncatedName name={pos.paperName} />
                         </TableCell>
                         <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
                         {colVis.avgPrice && (
@@ -307,5 +300,48 @@ export function PortfolioPage() {
       )}
 
     </div>
+  );
+}
+
+/**
+ * Jednoliniowy label z nazwą spółki. Jeśli tekst mieści się w szerokości komórki
+ * — render bez tooltipa ani cursor-help. Jeśli jest obcięty (scrollWidth > clientWidth)
+ * — dodaje ellipsis, cursor-help i Tooltip pokazujący pełną nazwę po hoverze.
+ * Przelicza się po każdym zmianie `name` lub rozmiaru okna.
+ */
+function TruncatedName({ name }: { name: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [isTruncated, setIsTruncated] = useState(false);
+
+  // useLayoutEffect bez listy zależności: sprawdzenie po każdym renderze + on resize.
+  // Guard przed pętlą: setState tylko gdy wynik się zmienia.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => {
+      const should = el.scrollWidth > el.clientWidth;
+      setIsTruncated(prev => (prev === should ? prev : should));
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
+  // Tooltip wrapper jest zawsze tym samym węzłem React-tree'a, żeby span nie był
+  // remountowany przy zmianie `isTruncated` (co wcześniej gubiło ref i efekt).
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span ref={ref} className={`block truncate ${isTruncated ? 'cursor-help' : ''}`}>
+          {name}
+        </span>
+      </TooltipTrigger>
+      {isTruncated && (
+        <TooltipContent side="top" className="max-w-[420px] text-xs">
+          {name}
+        </TooltipContent>
+      )}
+    </Tooltip>
   );
 }
