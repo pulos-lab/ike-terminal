@@ -17,6 +17,7 @@ export function initSchema(db: Database.Database): void {
       category TEXT DEFAULT 'stock',
       source TEXT DEFAULT 'bossa',
       import_batch TEXT,
+      synthetic_origin TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -127,6 +128,11 @@ export function initSchema(db: Database.Database): void {
   // PR14 — fx rate (kurs wymiany pamiętany przy rozliczeniu foreign → payment)
   if (!txColumns.some((c: any) => c.name === 'fx_rate')) {
     db.exec("ALTER TABLE transactions ADD COLUMN fx_rate REAL");
+  }
+  // PR16 (bulk-import) — syntetyczne sprzedaże z reconciliation (wezwania skupu, wykupy certyfikatów).
+  // Human-readable opis źródła; NULL dla zwykłych transakcji z pliku brokera.
+  if (!txColumns.some((c: any) => c.name === 'synthetic_origin')) {
+    db.exec("ALTER TABLE transactions ADD COLUMN synthetic_origin TEXT");
   }
 
   // Migration: tighten stock_splits UNIQUE from (isin, split_date) to (isin)

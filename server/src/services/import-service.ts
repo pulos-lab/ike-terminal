@@ -42,7 +42,7 @@ import {
   updateTransaction,
   detectOrphanedSells,
 } from '../db/transactions-repo.js';
-import { insertOperationsWithDedup } from '../db/operations-repo.js';
+import { insertOperationsWithDedup, getAllOperations } from '../db/operations-repo.js';
 import { seedTickerMap, findIsinByName, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
 import { getDb } from '../db/connection.js';
@@ -215,10 +215,16 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
 
     // 3. Reconciliation per broker
 
-    // 3a. Bossa — redemption markers (Wykup certyfikatów + Rozliczenie oferty)
+    // 3a. Bossa — redemption markers (tylko wykupy certyfikatów; tendery idą jako deposit + warning)
     if (parsedOps && 'redemptions' in parsedOps && parsedOps.redemptions.length > 0) {
       const r = reconcileBossaRedemptions(parsedOps.redemptions, pid, importBatch, crossFileWarnings);
       syntheticSells += r;
+    }
+
+    // 3a'. Bossa — wezwania skupu zostały zapisane jako deposit; emit warning
+    // zachęcający do ręcznego dodania sprzedaży (nie znamy liczby akcji i ceny tendera).
+    if (opsFile?.broker === 'bossa') {
+      warnAboutTenderOffers(pid, crossFileWarnings);
     }
 
     // 3b. DEGIRO — transaction taxes applied cross-batch (nawet jeśli user wgrał osobno wcześniej)
@@ -386,16 +392,17 @@ async function importBinary(file: ClassifiedFile, importBatch: string, pid: stri
   };
 }
 
-// ─── Bossa reconciliation: Wykup certyfikatów + Rozliczenie oferty ──────────
+// ─── Bossa reconciliation: wykupy certyfikatów ──────────────────────────────
 
 /**
- * Tworzy syntetyczną sprzedaż zamykającą otwartą pozycję dla każdego RedemptionMarker.
+ * Wykup certyfikatów (structured products, np. INTL*) — emitent wykupuje wszystkie
+ * wyemitowane certyfikaty po jednolitej cenie (NAV na datę wygaśnięcia / maturity).
+ * To **all-or-nothing** — nie da się częściowo zostać z pozycją, więc synthetic sell
+ * zamyka pełen openQty bezpiecznie.
  *
- * W przeciwieństwie do poprzedniej implementacji (która pulltowała już wstawione CashOperation
- * z DB i równolegle trzymała je jako `deposit`), to podejście:
- * - Opiera się na markerach wyłuskanych wprost z CSV (parser decyduje).
- * - Nie zapisuje CashOperation dla wykupu/wezwania — syntetyczna sprzedaż jest jedynym cashflow.
- * - Uwzględnia prowizję z siostrzanego `Rozliczenie oferty - prowizja`.
+ * UWAGA: wezwania skupu (`Rozliczenie oferty`) NIE przechodzą przez ten flow — tam nie
+ * wiemy ile akcji user sprzedał (CSV podaje tylko kwotę) i user mógł zostawić resztę.
+ * Te trafiają jako `deposit` + emitujemy warning z prośbą o ręczne dodanie sprzedaży.
  *
  * Zwraca liczbę dodanych syntetycznych sprzedaży.
  */
@@ -406,28 +413,25 @@ function reconcileBossaRedemptions(
   warnings: string[]
 ): number {
   if (redemptions.length === 0) return 0;
-
-  const allTx = getAllTransactions(pid);
   let added = 0;
 
   for (const red of redemptions) {
-    const matchingTx = allTx.filter(t => t.paperName === red.ticker);
-    if (matchingTx.length === 0) {
-      warnings.push(`Bossa: ${red.description} bez pasujących zakupów w historii (ticker: ${red.ticker})`);
+    const allTxForTicker = getAllTransactions(pid).filter(t => t.paperName === red.ticker);
+    if (allTxForTicker.length === 0) {
+      warnings.push(`Bossa: ${red.description} bez pasujących zakupów w historii (ticker: ${red.ticker}) — pomijam syntetyczną sprzedaż`);
       continue;
     }
 
-    const isin = matchingTx[0].isin;
-    const bought = matchingTx.filter(t => t.side === 'K').reduce((s, t) => s + t.quantity, 0);
-    const sold = matchingTx.filter(t => t.side === 'S').reduce((s, t) => s + t.quantity, 0);
+    const isin = allTxForTicker[0].isin;
+    const bought = allTxForTicker.filter(t => t.side === 'K').reduce((s, t) => s + t.quantity, 0);
+    const sold = allTxForTicker.filter(t => t.side === 'S').reduce((s, t) => s + t.quantity, 0);
     const openQty = bought - sold;
     if (openQty <= 0) {
-      warnings.push(`Bossa: ${red.description} — pozycja ${red.ticker} już zamknięta, pomijam`);
+      warnings.push(`Bossa: ${red.description} — pozycja ${red.ticker} już zamknięta (open=${openQty}), pomijam`);
       continue;
     }
 
-    const grossValue = red.amount + red.commission; // brutto = wpływ + prowizja (prowizja jest osobnym ujemnym cashflow w CSV)
-    const price = Math.round((grossValue / openQty) * 100) / 100;
+    const price = Math.round((red.amount / openQty) * 100) / 100;
     const syntheticSell: Transaction = {
       date: red.date,
       paperName: red.ticker,
@@ -435,18 +439,18 @@ function reconcileBossaRedemptions(
       quantity: openQty,
       side: 'S',
       price,
-      value: grossValue,
-      commission: red.commission,
-      total: red.amount, // netto po prowizji — zgodne z Bossa CSV
+      value: red.amount,
+      commission: 0,
+      total: red.amount,
       currency: red.currency,
       paymentCurrency: 'PLN',
       source: 'bossa',
       importBatch,
+      syntheticOrigin: `${red.description} — ${openQty} szt @ ${price.toFixed(2)} ${red.currency} (pełne zamknięcie pozycji przez emitenta)`,
     };
     const r = insertTransactionsWithDedup([syntheticSell], pid);
     added += r.inserted;
 
-    // Ticker map entry dla certyfikatu (żeby dashboard miał source cen).
     upsertTickerMapEntry({
       isin,
       ticker: red.ticker,
@@ -458,6 +462,24 @@ function reconcileBossaRedemptions(
   }
 
   return added;
+}
+
+/**
+ * Warnings dla wezwań skupu (`Rozliczenie oferty`) — gotówka jest już wpisana jako deposit,
+ * ale user musi ręcznie dodać sprzedaż (nie wiemy ile szt i po jakiej cenie).
+ * Wywoływane PO insertach operacji, skanuje operacje typu `deposit` z description
+ * rozpoczynającym się od "Wykup w ofercie skupu" (patrz humanizeDescription).
+ */
+function warnAboutTenderOffers(pid: string, warnings: string[]): void {
+  const allOps = getAllOperations(pid);
+  const tenders = allOps.filter(op => op.description.startsWith('Wykup w ofercie skupu'));
+  for (const op of tenders) {
+    warnings.push(
+      `Bossa: ${op.description} (${op.date.slice(0, 10)}, ${op.amount.toFixed(2)} ${op.currency}) — ` +
+      `broker zapisał tylko kwotę netto, bez liczby akcji. Dodaj ręcznie sprzedaż w panelu Transakcje ` +
+      `(typowa cena tendera widnieje w komunikacie espi spółki).`
+    );
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

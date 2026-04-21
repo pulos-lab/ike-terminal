@@ -46,6 +46,12 @@ export interface Transaction {
   rollover?: number;   // CFD: rollover cost (from Closed Positions sheet)
   cfdPositionId?: string; // CFD: unique position ID for FIFO grouping (prevents mixing overlapping positions)
   cfdGrossProfit?: number; // CFD: gross profit from XTB (includes contract multiplier + FX, before fees)
+  /**
+   * Jeśli transakcja została wygenerowana automatycznie (reconciliation), tu trafia ludzki
+   * opis źródła — np. "Wykup w ofercie skupu GAMIVO" albo "Wykup certyfikatów INTLGLD46805".
+   * Dla zwykłych K/S z pliku brokera: undefined. UI pokazuje ikonę ℹ i tooltip.
+   */
+  syntheticOrigin?: string;
 }
 
 // ============ Cash Operation Types ============
