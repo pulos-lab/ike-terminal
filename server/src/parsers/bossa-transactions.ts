@@ -1,5 +1,6 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
+import { applyIsinAlias } from 'shared';
 import { parseNumber, parseDottedDate } from './utils.js';
 
 /**
@@ -78,10 +79,15 @@ export function parseBossaTransactions(csvContent: string, importBatch: string):
 
     const isoDate = parseDottedDate(dateStr);
 
+    // Zastosuj mapę aliasów ISIN jeśli (isin, paperName) to stary identyfikator papieru,
+    // który zmienił ISIN/ticker w wyniku zdarzenia korporacyjnego (np. HUUUGE PL→US
+    // redomiciliacja). Dzięki temu FIFO i ticker_map operują na jednym ISIN-ie.
+    const { isin: canonicalIsin, paperName: canonicalPaperName } = applyIsinAlias(isin, paperName || '');
+
     transactions.push({
       date: isoDate,
-      paperName: paperName || '',
-      isin,
+      paperName: canonicalPaperName,
+      isin: canonicalIsin,
       quantity: Math.round(quantity),
       side,
       price,

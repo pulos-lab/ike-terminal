@@ -23,6 +23,7 @@ import type {
   SkippedRow,
   ImportResult,
   RedemptionMarker,
+  IpoSubscriptionMarker,
   ParseResult,
 } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
@@ -218,6 +219,12 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     // 3a. Bossa — redemption markers (tylko wykupy certyfikatów; tendery idą jako deposit + warning)
     if (parsedOps && 'redemptions' in parsedOps && parsedOps.redemptions.length > 0) {
       const r = reconcileBossaRedemptions(parsedOps.redemptions, pid, importBatch, crossFileWarnings);
+      syntheticSells += r;
+    }
+
+    // 3a''. Bossa — IPO subscriptions → synthetic K (znana cena emisyjna z mapy)
+    if (parsedOps && 'ipoSubscriptions' in parsedOps && parsedOps.ipoSubscriptions.length > 0) {
+      const r = reconcileBossaIpos(parsedOps.ipoSubscriptions, pid, importBatch, crossFileWarnings);
       syntheticSells += r;
     }
 
@@ -486,6 +493,74 @@ function reconcileBossaRedemptions(
       isin,
       ticker: red.ticker,
       name: red.ticker,
+      exchange: 'GPW',
+      currency: 'PLN',
+      priceSource: 'stooq',
+    }, pid);
+  }
+
+  return added;
+}
+
+/**
+ * Reconciliation subskrypcji IPO — dla każdego IpoSubscriptionMarker tworzy syntetyczną
+ * K transakcję na dacie alokacji (Zwrot nadpłaty).
+ *
+ * Netto koszt = subscriptionAmount − refundAmount; qty = round(netto / ipoPrice). Cena
+ * syntetycznej K = ipoPrice (nie uśredniamy, bo mamy deterministyczną wartość z mapy).
+ *
+ * Commission: w Bossie subskrypcja/zwrot nie ma oddzielnej prowizji, więc 0.
+ *
+ * Zwraca liczbę dodanych syntetycznych K.
+ */
+function reconcileBossaIpos(
+  ipos: IpoSubscriptionMarker[],
+  pid: string,
+  importBatch: string,
+  warnings: string[]
+): number {
+  if (ipos.length === 0) return 0;
+  let added = 0;
+
+  for (const ipo of ipos) {
+    const nettoCost = ipo.subscriptionAmount - ipo.refundAmount;
+    if (nettoCost <= 0) {
+      warnings.push(`Bossa: subskrypcja IPO ${ipo.ticker} — koszt netto ${nettoCost.toFixed(2)} ${ipo.currency} jest ≤ 0 (pełny zwrot?); pomijam syntetyczną K.`);
+      continue;
+    }
+
+    const qty = Math.round(nettoCost / ipo.ipoPrice);
+    if (qty <= 0) {
+      warnings.push(`Bossa: subskrypcja IPO ${ipo.ticker} — wyliczona liczba akcji ≤ 0 (netto ${nettoCost}, cena ${ipo.ipoPrice}); pomijam.`);
+      continue;
+    }
+
+    const originTag = `Subskrypcja IPO ${ipo.ticker}${ipo.series ? ` Seria ${ipo.series}` : ''} — ${qty} szt @ ${ipo.ipoPrice.toFixed(2)} ${ipo.currency} (cena emisyjna z mapy${ipo.sourceUrl ? `, źródło: ${ipo.sourceUrl}` : ''})`;
+
+    const syntheticBuy: Transaction = {
+      date: `${ipo.allocationDate}T00:00:00`,
+      paperName: ipo.ticker,
+      isin: ipo.isin,
+      quantity: qty,
+      side: 'K',
+      price: ipo.ipoPrice,
+      value: nettoCost,
+      commission: 0,
+      total: nettoCost,
+      currency: ipo.currency,
+      paymentCurrency: 'PLN',
+      source: 'bossa',
+      importBatch,
+      syntheticOrigin: originTag,
+    };
+
+    const r = insertTransactionsWithDedup([syntheticBuy], pid);
+    added += r.inserted;
+
+    upsertTickerMapEntry({
+      isin: ipo.isin,
+      ticker: ipo.ticker,
+      name: ipo.ticker,
       exchange: 'GPW',
       currency: 'PLN',
       priceSource: 'stooq',

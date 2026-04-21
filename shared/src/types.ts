@@ -330,6 +330,36 @@ export interface ParseResult<T> {
 }
 
 /**
+ * Marker subskrypcji IPO z nadpłatą — Bossa zapisuje parę wierszy w pliku operacji:
+ *   Zapisy na akcje X SERIA Y          -MAX_AMOUNT (withdrawal, subskrypcja maksymalna)
+ *   Zwrot nadpłaty X                   +REFUND      (deposit, nadpłata po alokacji)
+ * Netto koszt = |zapisy| − refund. Akcje NIE pojawiają się jako K w hisPW.
+ * Reconciliation tworzy syntetyczną K na dacie `allocationDate` (data Zwrotu nadpłaty).
+ */
+export interface IpoSubscriptionMarker {
+  /** Data wiersza `Zapisy na akcje` (ISO YYYY-MM-DD). */
+  subscriptionDate: string;
+  /** Data wiersza `Zwrot nadpłaty` — używana jako data syntetycznej K transakcji. */
+  allocationDate: string;
+  /** Ticker z pliku Bossy (może mieć suffix `_IPO`). */
+  ticker: string;
+  /** ISIN z mapy `ipo-subscriptions-map`. */
+  isin: string;
+  /** Cena emisyjna per akcja (z mapy). */
+  ipoPrice: number;
+  /** |zapisy.amount| = kwota zablokowana przy subskrypcji maksymalnej. */
+  subscriptionAmount: number;
+  /** zwrot.amount = nadpłata oddana przez brokera. */
+  refundAmount: number;
+  /** Currency (zawsze PLN dla Bossa IKE/IKZE). */
+  currency: string;
+  /** Seria akcji (opcjonalnie). */
+  series?: string;
+  /** URL źródłowy komunikatu ESPI. */
+  sourceUrl?: string;
+}
+
+/**
  * Marker dla operacji domykających otwartą pozycję (wykup certyfikatów, wezwanie skupu).
  * Parser emituje listę takich markerów ZAMIAST CashOperation — reconciliation w service
  * tworzy z nich syntetyczną sprzedaż, eliminując ryzyko double-count (deposit + synthetic sell).

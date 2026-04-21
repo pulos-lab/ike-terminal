@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
-import type { CashOperation, OperationType, RedemptionMarker, SkippedRow } from 'shared';
-import { lookupTenderPrice } from 'shared';
+import type { CashOperation, OperationType, RedemptionMarker, IpoSubscriptionMarker, SkippedRow } from 'shared';
+import { lookupTenderPrice, lookupIpoSubscription } from 'shared';
 import { parseNumber } from './utils.js';
 
 /**
@@ -22,6 +22,12 @@ export interface BossaOperationsParseResult {
    * deposit, raz jako wpływ ze sprzedaży).
    */
   redemptions: RedemptionMarker[];
+  /**
+   * Markery subskrypcji IPO — pary (Zapisy na akcje + Zwrot nadpłaty) dla emisji znajdujących
+   * się w `ipo-subscriptions-map`. Reconciliation tworzy z nich syntetyczną K transakcję
+   * z poprawnym qty (netto / ipoPrice), eliminując "pozycję znikąd" w portfelu.
+   */
+  ipoSubscriptions: IpoSubscriptionMarker[];
 }
 
 export function parseBossaOperations(csvContent: string, importBatch: string): BossaOperationsParseResult {
@@ -36,7 +42,7 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
   const hasDataCol = headers.some(h => h.toLowerCase() === 'data');
   const hasKwotaCol = headers.some(h => h.toLowerCase() === 'kwota');
   if (!hasDataCol || !hasKwotaCol) {
-    return { data: [], skipped: [], redemptions: [] };
+    return { data: [], skipped: [], redemptions: [], ipoSubscriptions: [] };
   }
 
   const operations: CashOperation[] = [];
@@ -87,10 +93,67 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
     }
   }
 
+  // Pre-scan IPO: parujemy `Zapisy na akcje X` z `Zwrot nadpłaty X` po normalizowanym tickerze.
+  // Normalizacja: "BIOCELTIX S.A." → "BIOCELTIX", "BIOCELTIX" → "BIOCELTIX".
+  // Dwa wiersze powinny mieć podobną datę (± kilka dni); rekord finalny używa daty Zwrotu
+  // jako `allocationDate` (wtedy akcje fizycznie trafiają na rachunek).
+  type IpoRowInfo = { rowNum: number; dateStr: string; amount: number; series?: string; rawTitle: string };
+  const ipoSubRows = new Map<string, IpoRowInfo>();
+  const ipoRefundRows = new Map<string, IpoRowInfo>();
+  for (const pr of parsedRows) {
+    const subMatch = pr.title.match(/^Zapisy na akcje\s+(.+?)(?:\s+SERIA\s+(\S+))?$/i);
+    if (subMatch) {
+      const normTicker = normalizeCompanyName(subMatch[1]);
+      ipoSubRows.set(normTicker, { rowNum: pr.rowNum, dateStr: pr.dateStr, amount: pr.amount, series: subMatch[2], rawTitle: pr.title });
+      continue;
+    }
+    // Zwrot nadpłaty — odróżniamy od "Zwrot nadpłaty - przekroczony limit IKE/IKZE" (nie IPO)
+    if (pr.title.startsWith('Zwrot nadpłaty') || pr.title.startsWith('Zwrot nadp\u0142aty')) {
+      if (pr.title.includes('przekroczony limit')) continue;
+      const refMatch = pr.title.match(/Zwrot nadp(?:łaty|\u0142aty)\s+(.+?)(?:\s+S\.A\.)?$/);
+      if (refMatch) {
+        const normTicker = normalizeCompanyName(refMatch[1]);
+        ipoRefundRows.set(normTicker, { rowNum: pr.rowNum, dateStr: pr.dateStr, amount: pr.amount, rawTitle: pr.title });
+      }
+    }
+  }
+
   const redemptions: RedemptionMarker[] = [];
+  const ipoSubscriptions: IpoSubscriptionMarker[] = [];
+  const ipoConsumedRows = new Set<number>(); // rowNum wierszy Zapisy/Zwrot skonsumowanych przez marker IPO
+
+  // Budowanie markerów IPO: dla każdej pary (Zapisy ↔ Zwrot) po normalizowanym tickerze
+  // sprawdź mapę. Jeśli znana — emituj marker i oznacz oba wiersze jako skonsumowane.
+  for (const [normTicker, sub] of ipoSubRows) {
+    const refund = ipoRefundRows.get(normTicker);
+    if (!refund) continue;
+    const entry = lookupIpoSubscription(normTicker, sub.dateStr);
+    if (!entry) continue; // Nieznane IPO — oba wiersze wpadną jako zwykły withdrawal/deposit
+    ipoSubscriptions.push({
+      subscriptionDate: sub.dateStr,
+      allocationDate: refund.dateStr,
+      ticker: entry.ticker,
+      isin: entry.isin,
+      ipoPrice: entry.ipoPrice,
+      subscriptionAmount: Math.abs(sub.amount),
+      refundAmount: refund.amount,
+      currency: 'PLN',
+      series: entry.series,
+      sourceUrl: entry.source,
+    });
+    ipoConsumedRows.add(sub.rowNum);
+    ipoConsumedRows.add(refund.rowNum);
+  }
 
   for (const pr of parsedRows) {
     const { rowNum, dateStr, title, details, amount, currency } = pr;
+
+    // 0. IPO subscription / refund pair skonsumowane przez marker → skip obu wierszy.
+    //    Cashflow reprezentuje syntetyczna K transakcja generowana przez reconciliation.
+    if (ipoConsumedRows.has(rowNum)) {
+      skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
+      continue;
+    }
 
     // 1. Wykup certyfikatów (kind='certificate') — all-or-nothing, reconciliation zamknie pełne openQty.
     const certMatch = title.match(/Wykup certyfikat(?:ów|\u00f3w)\s+(\S+)/);
@@ -180,7 +243,22 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
     });
   }
 
-  return { data: operations, skipped, redemptions };
+  return { data: operations, skipped, redemptions, ipoSubscriptions };
+}
+
+/**
+ * Normalizuj nazwę spółki z tytułu Bossy do klucza matchingu z mapą IPO.
+ * Usuwa suffiksy "S.A.", "SA", "S. A.", nadmiarowe spacje. Przykłady:
+ *   "BIOCELTIX S.A."  → "BIOCELTIX"
+ *   "BIOCELTIX"       → "BIOCELTIX"
+ *   "BIOCELTIX S. A." → "BIOCELTIX"
+ */
+function normalizeCompanyName(raw: string): string {
+  return raw
+    .trim()
+    .replace(/\s+S\.\s*A\.\s*$/i, '')
+    .replace(/\s+SA\s*$/i, '')
+    .trim();
 }
 
 /** Generate human-readable description from raw Bossa operation title */
