@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { Search } from 'lucide-react';
+import { Search, Info } from 'lucide-react';
 
 interface TxItem {
   id?: number;
@@ -28,6 +28,8 @@ interface TxItem {
   paymentCurrency?: string;
   category?: 'stock' | 'etf' | 'cfd';
   fxRate?: number;
+  /** Ustawiane przez reconciliation (Bossa wykupy certyfikatów / wezwania skupu) — źródło auto-generowanej sprzedaży. */
+  syntheticOrigin?: string;
 }
 
 export function TradesFeed() {
@@ -106,7 +108,25 @@ export function TradesFeed() {
                 <td className="py-2.5 pr-4 text-muted-foreground tabular-nums">
                   {formatDate(tx.date)}
                 </td>
-                <td className="py-2.5 pr-4 font-mono font-semibold">{tx.ticker}</td>
+                <td className="py-2.5 pr-4 font-mono font-semibold">
+                  <span className="inline-flex items-center gap-1">
+                    {tx.ticker}
+                    {tx.syntheticOrigin && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3 w-3 text-amber-500/80 cursor-help shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-[320px] text-xs leading-relaxed">
+                          <div className="font-semibold mb-1">Sprzedaż wygenerowana automatycznie</div>
+                          <div className="text-muted-foreground">{tx.syntheticOrigin}</div>
+                          <div className="text-muted-foreground mt-1">
+                            Brokerowy plik operacji zawierał wpływ z wezwania skupu / wykupu certyfikatu, ale bez informacji o liczbie sprzedanych akcji — wartości policzono na podstawie otwartej pozycji w historii.
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                  </span>
+                </td>
                 <td className="py-2.5 pr-4">
                   <CcyChip ccy={paymentCcy} />
                   {autoFx && (
@@ -157,6 +177,17 @@ export function TradesFeed() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 mb-0.5">
                 <span className="font-mono font-semibold text-sm">{tx.ticker}</span>
+                {tx.syntheticOrigin && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3 w-3 text-amber-500/80 cursor-help shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-[280px] text-xs leading-relaxed">
+                      <div className="font-semibold mb-1">Sprzedaż auto-wygenerowana</div>
+                      <div className="text-muted-foreground">{tx.syntheticOrigin}</div>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 {autoFx ? (
                   <Tooltip>
                     <TooltipTrigger asChild>

@@ -1,6 +1,27 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
+import { applyIsinAlias } from 'shared';
 import { parseNumber, parseDottedDate } from './utils.js';
+
+/**
+ * Bossa sufiksuje tickery instrumentów nietypowych:
+ * - `-C` — certyfikat strukturyzowany (np. `4MASS-C`, `HUUUGE-C`)
+ * - `-NC-FIX` — NewConnect z ceną fix (`ROBSGROUP-NC-FIX`, `DUALITY-NC-FIX`)
+ * - `-NC` — zwykły NewConnect (`PLATIGE-NC`)
+ * - `_IPO` — ticker pre-IPO (`HUUUGE_IPO`)
+ *
+ * Usuwamy sufiks, żeby resolver (Yahoo/Stooq) mógł trafić na realnie notowany papier.
+ * Oryginalny paperName zachowujemy w polu `paperName` transakcji — jest to ticker brokera
+ * wyświetlany w UI. Kanoniczny ticker idzie do resolvera pośrednio przez `paperName`,
+ * po stripowaniu sufiksów.
+ *
+ * UWAGA: NIE stripujemy dla zwykłych tickerów (nie mają tych sufiksów) — regex musi być ścisły.
+ */
+const SUFFIX_RE = /(-NC-FIX|-NC|-C|_IPO)$/;
+
+export function canonicalizeBossaTicker(paperName: string): string {
+  return paperName.replace(SUFFIX_RE, '');
+}
 
 /**
  * Parse Bossa transaction CSV (hisPW.csv / hisPW-2.csv format)
@@ -58,10 +79,15 @@ export function parseBossaTransactions(csvContent: string, importBatch: string):
 
     const isoDate = parseDottedDate(dateStr);
 
+    // Zastosuj mapę aliasów ISIN jeśli (isin, paperName) to stary identyfikator papieru,
+    // który zmienił ISIN/ticker w wyniku zdarzenia korporacyjnego (np. HUUUGE PL→US
+    // redomiciliacja). Dzięki temu FIFO i ticker_map operują na jednym ISIN-ie.
+    const { isin: canonicalIsin, paperName: canonicalPaperName } = applyIsinAlias(isin, paperName || '');
+
     transactions.push({
       date: isoDate,
-      paperName: paperName || '',
-      isin,
+      paperName: canonicalPaperName,
+      isin: canonicalIsin,
       quantity: Math.round(quantity),
       side,
       price,

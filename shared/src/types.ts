@@ -46,6 +46,12 @@ export interface Transaction {
   rollover?: number;   // CFD: rollover cost (from Closed Positions sheet)
   cfdPositionId?: string; // CFD: unique position ID for FIFO grouping (prevents mixing overlapping positions)
   cfdGrossProfit?: number; // CFD: gross profit from XTB (includes contract multiplier + FX, before fees)
+  /**
+   * Jeśli transakcja została wygenerowana automatycznie (reconciliation), tu trafia ludzki
+   * opis źródła — np. "Wykup w ofercie skupu GAMIVO" albo "Wykup certyfikatów INTLGLD46805".
+   * Dla zwykłych K/S z pliku brokera: undefined. UI pokazuje ikonę ℹ i tooltip.
+   */
+  syntheticOrigin?: string;
 }
 
 // ============ Cash Operation Types ============
@@ -308,7 +314,9 @@ export type SkipReason =
   | 'zero_amount' | 'settlement_record'
   | 'summary_row' | 'unparseable_comment' | 'close_trade_entry'
   | 'missing_description' | 'unmatched_fx_credit'
-  | 'duplicate';
+  | 'duplicate'
+  | 'redemption_reconciled' // Wykup certyfikatów / Rozliczenie oferty — obsłużone przez reconciliation jako synthetic sell
+  | 'unknown_operation_type'; // Nierozpoznany tytuł operacji — wrzucone jako 'other', ale raportowane w warnings
 
 export interface SkippedRow {
   row: number;
@@ -319,6 +327,61 @@ export interface SkippedRow {
 export interface ParseResult<T> {
   data: T[];
   skipped: SkippedRow[];
+}
+
+/**
+ * Marker subskrypcji IPO z nadpłatą — Bossa zapisuje parę wierszy w pliku operacji:
+ *   Zapisy na akcje X SERIA Y          -MAX_AMOUNT (withdrawal, subskrypcja maksymalna)
+ *   Zwrot nadpłaty X                   +REFUND      (deposit, nadpłata po alokacji)
+ * Netto koszt = |zapisy| − refund. Akcje NIE pojawiają się jako K w hisPW.
+ * Reconciliation tworzy syntetyczną K na dacie `allocationDate` (data Zwrotu nadpłaty).
+ */
+export interface IpoSubscriptionMarker {
+  /** Data wiersza `Zapisy na akcje` (ISO YYYY-MM-DD). */
+  subscriptionDate: string;
+  /** Data wiersza `Zwrot nadpłaty` — używana jako data syntetycznej K transakcji. */
+  allocationDate: string;
+  /** Ticker z pliku Bossy (może mieć suffix `_IPO`). */
+  ticker: string;
+  /** ISIN z mapy `ipo-subscriptions-map`. */
+  isin: string;
+  /** Cena emisyjna per akcja (z mapy). */
+  ipoPrice: number;
+  /** |zapisy.amount| = kwota zablokowana przy subskrypcji maksymalnej. */
+  subscriptionAmount: number;
+  /** zwrot.amount = nadpłata oddana przez brokera. */
+  refundAmount: number;
+  /** Currency (zawsze PLN dla Bossa IKE/IKZE). */
+  currency: string;
+  /** Seria akcji (opcjonalnie). */
+  series?: string;
+  /** URL źródłowy komunikatu ESPI. */
+  sourceUrl?: string;
+}
+
+/**
+ * Marker dla operacji domykających otwartą pozycję (wykup certyfikatów, wezwanie skupu).
+ * Parser emituje listę takich markerów ZAMIAST CashOperation — reconciliation w service
+ * tworzy z nich syntetyczną sprzedaż, eliminując ryzyko double-count (deposit + synthetic sell).
+ */
+export interface RedemptionMarker {
+  date: string; // ISO 8601
+  ticker: string;
+  amount: number; // brutto cashflow z wykupu/wezwania
+  commission: number; // sparowana prowizja (np. `Rozliczenie oferty - prowizja TICKER`)
+  description: string;
+  currency: string;
+  source: 'bossa'; // na razie tylko Bossa; jeśli DEGIRO dostanie analogiczny wzorzec — rozszerzyć
+  /**
+   * Typ wydarzenia:
+   * - 'certificate' — wykup certyfikatów (all-or-nothing, reconciliation zamyka pełne openQty)
+   * - 'tender'      — wezwanie skupu (qty = amount / tenderPrice; wymaga ceny z mapy)
+   */
+  kind: 'certificate' | 'tender';
+  /** Cena per akcja (PLN) — wymagana dla `kind === 'tender'`, niewykorzystywana dla 'certificate'. */
+  tenderPrice?: number;
+  /** URL źródłowy komunikatu ESPI (dla 'tender' z mapy) — pokazywany w tooltipie. */
+  sourceUrl?: string;
 }
 
 // ============ API Response Types ============
@@ -369,7 +432,26 @@ export interface ImportResult {
   skipped?: SkippedRow[];
   duplicatesSkipped?: number;
   orphanedSells?: OrphanedSell[];
+  /** Parser-level warnings (np. XTB missing Closed Positions sheet) */
   warnings?: string[];
+  /** Cross-file validation warnings from the bulk reconciliation step */
+  crossFileWarnings?: string[];
+  /** DEGIRO: liczba transakcji, do których zaaplikowano stamp duty / french tax z pliku Account */
+  taxesApplied?: number;
+  /** Bossa: liczba syntetycznych sprzedaży wygenerowanych przez reconcileRedemptions */
+  syntheticSells?: number;
+  /** Detected broker for transactions file */
+  detectedSource?: string;
+  /** Detected broker for operations file (bulk import, może się różnić) */
+  detectedOperationsSource?: string;
+}
+
+/** Result of POST /api/import/detect — used by UI to decide if second dropzone is needed */
+export interface DetectResult {
+  broker: BrokerType | null;
+  fileRole: 'transactions' | 'operations' | 'unknown';
+  /** Whether this broker requires an operations file for full import */
+  requiresOperationsFile: boolean;
 }
 
 // ============ Portfolio Management ============

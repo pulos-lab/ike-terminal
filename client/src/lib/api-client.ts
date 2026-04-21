@@ -182,17 +182,25 @@ export const api = {
   // Import
   getImportStatus: () => request<any>('/import/status'),
 
-  uploadTransactions: (file: File, broker: string = 'auto') => {
+  /**
+   * Klasyfikacja pliku — zwraca wykryty broker + rolę (transactions/operations).
+   * UI używa tego żeby zdecydować, czy drugie pole (operacje) jest potrzebne.
+   */
+  detectImportFile: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('broker', broker);
-    return uploadFile('/import/transactions', formData);
+    return uploadFile('/import/detect', formData) as Promise<import('shared').DetectResult>;
   },
 
-  uploadOperations: (file: File) => {
+  /**
+   * Atomowy import — jeden request, oba pliki naraz. Zastępuje stare uploadTransactions
+   * i uploadOperations. Backend robi wszystko w jednej transakcji SQLite.
+   */
+  bulkImport: (transactionsFile: File | null, operationsFile: File | null) => {
     const formData = new FormData();
-    formData.append('file', file);
-    return uploadFile('/import/operations', formData);
+    if (transactionsFile) formData.append('transactions', transactionsFile);
+    if (operationsFile) formData.append('operations', operationsFile);
+    return uploadFile('/import/bulk', formData);
   },
 
   // Bug reports
