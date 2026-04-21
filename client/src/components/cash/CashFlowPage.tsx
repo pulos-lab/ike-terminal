@@ -238,8 +238,8 @@ export function CashFlowPage() {
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
                 <Tooltip
-                  formatter={(value?: number, name?: string) => [
-                    formatPLN(value ?? 0),
+                  formatter={(value, name) => [
+                    formatPLN(Number(value) || 0),
                     name === 'netCashFlow' ? 'Wpłaty netto' : 'Wartość portfela',
                   ]}
                   labelFormatter={(label) => `Data: ${label}`}

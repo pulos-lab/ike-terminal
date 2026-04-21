@@ -273,7 +273,7 @@ export function DividendsPage() {
                       }}
                       labelStyle={{ color: 'var(--popover-foreground)', fontWeight: 600 }}
                       itemStyle={{ color: 'var(--primary)' }}
-                      formatter={(v: number | undefined) => [formatPLN(v ?? 0), 'Dywidendy']}
+                      formatter={(v) => [formatPLN(Number(v) || 0), 'Dywidendy']}
                     />
                     <Bar dataKey="amount" fill="var(--primary)" radius={[4, 4, 0, 0]} />
                   </BarChart>
