@@ -238,10 +238,17 @@ async function resolveIsin(
   // Strategy 1: Yahoo search by ISIN (exact identifier — reliable)
   const byIsin = await searchYahoo(isin);
   if (byIsin.length > 0) {
-    const hit = isPolishTicker
-      ? byIsin.find(r => r.symbol.endsWith('.WA')) || byIsin[0]
-      : byIsin[0];
-    return await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
+    if (isPolishTicker) {
+      // Dla polskich akcji preferujemy .WA. Jeśli Yahoo wyrzuci w odpowiedzi TYLKO zagraniczne
+      // listingi (np. TSGAMES → `1HQ.SG` Stuttgart), NIE akceptujemy ich od razu — niżej
+      // Strategy 2 (Stooq) znajdzie TEN.WA, a dopiero potem wracamy do zagranicznego fallbacku.
+      const waHit = byIsin.find(r => r.symbol.endsWith('.WA'));
+      if (waHit) {
+        return await buildEntry(isin, waHit.symbol, waHit.name, waHit.exchange, paperName, txCurrency);
+      }
+    } else {
+      return await buildEntry(isin, byIsin[0].symbol, byIsin[0].name, byIsin[0].exchange, paperName, txCurrency);
+    }
   }
 
   // Strategy 2: Stooq check for real Polish ISINs BEFORE Yahoo name search.
@@ -315,8 +322,26 @@ async function resolveIsin(
     for (const variant of searchVariants) {
       const byName = await searchYahoo(variant);
       if (byName.length > 0) {
-        return await buildEntry(isin, byName[0].symbol, byName[0].name, byName[0].exchange, paperName, txCurrency);
+        if (isPolishTicker) {
+          const waHit = byName.find(r => r.symbol.endsWith('.WA'));
+          if (waHit) {
+            return await buildEntry(isin, waHit.symbol, waHit.name, waHit.exchange, paperName, txCurrency);
+          }
+        } else {
+          return await buildEntry(isin, byName[0].symbol, byName[0].name, byName[0].exchange, paperName, txCurrency);
+        }
       }
+    }
+  }
+
+  // Ostatnia deska ratunku: jeśli dla polskiej akcji Yahoo nie zwrócił .WA ani Stooq nic
+  // nie znalazł, ALE mamy gdzieś wynik zagraniczny z Yahoo (np. TSGAMES → 1HQ.SG) — użyjmy
+  // go zamiast zwracać null. Wymaga to ponownego searchYahoo po ISIN (pierwszy byIsin poszedł
+  // out of scope w try/catch powyżej).
+  if (isPolishTicker) {
+    const byIsinRetry = await searchYahoo(isin);
+    if (byIsinRetry.length > 0) {
+      return await buildEntry(isin, byIsinRetry[0].symbol, byIsinRetry[0].name, byIsinRetry[0].exchange, paperName, txCurrency);
     }
   }
 
