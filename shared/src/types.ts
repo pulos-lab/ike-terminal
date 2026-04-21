@@ -342,6 +342,16 @@ export interface RedemptionMarker {
   description: string;
   currency: string;
   source: 'bossa'; // na razie tylko Bossa; jeśli DEGIRO dostanie analogiczny wzorzec — rozszerzyć
+  /**
+   * Typ wydarzenia:
+   * - 'certificate' — wykup certyfikatów (all-or-nothing, reconciliation zamyka pełne openQty)
+   * - 'tender'      — wezwanie skupu (qty = amount / tenderPrice; wymaga ceny z mapy)
+   */
+  kind: 'certificate' | 'tender';
+  /** Cena per akcja (PLN) — wymagana dla `kind === 'tender'`, niewykorzystywana dla 'certificate'. */
+  tenderPrice?: number;
+  /** URL źródłowy komunikatu ESPI (dla 'tender' z mapy) — pokazywany w tooltipie. */
+  sourceUrl?: string;
 }
 
 // ============ API Response Types ============

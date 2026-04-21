@@ -1,5 +1,6 @@
 import Papa from 'papaparse';
 import type { CashOperation, OperationType, RedemptionMarker, SkippedRow } from 'shared';
+import { lookupTenderPrice } from 'shared';
 import { parseNumber } from './utils.js';
 
 /**
@@ -70,27 +71,79 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
     parsedRows.push({ rowNum, dateStr, title, details, amount, currency });
   }
 
+  // Pre-scan: zbierz prowizje wezwań skupu parowane po (ticker, date) — żeby kolejność wierszy
+  // w CSV (prowizja vs główny wiersz) nie wpływała na wynik.
+  const offerCommissions = new Map<string, number>();
+  const offerMainRows = new Map<string, { rowNum: number; amount: number }>();
+  for (const pr of parsedRows) {
+    const prowizjaMatch = pr.title.match(/Rozliczenie oferty - prowizja\s+(\S+)/);
+    if (prowizjaMatch) {
+      offerCommissions.set(`${prowizjaMatch[1]}|${pr.dateStr}`, Math.abs(pr.amount));
+      continue;
+    }
+    const mainMatch = pr.title.match(/^Rozliczenie oferty\s+(\S+)/);
+    if (mainMatch) {
+      offerMainRows.set(`${mainMatch[1]}|${pr.dateStr}`, { rowNum: pr.rowNum, amount: pr.amount });
+    }
+  }
+
   const redemptions: RedemptionMarker[] = [];
 
   for (const pr of parsedRows) {
     const { rowNum, dateStr, title, details, amount, currency } = pr;
 
-    const redemptionKind = detectRedemption(title);
-    if (redemptionKind) {
-      // Wykup certyfikatów → redemption marker, NIE CashOperation.
-      // Cashflow tego wpływu pochodzi wyłącznie z syntetycznej sprzedaży, którą
-      // reconciliation wygeneruje na całości openQty (certyfikat = all-or-nothing przy wykupie).
+    // 1. Wykup certyfikatów (kind='certificate') — all-or-nothing, reconciliation zamknie pełne openQty.
+    const certMatch = title.match(/Wykup certyfikat(?:ów|\u00f3w)\s+(\S+)/);
+    if (certMatch) {
       redemptions.push({
         date: `${dateStr}T00:00:00`,
-        ticker: redemptionKind.ticker,
+        ticker: certMatch[1],
         amount,
-        commission: 0, // wykupy certyfikatów nie mają siostrzanej prowizji w Bossa
+        commission: 0,
         description: humanizeDescription(title),
         currency,
         source: 'bossa',
+        kind: 'certificate',
       });
       skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
       continue;
+    }
+
+    // 2. Rozliczenie oferty (wezwanie skupu) — sprawdź mapę cen.
+    const tenderMainMatch = title.match(/^Rozliczenie oferty\s+(\S+)/);
+    if (tenderMainMatch) {
+      const ticker = tenderMainMatch[1];
+      const entry = lookupTenderPrice(ticker, dateStr);
+      if (entry) {
+        // Znane wezwanie: emit RedemptionMarker, pair z prowizją; nie wstawiamy deposit.
+        const commission = offerCommissions.get(`${ticker}|${dateStr}`) ?? 0;
+        redemptions.push({
+          date: `${dateStr}T00:00:00`,
+          ticker,
+          amount,
+          commission,
+          description: humanizeDescription(title),
+          currency,
+          source: 'bossa',
+          kind: 'tender',
+          tenderPrice: entry.pricePerShare,
+          sourceUrl: entry.source,
+        });
+        skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
+        continue;
+      }
+      // Nieznane wezwanie: wpadnie niżej do classifyOperation → deposit, service doda warning.
+    }
+
+    // 3. Prowizja od Rozliczenie oferty dla ZNANEGO wezwania → skip (zużyta przy markerze).
+    // Dla NIEZNANEGO wezwania → spada do classifyOperation jako fee.
+    const prowizjaMatch = title.match(/Rozliczenie oferty - prowizja\s+(\S+)/);
+    if (prowizjaMatch) {
+      const mainRow = offerMainRows.get(`${prowizjaMatch[1]}|${dateStr}`);
+      if (mainRow && lookupTenderPrice(prowizjaMatch[1], dateStr)) {
+        skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
+        continue;
+      }
     }
 
     const operationType = classifyOperation(title);
@@ -128,23 +181,6 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
   }
 
   return { data: operations, skipped, redemptions };
-}
-
-/**
- * Wykryj czy wiersz to marker redemption — tylko dla wykupów certyfikatów.
- *
- * WEZWANIA SKUPU (Rozliczenie oferty) celowo NIE są tu — nie wiemy z CSV ile akcji zostało
- * sprzedanych (tylko kwotę netto), a arbitralne domknięcie pełnej pozycji over-closes gdy tender
- * był partial (typowe dla dużych wezwań, np. MOSTALZAB 691k). Dlatego wezwania idą standardową
- * ścieżką jako `deposit` + warning z prośbą o ręczne dodanie sprzedaży.
- *
- * Wykupy certyfikatów natomiast są zawsze 100% (emitent wykupuje wszystkie papiery na maturity),
- * więc tam synthetic sell z pełnym openQty jest poprawny.
- */
-function detectRedemption(title: string): { ticker: string; kind: 'certificate' } | null {
-  const certMatch = title.match(/Wykup certyfikat(?:ów|\u00f3w)\s+(\S+)/);
-  if (certMatch) return { ticker: certMatch[1], kind: 'certificate' };
-  return null;
 }
 
 /** Generate human-readable description from raw Bossa operation title */

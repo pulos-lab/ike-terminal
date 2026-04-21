@@ -392,17 +392,22 @@ async function importBinary(file: ClassifiedFile, importBatch: string, pid: stri
   };
 }
 
-// ─── Bossa reconciliation: wykupy certyfikatów ──────────────────────────────
+// ─── Bossa reconciliation: wykupy certyfikatów + wezwania skupu ze znaną ceną ─
 
 /**
- * Wykup certyfikatów (structured products, np. INTL*) — emitent wykupuje wszystkie
- * wyemitowane certyfikaty po jednolitej cenie (NAV na datę wygaśnięcia / maturity).
- * To **all-or-nothing** — nie da się częściowo zostać z pozycją, więc synthetic sell
- * zamyka pełen openQty bezpiecznie.
+ * Obsługuje dwa rodzaje redemption markers:
  *
- * UWAGA: wezwania skupu (`Rozliczenie oferty`) NIE przechodzą przez ten flow — tam nie
- * wiemy ile akcji user sprzedał (CSV podaje tylko kwotę) i user mógł zostawić resztę.
- * Te trafiają jako `deposit` + emitujemy warning z prośbą o ręczne dodanie sprzedaży.
+ * 1. `kind: 'certificate'` (Wykup certyfikatów INTL*): emitent wykupuje wszystkie wyemitowane
+ *    certyfikaty po jednolitej cenie (NAV na datę wygaśnięcia). All-or-nothing, więc synthetic
+ *    sell zamyka pełen openQty bezpiecznie. Cena = amount / openQty.
+ *
+ * 2. `kind: 'tender'` (Rozliczenie oferty — wezwanie skupu ze znaną ceną): parser znalazł
+ *    wpis w `tender-offers-map.ts`, ma `tenderPrice`. Liczba akcji = `round(amount / tenderPrice)`.
+ *    Prowizja z siostrzanego `Rozliczenie oferty - prowizja` jest przepisana na `Transaction.commission`.
+ *
+ * Wezwania spoza mapy NIE przechodzą tu — parser zostawia je jako deposit + fee, a service
+ * wywołuje `warnAboutTenderOffers` (niżej) żeby user zobaczył prośbę o ręczne dodanie sprzedaży
+ * lub o dopisanie wezwania do `tender-offers-map.ts`.
  *
  * Zwraca liczbę dodanych syntetycznych sprzedaży.
  */
@@ -431,22 +436,48 @@ function reconcileBossaRedemptions(
       continue;
     }
 
-    const price = Math.round((red.amount / openQty) * 100) / 100;
+    let qty: number;
+    let price: number;
+    let commission: number;
+    let originTag: string;
+
+    if (red.kind === 'tender' && red.tenderPrice) {
+      // Wezwanie skupu ze znaną ceną — qty liczone po cenie z mapy.
+      qty = Math.round(red.amount / red.tenderPrice);
+      if (qty <= 0) {
+        warnings.push(`Bossa: ${red.description} — wyliczona ilość akcji <= 0 (amount=${red.amount}, tenderPrice=${red.tenderPrice}); pomijam`);
+        continue;
+      }
+      if (qty > openQty) {
+        warnings.push(`Bossa: ${red.description} — wyliczono ${qty} szt, ale otwarta pozycja to tylko ${openQty}. Sprawdź czy pliki są kompletne.`);
+      }
+      price = red.tenderPrice;
+      commission = red.commission;
+      originTag = `${red.description} — ${qty} szt @ ${price.toFixed(2)} ${red.currency} (cena z tender-offers-map${red.sourceUrl ? `, źródło: ${red.sourceUrl}` : ''})`;
+    } else {
+      // Wykup certyfikatów — zamknij pełen openQty.
+      qty = openQty;
+      price = Math.round((red.amount / openQty) * 100) / 100;
+      commission = 0;
+      originTag = `${red.description} — ${qty} szt @ ${price.toFixed(2)} ${red.currency} (pełne zamknięcie pozycji przez emitenta)`;
+    }
+
+    const netTotal = red.amount - commission;
     const syntheticSell: Transaction = {
       date: red.date,
       paperName: red.ticker,
       isin,
-      quantity: openQty,
+      quantity: qty,
       side: 'S',
       price,
       value: red.amount,
-      commission: 0,
-      total: red.amount,
+      commission,
+      total: netTotal,
       currency: red.currency,
       paymentCurrency: 'PLN',
       source: 'bossa',
       importBatch,
-      syntheticOrigin: `${red.description} — ${openQty} szt @ ${price.toFixed(2)} ${red.currency} (pełne zamknięcie pozycji przez emitenta)`,
+      syntheticOrigin: originTag,
     };
     const r = insertTransactionsWithDedup([syntheticSell], pid);
     added += r.inserted;
