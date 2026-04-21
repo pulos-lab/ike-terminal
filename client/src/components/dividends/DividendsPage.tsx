@@ -263,7 +263,18 @@ export function DividendsPage() {
                   <BarChart data={yearlyData}>
                     <XAxis dataKey="year" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: number | undefined) => formatPLN(v ?? 0)} />
+                    <Tooltip
+                      cursor={{ fill: 'var(--primary)', fillOpacity: 0.1 }}
+                      contentStyle={{
+                        backgroundColor: 'var(--popover)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 8,
+                        fontSize: 12,
+                      }}
+                      labelStyle={{ color: 'var(--popover-foreground)', fontWeight: 600 }}
+                      itemStyle={{ color: 'var(--primary)' }}
+                      formatter={(v: number | undefined) => [formatPLN(v ?? 0), 'Dywidendy']}
+                    />
                     <Bar dataKey="amount" fill="var(--primary)" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
