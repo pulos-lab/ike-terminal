@@ -192,7 +192,16 @@ export function PortfolioPage() {
                             );
                           })()}
                         </TableCell>
-                        <TableCell className="text-muted-foreground">{pos.paperName}</TableCell>
+                        <TableCell className="text-muted-foreground max-w-[280px]">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="block truncate cursor-help">{pos.paperName}</span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[420px] text-xs">
+                              {pos.paperName}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TableCell>
                         <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
                         {colVis.avgPrice && (
                           <TableCell className="text-right">{formatNumber(pos.avgBuyPrice)}</TableCell>
