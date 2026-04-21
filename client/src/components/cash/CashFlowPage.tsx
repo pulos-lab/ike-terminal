@@ -15,32 +15,9 @@ import { formatPLN, formatDate } from '@/lib/formatters';
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { ChevronRight, ChevronDown, Loader2, Plus, Pencil, Trash2, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
 
-const IKE_LIMITS: Record<number, number> = {
-  2021: 15777,
-  2022: 17766,
-  2023: 20805,
-  2024: 23472,
-  2025: 26019,
-  2026: 28260,
-};
-
-const IKZE_LIMITS: Record<number, number> = {
-  2021: 6310.80,
-  2022: 7106.40,
-  2023: 8322.00,
-  2024: 9388.80,
-  2025: 10407.60,
-  2026: 11305.20,
-};
-
-const IKZE_DG_LIMITS: Record<number, number> = {
-  2021: 9466.20,
-  2022: 10659.60,
-  2023: 12483.00,
-  2024: 14083.20,
-  2025: 15611.40,
-  2026: 16957.80,
-};
+// Historyczne limity IKE/IKZE są centralne w shared/src/ike-ikze-limits.ts (2012–2026).
+// Trzymaj tam wszystkie edycje — ten komponent jest tylko konsumentem.
+import { IKE_LIMITS, IKZE_LIMITS, IKZE_DG_LIMITS } from 'shared';
 
 interface CashEntry {
   id: number;
