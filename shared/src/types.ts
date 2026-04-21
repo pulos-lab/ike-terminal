@@ -97,6 +97,8 @@ export interface Position {
   dailyChangePct: number | null;
   category?: InstrumentCategory;
   buyLots?: OpenBuyLot[];
+  /** true when price comes from last transaction, not live market data */
+  priceManual?: boolean;
 }
 
 export interface ClosedTradeFee {

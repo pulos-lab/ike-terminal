@@ -1,17 +1,75 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { randomUUID } from 'crypto';
-import type { BrokerType, CashOperation, SkippedRow } from 'shared';
+import type { BrokerType, CashOperation, Transaction, SkippedRow } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
-import { parseBossaOperations } from '../parsers/bossa-operations.js';
+import { parseBossaOperations, parseCertificateTicker } from '../parsers/bossa-operations.js';
 import { detectBroker, getParserById, detectBinaryBroker, getBinaryParserById, PARSER_REGISTRY } from '../parsers/registry.js';
-import { insertTransactionsWithDedup, getTransactionsCount, clearTransactions, getLastImportDate, getTransactionsByIsin, updateTransaction, detectOrphanedSells } from '../db/transactions-repo.js';
-import { insertOperationsWithDedup, getOperationsCount, clearOperations } from '../db/operations-repo.js';
-import { seedTickerMap, findIsinByName } from '../db/ticker-map-repo.js';
+import { insertTransactionsWithDedup, getAllTransactions, getTransactionsCount, clearTransactions, getLastImportDate, getTransactionsByIsin, updateTransaction, detectOrphanedSells } from '../db/transactions-repo.js';
+import { insertOperationsWithDedup, getOperationsCount, clearOperations, getAllOperations } from '../db/operations-repo.js';
+import { seedTickerMap, findIsinByName, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from '../services/isin-resolver.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 
 const router = Router();
+
+/**
+ * Reconcile certificate buyouts — idempotent, safe to call after either import path.
+ * Matches "Wykup certyfikatów" operations with buy transactions and creates synthetic sells.
+ */
+function reconcileCertificateBuyouts(pid: string, importBatch: string): number {
+  const allOps = getAllOperations(pid);
+  const buyouts = allOps.filter(op => op.description.includes('Wykup certyfikatów'));
+  if (buyouts.length === 0) return 0;
+
+  const allTx = getAllTransactions(pid);
+  let syntheticSells = 0;
+
+  for (const op of buyouts) {
+    const ticker = parseCertificateTicker(op.description);
+    if (!ticker) continue;
+
+    const matchingTx = allTx.filter(t => t.paperName === ticker);
+    if (matchingTx.length === 0) continue; // Transactions not yet imported
+
+    const isin = matchingTx[0].isin;
+    const bought = matchingTx.filter(t => t.side === 'K').reduce((s, t) => s + t.quantity, 0);
+    const sold = matchingTx.filter(t => t.side === 'S').reduce((s, t) => s + t.quantity, 0);
+    const openQty = bought - sold;
+    if (openQty <= 0) continue; // Already closed
+
+    const price = Math.round((op.amount / openQty) * 100) / 100;
+    const syntheticSell: Transaction = {
+      date: op.date,
+      paperName: ticker,
+      isin,
+      quantity: openQty,
+      side: 'S',
+      price,
+      value: op.amount,
+      commission: 0,
+      total: op.amount,
+      currency: op.currency,
+      paymentCurrency: 'PLN',
+      source: 'bossa',
+      importBatch,
+    };
+    const result = insertTransactionsWithDedup([syntheticSell], pid);
+    syntheticSells += result.inserted;
+
+    // Ensure ticker_map entry exists for the certificate
+    upsertTickerMapEntry({
+      isin,
+      ticker,
+      name: ticker,
+      exchange: 'GPW',
+      currency: 'PLN',
+      priceSource: 'stooq',
+    }, pid);
+  }
+
+  return syntheticSells;
+}
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 
@@ -215,6 +273,25 @@ router.post('/transactions', upload.single('file'), asyncHandler(async (req, res
   const { inserted, duplicates } = insertTransactionsWithDedup(transactions, pid);
   const { resolved, unresolved } = await resolveUnknownIsins(transactions, pid);
 
+  // Create fallback ticker_map entries for unresolved ISINs with open positions
+  for (const u of unresolved) {
+    const isinTxs = transactions.filter(t => t.isin === u.isin);
+    const net = isinTxs.reduce((sum, t) => sum + (t.side === 'K' ? t.quantity : -t.quantity), 0);
+    if (Math.abs(net) > 0.001) {
+      upsertTickerMapEntry({
+        isin: u.isin,
+        ticker: u.paperName,
+        name: u.paperName,
+        exchange: 'GPW',
+        currency: 'PLN',
+        priceSource: 'stooq',
+      }, pid);
+    }
+  }
+
+  // Reconcile certificate buyouts (works regardless of import order)
+  reconcileCertificateBuyouts(pid, importBatch);
+
   // Filter unresolved: skip ISINs with net 0 shares (fully closed positions)
   const unresolvedWithOpenPositions = unresolved.filter(u => {
     const isinTxs = transactions.filter(t => t.isin === u.isin);
@@ -276,6 +353,9 @@ router.post('/operations', upload.single('file'), asyncHandler((req, res) => {
 
   const pid = req.portfolioId;
   const { inserted, duplicates } = insertOperationsWithDedup(operations, pid);
+
+  // Reconcile certificate buyouts (works regardless of import order)
+  reconcileCertificateBuyouts(pid, importBatch);
 
   // Apply transaction-specific taxes to matching transactions (DEGIRO)
   let taxesApplied = 0;

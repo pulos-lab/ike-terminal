@@ -200,6 +200,9 @@ export function PortfolioPage() {
                         <TableCell className="text-right">
                           <span className="tabular-nums">{pos.currentPrice ? formatNumber(pos.currentPrice) : '—'}</span>
                           <CcyChip ccy={pos.currency} className="ml-1.5" />
+                          {pos.priceManual && (
+                            <span className="ml-1 text-[10px] text-muted-foreground/60" title="Cena z ostatniej transakcji — instrument bez aktualnych notowań">⚠</span>
+                          )}
                         </TableCell>
                         {colVis.dailyChange && (
                           <TableCell className="text-right">
