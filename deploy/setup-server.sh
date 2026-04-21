@@ -6,8 +6,8 @@ set -euo pipefail
 echo "=== Creating app user ==="
 adduser --disabled-password --gecos "" ike-terminal || true
 
-echo "=== Installing Node.js 22 LTS ==="
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+echo "=== Installing Node.js 24 LTS ==="
+curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 apt-get install -y nodejs build-essential sqlite3
 
 echo "=== Installing Caddy ==="
