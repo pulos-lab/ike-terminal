@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import type { CashOperation, OperationType, ParseResult, SkippedRow } from 'shared';
+import type { CashOperation, OperationType, RedemptionMarker, SkippedRow } from 'shared';
 import { parseNumber } from './utils.js';
 
 /**
@@ -11,7 +11,19 @@ import { parseNumber } from './utils.js';
 /** Valid date format: YYYY-MM-DD */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-export function parseBossaOperations(csvContent: string, importBatch: string): ParseResult<CashOperation> {
+export interface BossaOperationsParseResult {
+  data: CashOperation[];
+  skipped: SkippedRow[];
+  /**
+   * Markery domykające pozycje (Wykup certyfikatów, Rozliczenie oferty).
+   * Nie są zapisywane jako CashOperation — reconciliation w import-service tworzy z nich
+   * syntetyczną sprzedaż. Dzięki temu to samo cashflow nie jest liczone dwa razy (raz jako
+   * deposit, raz jako wpływ ze sprzedaży).
+   */
+  redemptions: RedemptionMarker[];
+}
+
+export function parseBossaOperations(csvContent: string, importBatch: string): BossaOperationsParseResult {
   const result = Papa.parse(csvContent.trim(), {
     delimiter: ';',
     header: true,
@@ -23,41 +35,119 @@ export function parseBossaOperations(csvContent: string, importBatch: string): P
   const hasDataCol = headers.some(h => h.toLowerCase() === 'data');
   const hasKwotaCol = headers.some(h => h.toLowerCase() === 'kwota');
   if (!hasDataCol || !hasKwotaCol) {
-    return { data: [], skipped: [] };
+    return { data: [], skipped: [], redemptions: [] };
   }
 
   const operations: CashOperation[] = [];
   const skipped: SkippedRow[] = [];
 
+  // Dwa etapy: najpierw zbieramy wszystkie wiersze (potrzebujemy parować prowizje wezwań skupu),
+  // potem emitujemy CashOperation + RedemptionMarker.
+  type ParsedRow = {
+    rowNum: number;
+    dateStr: string;
+    title: string;
+    details: string;
+    amount: number;
+    currency: string;
+  };
+  const parsedRows: ParsedRow[] = [];
+
   const rows = result.data as any[];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    const rowNum = i + 2; // 1-based, +1 for header
+    const rowNum = i + 2;
     const dateStr = row['data']?.trim();
     const title = row['tytuł operacji']?.trim() || row['tytu\u0142 operacji']?.trim() || '';
     const details = row['szczegóły']?.trim() || row['szczeg\u00f3\u0142y']?.trim() || '';
     const amount = parseNumber(row['kwota']);
-    const currency = row['waluta']?.trim();
+    const currency = row['waluta']?.trim() || 'PLN';
 
     if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date', paperName: title }); continue; }
     if (!DATE_RE.test(dateStr)) { skipped.push({ row: rowNum, reason: 'invalid_date', paperName: title }); continue; }
     if (amount === 0) { skipped.push({ row: rowNum, reason: 'zero_amount', paperName: title }); continue; }
 
-    const operationType = classifyOperation(title, amount);
+    parsedRows.push({ rowNum, dateStr, title, details, amount, currency });
+  }
 
-    // Skip transaction settlement records — they belong to transactions, not cash operations
-    if (operationType === 'skip') { skipped.push({ row: rowNum, reason: 'settlement_record', paperName: title }); continue; }
+  // Parowanie prowizji wezwań skupu: `Rozliczenie oferty - prowizja TICKER` z `Rozliczenie oferty TICKER`
+  // na tę samą datę. Klucz: ticker+date.
+  const offerCommissions = new Map<string, { amount: number; consumed: boolean }>();
+  for (const pr of parsedRows) {
+    if (!pr.title.includes('Rozliczenie oferty - prowizja')) continue;
+    const tickerMatch = pr.title.match(/Rozliczenie oferty - prowizja\s+(\S+)/);
+    if (!tickerMatch) continue;
+    const key = `${tickerMatch[1]}|${pr.dateStr}`;
+    offerCommissions.set(key, { amount: Math.abs(pr.amount), consumed: false });
+  }
 
+  const redemptions: RedemptionMarker[] = [];
+
+  for (const pr of parsedRows) {
+    const { rowNum, dateStr, title, details, amount, currency } = pr;
+
+    const redemptionKind = detectRedemption(title);
+    if (redemptionKind) {
+      // Wykup certyfikatów lub główny wiersz Rozliczenie oferty → redemption marker, NIE CashOperation.
+      const ticker = redemptionKind.ticker;
+      const key = `${ticker}|${dateStr}`;
+      const commissionEntry = offerCommissions.get(key);
+      const commission = commissionEntry ? commissionEntry.amount : 0;
+      if (commissionEntry) commissionEntry.consumed = true;
+
+      redemptions.push({
+        date: `${dateStr}T00:00:00`,
+        ticker,
+        amount,
+        commission,
+        description: humanizeDescription(title),
+        currency,
+        source: 'bossa',
+      });
+      skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
+      continue;
+    }
+
+    // Prowizja od Rozliczenie oferty — jeśli już sparowana z redemption markerem, pomijamy.
+    if (title.includes('Rozliczenie oferty - prowizja')) {
+      const tickerMatch = title.match(/Rozliczenie oferty - prowizja\s+(\S+)/);
+      if (tickerMatch) {
+        const key = `${tickerMatch[1]}|${dateStr}`;
+        const commissionEntry = offerCommissions.get(key);
+        if (commissionEntry?.consumed) {
+          skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
+          continue;
+        }
+      }
+      // Nie ma pasującego redemption markera (edge case) → wpada jako zwykła opłata niżej.
+    }
+
+    const operationType = classifyOperation(title);
+
+    // Settlement records (Rozliczenie transakcji) → skip, należą do transakcji.
+    if (operationType === 'skip') {
+      skipped.push({ row: rowNum, reason: 'settlement_record', paperName: title });
+      continue;
+    }
+
+    // Nieznany typ operacji → zapisujemy jako `other` (żeby zachować cashflow),
+    // ale dodatkowo oznaczamy w `skipped` z `unknown_operation_type` — UI pokaże w warnings
+    // żeby user mógł ręcznie zweryfikować klasyfikację (P3+P7).
+    if (operationType === 'unknown') {
+      skipped.push({ row: rowNum, reason: 'unknown_operation_type', paperName: title });
+    }
+
+    const effectiveType: OperationType = operationType === 'unknown' ? 'other' : operationType;
     const ticker = parseDividendTicker(title);
     const fxInfo = parseFxRate(title);
 
     operations.push({
       date: `${dateStr}T00:00:00`,
-      operationType,
+      operationType: effectiveType,
       description: humanizeDescription(title),
       details: details || undefined,
       amount,
-      currency: currency || 'PLN',
+      currency,
       ticker: ticker || undefined,
       fxRate: fxInfo?.rate,
       fxPair: fxInfo?.pair,
@@ -66,7 +156,23 @@ export function parseBossaOperations(csvContent: string, importBatch: string): P
     });
   }
 
-  return { data: operations, skipped };
+  return { data: operations, skipped, redemptions };
+}
+
+/**
+ * Wykryj czy wiersz to marker redemption (wykup certyfikatu / wezwanie skupu).
+ * Zwraca ticker jeśli tak, null jeśli nie.
+ */
+function detectRedemption(title: string): { ticker: string; kind: 'certificate' | 'tender' } | null {
+  const certMatch = title.match(/Wykup certyfikat(?:ów|\u00f3w)\s+(\S+)/);
+  if (certMatch) return { ticker: certMatch[1], kind: 'certificate' };
+
+  // Rozliczenie oferty, ale NIE "- prowizja" (to obsługujemy osobno, parując z głównym)
+  if (title.includes('Rozliczenie oferty - prowizja')) return null;
+  const tenderMatch = title.match(/Rozliczenie oferty\s+(\S+)/);
+  if (tenderMatch) return { ticker: tenderMatch[1], kind: 'tender' };
+
+  return null;
 }
 
 /** Generate human-readable description from raw Bossa operation title */
@@ -79,13 +185,13 @@ function humanizeDescription(title: string): string {
   const divMatch = title.match(/Wypłata dywidendy\s+(.*)/i) || title.match(/Wyp\u0142ata dywidendy\s+(.*)/i);
   if (divMatch) return `Dywidenda ${divMatch[1]}`;
 
-  // Rozliczenie oferty
+  // Rozliczenie oferty — humanize dla ewentualnych edge-case'ów (głównie idzie jako RedemptionMarker)
   const offerFeeMatch = title.match(/Rozliczenie oferty - prowizja\s+(\S+)/);
   if (offerFeeMatch) return `Prowizja od oferty skupu ${offerFeeMatch[1]}`;
   const offerMatch = title.match(/Rozliczenie oferty\s+(\S+)/);
   if (offerMatch) return `Wykup w ofercie skupu ${offerMatch[1]}`;
 
-  // Wykup certyfikatów: strip "(kwota brutto)"
+  // Wykup certyfikatów (głównie idzie jako RedemptionMarker)
   const certMatch = title.match(/Wykup certyfikat(?:ów|\u00f3w)\s+(\S+)/);
   if (certMatch) return `Wykup certyfikatów ${certMatch[1]}`;
 
@@ -96,49 +202,52 @@ function humanizeDescription(title: string): string {
     return subMatch[2] ? `Subskrypcja akcji ${name} (seria ${subMatch[2]})` : `Subskrypcja akcji ${name}`;
   }
 
-  // Zwrot nadpłaty
   if (title.includes('przekroczony limit')) return 'Zwrot nadpłaty — przekroczony limit IKE/IKZE';
   const refundMatch = title.match(/Zwrot nadp(?:łaty|\u0142aty)\s+(.+?)(?:\s+S\.A\.)?$/);
   if (refundMatch) return `Zwrot nadpłaty z subskrypcji ${refundMatch[1].replace(/\s+S\.A\.$/, '')}`;
 
-  // Obniżenie wartości nominalnej
   const nominalMatch = title.match(/Obni(?:żenie|[\u017c]enie) warto(?:ści|[\u015b]ci) nominalnej\s+(\S+)/);
   if (nominalMatch) return `Umorzenie akcji ${nominalMatch[1]} (obniżenie nominału)`;
 
-  // Opłaty — keep as-is, already clear
   return title;
 }
 
-function classifyOperation(title: string, amount: number): OperationType | 'skip' {
+/**
+ * Klasyfikacja operacji. Zwraca:
+ * - konkretny OperationType dla rozpoznanych typów
+ * - 'skip' dla settlement records (Rozliczenie transakcji)
+ * - 'unknown' dla nierozpoznanego tytułu (traktowane jako 'other' + dodane do warnings przez caller)
+ *
+ * UWAGA: Wykup certyfikatów i Rozliczenie oferty NIE przechodzą już przez tę funkcję —
+ * są przechwytywane wcześniej jako RedemptionMarker (source-of-truth = synthetic sell
+ * z reconciliation, nie deposit).
+ */
+function classifyOperation(title: string): OperationType | 'skip' | 'unknown' {
   if (title.includes('Rozliczenie transakcji')) return 'skip';
 
-  // Rozliczenie oferty (buyback/tender offer) — prowizja = fee, wpływ = deposit
-  if (title.includes('Rozliczenie oferty')) {
-    return title.includes('prowizja') ? 'fee' : 'deposit';
+  if (title.includes('Przelew')) {
+    // Kierunek (deposit/withdrawal) rozpozna caller po znaku amount — tu wystarczy klasyfikacja.
+    // Konwencja istniejąca: zwracamy 'deposit' dla dodatnich, 'withdrawal' dla ujemnych.
+    // Robimy to przez odczyt amount z closure w wywołaniu — ale classifyOperation dostaje tylko title,
+    // więc zwracamy rozpoznany typ, a caller zadecyduje o deposit vs withdrawal jeśli trzeba.
+    // Prosty heurystyk: Przelew wewnętrzny = deposit (bo zwyczajowo zasila konto), Przelew do DM = deposit.
+    // Dla withdrawal (Przelew z rachunku gdzieś dalej) Bossa używa innych tytułów.
+    return 'deposit';
   }
-
-  if (title.includes('Przelew')) return amount < 0 ? 'withdrawal' : 'deposit';
   if (title.toLowerCase().includes('dywidendy')) return 'dividend';
   if (title.includes('Wymiana waluty')) return 'fx_exchange';
-
-  // Opłaty (transakcyjne, WZA, blokady, inne)
   if (title.startsWith('Opłata za') || title.startsWith('Op\u0142ata za')) return 'fee';
-
   if (title.includes('Zwrot prowizji')) return 'commission_refund';
-
-  // Wykup certyfikatów (redempcja przez emitenta) → wpływ gotówki
-  if (title.includes('Wykup certyfikatów') || title.includes('Wykup certyfikat\u00f3w')) return 'deposit';
-
-  // Zapisy na akcje (IPO/SPO) → wypływ gotówki
+  // P6: Zwrot prowizji (90 wierszy w eksporcie testowym) pozostaje osobnym cashflowem.
+  // NIE parujemy go do konkretnej transakcji — transakcje mają już `prowizja` zapłaconą
+  // w kolumnie `prowizja` z hisPW, a zwrot to niezależne cash-eventy (często z anulowanych zleceń).
+  // Dashboard XIRR liczy cashflow z wpłat/wypłat, więc zwrot jako `commission_refund`
+  // nie zniekształca metryk. Parowanie heurystyczne miałoby duże ryzyko false-positive.
   if (title.includes('Zapisy na akcje')) return 'withdrawal';
-
-  // Zwrot nadpłaty (limit IKE/IKZE lub subskrypcja)
-  if (title.includes('Zwrot nadpłaty') || title.includes('Zwrot nadp\u0142aty')) return amount > 0 ? 'deposit' : 'withdrawal';
-
-  // Obniżenie wartości nominalnej (corporate action) → wpływ
+  if (title.includes('Zwrot nadpłaty') || title.includes('Zwrot nadp\u0142aty')) return 'deposit'; // caller może zmienić na withdrawal wg znaku
   if (title.includes('Obniżenie wartości nominalnej') || title.includes('Obni\u017cenie warto\u015bci nominalnej')) return 'deposit';
 
-  return 'other';
+  return 'unknown';
 }
 
 /**
@@ -152,7 +261,7 @@ function parseDividendTicker(title: string): string | null {
 }
 
 /**
- * Extract certificate ticker from buyout title
+ * Extract certificate ticker from buyout title — kept for backward compat with reconciliation.
  * "Wykup certyfikatów INTLGLD46805 (kwota brutto)" -> "INTLGLD46805"
  */
 export function parseCertificateTicker(title: string): string | null {
@@ -171,4 +280,3 @@ function parseFxRate(title: string): { pair: string; rate: number } | null {
   }
   return null;
 }
-

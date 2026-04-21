@@ -308,7 +308,9 @@ export type SkipReason =
   | 'zero_amount' | 'settlement_record'
   | 'summary_row' | 'unparseable_comment' | 'close_trade_entry'
   | 'missing_description' | 'unmatched_fx_credit'
-  | 'duplicate';
+  | 'duplicate'
+  | 'redemption_reconciled' // Wykup certyfikatów / Rozliczenie oferty — obsłużone przez reconciliation jako synthetic sell
+  | 'unknown_operation_type'; // Nierozpoznany tytuł operacji — wrzucone jako 'other', ale raportowane w warnings
 
 export interface SkippedRow {
   row: number;
@@ -319,6 +321,21 @@ export interface SkippedRow {
 export interface ParseResult<T> {
   data: T[];
   skipped: SkippedRow[];
+}
+
+/**
+ * Marker dla operacji domykających otwartą pozycję (wykup certyfikatów, wezwanie skupu).
+ * Parser emituje listę takich markerów ZAMIAST CashOperation — reconciliation w service
+ * tworzy z nich syntetyczną sprzedaż, eliminując ryzyko double-count (deposit + synthetic sell).
+ */
+export interface RedemptionMarker {
+  date: string; // ISO 8601
+  ticker: string;
+  amount: number; // brutto cashflow z wykupu/wezwania
+  commission: number; // sparowana prowizja (np. `Rozliczenie oferty - prowizja TICKER`)
+  description: string;
+  currency: string;
+  source: 'bossa'; // na razie tylko Bossa; jeśli DEGIRO dostanie analogiczny wzorzec — rozszerzyć
 }
 
 // ============ API Response Types ============
@@ -369,7 +386,26 @@ export interface ImportResult {
   skipped?: SkippedRow[];
   duplicatesSkipped?: number;
   orphanedSells?: OrphanedSell[];
+  /** Parser-level warnings (np. XTB missing Closed Positions sheet) */
   warnings?: string[];
+  /** Cross-file validation warnings from the bulk reconciliation step */
+  crossFileWarnings?: string[];
+  /** DEGIRO: liczba transakcji, do których zaaplikowano stamp duty / french tax z pliku Account */
+  taxesApplied?: number;
+  /** Bossa: liczba syntetycznych sprzedaży wygenerowanych przez reconcileRedemptions */
+  syntheticSells?: number;
+  /** Detected broker for transactions file */
+  detectedSource?: string;
+  /** Detected broker for operations file (bulk import, może się różnić) */
+  detectedOperationsSource?: string;
+}
+
+/** Result of POST /api/import/detect — used by UI to decide if second dropzone is needed */
+export interface DetectResult {
+  broker: BrokerType | null;
+  fileRole: 'transactions' | 'operations' | 'unknown';
+  /** Whether this broker requires an operations file for full import */
+  requiresOperationsFile: boolean;
 }
 
 // ============ Portfolio Management ============
