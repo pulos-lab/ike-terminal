@@ -141,7 +141,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         }
 
         if (result.syntheticSells && result.syntheticSells > 0) {
-          addMessage({ kind: 'info', text: `Utworzono ${result.syntheticSells} syntetycznych sprzedaży (wykupy certyfikatów / wezwania skupu)` });
+          addMessage({ kind: 'info', text: `Utworzono ${result.syntheticSells} syntetycznych sprzedaży (wykupy certyfikatów / wezwania skupu akcji)` });
         }
 
         if (result.taxesApplied && result.taxesApplied > 0) {
@@ -173,20 +173,21 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         }
 
         if (result.skipped && result.skipped.length > 0) {
-          const visible = result.skipped.filter((s: any) => s.reason !== 'close_trade_entry' && s.reason !== 'duplicate');
+          // Ukrywamy rows, które użytkownik nie traktuje jako „pominięte":
+          //  - close_trade_entry (XTB P/L — użyte w parze K+S)
+          //  - duplicate (już liczone osobno powyżej)
+          //  - redemption_reconciled (wykup/wezwanie wchodzi jako syntetyczna sprzedaż —
+          //    użytkownik widzi je w info "Utworzono N syntetycznych sprzedaży", duplikowanie
+          //    w liście "pominięto" jest mylące)
+          const hiddenReasons = new Set(['close_trade_entry', 'duplicate', 'redemption_reconciled']);
+          const visible = result.skipped.filter((s: any) => !hiddenReasons.has(s.reason));
           if (visible.length > 0) {
-            const MAX_SHOWN = 10;
-            const items = visible.slice(0, MAX_SHOWN);
-            const lines = items.map((s: { paperName?: string; reason: string; row: number }) => {
+            const lines = visible.map((s: { paperName?: string; reason: string; row: number }) => {
               const name = s.paperName ? `${s.paperName} ` : '';
               const reason = SKIP_REASON_LABELS[s.reason as SkipReason] || s.reason;
               return `${name}(wiersz ${s.row}) — ${reason}`;
             });
-            let detail = lines.join('\n');
-            if (visible.length > MAX_SHOWN) {
-              detail += `\n...i ${visible.length - MAX_SHOWN} więcej`;
-            }
-            addMessage({ kind: 'warn', text: `Pominięto ${visible.length} wierszy:\n${detail}` });
+            addMessage({ kind: 'warn', text: `Pominięto ${visible.length} wierszy:\n${lines.join('\n')}` });
           }
         }
 
@@ -306,24 +307,31 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             ) : 'Importuj'}
           </Button>
 
-          {messages.map((m, i) => (
-            <div key={i} className="flex items-start gap-2 text-sm">
-              {m.kind === 'error' ? (
-                <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-              ) : m.kind === 'warn' ? (
-                <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
-              ) : m.kind === 'info' ? (
-                <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
-              ) : (
-                <CheckCircle className="h-4 w-4 text-success shrink-0 mt-0.5" />
-              )}
-              <span className={
-                m.kind === 'warn' ? 'text-yellow-600 dark:text-yellow-400 whitespace-pre-line' :
-                m.kind === 'info' ? 'text-blue-600 dark:text-blue-400' :
-                m.kind === 'error' ? 'text-destructive' : ''
-              }>{m.text}</span>
-            </div>
-          ))}
+          {messages.map((m, i) => {
+            // Długie wiadomości (lista pominiętych/warningi cross-file) mogą mieć wiele linii —
+            // cap wysokości + wewnętrzny scroll żeby dialog nie rósł w nieskończoność.
+            const isLong = m.text.split('\n').length > 10;
+            return (
+              <div key={i} className="flex items-start gap-2 text-sm">
+                {m.kind === 'error' ? (
+                  <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                ) : m.kind === 'warn' ? (
+                  <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+                ) : m.kind === 'info' ? (
+                  <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
+                ) : (
+                  <CheckCircle className="h-4 w-4 text-success shrink-0 mt-0.5" />
+                )}
+                <span className={[
+                  'whitespace-pre-line min-w-0',
+                  isLong ? 'max-h-60 overflow-y-auto pr-2 block' : '',
+                  m.kind === 'warn' ? 'text-yellow-600 dark:text-yellow-400' : '',
+                  m.kind === 'info' ? 'text-blue-600 dark:text-blue-400' : '',
+                  m.kind === 'error' ? 'text-destructive' : '',
+                ].filter(Boolean).join(' ')}>{m.text}</span>
+              </div>
+            );
+          })}
 
           {orphanedSells.length > 0 && (
             <div className="rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3 space-y-3">
