@@ -44,7 +44,7 @@ import {
   detectOrphanedSells,
 } from '../db/transactions-repo.js';
 import { insertOperationsWithDedup, getAllOperations } from '../db/operations-repo.js';
-import { seedTickerMap, findIsinByName, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
+import { seedTickerMap, findIsinByName, upsertTickerMapEntry, getTickerByIsin, deleteTickerMapEntry } from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
 import { getDb } from '../db/connection.js';
 
@@ -268,6 +268,33 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   });
   runAll();
 
+  // Self-healing: usuń legacy stuby z ticker_map dla ISIN-ów, które trafiły do reconciliation
+  // jako tender/IPO. Stare wersje kodu wpisywały tam ticker brokerowy (np. "MOSTALZAB"),
+  // co blokowało resolverowi znalezienie prawdziwego Yahoo tickera (np. "MSZ.WA").
+  // Kryterium "stuba": ticker === name i brak kropki (Yahoo/Stooq zawsze mają `.WA` lub podobne
+  // dla polskich spółek; gdyby to był prawdziwy ticker jak "AAPL" — name byłoby "Apple Inc.").
+  const reconciledIsinsNeedingRealTicker = new Set<string>();
+  if (parsedOps && 'redemptions' in parsedOps) {
+    for (const red of parsedOps.redemptions) {
+      if (red.kind !== 'certificate') {
+        // Znajdź ISIN z transakcji dla tego tickera
+        const tx = parsedTx?.data.find(t => t.paperName === red.ticker);
+        if (tx) reconciledIsinsNeedingRealTicker.add(tx.isin);
+      }
+    }
+  }
+  if (parsedOps && 'ipoSubscriptions' in parsedOps) {
+    for (const ipo of parsedOps.ipoSubscriptions) {
+      reconciledIsinsNeedingRealTicker.add(ipo.isin);
+    }
+  }
+  for (const isin of reconciledIsinsNeedingRealTicker) {
+    const entry = getTickerByIsin(isin, pid);
+    if (entry && entry.ticker === entry.name && !entry.ticker.includes('.')) {
+      deleteTickerMapEntry(isin, pid);
+    }
+  }
+
   // Po db.transaction: ISIN resolution (sieciowe — poza transakcją SQLite)
   let resolved: any[] = [];
   let unresolved: any[] = [];
@@ -489,14 +516,21 @@ function reconcileBossaRedemptions(
     const r = insertTransactionsWithDedup([syntheticSell], pid);
     added += r.inserted;
 
-    upsertTickerMapEntry({
-      isin,
-      ticker: red.ticker,
-      name: red.ticker,
-      exchange: 'GPW',
-      currency: 'PLN',
-      priceSource: 'stooq',
-    }, pid);
+    // Tylko dla certyfikatów strukturyzowanych (INTL*) dopisujemy stub do ticker_map —
+    // te papiery zwykle nie istnieją w Yahoo/Stooq, więc bez tego resolver by się poddał.
+    // Dla wezwań skupu (tender) to normalne listed stocks (GAMIVO=GMV.WA, TSGAMES=TEN.WA,
+    // MOSTALZAB=MSZ.WA itd.) — zostawiamy pustą mapę, żeby `resolveUnknownIsins` poszedł
+    // swoją ścieżką i znalazł prawdziwy Yahoo ticker + źródło cen live.
+    if (red.kind === 'certificate') {
+      upsertTickerMapEntry({
+        isin,
+        ticker: red.ticker,
+        name: red.ticker,
+        exchange: 'GPW',
+        currency: 'PLN',
+        priceSource: 'stooq',
+      }, pid);
+    }
   }
 
   return added;
@@ -557,14 +591,9 @@ function reconcileBossaIpos(
     const r = insertTransactionsWithDedup([syntheticBuy], pid);
     added += r.inserted;
 
-    upsertTickerMapEntry({
-      isin: ipo.isin,
-      ticker: ipo.ticker,
-      name: ipo.ticker,
-      exchange: 'GPW',
-      currency: 'PLN',
-      priceSource: 'stooq',
-    }, pid);
+    // Celowo NIE wpisujemy stuba do ticker_map — papier subskrybowany z IPO to normalna spółka
+    // notowana na GPW/NewConnect, więc resolver znajdzie ją pod prawdziwym Yahoo tickerem
+    // (np. BIOCELTIX → BCL.WA). Inaczej stub "BIOCELTIX" zablokowałby live price lookup.
   }
 
   return added;
