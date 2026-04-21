@@ -125,3 +125,11 @@ export function upsertTickerMapEntry(entry: TickerMapEntry, portfolioId: string 
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(entry.isin, entry.ticker, entry.name, entry.exchange, entry.currency, entry.priceSource, entry.sector || null);
 }
+
+/** Usuń wpis z ticker_map dla danego ISIN-u. Używane do czyszczenia legacy-stubów
+ *  które blokują resolverowi znalezienie prawdziwego Yahoo tickera. */
+export function deleteTickerMapEntry(isin: string, portfolioId: string = 'default'): boolean {
+  const db = getDb(portfolioId);
+  const res = db.prepare('DELETE FROM ticker_map WHERE isin = ?').run(isin);
+  return res.changes > 0;
+}
