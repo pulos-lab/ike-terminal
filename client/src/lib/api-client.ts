@@ -193,12 +193,16 @@ export const api = {
   },
 
   /**
-   * Atomowy import — jeden request, oba pliki naraz. Zastępuje stare uploadTransactions
-   * i uploadOperations. Backend robi wszystko w jednej transakcji SQLite.
+   * Atomowy import — jeden request, wszystkie pliki naraz. Backend parsuje,
+   * inserteruje i wykonuje reconciliation w jednej transakcji SQLite.
+   * `transactionsFiles` może mieć 1-N plików (np. Bossa eksportuje osobno
+   * per waluta: hisPW-PLN.csv + hisPW-USD.csv + hisPW-EUR.csv).
    */
-  bulkImport: (transactionsFile: File | null, operationsFile: File | null) => {
+  bulkImport: (transactionsFiles: File[], operationsFile: File | null) => {
     const formData = new FormData();
-    if (transactionsFile) formData.append('transactions', transactionsFile);
+    for (const file of transactionsFiles) {
+      formData.append('transactions', file);
+    }
     if (operationsFile) formData.append('operations', operationsFile);
     return uploadFile('/import/bulk', formData);
   },

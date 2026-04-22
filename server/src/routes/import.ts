@@ -45,24 +45,27 @@ router.post('/detect', upload.single('file'), asyncHandler(async (req, res) => {
 
 /**
  * POST /api/import/bulk
- * Atomowy import — przyjmuje jeden lub dwa pliki (`transactions` i/lub `operations`).
- * Wszystko leci w jednej transakcji SQLite; per-broker cross-file reconciliation
- * biegnie raz, po insertach.
+ * Atomowy import — przyjmuje jeden lub wiele plików transakcji (`transactions`)
+ * oraz opcjonalnie plik operacji (`operations`). Wiele plików transakcji jest
+ * potrzebne np. dla Bossa, która eksportuje historię osobno per waluta
+ * (hisPW-PLN.csv, hisPW-USD.csv, hisPW-EUR.csv). Wszystko leci w jednej
+ * transakcji SQLite; per-broker cross-file reconciliation biegnie raz, po
+ * insertach.
  */
 router.post('/bulk', upload.fields([
-  { name: 'transactions', maxCount: 1 },
+  { name: 'transactions', maxCount: 10 },
   { name: 'operations', maxCount: 1 },
 ]), asyncHandler(async (req, res) => {
   const files = req.files as Record<string, Express.Multer.File[]>;
-  const txFile = files?.transactions?.[0];
+  const txFiles = files?.transactions ?? [];
   const opsFile = files?.operations?.[0];
 
-  if (!txFile && !opsFile) {
+  if (txFiles.length === 0 && !opsFile) {
     return res.status(400).json({ error: 'Nie przesłano żadnego pliku' });
   }
 
   const result = await bulkImport({
-    transactionsFile: txFile ? { buffer: txFile.buffer, originalname: txFile.originalname } : undefined,
+    transactionsFiles: txFiles.map(f => ({ buffer: f.buffer, originalname: f.originalname })),
     operationsFile: opsFile ? { buffer: opsFile.buffer, originalname: opsFile.originalname } : undefined,
     portfolioId: req.portfolioId,
   });

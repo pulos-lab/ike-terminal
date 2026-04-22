@@ -114,35 +114,61 @@ export function requiresOperationsFile(broker: BrokerType | null): boolean {
 // ─── Main bulk entry point ───────────────────────────────────────────────────
 
 export interface BulkInput {
-  transactionsFile?: { buffer: Buffer; originalname: string };
+  /**
+   * Pliki transakcji — co najmniej 0, praktycznie 1-3. Wiele plików jest
+   * potrzebne np. dla Bossa, która eksportuje historię osobno per waluta
+   * (hisPW-PLN.csv, hisPW-USD.csv, hisPW-EUR.csv). Wszystkie pliki muszą
+   * pochodzić z tego samego brokera i być rolą `transactions`.
+   */
+  transactionsFiles?: Array<{ buffer: Buffer; originalname: string }>;
   operationsFile?: { buffer: Buffer; originalname: string };
   requestedBroker?: BrokerType;
   portfolioId: string;
 }
 
 export async function bulkImport(input: BulkInput): Promise<ImportResult> {
-  const { portfolioId: pid, transactionsFile, operationsFile } = input;
+  const { portfolioId: pid, transactionsFiles = [], operationsFile } = input;
   const importBatch = randomUUID();
 
-  if (!transactionsFile && !operationsFile) {
+  if (transactionsFiles.length === 0 && !operationsFile) {
     return emptyResult(importBatch, ['Nie przesłano żadnego pliku']);
   }
 
-  // Klasyfikacja
-  const txFile = transactionsFile ? await classifyFile(transactionsFile) : null;
+  // Klasyfikacja każdego pliku transakcji osobno
+  const txFiles = await Promise.all(transactionsFiles.map(f => classifyFile(f)));
   const opsFile = operationsFile ? await classifyFile(operationsFile) : null;
 
   // Walidacja ról
-  if (txFile && txFile.role !== 'transactions') {
-    return emptyResult(importBatch, [`Plik "${txFile.originalName}" nie wygląda na eksport transakcji (wykryto: ${txFile.role}).`]);
+  for (const tx of txFiles) {
+    if (tx.role !== 'transactions') {
+      return emptyResult(importBatch, [`Plik "${tx.originalName}" nie wygląda na eksport transakcji (wykryto: ${tx.role}).`]);
+    }
   }
   if (opsFile && opsFile.role !== 'operations') {
     return emptyResult(importBatch, [`Plik "${opsFile.originalName}" nie wygląda na eksport operacji gotówkowych (wykryto: ${opsFile.role}).`]);
   }
 
+  // Wszystkie pliki transakcji muszą być z tego samego brokera (mixowanie
+  // Bossa+DEGIRO w jednej paczce byłoby niejednoznaczne dla reconciliation).
+  if (txFiles.length > 1) {
+    const brokers = new Set(txFiles.map(t => t.broker));
+    if (brokers.size > 1) {
+      return emptyResult(importBatch, [
+        `Pliki transakcji pochodzą z różnych brokerów (${[...brokers].join(', ')}). ` +
+        `Wgraj pliki z jednego brokera na raz.`,
+      ]);
+    }
+    // Multi-file wspierane tylko dla CSV brokerów. XTB XLSX to pojedynczy plik.
+    if (txFiles.some(t => t.isBinary)) {
+      return emptyResult(importBatch, [
+        'Wgrywanie wielu plików nie jest wspierane dla XTB XLSX — wgraj jeden plik XTB naraz.',
+      ]);
+    }
+  }
+
   // XTB XLSX: jeden plik, multi-sheet, atomowy z natury
-  if (txFile?.isBinary) {
-    return await importBinary(txFile, importBatch, pid);
+  if (txFiles.length === 1 && txFiles[0].isBinary) {
+    return await importBinary(txFiles[0], importBatch, pid);
   }
 
   // CSV flow: parsujemy oba pliki, potem wsadzamy w jednej db.transaction()
@@ -154,22 +180,37 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   let opsParserId: BrokerType | null = null;
   let opsContentRaw: string | null = null;
 
-  if (txFile) {
-    const content = decodeCSVBuffer(txFile.buffer);
-    const parser = detectBroker(content);
-    if (!parser) {
-      return emptyResult(importBatch, [`Nie rozpoznano formatu pliku transakcji: ${txFile.originalName}`]);
-    }
-    parsedTx = parser.parse(content, importBatch);
-    txParserId = parser.id;
-
-    // Name resolution (mBank: paperName → ISIN z ticker_map)
-    if (parser.needsNameResolution) {
-      for (const tx of parsedTx.data) {
-        const existing = findIsinByName(tx.paperName, pid);
-        if (existing) tx.isin = existing.isin;
+  if (txFiles.length > 0) {
+    // Parsuj każdy plik osobno, łącz wyniki. Pierwszy wykryty broker dyktuje
+    // parser dla całej paczki (już zwalidowaliśmy że wszystkie są tego samego).
+    const mergedData: Transaction[] = [];
+    const mergedSkipped: SkippedRow[] = [];
+    for (const file of txFiles) {
+      const content = decodeCSVBuffer(file.buffer);
+      const parser = detectBroker(content);
+      if (!parser) {
+        return emptyResult(importBatch, [`Nie rozpoznano formatu pliku transakcji: ${file.originalName}`]);
       }
+      if (txParserId && parser.id !== txParserId) {
+        return emptyResult(importBatch, [
+          `Pliki transakcji mają różne formaty (pierwszy: ${txParserId}, ${file.originalName}: ${parser.id}).`,
+        ]);
+      }
+      const parsed = parser.parse(content, importBatch);
+      txParserId = parser.id;
+
+      // Name resolution (mBank: paperName → ISIN z ticker_map)
+      if (parser.needsNameResolution) {
+        for (const tx of parsed.data) {
+          const existing = findIsinByName(tx.paperName, pid);
+          if (existing) tx.isin = existing.isin;
+        }
+      }
+
+      mergedData.push(...parsed.data);
+      mergedSkipped.push(...parsed.skipped);
     }
+    parsedTx = { data: mergedData, skipped: mergedSkipped };
   }
 
   if (opsFile) {
