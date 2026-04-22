@@ -89,9 +89,10 @@ export interface BinaryBrokerParser {
   id: BrokerType;
   label: string;
   detect: (buffer: Buffer) => boolean | Promise<boolean>;
-  parse: (buffer: Buffer, importBatch: string) => Promise<{
+  parse: (buffer: Buffer, importBatch: string, fileName?: string) => Promise<{
     transactions: ParseResult<Transaction>;
     operations: ParseResult<CashOperation>;
+    warnings?: string[];
   }>;
   needsNameResolution: boolean;
 }

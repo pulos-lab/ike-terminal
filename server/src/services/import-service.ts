@@ -419,7 +419,7 @@ async function importBinary(file: ClassifiedFile, importBatch: string, pid: stri
   if (!binary) {
     return emptyResult(importBatch, ['Nie rozpoznano formatu XLSX']);
   }
-  const parseResult = await binary.parse(file.buffer, importBatch);
+  const parseResult = await binary.parse(file.buffer, importBatch, file.originalName);
   const { transactions: txResult, operations: opsResult } = parseResult;
   const parserWarnings: string[] = (parseResult as any).warnings ?? [];
 
