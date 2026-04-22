@@ -26,6 +26,24 @@ const app = express();
 // Behind reverse proxy (Caddy) — needed for secure cookies
 app.set('trust proxy', isProduction ? 1 : false);
 
+// ── HTTP request logging ────────────────────────────────────────────────────
+// W produkcji logujemy tylko mutacje + błędy (GET-y są hałaśliwe: price polling,
+// benchmark refresh). W dev logujemy wszystko.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const isMutation = req.method !== 'GET' && req.method !== 'HEAD';
+  if (!isMutation && isProduction) return next();
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    const isError = res.statusCode >= 400;
+    if (!isMutation && !isError && isProduction) return; // skip healthy GETs in prod
+    const tag = isError ? 'ERROR' : 'OK';
+    const user = req.userId ? req.userId.slice(0, 8) : '-';
+    console.log(`[${tag}] ${req.method} ${req.originalUrl} → ${res.statusCode} ${ms}ms user=${user}`);
+  });
+  next();
+});
+
 // ── Security ────────────────────────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: isProduction
