@@ -112,9 +112,15 @@ function normalizeType(type: string): string {
     'withdrawal': 'withdrawal',
     'commission': 'commission',
     'sec fee': 'Sec Fee',
+    // Accept both space- and hyphen-spelled variants — the PL template uses
+    // "Free-funds Interest" / "Free-funds Interest Tax", EN uses space.
     'free funds interest': 'Free funds interest',
+    'free-funds interest': 'Free funds interest',
     'free funds interest tax': 'Free funds interest tax',
+    'free-funds interest tax': 'Free funds interest tax',
     'dividend': 'dividend',
+    // PL template has "DIVIDENT" typo
+    'divident': 'dividend',
     'withholding tax': 'withholding tax',
     'swap': 'swap',
     'tax iftt': 'tax iftt',
@@ -122,6 +128,9 @@ function normalizeType(type: string): string {
     'rollover': 'rollover',
     'ikze deposit': 'deposit',
     'ike deposit': 'deposit',
+    // Currency conversion between XTB sub-accounts
+    'transfer': 'fx_conversion',
+    'currency conversion': 'fx_conversion',
   };
   return ALIASES[lower] || type;
 }
@@ -252,11 +261,92 @@ interface RawRow {
   amount: number;
 }
 
+// ── Header layout detection ────────────────────────────────────────────────
+//
+// XTB exports Cash Operations with several header layouts we've seen:
+//   OLD EN       : ID | Type | Time | Comment | Symbol | Amount
+//   NEW EN       : Type | Instrument | Time | Amount | ID | Comment | Product
+//   NEW EN+TICKER: Type | Ticker | Instrument | Time | Amount | ID | Comment | Product
+//   PL TEMPLATE  : (empty) | ID | Type | Time | Comment | Symbol | Amount  (leading col)
+//
+// Instead of enumerating every permutation, scan each candidate row for known
+// header names via synonyms and build a canonical column → index map. Any
+// layout where we can find id/type/time/amount/symbol qualifies.
+
+interface HeaderLayout {
+  /** Index into `rows` array where the header sits. */
+  headerIdx: number;
+  /** Canonical column name → column index within the row. */
+  col: { id: number; type: number; time: number; comment: number; symbol: number; amount: number };
+}
+
+const HEADER_SYNONYMS = {
+  id: ['id'],
+  type: ['type'],
+  time: ['time'],
+  comment: ['comment'],
+  // Symbol source: prefer 'Ticker' (broker format like MSFT.US) when present,
+  // fall back to 'Instrument' (company name like "Microsoft") or 'Symbol' (PL).
+  // We record the winning column as `symbol` regardless of its header label.
+  symbol: ['ticker', 'instrument', 'symbol'],
+  amount: ['amount'],
+} as const;
+
+function detectHeaderLayout(rows: any[][]): HeaderLayout | null {
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
+    const row = rows[i];
+    if (!row) continue;
+
+    // Build lowercase label → index for this row.
+    const labels: Record<string, number> = {};
+    for (let j = 0; j < row.length; j++) {
+      const cell = row[j]?.toString?.().trim().toLowerCase();
+      if (!cell) continue;
+      if (!(cell in labels)) labels[cell] = j;
+    }
+
+    // Find the best column for each canonical name (first synonym that hits).
+    function find(names: readonly string[]): number | null {
+      for (const n of names) if (n in labels) return labels[n];
+      return null;
+    }
+
+    const id = find(HEADER_SYNONYMS.id);
+    const type = find(HEADER_SYNONYMS.type);
+    const time = find(HEADER_SYNONYMS.time);
+    const comment = find(HEADER_SYNONYMS.comment);
+    const amount = find(HEADER_SYNONYMS.amount);
+    // Symbol source — prefer Ticker > Instrument > Symbol if multiple present.
+    let symbol: number | null = null;
+    for (const n of HEADER_SYNONYMS.symbol) {
+      if (n in labels) { symbol = labels[n]; break; }
+    }
+
+    if (id !== null && type !== null && time !== null && comment !== null && amount !== null && symbol !== null) {
+      return { headerIdx: i, col: { id, type, time, comment, symbol, amount } };
+    }
+  }
+  return null;
+}
+
+/** Fallback: extract account currency from filename prefix like "USD_52807819_..." */
+function currencyFromFileName(fileName: string | undefined): string | null {
+  if (!fileName) return null;
+  const base = fileName.split(/[\\/]/).pop() || fileName;
+  const m = base.match(/^([A-Z]{3})_\d+_/);
+  if (!m) return null;
+  const cur = m[1];
+  // Known XTB base currencies — filter to avoid false positives
+  if (['PLN', 'USD', 'EUR', 'GBP', 'CHF', 'SEK', 'NOK', 'DKK', 'HUF', 'CZK'].includes(cur)) return cur;
+  return null;
+}
+
 // ── Main parser ─────────────────────────────────────────────────────────────
 
 export async function parseXtbFile(
   buffer: Buffer,
   importBatch: string,
+  fileName?: string,
 ): Promise<{ transactions: ParseResult<Transaction>; operations: ParseResult<CashOperation>; warnings?: string[] }> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer as unknown as ArrayBuffer);
@@ -282,39 +372,23 @@ export async function parseXtbFile(
     };
   }
 
-  // Convert to 2D array (equivalent to xlsx sheet_to_json with header:1)
-  // ExcelJS preserves column positions (including empty leading columns),
-  // while xlsx's sheet_to_json trimmed them. Find the first data column
-  // from the header row and shift all rows to match the old behavior.
-  const rawRows2d: any[][] = [];
+  // Convert to 2D array. ExcelJS preserves column positions (including empty
+  // leading columns) — detectHeaderLayout scans every cell for known header
+  // names via synonyms, so leading empty columns are handled implicitly.
+  const rows: any[][] = [];
   worksheet.eachRow({ includeEmpty: false }, (row) => {
-    rawRows2d.push((row.values as any[]).slice(1));
+    rows.push((row.values as any[]).slice(1));
   });
 
-  // Detect leading empty columns offset from the header row (ID/Type in col 0)
-  let colOffset = 0;
-  for (const row of rawRows2d) {
-    const col0 = row[0]?.toString?.().trim();
-    const col1 = row[1]?.toString?.().trim();
-    if ((col0 === 'ID' && col1 === 'Type') || (col0 === 'Type' && col1 === 'Instrument')) {
-      break; // data starts at index 0 — no offset needed
-    }
-    if ((col1 === 'ID' && row[2]?.toString?.().trim() === 'Type') ||
-        (col1 === 'Type' && row[2]?.toString?.().trim() === 'Instrument')) {
-      colOffset = 1;
-      break;
-    }
-  }
-
-  const rows: any[][] = colOffset > 0
-    ? rawRows2d.map(r => r.slice(colOffset))
-    : rawRows2d;
-
-  // ── Extract account currency from metadata rows (1-8) ──
-  const { currency: accountCurrency, detected: accountCurrencyDetected } = extractAccountCurrency(rows);
+  // ── Extract account currency ──
+  // Priority: metadata cell (PLN/USD/EUR/...) > filename prefix ("USD_...") > PLN default.
+  const meta = extractAccountCurrency(rows);
+  const fromFile = currencyFromFileName(fileName);
+  const accountCurrency = meta.detected ? meta.currency : (fromFile ?? 'PLN');
+  const accountCurrencyDetected = meta.detected || fromFile !== null;
   if (!accountCurrencyDetected) {
     warnings.push(
-      'Nie wykryto waluty konta w metadanych pliku XTB — przyjęto PLN. ' +
+      'Nie wykryto waluty konta w metadanych pliku XTB ani w nazwie pliku — przyjęto PLN. ' +
       'Jeśli konto jest prowadzone w innej walucie, zweryfikuj import.',
     );
   }
@@ -324,71 +398,45 @@ export async function parseXtbFile(
   const unknownSuffixes = new Set<string>();
   const unknownNames = new Set<string>();
 
-  // ── Detect format and find header row ──
-  // Old format: headers start with "ID, Type, ..."
-  // New format: headers start with "Type, Instrument, ..."
-  let headerIdx = -1;
-  let isNewFormat = false;
-  for (let i = 0; i < Math.min(rows.length, 15); i++) {
-    const row = rows[i];
-    if (!row) continue;
-    const col0 = row[0]?.toString().trim();
-    const col1 = row[1]?.toString().trim();
-    if (col0 === 'ID' && col1 === 'Type') {
-      headerIdx = i;
-      isNewFormat = false;
-      break;
-    }
-    if (col0 === 'Type' && col1 === 'Instrument') {
-      headerIdx = i;
-      isNewFormat = true;
-      break;
-    }
-  }
-
-  if (headerIdx === -1) {
+  // ── Detect header layout ──
+  const layout = detectHeaderLayout(rows);
+  if (!layout) {
     return {
       transactions: { data: [], skipped: [] },
       operations: { data: [], skipped: [] },
     };
   }
+  const { headerIdx, col } = layout;
 
-  // ── Parse data rows ──
-  // Old format columns: ID[0], Type[1], Time[2], Comment[3], Symbol[4], Amount[5]
-  // New format columns: Type[0], Instrument[1], Time[2], Amount[3], ID[4], Comment[5], Product[6]
+  // ── Parse data rows — column indices come from the layout map ──
   const rawRows: RawRow[] = [];
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
-    if (!row || !row[0]) continue;
+    if (!row) continue;
 
-    const col0 = row[0]?.toString().trim() || '';
-    const col0Lower = col0.toLowerCase();
-    if (col0Lower === 'total' || col0Lower === 'profit/loss' || col0 === '') continue;
+    const typeCell = row[col.type]?.toString().trim() || '';
+    if (!typeCell) continue;
+    const typeLower = typeCell.toLowerCase();
+    if (typeLower === 'total' || typeLower === 'profit/loss') continue;
 
-    if (isNewFormat) {
-      // New format: Type[0], Instrument[1], Time[2], Amount[3], ID[4], Comment[5]
-      const amountVal = typeof row[3] === 'number' ? row[3] : parseFloat(row[3]?.toString() || '0') || 0;
-      rawRows.push({
-        rowNum: i + 1,
-        id: row[4]?.toString().trim() || '',
-        type: normalizeType(col0),
-        time: row[2] instanceof Date || typeof row[2] === 'number' ? row[2] : row[2]?.toString().trim() || '',
-        comment: row[5]?.toString().trim() || '',
-        symbol: row[1]?.toString().trim() || '', // Instrument = full company name
-        amount: amountVal,
-      });
-    } else {
-      // Old format: ID[0], Type[1], Time[2], Comment[3], Symbol[4], Amount[5]
-      rawRows.push({
-        rowNum: i + 1,
-        id: col0,
-        type: normalizeType(row[1]?.toString().trim() || ''),
-        time: row[2] instanceof Date || typeof row[2] === 'number' ? row[2] : row[2]?.toString().trim() || '',
-        comment: row[3]?.toString().trim() || '',
-        symbol: row[4]?.toString().trim() || '',
-        amount: typeof row[5] === 'number' ? row[5] : parseFloat(row[5]?.toString() || '0') || 0,
-      });
-    }
+    const timeVal = row[col.time];
+    const time = timeVal instanceof Date || typeof timeVal === 'number'
+      ? timeVal
+      : timeVal?.toString().trim() || '';
+    const amountRaw = row[col.amount];
+    const amount = typeof amountRaw === 'number'
+      ? amountRaw
+      : parseFloat(amountRaw?.toString() || '0') || 0;
+
+    rawRows.push({
+      rowNum: i + 1,
+      id: row[col.id]?.toString().trim() || '',
+      type: normalizeType(typeCell),
+      time,
+      comment: row[col.comment]?.toString().trim() || '',
+      symbol: row[col.symbol]?.toString().trim() || '',
+      amount,
+    });
   }
 
   // ── Pre-pass: Build commission lookup for old-format fallback (JSW) ──
@@ -742,6 +790,59 @@ export async function parseXtbFile(
         importBatch,
       });
 
+    } else if (raw.type === 'fx_conversion') {
+      // Currency conversion between XTB sub-accounts (e.g. PLN→USD).
+      // Raw amount is in the account currency; the paired leg is derived from
+      // the exchange rate in the Comment. Emit two fx_exchange records so the
+      // cash-flow books both sides (analogously to DEGIRO's fx_credit/withdrawal).
+      const isoTime = parseXtbTime(raw.time);
+      if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date' }); continue; }
+
+      const m = raw.comment.match(/\b([A-Z]{3})\s+to\s+([A-Z]{3})\b[^]*?Exchange\s+rate\s*:\s*([\d.]+)/i);
+      if (!m) { opsSkipped.push({ row: raw.rowNum, reason: 'unparseable_fx_comment' }); continue; }
+
+      const [, fromCur, toCur, rateStr] = m;
+      const rate = parseFloat(rateStr);
+      if (!(rate > 0)) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_fx_rate' }); continue; }
+
+      const pair = `${fromCur}/${toCur}`;
+      // Convention: rate = toCur per 1 fromCur (i.e. amount_to = amount_from × rate)
+      let accountLegCur: string, accountLegAmt: number;
+      let otherLegCur: string,   otherLegAmt: number;
+      if (accountCurrency === toCur) {
+        accountLegCur = toCur;   accountLegAmt = raw.amount;            // credit in account
+        otherLegCur   = fromCur; otherLegAmt   = -Math.abs(raw.amount) / rate;
+      } else if (accountCurrency === fromCur) {
+        accountLegCur = fromCur; accountLegAmt = raw.amount;            // debit in account (negative expected)
+        otherLegCur   = toCur;   otherLegAmt   = Math.abs(raw.amount) * rate;
+      } else {
+        opsSkipped.push({ row: raw.rowNum, reason: 'fx_currency_mismatch' });
+        continue;
+      }
+
+      operations.push({
+        date: isoTime,
+        operationType: 'fx_exchange',
+        description: raw.comment,
+        amount: roundTo2(accountLegAmt),
+        currency: accountLegCur,
+        fxRate: rate,
+        fxPair: pair,
+        source: 'xtb',
+        importBatch,
+      });
+      operations.push({
+        date: isoTime,
+        operationType: 'fx_exchange',
+        description: raw.comment,
+        amount: roundTo2(otherLegAmt),
+        currency: otherLegCur,
+        fxRate: rate,
+        fxPair: pair,
+        source: 'xtb',
+        importBatch,
+      });
+
     } else if (raw.type === 'close trade') {
       txSkipped.push({ row: raw.rowNum, reason: 'close_trade_entry', paperName: raw.symbol });
     }
@@ -797,12 +898,43 @@ export async function parseXtbFile(
     );
   }
 
+  // Aggregated warning for raw rows whose `type` matched no dispatch branch.
+  // Until now these rows silently disappeared (no skipped entry, no operation).
+  const unknownTypes = new Map<string, number>();
+  for (const raw of rawRows) {
+    if (!KNOWN_XTB_TYPES.has(raw.type)) {
+      unknownTypes.set(raw.type, (unknownTypes.get(raw.type) ?? 0) + 1);
+    }
+  }
+  if (unknownTypes.size > 0) {
+    const list = [...unknownTypes.entries()]
+      .map(([t, n]) => `${t} (${n}×)`)
+      .sort()
+      .join(', ');
+    warnings.push(
+      `Nierozpoznane typy operacji XTB — pominięte cicho: ${list}. ` +
+      `Sprawdź czy któryś nie powinien być zaimportowany.`,
+    );
+  }
+
   return {
     transactions: { data: transactions, skipped: txSkipped },
     operations: { data: operations, skipped: opsSkipped },
     warnings: warnings.length > 0 ? warnings : undefined,
   };
 }
+
+/** Canonical operation type names that the main dispatch loop handles.
+ * Any `raw.type` not in this set (after normalizeType aliasing) is silently
+ * dropped today — we surface it as an aggregated warning instead. */
+const KNOWN_XTB_TYPES = new Set<string>([
+  'Stock purchase', 'Stock sale', 'close trade',
+  'deposit', 'withdrawal', 'commission', 'Sec Fee',
+  'Free funds interest', 'Free funds interest tax',
+  'dividend', 'withholding tax',
+  'swap', 'tax iftt', 'rights issue', 'rollover',
+  'fx_conversion',
+]);
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -819,6 +951,68 @@ function extractAccountCurrency(rows: any[][]): { currency: string; detected: bo
     }
   }
   return { currency: 'PLN', detected: false };
+}
+
+// ── Closed Positions sheet — column resolver ───────────────────────────────
+// Multiple XTB templates export this sheet with different column names:
+//   EN new    : Instrument | Category | Ticker | Type | Volume | Open Price | Open Time (UTC) | ...
+//   PL legacy : Position | Symbol | Type | Volume | Open time | Open price | Close time | Close price | ... | Gross P/L
+// Single resolver finds the header row and maps each canonical column to its
+// index via synonyms; callers look up `cols.openTime`, `cols.instrument`, etc.
+
+const CP_SYNONYMS: Record<string, readonly string[]> = {
+  instrument: ['instrument', 'symbol'],
+  type: ['type'],
+  volume: ['volume'],
+  openPrice: ['open price'],
+  closePrice: ['close price'],
+  openTime: ['open time (utc)', 'open time'],
+  closeTime: ['close time (utc)', 'close time'],
+  commission: ['commission'],
+  swap: ['swap'],
+  rollover: ['rollover'],
+  positionId: ['position id', 'position'],
+  grossProfit: ['gross profit', 'gross p/l'],
+  ticker: ['ticker'],
+  category: ['category'],
+};
+
+interface ClosedPosLayout {
+  headerIdx: number;
+  cols: Partial<Record<keyof typeof CP_SYNONYMS, number>>;
+}
+
+/** Locate the header row of a Closed Positions sheet and map canonical columns
+ * to indices. Requires at minimum instrument/type/volume/openPrice/openTime/
+ * closePrice/closeTime to consider a row a valid header. */
+function resolveClosedPositionLayout(ws: ExcelJS.Worksheet): ClosedPosLayout | null {
+  let best: ClosedPosLayout | null = null;
+  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (best) return;
+    const vals = (row.values as any[]).slice(1);
+    const labels: Record<string, number> = {};
+    for (let i = 0; i < vals.length; i++) {
+      const v = vals[i]?.toString?.().trim().toLowerCase();
+      if (v && !(v in labels)) labels[v] = i;
+    }
+    const cols: ClosedPosLayout['cols'] = {};
+    for (const canonical of Object.keys(CP_SYNONYMS) as Array<keyof typeof CP_SYNONYMS>) {
+      for (const syn of CP_SYNONYMS[canonical]) {
+        if (syn in labels) { cols[canonical] = labels[syn]; break; }
+      }
+    }
+    const required: Array<keyof typeof CP_SYNONYMS> =
+      ['instrument', 'type', 'volume', 'openPrice', 'openTime', 'closePrice', 'closeTime'];
+    if (required.every(k => cols[k] !== undefined)) {
+      best = { headerIdx: rowNum, cols };
+    }
+  });
+  return best;
+}
+
+function readNum(v: any): number {
+  if (typeof v === 'number') return v;
+  return parseFloat(v?.toString() || '0') || 0;
 }
 
 /** Extract CFD transactions from Closed Positions sheet.
@@ -841,22 +1035,9 @@ function extractCfdTransactions(
   const ws = wb.worksheets.find(s => s.name.toUpperCase().includes('CLOSED'));
   if (!ws) return { transactions: [], unmappedCfd };
 
-  // Find header row and column indices
-  let headerIdx = -1;
-  const cols: Record<string, number> = {};
-  const NEEDED = ['Instrument', 'Category', 'Type', 'Volume', 'Open Price', 'Open Time (UTC)', 'Close Price', 'Close Time (UTC)', 'Commission', 'Swap', 'Rollover', 'Position ID', 'Gross Profit'];
-
-  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
-    if (headerIdx !== -1) return;
-    const vals = (row.values as any[]).slice(1);
-    for (let i = 0; i < vals.length; i++) {
-      const v = vals[i]?.toString?.().trim();
-      if (v && NEEDED.includes(v)) cols[v] = i;
-    }
-    if (cols['Instrument'] !== undefined && cols['Category'] !== undefined) headerIdx = rowNum;
-  });
-
-  if (headerIdx === -1) return { transactions: [], unmappedCfd };
+  const layout = resolveClosedPositionLayout(ws);
+  if (!layout) return { transactions: [], unmappedCfd };
+  const { headerIdx, cols } = layout;
 
   const transactions: Transaction[] = [];
 
@@ -864,18 +1045,24 @@ function extractCfdTransactions(
     if (rowNum <= headerIdx) return;
     const vals = (row.values as any[]).slice(1);
 
-    const cat = vals[cols['Category']]?.toString?.().trim()?.toUpperCase();
-    if (cat !== 'CFD') return;
+    const instrument = vals[cols.instrument!]?.toString?.().trim() || '';
+    const posType = vals[cols.type!]?.toString?.().trim()?.toUpperCase() || ''; // BUY or SELL
+    if (!instrument || !posType) return;
 
-    const instrument = vals[cols['Instrument']]?.toString?.().trim() || '';
-    const posType = vals[cols['Type']]?.toString?.().trim()?.toUpperCase() || ''; // BUY or SELL
-    const volume = typeof vals[cols['Volume']] === 'number' ? vals[cols['Volume']] : parseFloat(vals[cols['Volume']]?.toString() || '0');
-    const openPrice = typeof vals[cols['Open Price']] === 'number' ? vals[cols['Open Price']] : parseFloat(vals[cols['Open Price']]?.toString() || '0');
-    const closePrice = typeof vals[cols['Close Price']] === 'number' ? vals[cols['Close Price']] : parseFloat(vals[cols['Close Price']]?.toString() || '0');
-    const openTimeRaw = vals[cols['Open Time (UTC)']];
-    const closeTimeRaw = vals[cols['Close Time (UTC)']];
+    // Determine whether this row is a CFD:
+    //   - EN template: Category column present → only keep rows with Category='CFD'
+    //   - PL template: no Category → infer from CFD ticker map (inferCategoryFromSymbol)
+    if (cols.category !== undefined) {
+      const cat = vals[cols.category]?.toString?.().trim()?.toUpperCase();
+      if (cat !== 'CFD') return;
+    } else {
+      if (inferCategoryFromSymbol(instrument) !== 'cfd') return;
+    }
 
-    if (!instrument || !posType || volume <= 0 || openPrice <= 0 || closePrice <= 0) return;
+    const volume = readNum(vals[cols.volume!]);
+    const openPrice = readNum(vals[cols.openPrice!]);
+    const closePrice = readNum(vals[cols.closePrice!]);
+    if (volume <= 0 || openPrice <= 0 || closePrice <= 0) return;
 
     // Flag CFDs that have no Yahoo mapping — their historical valuation will fall
     // back to txPrice only. Uses the same lookup logic as inferCategoryFromSymbol:
@@ -887,23 +1074,19 @@ function extractCfdTransactions(
       }
     }
 
-    const openTime = parseXtbTime(openTimeRaw);
-    const closeTime = parseXtbTime(closeTimeRaw);
+    const openTime = parseXtbTime(vals[cols.openTime!]);
+    const closeTime = parseXtbTime(vals[cols.closeTime!]);
     if (!openTime || !closeTime) return;
 
-    const commission = Math.abs(typeof vals[cols['Commission']] === 'number' ? vals[cols['Commission']] : parseFloat(vals[cols['Commission']]?.toString() || '0') || 0);
+    const commission = cols.commission !== undefined ? Math.abs(readNum(vals[cols.commission])) : 0;
+    const swap       = cols.swap       !== undefined ? Math.abs(readNum(vals[cols.swap]))       : 0;
+    const rollover   = cols.rollover   !== undefined ? Math.abs(readNum(vals[cols.rollover]))   : 0;
 
-    // Read swap/rollover directly from Closed Positions sheet columns
-    const swap = Math.abs(typeof vals[cols['Swap']] === 'number' ? vals[cols['Swap']] : parseFloat(vals[cols['Swap']]?.toString() || '0') || 0);
-    const rollover = Math.abs(typeof vals[cols['Rollover']] === 'number' ? vals[cols['Rollover']] : parseFloat(vals[cols['Rollover']]?.toString() || '0') || 0);
-
-    // Position ID for unique FIFO grouping (prevents mixing overlapping CFD positions)
-    const positionId = cols['Position ID'] !== undefined ? vals[cols['Position ID']]?.toString?.().trim() : undefined;
-
-    // Gross Profit — actual P/L from price movement (includes contract multiplier + FX conversion, before swap/rollover/commission)
-    const grossProfit = cols['Gross Profit'] !== undefined
-      ? (typeof vals[cols['Gross Profit']] === 'number' ? vals[cols['Gross Profit']] : parseFloat(vals[cols['Gross Profit']]?.toString() || '0') || 0)
+    const positionId = cols.positionId !== undefined
+      ? vals[cols.positionId]?.toString?.().trim() || undefined
       : undefined;
+
+    const grossProfit = cols.grossProfit !== undefined ? readNum(vals[cols.grossProfit]) : undefined;
 
     // Deduplicate: skip if Cash Operations already has a transaction for this instrument+time
     const openKey = `${instrument}|${openTime}`;
@@ -966,36 +1149,22 @@ function extractCfdTransactions(
 }
 
 /** Extract instrument category (STOCK/ETF/CFD) from Closed Positions sheet.
- * Returns Map<instrumentName, InstrumentCategory> */
+ * Returns Map<instrumentName, InstrumentCategory>. Empty when the sheet has
+ * no Category column (PL template) — callers fall back to inferCategoryFromSymbol. */
 function extractCategoryMap(wb: ExcelJS.Workbook): Map<string, InstrumentCategory> {
   const map = new Map<string, InstrumentCategory>();
-  const ws = wb.worksheets.find(s =>
-    s.name.toUpperCase().includes('CLOSED')
-  );
+  const ws = wb.worksheets.find(s => s.name.toUpperCase().includes('CLOSED'));
   if (!ws) return map;
 
-  // Find header row with "Instrument" and "Category"
-  let headerIdx = -1;
-  let instrCol = -1;
-  let catCol = -1;
-  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
-    if (headerIdx !== -1) return;
-    const vals = (row.values as any[]).slice(1);
-    for (let i = 0; i < vals.length; i++) {
-      const v = vals[i]?.toString?.().trim();
-      if (v === 'Instrument') instrCol = i;
-      if (v === 'Category') catCol = i;
-    }
-    if (instrCol !== -1 && catCol !== -1) headerIdx = rowNum;
-  });
-
-  if (headerIdx === -1) return map;
+  const layout = resolveClosedPositionLayout(ws);
+  if (!layout || layout.cols.category === undefined) return map;
+  const { headerIdx, cols } = layout;
 
   ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
     if (rowNum <= headerIdx) return;
     const vals = (row.values as any[]).slice(1);
-    const instr = vals[instrCol]?.toString?.().trim();
-    const cat = vals[catCol]?.toString?.().trim()?.toLowerCase();
+    const instr = vals[cols.instrument!]?.toString?.().trim();
+    const cat = vals[cols.category!]?.toString?.().trim()?.toLowerCase();
     if (instr && cat) {
       if (cat === 'cfd') map.set(instr, 'cfd');
       else if (cat === 'etf') map.set(instr, 'etf');
@@ -1008,33 +1177,22 @@ function extractCategoryMap(wb: ExcelJS.Workbook): Map<string, InstrumentCategor
 
 /** Extract instrument name → XTB ticker mapping from Closed Positions sheet.
  * e.g. "Grupa Kęty" → "KTY.PL", "Synektik" → "SNT.PL"
- * Used to resolve new-format company names to Yahoo-compatible tickers. */
+ * Used to resolve new-format company names to Yahoo-compatible tickers.
+ * Returns empty map when the sheet has no Ticker column (PL template). */
 function extractTickerLookup(wb: ExcelJS.Workbook): Map<string, string> {
   const map = new Map<string, string>();
   const ws = wb.worksheets.find(s => s.name.toUpperCase().includes('CLOSED'));
   if (!ws) return map;
 
-  let headerIdx = -1;
-  let instrCol = -1;
-  let tickerCol = -1;
-  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
-    if (headerIdx !== -1) return;
-    const vals = (row.values as any[]).slice(1);
-    for (let i = 0; i < vals.length; i++) {
-      const v = vals[i]?.toString?.().trim();
-      if (v === 'Instrument') instrCol = i;
-      if (v === 'Ticker') tickerCol = i;
-    }
-    if (instrCol !== -1 && tickerCol !== -1) headerIdx = rowNum;
-  });
-
-  if (headerIdx === -1) return map;
+  const layout = resolveClosedPositionLayout(ws);
+  if (!layout || layout.cols.ticker === undefined) return map;
+  const { headerIdx, cols } = layout;
 
   ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
     if (rowNum <= headerIdx) return;
     const vals = (row.values as any[]).slice(1);
-    const instr = vals[instrCol]?.toString?.().trim();
-    const ticker = vals[tickerCol]?.toString?.().trim();
+    const instr = vals[cols.instrument!]?.toString?.().trim();
+    const ticker = vals[cols.ticker!]?.toString?.().trim();
     if (instr && ticker && instr !== ticker) {
       // Only store if instrument name differs from ticker (new format)
       map.set(instr, ticker);

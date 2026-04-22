@@ -316,7 +316,10 @@ export type SkipReason =
   | 'missing_description' | 'unmatched_fx_credit'
   | 'duplicate'
   | 'redemption_reconciled' // Wykup certyfikatów / Rozliczenie oferty — obsłużone przez reconciliation jako synthetic sell
-  | 'unknown_operation_type'; // Nierozpoznany tytuł operacji — wrzucone jako 'other', ale raportowane w warnings
+  | 'unknown_operation_type' // Nierozpoznany tytuł operacji — wrzucone jako 'other', ale raportowane w warnings
+  | 'unparseable_fx_comment' // XTB Transfer — brak pary walutowej + kursu w Comment
+  | 'invalid_fx_rate'        // XTB Transfer — Exchange rate ≤ 0 w Comment
+  | 'fx_currency_mismatch';  // XTB Transfer — ani fromCur ani toCur nie zgadza się z walutą konta
 
 export interface SkippedRow {
   row: number;
