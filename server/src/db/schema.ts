@@ -170,6 +170,9 @@ export function initSchema(db: Database.Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_transactions_dedup
       ON transactions(date, isin, side, quantity, price);
+    CREATE INDEX IF NOT EXISTS idx_transactions_cfd_dedup
+      ON transactions(cfd_position_id, side, date)
+      WHERE cfd_position_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_operations_dedup
       ON cash_operations(date, operation_type, amount, currency, ticker);
 

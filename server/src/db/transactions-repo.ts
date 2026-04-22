@@ -25,7 +25,16 @@ export interface InsertWithDedupResult {
   duplicates: SkippedRow[];
 }
 
-/** Insert transactions with duplicate detection (count-based). */
+/** Insert transactions with duplicate detection (count-based).
+ *
+ * Dedup strategy:
+ *  - Standard transactions: grouped + counted by (date, isin, side, quantity, price).
+ *  - CFD transactions with cfd_position_id: grouped + counted by
+ *    (cfd_position_id, side, date). CFD positions carry a broker-unique
+ *    Position ID that identifies the trade regardless of price/volume
+ *    rounding; reimporting the same Closed Positions sheet will no longer
+ *    duplicate them.
+ */
 export function insertTransactionsWithDedup(
   transactions: Transaction[],
   portfolioId: string = 'default',
@@ -36,29 +45,38 @@ export function insertTransactionsWithDedup(
     SELECT COUNT(*) as cnt FROM transactions
     WHERE date = ? AND isin = ? AND side = ? AND quantity = ? AND price = ?
   `);
+  const countCfdStmt = db.prepare(`
+    SELECT COUNT(*) as cnt FROM transactions
+    WHERE cfd_position_id = ? AND side = ? AND date = ?
+  `);
   const insertStmt = db.prepare(`
     INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, payment_currency, fx_rate, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit, synthetic_origin)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // Group by dedup key
-  const groups = new Map<string, Transaction[]>();
+  type Group = { txs: Transaction[]; isCfd: boolean };
+  const groups = new Map<string, Group>();
   for (const tx of transactions) {
-    const key = `${tx.date}|${tx.isin}|${tx.side}|${tx.quantity}|${tx.price}`;
+    // CFD transactions with a broker Position ID are deduped by that ID + side + date
+    // to tolerate reimporting the same Closed Positions sheet.
+    const isCfd = !!tx.cfdPositionId;
+    const key = isCfd
+      ? `CFD|${tx.cfdPositionId}|${tx.side}|${tx.date}`
+      : `${tx.date}|${tx.isin}|${tx.side}|${tx.quantity}|${tx.price}`;
     const group = groups.get(key);
-    if (group) group.push(tx);
-    else groups.set(key, [tx]);
+    if (group) group.txs.push(tx);
+    else groups.set(key, { txs: [tx], isCfd });
   }
 
   const duplicates: SkippedRow[] = [];
   let inserted = 0;
 
   db.transaction(() => {
-    for (const [, txGroup] of groups) {
+    for (const [, { txs: txGroup, isCfd }] of groups) {
       const sample = txGroup[0];
-      const { cnt: existingCount } = countStmt.get(
-        sample.date, sample.isin, sample.side, sample.quantity, sample.price,
-      ) as { cnt: number };
+      const { cnt: existingCount } = isCfd
+        ? countCfdStmt.get(sample.cfdPositionId, sample.side, sample.date) as { cnt: number }
+        : countStmt.get(sample.date, sample.isin, sample.side, sample.quantity, sample.price) as { cnt: number };
 
       const toInsert = Math.max(0, txGroup.length - existingCount);
 
