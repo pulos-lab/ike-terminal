@@ -95,7 +95,10 @@ export function parseBossaTransactions(csvContent: string, importBatch: string):
       commission,
       total,
       currency: currency || 'PLN',   // quote — co CSV `waluta` mówi o tym trade'ie
-      paymentCurrency: 'PLN',         // Bossa IKE/IKZE: account zawsze w PLN → auto-FX widoczny jako glyph gdy currency != PLN
+      paymentCurrency: 'PLN',         // default — faktyczna waluta rozliczenia wyliczana post-insert przez
+                                      // reconcilePaymentCurrencies() (symulacja salda walut). Bossa IKE/IKZE
+                                      // pozwala trzymać subkonta walutowe (USD/EUR), więc zakup US może iść
+                                      // bezpośrednio z salda USD zamiast auto-FX z PLN.
       source: 'bossa',
       importBatch,
     });

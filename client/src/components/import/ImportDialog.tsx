@@ -49,7 +49,7 @@ interface Message {
 export function ImportDialog({ open, onOpenChange }: Props) {
   const queryClient = useQueryClient();
 
-  const [transactionsFile, setTransactionsFile] = useState<File | null>(null);
+  const [transactionsFiles, setTransactionsFiles] = useState<File[]>([]);
   const [operationsFile, setOperationsFile] = useState<File | null>(null);
   const [detectedBroker, setDetectedBroker] = useState<BrokerType | null>(null);
   const [requiresOps, setRequiresOps] = useState(false);
@@ -64,7 +64,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
   }, []);
 
   const resetState = useCallback(() => {
-    setTransactionsFile(null);
+    setTransactionsFiles([]);
     setOperationsFile(null);
     setDetectedBroker(null);
     setRequiresOps(false);
@@ -72,31 +72,71 @@ export function ImportDialog({ open, onOpenChange }: Props) {
     setOrphanedSells([]);
   }, []);
 
-  const handleTransactionsSelected = useCallback(async (file: File | null) => {
-    setTransactionsFile(file);
-    setDetectedBroker(null);
-    setRequiresOps(false);
+  /** Obsługuje N plików naraz — wykrywa brokera dla KAŻDEGO pliku, akceptuje
+   *  tylko pliki roli "transactions" z tego samego brokera. Pozwala dodawać
+   *  pliki stopniowo (każdy wybór powiększa listę). */
+  const handleTransactionsSelected = useCallback(async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
 
-    if (!file) return;
     setDetecting(true);
     try {
-      const detect: DetectResult = await api.detectImportFile(file);
-      if (detect.fileRole === 'operations') {
-        addMessage({ kind: 'warn', text: `Plik "${file.name}" wygląda na eksport operacji gotówkowych, nie transakcji — przełóż go do pola poniżej.` });
-        setTransactionsFile(null);
-        return;
+      const accepted: File[] = [];
+      let brokerForBatch: BrokerType | null = detectedBroker;
+      let newRequiresOps = requiresOps;
+
+      for (const file of files) {
+        const detect: DetectResult = await api.detectImportFile(file);
+
+        if (detect.fileRole === 'operations') {
+          addMessage({
+            kind: 'warn',
+            text: `Plik "${file.name}" wygląda na eksport operacji gotówkowych, nie transakcji — przełóż go do pola poniżej.`,
+          });
+          continue;
+        }
+        if (detect.fileRole === 'unknown' || !detect.broker) {
+          addMessage({
+            kind: 'warn',
+            text: `Nie udało się rozpoznać formatu pliku ${file.name}. Sprawdź czy to poprawny eksport z brokera.`,
+          });
+          continue;
+        }
+        if (brokerForBatch && detect.broker !== brokerForBatch) {
+          addMessage({
+            kind: 'warn',
+            text: `Plik "${file.name}" to ${detect.broker}, ale poprzednie pliki to ${brokerForBatch}. Wgraj osobno.`,
+          });
+          continue;
+        }
+
+        brokerForBatch = detect.broker;
+        newRequiresOps = detect.requiresOperationsFile;
+        accepted.push(file);
       }
-      if (detect.fileRole === 'unknown' || !detect.broker) {
-        addMessage({ kind: 'warn', text: `Nie udało się rozpoznać formatu pliku ${file.name}. Sprawdź czy to poprawny eksport z brokera.` });
+
+      if (accepted.length > 0) {
+        setTransactionsFiles(prev => [...prev, ...accepted]);
+        setDetectedBroker(brokerForBatch);
+        setRequiresOps(newRequiresOps);
       }
-      setDetectedBroker(detect.broker);
-      setRequiresOps(detect.requiresOperationsFile);
     } catch (err) {
       addMessage({ kind: 'error', text: `Błąd klasyfikacji pliku: ${(err as Error).message}` });
     } finally {
       setDetecting(false);
     }
-  }, [addMessage]);
+  }, [addMessage, detectedBroker, requiresOps]);
+
+  const removeTransactionFile = useCallback((idx: number) => {
+    setTransactionsFiles(prev => {
+      const next = prev.filter((_, i) => i !== idx);
+      if (next.length === 0) {
+        setDetectedBroker(null);
+        setRequiresOps(false);
+      }
+      return next;
+    });
+  }, []);
 
   const handleOperationsSelected = useCallback(async (file: File | null) => {
     setOperationsFile(file);
@@ -115,7 +155,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
 
   const canSubmit = (() => {
     if (uploading) return false;
-    if (!transactionsFile) return false;
+    if (transactionsFiles.length === 0) return false;
     if (requiresOps && !operationsFile) return false;
     return true;
   })();
@@ -124,7 +164,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
     if (!canSubmit) return;
     setUploading(true);
     try {
-      const result = await api.bulkImport(transactionsFile, operationsFile);
+      const result = await api.bulkImport(transactionsFiles, operationsFile);
 
       if (result.success) {
         const txCount = result.transactionsImported || 0;
@@ -209,7 +249,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
     } finally {
       setUploading(false);
     }
-  }, [canSubmit, transactionsFile, operationsFile, queryClient, addMessage]);
+  }, [canSubmit, transactionsFiles, operationsFile, queryClient, addMessage]);
 
   const handleAddSpinoffBuy = useCallback(async (orphan: OrphanedSell) => {
     setResolving(orphan.isin);
@@ -255,22 +295,49 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
               Transakcje (hisPW.csv, Transactions.csv, XTB .xlsx, mBank CSV)
             </label>
+            <span className="text-xs text-muted-foreground -mt-0.5">
+              Bossa eksportuje historię osobno per waluta — wgraj wszystkie pliki naraz (np. hisPW-PLN.csv, hisPW-USD.csv, hisPW-EUR.csv).
+            </span>
             <Input
               type="file"
               accept=".csv,.xlsx"
+              multiple
               disabled={uploading}
               className="file:bg-muted file:border-0 file:mr-3 file:py-1.5 file:px-3 file:rounded file:text-xs file:font-semibold file:text-foreground hover:file:bg-accent file:cursor-pointer text-xs text-muted-foreground"
-              onChange={(e) => handleTransactionsSelected(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                handleTransactionsSelected(e.target.files);
+                // Pozwól wybrać ten sam plik ponownie po usunięciu z listy
+                e.target.value = '';
+              }}
             />
             {detecting && (
               <span className="text-xs text-muted-foreground flex items-center gap-1.5">
                 <Loader2 className="h-3 w-3 animate-spin" /> Rozpoznawanie formatu...
               </span>
             )}
-            {detectedLabel && !detecting && (
+            {detectedLabel && !detecting && transactionsFiles.length > 0 && (
               <span className="text-xs text-muted-foreground flex items-center gap-1.5">
                 <Info className="h-3 w-3" /> Wykryto: <span className="font-medium">{detectedLabel}</span>
+                <span className="text-muted-foreground/80">· {transactionsFiles.length} {transactionsFiles.length === 1 ? 'plik' : 'pliki'}</span>
               </span>
+            )}
+            {transactionsFiles.length > 0 && (
+              <ul className="flex flex-col gap-1 mt-0.5">
+                {transactionsFiles.map((f, idx) => (
+                  <li key={idx} className="flex items-center justify-between text-xs bg-muted/50 rounded px-2 py-1">
+                    <span className="truncate flex-1" title={f.name}>{f.name}</span>
+                    <button
+                      type="button"
+                      disabled={uploading}
+                      onClick={() => removeTransactionFile(idx)}
+                      className="ml-2 text-muted-foreground hover:text-destructive transition-colors"
+                      aria-label={`Usuń ${f.name}`}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 
@@ -291,7 +358,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             <Input
               type="file"
               accept=".csv"
-              disabled={uploading || !transactionsFile}
+              disabled={uploading || transactionsFiles.length === 0}
               className="file:bg-muted file:border-0 file:mr-3 file:py-1.5 file:px-3 file:rounded file:text-xs file:font-semibold file:text-foreground hover:file:bg-accent file:cursor-pointer text-xs text-muted-foreground"
               onChange={(e) => handleOperationsSelected(e.target.files?.[0] ?? null)}
             />
