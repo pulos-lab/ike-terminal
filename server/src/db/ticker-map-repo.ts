@@ -118,8 +118,27 @@ export function migrateGpwToYahoo(portfolioId: string): number {
   return result.changes;
 }
 
-export function upsertTickerMapEntry(entry: TickerMapEntry, portfolioId: string = 'default'): void {
+/** Insert or update a ticker_map entry.
+ *
+ * Anchor behavior (default `force = false`): if an entry already exists for
+ * this ISIN, it is NOT overwritten. This protects against auto-resolve paths
+ * silently flipping a ticker to a different Yahoo/Stooq symbol between runs
+ * (which can cause historical price discontinuities and fake step-ups on the
+ * portfolio chart).
+ *
+ * Pass `force: true` from explicitly user-initiated flows (UI ticker edit,
+ * admin endpoint) that should intentionally overwrite the anchored entry.
+ */
+export function upsertTickerMapEntry(
+  entry: TickerMapEntry,
+  portfolioId: string = 'default',
+  force: boolean = false,
+): void {
   const db = getDb(portfolioId);
+  if (!force) {
+    const existing = getTickerByIsin(entry.isin, portfolioId);
+    if (existing) return; // anchor — already resolved, do not overwrite
+  }
   db.prepare(`
     INSERT OR REPLACE INTO ticker_map (isin, ticker, name, exchange, currency, price_source, sector)
     VALUES (?, ?, ?, ?, ?, ?, ?)

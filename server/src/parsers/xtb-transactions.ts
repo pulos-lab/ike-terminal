@@ -62,6 +62,16 @@ function instrumentCurrency(symbol: string): string {
   return SUFFIX_CURRENCY[suffix] || 'USD';
 }
 
+/** Returns the raw suffix (after last dot) if present and NOT mapped in
+ * SUFFIX_CURRENCY — i.e. the case where instrumentCurrency silently falls
+ * back to USD. Returns null for symbols without suffix or with known suffix. */
+function unknownSuffixOf(symbol: string): string | null {
+  const dot = symbol.lastIndexOf('.');
+  if (dot === -1) return null;
+  const suffix = symbol.slice(dot + 1).toUpperCase();
+  return SUFFIX_CURRENCY[suffix] ? null : suffix;
+}
+
 function normalizeXtbSymbol(symbol: string): string {
   const dot = symbol.lastIndexOf('.');
   return dot === -1 ? symbol : symbol.slice(0, dot);
@@ -124,23 +134,36 @@ const COMMISSION_BUY_RE = /BUY ([\d.]+) @ ([\d.]+)/;
 /** Determine paperName and isin for a raw symbol.
  * Old format: "JSW.PL" → yahooTicker "JSW.WA"
  * New format: "Cyfrowy Polsat" → look up in Closed Positions ticker column,
- *   fall back to company name as placeholder */
+ *   fall back to company name as placeholder
+ *
+ * Optional collectors — when provided, the function logs each silent fallback
+ * it takes so the caller can surface a single aggregated warning:
+ *   unknownSuffixes — raw country suffixes that triggered USD fallback
+ *   unknownNames     — new-format company names that triggered PLN placeholder
+ */
 function resolveSymbolIdentifiers(
   symbol: string,
   tickerLookup?: Map<string, string>,
+  unknownSuffixes?: Set<string>,
+  unknownNames?: Set<string>,
 ): { paperName: string; isin: string; currency: string } {
   if (symbol.includes('.') && /\.\w{2}$/.test(symbol)) {
     // Old format: ticker.COUNTRY (e.g., "JSW.PL", "PLTR.US")
     const yahooTicker = xtbToYahooTicker(symbol);
+    const badSuffix = unknownSuffixOf(symbol);
+    if (badSuffix && unknownSuffixes) unknownSuffixes.add(badSuffix);
     return { paperName: yahooTicker, isin: yahooTicker, currency: instrumentCurrency(symbol) };
   }
   // New format: full company name — try Closed Positions ticker lookup first
   const cpTicker = tickerLookup?.get(symbol);
   if (cpTicker) {
     const yahooTicker = xtbToYahooTicker(cpTicker);
+    const badSuffix = unknownSuffixOf(cpTicker);
+    if (badSuffix && unknownSuffixes) unknownSuffixes.add(badSuffix);
     return { paperName: yahooTicker, isin: yahooTicker, currency: instrumentCurrency(cpTicker) };
   }
   // Fallback: use company name as placeholder
+  if (unknownNames) unknownNames.add(symbol);
   return { paperName: symbol, isin: symbol, currency: 'PLN' };
 }
 
@@ -288,7 +311,18 @@ export async function parseXtbFile(
     : rawRows2d;
 
   // ── Extract account currency from metadata rows (1-8) ──
-  const accountCurrency = extractAccountCurrency(rows);
+  const { currency: accountCurrency, detected: accountCurrencyDetected } = extractAccountCurrency(rows);
+  if (!accountCurrencyDetected) {
+    warnings.push(
+      'Nie wykryto waluty konta w metadanych pliku XTB — przyjęto PLN. ' +
+      'Jeśli konto jest prowadzone w innej walucie, zweryfikuj import.',
+    );
+  }
+
+  // Collectors for silent currency fallbacks used by resolveSymbolIdentifiers
+  // (aggregated into one warning each at the end of the parse).
+  const unknownSuffixes = new Set<string>();
+  const unknownNames = new Set<string>();
 
   // ── Detect format and find header row ──
   // Old format: headers start with "ID, Type, ..."
@@ -432,7 +466,7 @@ export async function parseXtbFile(
       if (qty <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_quantity', paperName: raw.symbol }); continue; }
       if (price <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol }); continue; }
 
-      const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup);
+      const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames);
       const value = roundTo2(qty * price);
       const category = categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol) ?? 'stock';
 
@@ -492,7 +526,7 @@ export async function parseXtbFile(
       if (qty <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_quantity', paperName: raw.symbol }); continue; }
       if (price <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol }); continue; }
 
-      const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup);
+      const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames);
       const value = roundTo2(qty * price);
       const category = categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol) ?? 'stock';
 
@@ -602,7 +636,7 @@ export async function parseXtbFile(
         description,
         amount: netAmount,
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup).paperName : undefined,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames).paperName : undefined,
         source: 'xtb',
         importBatch,
       });
@@ -669,7 +703,7 @@ export async function parseXtbFile(
         description: raw.comment || `Withholding tax: ${raw.symbol}`,
         amount: raw.amount, // negative
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup).paperName : undefined,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames).paperName : undefined,
         source: 'xtb',
         importBatch,
       });
@@ -688,7 +722,7 @@ export async function parseXtbFile(
         description: `${raw.type}: ${raw.comment || raw.symbol || ''}`.trim(),
         amount: raw.amount,
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup).paperName : undefined,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames).paperName : undefined,
         source: 'xtb',
         importBatch,
       });
@@ -703,7 +737,7 @@ export async function parseXtbFile(
         description: raw.comment || `Rights issue: ${raw.symbol}`,
         amount: raw.amount,
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup).paperName : undefined,
+        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames).paperName : undefined,
         source: 'xtb',
         importBatch,
       });
@@ -724,7 +758,7 @@ export async function parseXtbFile(
       description: `${raw.type}: ${raw.comment}`,
       amount: raw.amount,
       currency: accountCurrency,
-      ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup).paperName : undefined,
+      ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames).paperName : undefined,
       source: 'xtb',
       importBatch,
     });
@@ -735,8 +769,33 @@ export async function parseXtbFile(
   // Build a set of existing transaction keys for deduplication.
   const existingTxKeys = new Set(txBySymbolTime.keys());
 
-  const cfdTransactions = extractCfdTransactions(wb, accountCurrency, importBatch, existingTxKeys);
+  const { transactions: cfdTransactions, unmappedCfd } = extractCfdTransactions(
+    wb, accountCurrency, importBatch, existingTxKeys,
+  );
   transactions.push(...cfdTransactions);
+
+  // ── Aggregated warnings from silent fallbacks ──────────────────────────
+  if (unknownSuffixes.size > 0) {
+    warnings.push(
+      `Nieznane suffixy kraju w symbolach: ${[...unknownSuffixes].sort().join(', ')} — ` +
+      `walutę przyjęto domyślnie jako USD. Zweryfikuj transakcje tych instrumentów.`,
+    );
+  }
+  if (unknownNames.size > 0) {
+    const sample = [...unknownNames].slice(0, 5).join(', ');
+    const more = unknownNames.size > 5 ? ` (i ${unknownNames.size - 5} innych)` : '';
+    warnings.push(
+      `Brak mapy tickerów dla ${unknownNames.size} instrumentów (nowy format XTB bez arkusza ` +
+      `"Closed Positions"): ${sample}${more}. Walutę ustawiono domyślnie na PLN — zweryfikuj, ` +
+      `czy to poprawne dla każdego z tych walorów.`,
+    );
+  }
+  if (unmappedCfd.size > 0) {
+    warnings.push(
+      `Instrumenty CFD bez mapowania Yahoo (${unmappedCfd.size}): ${[...unmappedCfd].sort().join(', ')}. ` +
+      `Wycena historyczna będzie oparta tylko na cenie transakcji (txPrice).`,
+    );
+  }
 
   return {
     transactions: { data: transactions, skipped: txSkipped },
@@ -747,7 +806,7 @@ export async function parseXtbFile(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function extractAccountCurrency(rows: any[][]): string {
+function extractAccountCurrency(rows: any[][]): { currency: string; detected: boolean } {
   // Look for currency in metadata rows (typically row 6, column 4 "Currency")
   for (let i = 0; i < Math.min(rows.length, 10); i++) {
     const row = rows[i];
@@ -755,11 +814,11 @@ function extractAccountCurrency(rows: any[][]): string {
     for (let j = 0; j < row.length; j++) {
       const cell = row[j]?.toString().trim();
       if (cell === 'PLN' || cell === 'USD' || cell === 'EUR' || cell === 'GBP') {
-        return cell;
+        return { currency: cell, detected: true };
       }
     }
   }
-  return 'PLN';
+  return { currency: 'PLN', detected: false };
 }
 
 /** Extract CFD transactions from Closed Positions sheet.
@@ -777,9 +836,10 @@ function extractCfdTransactions(
   accountCurrency: string,
   importBatch: string,
   existingTxKeys: Set<string>,
-): Transaction[] {
+): { transactions: Transaction[]; unmappedCfd: Set<string> } {
+  const unmappedCfd = new Set<string>();
   const ws = wb.worksheets.find(s => s.name.toUpperCase().includes('CLOSED'));
-  if (!ws) return [];
+  if (!ws) return { transactions: [], unmappedCfd };
 
   // Find header row and column indices
   let headerIdx = -1;
@@ -796,7 +856,7 @@ function extractCfdTransactions(
     if (cols['Instrument'] !== undefined && cols['Category'] !== undefined) headerIdx = rowNum;
   });
 
-  if (headerIdx === -1) return [];
+  if (headerIdx === -1) return { transactions: [], unmappedCfd };
 
   const transactions: Transaction[] = [];
 
@@ -816,6 +876,16 @@ function extractCfdTransactions(
     const closeTimeRaw = vals[cols['Close Time (UTC)']];
 
     if (!instrument || !posType || volume <= 0 || openPrice <= 0 || closePrice <= 0) return;
+
+    // Flag CFDs that have no Yahoo mapping — their historical valuation will fall
+    // back to txPrice only. Uses the same lookup logic as inferCategoryFromSymbol:
+    // try the full symbol first, then the base name without suffix.
+    if (!findCfdTicker(instrument)) {
+      const base = instrument.includes('.') ? instrument.split('.')[0] : instrument;
+      if (base === instrument || !findCfdTicker(base)) {
+        unmappedCfd.add(instrument);
+      }
+    }
 
     const openTime = parseXtbTime(openTimeRaw);
     const closeTime = parseXtbTime(closeTimeRaw);
@@ -892,7 +962,7 @@ function extractCfdTransactions(
     });
   });
 
-  return transactions;
+  return { transactions, unmappedCfd };
 }
 
 /** Extract instrument category (STOCK/ETF/CFD) from Closed Positions sheet.
