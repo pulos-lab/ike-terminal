@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectSeparator } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
@@ -15,6 +16,7 @@ export function PortfolioSelector() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
   const [purging, setPurging] = useState(false);
   const [newName, setNewName] = useState('');
@@ -64,17 +66,30 @@ export function PortfolioSelector() {
   };
 
   const handleDelete = async () => {
-    await deletePortfolio(activeId);
-    setDeleteConfirmOpen(false);
-    setSettingsDialogOpen(false);
+    const nameSnapshot = activeName;
+    setDeleting(true);
+    try {
+      await deletePortfolio(activeId);
+      setDeleteConfirmOpen(false);
+      setSettingsDialogOpen(false);
+      toast.success(`Portfel „${nameSnapshot}" usunięty`);
+    } catch (err: any) {
+      toast.error(`Nie udało się usunąć portfela: ${err?.message || 'nieznany błąd'}`);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handlePurge = async () => {
+    const nameSnapshot = activeName;
     setPurging(true);
     try {
       await purgeData(activeId);
       setPurgeConfirmOpen(false);
       setSettingsDialogOpen(false);
+      toast.success(`Dane portfela „${nameSnapshot}" wyczyszczone`);
+    } catch (err: any) {
+      toast.error(`Nie udało się wyczyścić danych: ${err?.message || 'nieznany błąd'}`);
     } finally {
       setPurging(false);
     }
@@ -304,8 +319,8 @@ export function PortfolioSelector() {
             <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
               Anuluj
             </Button>
-            <Button variant="destructive" onClick={handleDelete}>
-              Usuń
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting ? 'Usuwam...' : 'Usuń'}
             </Button>
           </DialogFooter>
         </DialogContent>
