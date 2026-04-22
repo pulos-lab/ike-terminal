@@ -129,7 +129,11 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
       commission,
       total,
       currency,                                      // quote — z kolumny 8 (priceCurrency)
-      paymentCurrency: 'EUR',                        // DEGIRO base account (standard)
+      paymentCurrency: 'EUR',                        // default — DEGIRO base account EUR; faktyczna waluta
+                                                     // rozliczenia wyliczana post-insert przez
+                                                     // reconcilePaymentCurrencies() (symulacja salda walut).
+                                                     // Z wyłączonym auto-FX user może trzymać PLN/USD i płacić
+                                                     // bezpośrednio z salda danej waluty.
       fxRate: fxRateRaw > 0 ? fxRateRaw : undefined, // z NEW format "Kurs wymiany"; undefined dla OLD format
       source: 'degiro',
       importBatch,

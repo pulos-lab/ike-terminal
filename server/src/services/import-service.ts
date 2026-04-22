@@ -46,6 +46,7 @@ import {
 import { insertOperationsWithDedup, getAllOperations } from '../db/operations-repo.js';
 import { seedTickerMap, findIsinByName, upsertTickerMapEntry, getTickerByIsin, deleteTickerMapEntry } from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
+import { reconcilePaymentCurrencies } from './payment-currency-reconciler.js';
 import { getDb } from '../db/connection.js';
 
 // ─── File classification ─────────────────────────────────────────────────────
@@ -293,6 +294,23 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     if (entry && entry.ticker === entry.name && !entry.ticker.includes('.')) {
       deleteTickerMapEntry(isin, pid);
     }
+  }
+
+  // Po db.transaction: reconcile paymentCurrency na podstawie pełnego ledgera
+  // walut (Bossa / DEGIRO). Bossa IKE/IKZE pozwala trzymać subkonta walutowe,
+  // więc paymentCurrency zależy od stanu salda w momencie transakcji, nie od
+  // stałej waluty konta. Idempotent — UPDATE tylko gdy obliczone różni się od
+  // zapisanego. Musi być poza db.transaction bo czyta aktualny stan DB po
+  // insercie i robi osobne UPDATE-y.
+  const paymentRecon = reconcilePaymentCurrencies(pid, ['bossa', 'degiro']);
+  if (paymentRecon.updatedCount > 0) {
+    crossFileWarnings.push(
+      `Zrekonsyliowano walutę rozliczenia dla ${paymentRecon.updatedCount} ` +
+      `transakcji na podstawie salda walut (Bossa/DEGIRO).`,
+    );
+  }
+  if (paymentRecon.warnings.length > 0) {
+    crossFileWarnings.push(...paymentRecon.warnings);
   }
 
   // Po db.transaction: ISIN resolution (sieciowe — poza transakcją SQLite)
