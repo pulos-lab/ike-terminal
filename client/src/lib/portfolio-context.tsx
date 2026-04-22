@@ -15,7 +15,7 @@ interface PortfolioContextValue {
   purgeData: (id: string) => Promise<void>;
   updateSettings: (settings: PortfolioSettings) => Promise<void>;
   updateName: (name: string) => Promise<void>;
-  refreshPortfolios: () => Promise<void>;
+  refreshPortfolios: () => Promise<Portfolio[]>;
 }
 
 const PortfolioContext = createContext<PortfolioContextValue | null>(null);
@@ -28,12 +28,20 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   const refreshPortfolios = useCallback(async () => {
     const list = await api.getPortfolios();
     setPortfolios(list);
-    // If active portfolio doesn't exist in user's list, switch to first available
-    if (list.length > 0 && !list.find(p => p.id === getActivePortfolioId())) {
-      setActivePortfolioId(list[0].id);
-      setActiveId(list[0].id);
+    // Ghost activeId detection: jesli stan localStorage wskazuje na portfel
+    // ktorego juz nie ma w API (bo zostal usuniety — albo on-device-only stale),
+    // trzeba awaryjnie przestawic na pierwszy dostepny i zresetowac zapytania.
+    // Bez tego kazde DELETE /portfolios/<ghost-id> wraca z 403 i user nie wie
+    // dlaczego "Usun portfel" nie reaguje.
+    const currentActive = getActivePortfolioId();
+    if (list.length > 0 && !list.some(p => p.id === currentActive)) {
+      const fallbackId = list[0].id;
+      setActivePortfolioId(fallbackId);
+      setActiveId(fallbackId);
+      queryClient.resetQueries();
     }
-  }, []);
+    return list;
+  }, [queryClient]);
 
   useEffect(() => {
     refreshPortfolios();
@@ -54,17 +62,40 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   }, [refreshPortfolios, switchPortfolio]);
 
   const deletePortfolioFn = useCallback(async (id: string) => {
-    await api.deletePortfolio(id);
-    await refreshPortfolios();
+    try {
+      await api.deletePortfolio(id);
+    } catch (err: any) {
+      // Backend zwraca 403 (Access denied) gdy portfel nie istnieje w registry
+      // (ownership check szuka portfolio i zwraca null -> isPortfolioOwnedBy=false).
+      // Dla usera to znaczy "portfel juz usuniety" -> traktujemy jako success,
+      // refreshujemy stan. Pozostale bledy propagujemy do UI.
+      const msg = String(err?.message || '');
+      const alreadyGone = msg.includes('Access denied') || msg.includes('HTTP 403') ||
+                          msg.includes('HTTP 404') || msg.includes('not found');
+      if (!alreadyGone) throw err;
+    }
+    const list = await refreshPortfolios();
     if (activeId === id) {
-      switchPortfolio('default');
+      // Switch na pierwszy dostepny z odswiezonej listy (refreshPortfolios
+      // moze juz to zrobil, ale jawny switch jest bezpieczniejszy).
+      if (list.length > 0) switchPortfolio(list[0].id);
     }
   }, [activeId, refreshPortfolios, switchPortfolio]);
 
   const purgeDataFn = useCallback(async (id: string) => {
-    await api.purgePortfolioData(id);
-    queryClient.resetQueries();
-  }, [queryClient]);
+    try {
+      await api.purgePortfolioData(id);
+      queryClient.resetQueries();
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      // 403/404 dla purgeData = portfel nie istnieje; odswiez state i zglos uzytkownikowi.
+      if (msg.includes('Access denied') || msg.includes('HTTP 403') || msg.includes('HTTP 404')) {
+        await refreshPortfolios();
+        throw new Error('Portfel nie istnieje — odswiezono liste');
+      }
+      throw err;
+    }
+  }, [queryClient, refreshPortfolios]);
 
   const updateSettingsFn = useCallback(async (settings: PortfolioSettings) => {
     await api.updatePortfolio(activeId, { settings });
