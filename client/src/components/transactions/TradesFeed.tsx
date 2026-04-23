@@ -191,9 +191,9 @@ export const TradesFeed = memo(function TradesFeed() {
         </div>
       )}
 
-      {/* Desktop table — wirtualizowana lista. Renderujemy TYLKO ~20 widocznych
-          wierszy zamiast 6334. React reconciliation O(widocznych) ≈ O(20). */}
-      {isDesktop && (
+      {/* Desktop table — powyżej 500 wierszy wirtualizacja (renderuje ~30
+          widocznych), poniżej zwykła tabela (pełny Ctrl+F, natywny scroll). */}
+      {isDesktop && sorted.length > 500 ? (
         <VirtualTable
           rows={sorted}
           editingId={editingId}
@@ -206,7 +206,20 @@ export const TradesFeed = memo(function TradesFeed() {
           onEdit={startEdit}
           onDelete={requestDelete}
         />
-      )}
+      ) : isDesktop ? (
+        <SimpleTable
+          rows={sorted}
+          editingId={editingId}
+          editForm={editForm}
+          setEditForm={setEditForm}
+          isEditValid={isEditValid}
+          updatePending={updateMutation.isPending}
+          saveEdit={saveEdit}
+          cancelEdit={cancelEdit}
+          onEdit={startEdit}
+          onDelete={requestDelete}
+        />
+      ) : null}
 
       {/* Mobile cards — renderujemy TYLKO gdy wąski viewport */}
       {!isDesktop && (
@@ -472,6 +485,62 @@ function VirtualTable({
               padding: 0, border: 'none',
             }} /></tr>
           )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ============ Simple Table (≤500 rows — no virtualization) ============
+
+function SimpleTable({
+  rows, editingId, editForm, setEditForm, isEditValid,
+  updatePending, saveEdit, cancelEdit, onEdit, onDelete,
+}: VirtualTableProps) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold border-b border-border">
+            <th className="text-left py-2 pr-4">Data</th>
+            <th className="text-left py-2 pr-4">Ticker</th>
+            <th className="text-left py-2 pr-4" title="Waluta rozliczenia — co zapłaciłeś">Waluta zakupu</th>
+            <th className="text-left py-2 pr-4">Strona</th>
+            <th className="text-right py-2 pr-4">Ilość</th>
+            <th className="text-right py-2 pr-4">Cena</th>
+            <th className="text-left py-2 pr-4" title="Waluta kwotowania papieru na giełdzie">Kwotowanie</th>
+            <th className="text-right py-2 pr-4">Prow.</th>
+            <th className="text-right py-2 pr-4">Wartość PLN</th>
+            <th className="text-right py-2 w-[90px]"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((tx, i) => {
+            const key = tx.id ?? `row-${i}`;
+            const isEditing = tx.id != null && editingId === tx.id;
+            if (isEditing) {
+              return (
+                <EditRow
+                  key={key}
+                  tx={tx}
+                  editForm={editForm}
+                  setEditForm={setEditForm}
+                  isEditValid={isEditValid}
+                  updatePending={updatePending}
+                  saveEdit={saveEdit}
+                  cancelEdit={cancelEdit}
+                />
+              );
+            }
+            return (
+              <NormalRow
+                key={key}
+                tx={tx}
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
+            );
+          })}
         </tbody>
       </table>
     </div>
