@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { getAllTransactions, getTransactionById, insertTransaction, updateTransaction, deleteTransaction } from '../db/transactions-repo.js';
 import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOperation, insertOperations, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
-import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
+import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry, getAllTickers, updateTickerSector } from '../db/ticker-map-repo.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
 import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput, StockSplitInput, DetectedSplit, UpcomingDividend } from 'shared';
 import { invalidateCachedPrices } from '../services/history-cache.js';
-import { fetchYahooPrice, fetchFxRate, fetchDividendCalendar } from '../services/yahoo-finance.js';
+import { fetchYahooPrice, fetchFxRate, fetchDividendCalendar, fetchAssetProfile } from '../services/yahoo-finance.js';
+import { findCfdTicker, getCfdSector } from 'shared';
 import {
   computeOpenPositions,
   computeClosedTrades,
@@ -491,6 +492,57 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
 
   const cashFlow = computeCashFlow(operations, history, dailyFxRates, baseCurrency);
   res.json({ cashFlow, baseCurrency });
+}));
+
+// POST /api/portfolio/ticker-map/refresh-sectors
+// Backfill pola sector dla wszystkich entries w ticker_map aktywnego portfela.
+// Dla CFD (CFD_TICKER_MAP hit) używa getCfdSector (offline). Dla pozostałych
+// wywołuje Yahoo fetchAssetProfile. Bezpieczne — aktualizuje tylko puste
+// sektory (nie nadpisuje ręcznie przypisanych).
+router.post('/ticker-map/refresh-sectors', asyncHandler(async (req, res) => {
+  const pid = req.portfolioId;
+  const entries = getAllTickers(pid);
+  const toUpdate = entries.filter(e => !e.sector);
+
+  let updatedCount = 0;
+  let fromCfdMap = 0;
+  let fromYahoo = 0;
+  const failed: string[] = [];
+
+  for (const entry of toUpdate) {
+    try {
+      // CFD-first: static map
+      const cfdEntry = findCfdTicker(entry.name) || findCfdTicker(entry.ticker);
+      if (cfdEntry) {
+        const sector = getCfdSector(cfdEntry);
+        updateTickerSector(entry.isin, sector, pid);
+        updatedCount++;
+        fromCfdMap++;
+        continue;
+      }
+
+      // Otherwise: Yahoo assetProfile
+      const profile = await fetchAssetProfile(entry.ticker);
+      if (profile?.sector) {
+        updateTickerSector(entry.isin, profile.sector, pid);
+        updatedCount++;
+        fromYahoo++;
+      } else {
+        failed.push(entry.ticker);
+      }
+    } catch {
+      failed.push(entry.ticker);
+    }
+  }
+
+  res.json({
+    total: entries.length,
+    needingUpdate: toUpdate.length,
+    updated: updatedCount,
+    fromCfdMap,
+    fromYahoo,
+    failed,
+  });
 }));
 
 // GET /api/portfolio/metrics

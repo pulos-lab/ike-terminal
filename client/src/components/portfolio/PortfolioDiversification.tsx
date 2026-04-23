@@ -1,5 +1,11 @@
 import { useMemo, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { RefreshCw, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { api } from '@/lib/api-client';
+import { QUERY_KEYS } from '@/lib/query-keys';
 
 interface Position {
   ticker: string;
@@ -212,17 +218,60 @@ function ChartLegend({ data }: { data: SliceData[] }) {
   );
 }
 
-function DiversificationChart({ title, data }: { title: string; data: SliceData[] }) {
+function DiversificationChart({ title, data, headerAction }: { title: string; data: SliceData[]; headerAction?: React.ReactNode }) {
   return (
     <Card>
       <CardHeader className="pb-1">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+          {headerAction}
+        </div>
       </CardHeader>
       <CardContent className="pb-4">
         <DonutChart data={data} />
         <ChartLegend data={data} />
       </CardContent>
     </Card>
+  );
+}
+
+function RefreshSectorsButton() {
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: api.refreshSectors,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.positions });
+      if (result.updated > 0) {
+        toast.success(`Zaktualizowano ${result.updated} sektor${result.updated === 1 ? '' : 'ów'}`, {
+          description: `CFD: ${result.fromCfdMap}, Yahoo: ${result.fromYahoo}${result.failed.length > 0 ? `, nie znaleziono: ${result.failed.length}` : ''}`,
+        });
+      } else if (result.needingUpdate === 0) {
+        toast.info('Wszystkie sektory są już przypisane');
+      } else {
+        toast.warning('Nie udało się zaktualizować żadnego sektora', {
+          description: `Yahoo nie zwrócił danych dla: ${result.failed.slice(0, 3).join(', ')}${result.failed.length > 3 ? '…' : ''}`,
+        });
+      }
+    },
+    onError: (err: any) => {
+      toast.error('Błąd odświeżania sektorów', { description: err?.message });
+    },
+  });
+
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      onClick={() => mutation.mutate()}
+      disabled={mutation.isPending}
+      className="h-7 px-2 text-xs"
+      title="Pobiera sektory z Yahoo Finance dla pozycji bez przypisanego sektora"
+    >
+      {mutation.isPending
+        ? <Loader2 className="h-3 w-3 animate-spin" />
+        : <RefreshCw className="h-3 w-3" />}
+      <span className="ml-1">Odśwież</span>
+    </Button>
   );
 }
 
@@ -320,7 +369,11 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <DiversificationChart title="Regiony" data={regionData} />
         <DiversificationChart title="Waluty" data={currencyData} />
-        <DiversificationChart title="Sektory" data={sectorData} />
+        <DiversificationChart
+          title="Sektory"
+          data={sectorData}
+          headerAction={<RefreshSectorsButton />}
+        />
         <DiversificationChart title="Top pozycje" data={topPositionsData} />
       </div>
     </div>

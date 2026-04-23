@@ -126,6 +126,13 @@ export const api = {
   searchTickers: (query: string) =>
     request<Array<{ symbol: string; name: string; exchange: string; currency?: string }>>(`/portfolio/ticker-search?q=${encodeURIComponent(query)}`),
 
+  // Ticker map — sector backfill (dla istniejących entries bez sectora)
+  refreshSectors: () =>
+    request<{ total: number; needingUpdate: number; updated: number; fromCfdMap: number; fromYahoo: number; failed: string[] }>(
+      '/portfolio/ticker-map/refresh-sectors',
+      { method: 'POST' },
+    ),
+
   // Deposits CRUD
   getDeposits: () => request<any>('/portfolio/deposits'),
   createDeposit: (body: { date: string; amount: number }, type: 'deposit' | 'withdrawal' = 'deposit') =>
