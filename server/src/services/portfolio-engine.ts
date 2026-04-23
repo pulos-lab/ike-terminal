@@ -870,7 +870,15 @@ export async function computePortfolioHistory(
   startDate?: string,
   endDate?: string,
   splits: DetectedSplit[] = [],
-): Promise<{ history: PortfolioHistoryPoint[]; metrics: PortfolioMetrics; detectedSplits: DetectedSplit[] }> {
+): Promise<{
+  history: PortfolioHistoryPoint[];
+  metrics: PortfolioMetrics;
+  detectedSplits: DetectedSplit[];
+  /** Per-day snapshot of FX rates (currency → PLN multiplier).
+   * Exposed dla downstream consumers (np. computeCashFlow) którzy potrzebują
+   * konwertować PLN-values history do innej waluty bazowej bez re-fetchu. */
+  dailyFxRates: Map<string, Map<string, number>>;
+}> {
   // Determine date range
   const allDates = [
     ...operations.map(o => o.date.split('T')[0]),
@@ -1422,17 +1430,26 @@ export async function computePortfolioHistory(
     totalDividends,
   };
 
-  return { history, metrics, detectedSplits: allSplits };
+  return { history, metrics, detectedSplits: allSplits, dailyFxRates };
 }
 
 // ============ Cash Flow History ============
 
-export function computeCashFlow(operations: CashOperation[], portfolioHistory: PortfolioHistoryPoint[]): CashFlowRecord[] {
+export function computeCashFlow(
+  operations: CashOperation[],
+  portfolioHistory: PortfolioHistoryPoint[],
+  dailyFxRates?: Map<string, Map<string, number>>,
+  baseCurrency: string = 'PLN',
+): CashFlowRecord[] {
   // Build cash flow record for every date that has a deposit or withdrawal
   // (in any currency). Values come from history points which are already
   // PLN-normalized per-day using FX rates from computePortfolioHistory.
-  // This keeps cash flow chart consistent with MWR/TWR/portfolio value
-  // (wszystkie w PLN na jednej osi).
+  //
+  // For non-PLN portfolios (np. XTB USD sub-konto), konwertujemy PLN → base
+  // używając per-day FX rate — wszystkie linie wykresu (portfolioValue,
+  // netCashFlow) są wtedy w walucie portfela, a nie w PLN. Dla USD portfela
+  // z depozytami tylko w USD: portfolioValue ≈ cash balance USD + stocks_USD,
+  // a cumulativeDeposits ≈ raw sum of USD amounts.
   const cashOpDates = new Set<string>();
   for (const op of operations) {
     if (op.operationType === 'deposit' || op.operationType === 'withdrawal') {
@@ -1440,31 +1457,45 @@ export function computeCashFlow(operations: CashOperation[], portfolioHistory: P
     }
   }
 
+  const baseUpper = baseCurrency.toUpperCase();
+  const needsConversion = baseUpper !== 'PLN';
+
+  // Resolve PLN-denominated value → base currency for a given date.
+  // baseFx = how many PLN per 1 base-cur. Value in base = value_pln / baseFx.
+  const toBase = (valuePln: number, date: string): number => {
+    if (!needsConversion) return valuePln;
+    const fx = dailyFxRates?.get(date)?.get(baseUpper);
+    if (!fx || fx <= 0) return valuePln; // fallback — leave in PLN (lepsze niż NaN)
+    return valuePln / fx;
+  };
+
   const records: CashFlowRecord[] = [];
-  let prevCumDeposits = 0;
-  let prevCumWithdrawals = 0;
+  let prevCumDepositsPln = 0;
+  let prevCumWithdrawalsPln = 0;
 
   for (const p of portfolioHistory) {
-    const dCum = p.cumulativeDepositsPln;
-    const wCum = p.cumulativeWithdrawalsPln;
-    // Only emit records on days where cash flow actually changed OR an op
-    // exists on this date (preserves compatibility with previous behavior
-    // that emitted one record per operation date).
-    const changed = dCum !== prevCumDeposits || wCum !== prevCumWithdrawals;
+    const dCumPln = p.cumulativeDepositsPln;
+    const wCumPln = p.cumulativeWithdrawalsPln;
+    const changed = dCumPln !== prevCumDepositsPln || wCumPln !== prevCumWithdrawalsPln;
     if (!changed && !cashOpDates.has(p.date)) continue;
+
+    const dCum = toBase(dCumPln, p.date);
+    const wCum = toBase(wCumPln, p.date);
+    const depositDeltaPln = Math.max(0, dCumPln - prevCumDepositsPln);
+    const withdrawalDeltaPln = Math.max(0, wCumPln - prevCumWithdrawalsPln);
 
     records.push({
       date: p.date,
-      depositAmount: Math.max(0, dCum - prevCumDeposits),
-      withdrawalAmount: Math.max(0, wCum - prevCumWithdrawals),
+      depositAmount: toBase(depositDeltaPln, p.date),
+      withdrawalAmount: toBase(withdrawalDeltaPln, p.date),
       cumulativeDeposits: dCum,
       cumulativeWithdrawals: wCum,
       netCashFlow: dCum - wCum,
-      portfolioValue: p.portfolioValue,
+      portfolioValue: toBase(p.portfolioValue, p.date),
     });
 
-    prevCumDeposits = dCum;
-    prevCumWithdrawals = wCum;
+    prevCumDepositsPln = dCumPln;
+    prevCumWithdrawalsPln = wCumPln;
   }
 
   return records;

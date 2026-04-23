@@ -257,7 +257,14 @@ export function CashFlowPage() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Wpłaty netto a wycena portfela</CardTitle>
+          <CardTitle className="text-base">
+            Wpłaty netto a wycena portfela
+            {cashFlowData?.baseCurrency && cashFlowData.baseCurrency !== 'PLN' && (
+              <span className="ml-2 text-xs text-muted-foreground font-normal">
+                (w {cashFlowData.baseCurrency})
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {cashFlowLoading ? (
@@ -269,7 +276,7 @@ export function CashFlowPage() {
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
                 <Tooltip
                   formatter={(value, name) => [
-                    formatPLN(Number(value) || 0),
+                    formatCurrency(Number(value) || 0, cashFlowData?.baseCurrency || 'PLN'),
                     name === 'netCashFlow' ? 'Wpłaty netto' : 'Wartość portfela',
                   ]}
                   labelFormatter={(label) => `Data: ${label}`}
