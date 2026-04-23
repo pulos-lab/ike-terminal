@@ -17,7 +17,7 @@ import {
   TooltipProvider as UITooltipProvider,
   TooltipTrigger as UITooltipTrigger,
 } from '@/components/ui/tooltip';
-import { formatPLN, formatDate } from '@/lib/formatters';
+import { formatPLN, formatDate, formatCurrency } from '@/lib/formatters';
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { ChevronRight, ChevronDown, Loader2, Plus, Pencil, Trash2, Check, X, ArrowUp, ArrowDown, Info } from 'lucide-react';
 
@@ -144,7 +144,7 @@ export function CashFlowPage() {
 
   function handleDelete(entry: CashEntry) {
     const label = entry.type === 'deposit' ? 'wpłatę' : 'wypłatę';
-    if (window.confirm(`Usunąć ${label} ${formatPLN(Math.abs(entry.amount))} z ${formatDate(entry.date)}?`)) {
+    if (window.confirm(`Usunąć ${label} ${formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN')} z ${formatDate(entry.date)}?`)) {
       deleteMutation.mutate(entry.id);
     }
   }
@@ -154,6 +154,22 @@ export function CashFlowPage() {
     type: d.type || 'deposit',
   }));
   const ikzeLimits = activeSettings.ikzeIsDG ? IKZE_DG_LIMITS : IKZE_LIMITS;
+
+  // Dominant currency across all entries — if all entries share one currency,
+  // use it for aggregates (year totals, grand totals, chart axis). For mixed-
+  // currency portfolios fall back to PLN as a common denominator (which may be
+  // imprecise — IKE/IKZE limits are PLN-only anyway and sumy bez konwersji FX
+  // nie mają sensu; osobny follow-up).
+  const displayCurrency = useMemo(() => {
+    const currencies = new Set(entries.map(e => (e.currency || 'PLN').toUpperCase()));
+    if (currencies.size === 1) return [...currencies][0];
+    return 'PLN';
+  }, [entries]);
+  const isMultiCurrency = useMemo(() => {
+    const currencies = new Set(entries.map(e => (e.currency || 'PLN').toUpperCase()));
+    return currencies.size > 1;
+  }, [entries]);
+  const fmtAgg = (v: number) => formatCurrency(v, displayCurrency);
 
   const yearGroups = useMemo(() => {
     if (!entries.length) return [];
@@ -275,9 +291,10 @@ export function CashFlowPage() {
           <CardTitle className="text-base">
             {cardTitle}
             <span className="ml-2 text-muted-foreground font-normal">
-              (wpłaty: {formatPLN(grandTotalDeposits)}
-              {grandTotalWithdrawals > 0 && <>, wypłaty: {formatPLN(grandTotalWithdrawals)}</>}
-              , netto: {formatPLN(grandTotalDeposits - grandTotalWithdrawals)})
+              (wpłaty: {fmtAgg(grandTotalDeposits)}
+              {grandTotalWithdrawals > 0 && <>, wypłaty: {fmtAgg(grandTotalWithdrawals)}</>}
+              , netto: {fmtAgg(grandTotalDeposits - grandTotalWithdrawals)}
+              {isMultiCurrency && <span className="text-xs"> — uwaga: kwoty w różnych walutach, sumowane bez konwersji</span>})
             </span>
           </CardTitle>
         </CardHeader>
@@ -389,10 +406,10 @@ export function CashFlowPage() {
                               </div>
                             </TableCell>
                             <TableCell className="text-right font-medium text-gain">
-                              {group.totalDeposits > 0 ? formatPLN(group.totalDeposits) : '—'}
+                              {group.totalDeposits > 0 ? fmtAgg(group.totalDeposits) : '—'}
                             </TableCell>
                             <TableCell className="text-right font-medium text-loss">
-                              {group.totalWithdrawals > 0 ? formatPLN(group.totalWithdrawals) : '—'}
+                              {group.totalWithdrawals > 0 ? fmtAgg(group.totalWithdrawals) : '—'}
                             </TableCell>
                             {showIKE && (
                               <TableCell className="text-right text-muted-foreground">
@@ -480,10 +497,10 @@ export function CashFlowPage() {
                                   </div>
                                 </TableCell>
                                 <TableCell className={`text-right ${entry.type === 'deposit' ? 'text-gain' : ''}`}>
-                                  {entry.type === 'deposit' ? formatPLN(Math.abs(entry.amount)) : ''}
+                                  {entry.type === 'deposit' ? formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN') : ''}
                                 </TableCell>
                                 <TableCell className={`text-right ${entry.type === 'withdrawal' ? 'text-loss' : ''}`}>
-                                  {entry.type === 'withdrawal' ? formatPLN(Math.abs(entry.amount)) : ''}
+                                  {entry.type === 'withdrawal' ? formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN') : ''}
                                 </TableCell>
                                 <TableCell colSpan={limitColCount > 0 ? limitColCount - 1 : 0} />
                                 <TableCell className="text-right">

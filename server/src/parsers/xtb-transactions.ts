@@ -529,8 +529,14 @@ export async function parseXtbFile(
         value,
         commission: 0,
         total: value,
-        currency: ids.currency,               // quote — z suffixu symbolu (.US→USD, .PL→PLN, .DE→EUR)
-        paymentCurrency: accountCurrency,     // XTB account base — z metadanych XLSX
+        // XTB model: jedno sub-konto = jedna waluta. XLSX raportuje CENY I KWOTY
+        // w walucie konta, nawet dla instrumentów notowanych natywnie gdzie indziej
+        // (np. ISAC.UK to USD Acc share class — cena w USD mimo suffixu .UK).
+        // Ustawienie currency z suffixu symbolu prowadziło do rozjazdu z Yahoo
+        // quote.currency (zapisanym w tickerMap) i powodowało, że engine skipował
+        // transakcje w cash-flow oraz wpisywał bilans do fantomowej waluty.
+        currency: accountCurrency,
+        paymentCurrency: accountCurrency,
         category,
         source: 'xtb',
         importBatch,
@@ -589,8 +595,9 @@ export async function parseXtbFile(
         value,
         commission: 0,
         total: value,
-        currency: ids.currency,               // quote — z suffixu symbolu
-        paymentCurrency: accountCurrency,     // XTB account base
+        // XTB model: cena i kwota w walucie konta (patrz komentarz w Stock purchase).
+        currency: accountCurrency,
+        paymentCurrency: accountCurrency,
         category,
         source: 'xtb',
         importBatch,
