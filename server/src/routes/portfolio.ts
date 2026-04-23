@@ -136,7 +136,18 @@ router.get('/positions', asyncHandler(async (req, res) => {
     .filter(s => s.date >= weekAgoStr)
     .map(s => ({ isin: s.isin, ticker: s.ticker, date: s.date, ratio: s.ratio }));
 
-  res.json({ positions, cashPositions, totalValuePln, stocksValuePln, cashValuePln, recentSplits });
+  // Detekcja waluty bazowej portfela (identyczna logika co /metrics i /cash-flow).
+  // Dla single-currency portfela (np. XTB USD sub-konto) pokazujemy wartości
+  // w walucie konta zamiast PLN-konwersji.
+  const cashOpCurrencies = new Set<string>();
+  for (const op of operations) {
+    if (op.operationType === 'deposit' || op.operationType === 'withdrawal') {
+      cashOpCurrencies.add((op.currency || 'PLN').toUpperCase());
+    }
+  }
+  const baseCurrency = cashOpCurrencies.size === 1 ? [...cashOpCurrencies][0] : 'PLN';
+
+  res.json({ positions, cashPositions, totalValuePln, stocksValuePln, cashValuePln, recentSplits, baseCurrency });
 }));
 
 // GET /api/portfolio/closed-trades
