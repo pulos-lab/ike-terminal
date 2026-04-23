@@ -207,3 +207,30 @@ export const CFD_TICKER_MAP: Record<string, CfdTickerEntry> = {
 export function findCfdTicker(instrument: string): CfdTickerEntry | null {
   return CFD_TICKER_MAP[instrument.toUpperCase()] ?? null;
 }
+
+export type CfdSector = 'Surowce' | 'Indeksy' | 'Forex' | 'Krypto';
+
+/**
+ * Derive CFD sector from a CfdTickerEntry using Yahoo ticker conventions.
+ *
+ * Yahoo symbol conventions follow natural sector groupings:
+ * - `...-USD` → kryptowaluta (BTC-USD, ETH-USD…)
+ * - `...=X`   → para walutowa / Forex (EURUSD=X…)
+ * - `^...`    → indeks notowany przez Yahoo (^GSPC, ^FTSE…)
+ * - `...=F` w kilku przypadkach → indeks futures (ES=F, NQ=F, YM=F, RTY=F)
+ * - pozostałe `...=F` → futures surowca (GC=F, CL=F, NG=F…)
+ * - specjalne: DX-Y.NYB (Dollar Index → Indeksy), WIG20.WA (→ Indeksy)
+ *
+ * Yahoo `assetProfile` nie zwraca sensownego sektora dla futures/forex/crypto
+ * — ta mapa jest autorytatywnym źródłem dla CFD w portfelach XTB.
+ */
+const CFD_INDEX_FUTURES = new Set(['ES=F', 'NQ=F', 'YM=F', 'RTY=F']);
+
+export function getCfdSector(entry: CfdTickerEntry): CfdSector {
+  const y = entry.yahooTicker;
+  if (y.endsWith('-USD')) return 'Krypto';
+  if (y.endsWith('=X')) return 'Forex';
+  if (y.startsWith('^') || y === 'DX-Y.NYB' || y.endsWith('.WA')) return 'Indeksy';
+  if (CFD_INDEX_FUTURES.has(y)) return 'Indeksy';
+  return 'Surowce'; // pozostałe futures =F (GC=F, CL=F, NG=F, HG=F, …)
+}

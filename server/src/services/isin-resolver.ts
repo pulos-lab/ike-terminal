@@ -1,8 +1,8 @@
 import type { Transaction, TickerMapEntry } from 'shared';
-import { findNcTicker, findCfdTicker } from 'shared';
+import { findNcTicker, findCfdTicker, getCfdSector } from 'shared';
 import { getTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { searchYahoo, validateStooq, searchStooqByName } from './ticker-search.js';
-import { fetchYahooPrice } from './yahoo-finance.js';
+import { fetchYahooPrice, fetchAssetProfile } from './yahoo-finance.js';
 
 interface UnresolvedIsin {
   isin: string;
@@ -363,8 +363,26 @@ async function buildEntry(
   const exchange = inferExchange(ticker, yahooExchange);
   const priceSource = inferPriceSource(ticker, exchange);
 
-  // For .WA tickers, we know it's PLN — skip Yahoo price lookup
+  // CFD-first: jeśli paperName/ticker pasuje do CFD_TICKER_MAP, używamy
+  // statycznej kategoryzacji (Yahoo assetProfile i tak nie zwraca sensownego
+  // sektora dla futures/forex/crypto).
+  const cfdEntry = findCfdTicker(paperName) || findCfdTicker(ticker);
+  if (cfdEntry) {
+    return {
+      isin,
+      ticker,
+      name: name || paperName,
+      exchange,
+      currency: cfdEntry.currency,
+      priceSource,
+      sector: getCfdSector(cfdEntry),
+    };
+  }
+
+  // For .WA tickers, we know it's PLN — skip Yahoo price lookup,
+  // ale sector nadal próbujemy pobrać (GPW ma assetProfile na Yahoo).
   if (ticker.endsWith('.WA')) {
+    const profile = await fetchAssetProfile(ticker).catch(() => null);
     return {
       isin,
       ticker,
@@ -372,18 +390,22 @@ async function buildEntry(
       exchange,
       currency: 'PLN',
       priceSource,
+      sector: profile?.sector || undefined,
     };
   }
 
-  // For other tickers, try to get currency from Yahoo price API
+  // For other tickers, fetch currency (price) and sector (profile) in parallel.
   let currency = txCurrency;
+  let sector: string | undefined;
   try {
-    const priceData = await fetchYahooPrice(ticker);
-    if (priceData?.currency) {
-      currency = priceData.currency;
-    }
+    const [priceData, profile] = await Promise.all([
+      fetchYahooPrice(ticker).catch(() => null),
+      fetchAssetProfile(ticker).catch(() => null),
+    ]);
+    if (priceData?.currency) currency = priceData.currency;
+    if (profile?.sector) sector = profile.sector;
   } catch {
-    // Fall back to transaction currency
+    // Fall back to transaction currency, no sector
   }
 
   return {
@@ -393,6 +415,7 @@ async function buildEntry(
     exchange,
     currency,
     priceSource,
+    sector,
   };
 }
 

@@ -141,6 +141,49 @@ export async function fetchDividendCalendar(ticker: string): Promise<DividendCal
   }
 }
 
+// ============ Asset Profile (v10) ============
+
+export interface AssetProfile {
+  sector: string | null;
+  industry: string | null;
+}
+
+/**
+ * Fetch sector/industry classification from Yahoo v10 quoteSummary.
+ * Działa dla akcji (assetProfile.sector) i ETF-ów (fundProfile.categoryName
+ * jako pseudo-sektor). Dla futures/FX/crypto Yahoo nie zwraca sensownego
+ * profilu — wtedy null i caller zna statyczną mapę (CFD_TICKER_MAP dla CFD).
+ *
+ * Cache: 7 dni — sektor/industry nie zmieniają się często.
+ */
+export async function fetchAssetProfile(ticker: string): Promise<AssetProfile | null> {
+  const cacheKey = `yahoo_profile_${ticker}`;
+  const cached = getCached<AssetProfile>(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const result = await yahooQuoteSummary(ticker, ['assetProfile', 'fundProfile']);
+    if (!result) return null;
+
+    // Stocks: assetProfile.sector / industry
+    const ap = result.assetProfile;
+    // ETFs / mutual funds: fundProfile.categoryName
+    const fp = result.fundProfile;
+
+    const profile: AssetProfile = {
+      sector: ap?.sector || fp?.categoryName || null,
+      industry: ap?.industry || null,
+    };
+
+    // Cache for 7 days
+    setCached(cacheKey, profile, 7 * 24 * 3600);
+    return profile;
+  } catch (error) {
+    console.error(`Yahoo asset profile fetch failed for ${ticker}:`, error);
+    return null;
+  }
+}
+
 // ============ v8 Chart API ============
 
 async function yahooChart(ticker: string, params: Record<string, string>): Promise<any> {
