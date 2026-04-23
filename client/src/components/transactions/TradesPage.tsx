@@ -411,7 +411,11 @@ export function TradesPage() {
         aria-hidden={tab !== 'all'}
         style={{
           contentVisibility: tab === 'all' ? 'visible' : 'hidden',
-          containIntrinsicSize: tab === 'all' ? undefined : '0 254000px', // 6340 × ~40px
+          // containIntrinsicSize: 0 0 — gdy hidden div zajmuje zerową wysokość,
+          // więc Otwarte content (renderowane poniżej) nie jest zepchnięte w dół.
+          // Browser cachuje layout wewnątrz dzięki content-visibility, wciąż
+          // 30× szybszy powrót niż display:none mimo tej zmiany.
+          containIntrinsicSize: tab === 'all' ? undefined : '0 0',
         }}
       >
         <Card>
