@@ -17,6 +17,8 @@ import {
   computeCashFlow,
   computeXirr,
   computeCashBalances,
+  detectBaseCurrency,
+  computeFxImpact,
 } from '../services/portfolio-engine.js';
 import { BENCHMARKS, type BenchmarkKey } from 'shared';
 import { searchTickers } from '../services/ticker-search.js';
@@ -136,16 +138,7 @@ router.get('/positions', asyncHandler(async (req, res) => {
     .filter(s => s.date >= weekAgoStr)
     .map(s => ({ isin: s.isin, ticker: s.ticker, date: s.date, ratio: s.ratio }));
 
-  // Detekcja waluty bazowej portfela (identyczna logika co /metrics i /cash-flow).
-  // Dla single-currency portfela (np. XTB USD sub-konto) pokazujemy wartości
-  // w walucie konta zamiast PLN-konwersji.
-  const cashOpCurrencies = new Set<string>();
-  for (const op of operations) {
-    if (op.operationType === 'deposit' || op.operationType === 'withdrawal') {
-      cashOpCurrencies.add((op.currency || 'PLN').toUpperCase());
-    }
-  }
-  const baseCurrency = cashOpCurrencies.size === 1 ? [...cashOpCurrencies][0] : 'PLN';
+  const baseCurrency = detectBaseCurrency(operations);
 
   res.json({ positions, cashPositions, totalValuePln, stocksValuePln, cashValuePln, recentSplits, baseCurrency });
 }));
@@ -478,6 +471,8 @@ router.post('/history', asyncHandler(async (req, res) => {
 
   const savedSplits = loadSplitsForEngine(pid);
 
+  const baseCurrency = detectBaseCurrency(operations);
+
   // Always compute full history – client filters & rebases by date range
   const result = await computePortfolioHistory(
     transactions,
@@ -488,6 +483,7 @@ router.post('/history', asyncHandler(async (req, res) => {
     undefined,
     undefined,
     savedSplits,
+    baseCurrency,
   );
 
   // Persist any newly detected splits and invalidate stale price cache
@@ -507,7 +503,7 @@ router.post('/history', asyncHandler(async (req, res) => {
     }
   }
 
-  res.json({ history: result.history, metrics: result.metrics });
+  res.json({ history: result.history, metrics: result.metrics, baseCurrency });
 }));
 
 // GET /api/portfolio/cash-flow
@@ -518,25 +514,17 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
   const tickerMap = getTickerMap(pid);
   const savedSplits = loadSplitsForEngine(pid);
 
-  // Need portfolio history to get daily values (PLN-normalized)
+  const baseCurrency = detectBaseCurrency(operations);
+
+  // Engine liczy history w baseCurrency — cumulativeDepositsPln/Withdrawals w
+  // history points to już wartości w walucie bazowej. computeCashFlow nie
+  // potrzebuje dodatkowej konwersji — dailyFxRates i baseCurrency tylko dla
+  // backward-compat sygnatury (identity transform w base currency).
   const { history, dailyFxRates } = await computePortfolioHistory(
     transactions, operations, tickerMap,
     '^GSPC', 'yahoo', // default benchmark, doesn't matter for cash flow
-    undefined, undefined, savedSplits,
+    undefined, undefined, savedSplits, baseCurrency,
   );
-
-  // Wykryj walutę bazową portfela: jeśli wszystkie deposits/withdrawals są
-  // w jednej walucie — używamy jej; w przeciwnym razie default PLN. Pozwala
-  // to pokazać wykres XTB USD sub-konta w USD (zamiast PLN-conversion).
-  const cashOpCurrencies = new Set<string>();
-  for (const op of operations) {
-    if (op.operationType === 'deposit' || op.operationType === 'withdrawal') {
-      cashOpCurrencies.add((op.currency || 'PLN').toUpperCase());
-    }
-  }
-  const baseCurrency = cashOpCurrencies.size === 1
-    ? [...cashOpCurrencies][0]
-    : 'PLN';
 
   const cashFlow = computeCashFlow(operations, history, dailyFxRates, baseCurrency);
   res.json({ cashFlow, baseCurrency });
@@ -601,69 +589,65 @@ router.get('/metrics', asyncHandler(async (req, res) => {
   const tickerMap = getTickerMap(pid);
   const savedSplits = loadSplitsForEngine(pid);
 
-  // Engine liczy wszystko w PLN (per-day FX normalizacja). Dla portfeli
-  // single-currency (np. XTB USD sub-konto) konwertujemy z powrotem do waluty
-  // bazowej portfela — spójnie z CashFlowPage gdzie też pokazujemy USD zamiast
-  // PLN dla USD portfela.
-  const { metrics, history, dailyFxRates } = await computePortfolioHistory(
+  const baseCurrency = detectBaseCurrency(operations);
+
+  // Engine liczy wszystko w baseCurrency (nowy refactor — commit e9db541+).
+  // Wszystkie metrics zwracane są już w walucie bazowej portfela, bez FX drift
+  // jaki wcześniej powodował podwójną konwersję (Σ raw × fx_dnia → PLN → /fx_today).
+  const { metrics } = await computePortfolioHistory(
     transactions, operations, tickerMap,
     '^GSPC', 'yahoo', // benchmark ticker nie wpływa na metrics
-    undefined, undefined, savedSplits,
+    undefined, undefined, savedSplits, baseCurrency,
   );
 
-  // Detekcja baseCurrency (identyczna logika co /cash-flow):
-  const cashOpCurrencies = new Set<string>();
-  for (const op of operations) {
-    if (op.operationType === 'deposit' || op.operationType === 'withdrawal') {
-      cashOpCurrencies.add((op.currency || 'PLN').toUpperCase());
-    }
+  // FX impact — liczymy per-currency exposure dla każdej obcej waluty w portfelu
+  // (vs PLN jako referencja). fxImpactPct pokazywany jako % CAŁEGO portfela
+  // (intuicyjne — "o ile portfel ruszył dzięki FX"), breakdown per waluta z
+  // ekspozycją jako % portfela (user widzi skalę).
+  const { positions, totalValuePln: stocksValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
+  const cashBalances = computeCashBalances(transactions, operations);
+
+  const foreignExposures = new Map<string, number>();
+  for (const pos of positions) {
+    const cur = (pos.currency || 'PLN').toUpperCase();
+    if (cur === 'PLN') continue;
+    const native = pos.currentValue ?? 0;
+    foreignExposures.set(cur, (foreignExposures.get(cur) ?? 0) + native);
   }
-  const baseCurrency = cashOpCurrencies.size === 1
-    ? [...cashOpCurrencies][0]
-    : 'PLN';
-  const isSingleCcy = baseCurrency !== 'PLN';
-
-  // Dla currentValue: roundtrip przez fx_today jest DOKŁADNY, bo engine wycenia
-  // holdings i cash też używając fx_today (value_pln = native × fx_today dla
-  // ostatniego dnia → / fx_today = native z powrotem). Zero driftu.
-  const lastDate = history[history.length - 1]?.date;
-  const fxLast = lastDate && isSingleCcy ? dailyFxRates.get(lastDate)?.get(baseCurrency) : null;
-  const currentValueBase = fxLast && fxLast > 0 ? metrics.currentValue / fxLast : metrics.currentValue;
-
-  // Dla totalInvested/totalDividends NIE MOŻEMY roundtripować — to są sumy
-  // historyczne (Σ raw × fx_dnia), więc / fx_today daje drift gdy kursy się
-  // wahały. Sumujemy raw amounts z operations bezpośrednio — identycznie jak
-  // CashFlowPage pokazuje cumulativeDeposits. Dla portfeli PLN: raw = PLN,
-  // spójne z totalInvested z history.
-  let totalInvestedBase: number;
-  let totalDividendsBase: number;
-  if (isSingleCcy) {
-    totalInvestedBase = operations
-      .filter(op => (op.operationType === 'deposit' || op.operationType === 'withdrawal')
-                    && (op.currency || 'PLN').toUpperCase() === baseCurrency)
-      .reduce((s, op) => s + op.amount, 0);
-    totalDividendsBase = operations
-      .filter(op => op.operationType === 'dividend'
-                    && (op.currency || 'PLN').toUpperCase() === baseCurrency)
-      .reduce((s, op) => s + op.amount, 0);
-  } else {
-    totalInvestedBase = metrics.totalInvested;     // PLN
-    totalDividendsBase = metrics.totalDividends;   // PLN
+  for (const [cur, balance] of Object.entries(cashBalances)) {
+    const upperCur = cur.toUpperCase();
+    if (upperCur === 'PLN') continue;
+    if (balance > 0) foreignExposures.set(upperCur, (foreignExposures.get(upperCur) ?? 0) + balance);
   }
 
-  const totalReturnBase = currentValueBase - totalInvestedBase;
-  const totalReturnPctBase = totalInvestedBase > 0
-    ? (totalReturnBase / totalInvestedBase) * 100
-    : 0;
+  // Dzisiejsze kursy PLN-per-X dla każdej obcej waluty w portfelu
+  const todayFxRatesToPln = new Map<string, number>();
+  for (const cur of foreignExposures.keys()) {
+    const rate = await fetchFxRate(`${cur}PLN`) || 0;
+    if (rate > 0) todayFxRatesToPln.set(cur, rate);
+  }
+
+  // totalPortfolioValuePln = stocks + cash, cash konwertowany przez dzisiejszy FX.
+  // Dla PLN portfeli: stocksValuePln już w PLN, cash PLN + obce waluty konwertowane.
+  let cashValuePln = 0;
+  for (const [cur, balance] of Object.entries(cashBalances)) {
+    const upperCur = cur.toUpperCase();
+    if (upperCur === 'PLN') cashValuePln += balance;
+    else cashValuePln += balance * (todayFxRatesToPln.get(upperCur) || 0);
+  }
+  const totalPortfolioValuePln = stocksValuePln + cashValuePln;
+
+  const fxImpact = computeFxImpact(operations, foreignExposures, todayFxRatesToPln, totalPortfolioValuePln);
 
   res.json({
-    currentValue: currentValueBase,
-    totalInvested: totalInvestedBase,
-    xirr: metrics.xirr,                              // % — invariant
-    totalReturn: totalReturnBase,
-    totalReturnPct: totalReturnPctBase,
-    totalDividends: totalDividendsBase,
+    currentValue: metrics.currentValue,
+    totalInvested: metrics.totalInvested,
+    xirr: metrics.xirr,
+    totalReturn: metrics.totalReturn,
+    totalReturnPct: metrics.totalReturnPct,
+    totalDividends: metrics.totalDividends,
     baseCurrency,
+    fxImpact,
   });
 }));
 

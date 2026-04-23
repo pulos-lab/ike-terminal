@@ -2,8 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { plColor } from '@/components/ui/pl-badge';
-import { formatCurrency, formatPercent } from '@/lib/formatters';
-import { TrendingUp, TrendingDown, DollarSign, Target } from 'lucide-react';
+import { formatCurrency, formatPercent, formatPLN } from '@/lib/formatters';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { TrendingUp, TrendingDown, DollarSign, Target, ArrowLeftRight } from 'lucide-react';
 
 export function MetricsBar() {
   const { data } = useQuery({
@@ -60,6 +61,105 @@ export function MetricsBar() {
           {formatPercent(data.xirr)}
         </span>
       </div>
+      {data.fxImpact && (
+        <TooltipProvider delayDuration={150}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-2 cursor-help">
+                <ArrowLeftRight className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                  Wpływ walut
+                </span>
+                <span className={`font-semibold tabular-nums ${plColor(data.fxImpact.fxImpactPct)}`}>
+                  {formatPercent(data.fxImpact.fxImpactPct)}
+                </span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-sm">
+              <FxImpactTooltipBody fxImpact={data.fxImpact} />
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+    </div>
+  );
+}
+
+interface FxImpactCurrencyEntry {
+  currency: string;
+  exposureNative: number;
+  exposurePln: number;
+  exposurePctOfPortfolio: number;
+  avgPlnPerCurrency: number;
+  todayPlnPerCurrency: number;
+  impactPln: number;
+  impactPct: number;
+  totalAcquiredNative: number;
+}
+
+interface FxImpactData {
+  fxImpactPct: number;              // % portfela (main)
+  fxImpactPctOfForeign: number;     // % ekspozycji zagranicznej
+  fxImpactPln: number;
+  foreignExposurePln: number;
+  foreignExposurePctOfPortfolio: number;
+  totalPortfolioValuePln: number;
+  breakdown: FxImpactCurrencyEntry[];
+}
+
+function FxImpactTooltipBody({ fxImpact }: { fxImpact: FxImpactData }) {
+  const positive = fxImpact.fxImpactPct >= 0;
+  const absPctPortfolio = Math.abs(fxImpact.fxImpactPct);
+  const absPln = Math.abs(fxImpact.fxImpactPln);
+
+  const interpretation = positive
+    ? `Od czasu wpłat PLN osłabł w stosunku do walut obcych w portfelu. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} więcej (+${absPctPortfolio.toFixed(2)}% wartości portfela) niż przy średnich kursach zakupu.`
+    : `Od czasu wpłat PLN wzmocnił się w stosunku do walut obcych w portfelu. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} mniej (−${absPctPortfolio.toFixed(2)}% wartości portfela) niż przy średnich kursach zakupu.`;
+
+  return (
+    <div className="text-xs space-y-2">
+      <p className="font-semibold">
+        Wpływ walut na portfel: {formatPercent(fxImpact.fxImpactPct)} ({formatPLN(fxImpact.fxImpactPln)})
+      </p>
+      <p>{interpretation}</p>
+
+      <div className="pt-1 border-t border-border">
+        <p className="font-medium mb-1">Kontekst:</p>
+        <ul className="space-y-0.5 text-muted-foreground">
+          <li>• Wartość portfela: {formatPLN(fxImpact.totalPortfolioValuePln)}</li>
+          <li>
+            • Część zagraniczna: {formatPLN(fxImpact.foreignExposurePln)}
+            {' '}({fxImpact.foreignExposurePctOfPortfolio.toFixed(1)}% portfela)
+          </li>
+          <li>• Zmiana kursów ważona: {formatPercent(fxImpact.fxImpactPctOfForeign)} (impact na część walutową)</li>
+        </ul>
+      </div>
+
+      <div className="pt-1 border-t border-border">
+        <p className="font-medium mb-1">Per waluta:</p>
+        <ul className="space-y-1.5">
+          {fxImpact.breakdown.map((e) => (
+            <li key={e.currency} className="text-muted-foreground">
+              <div className="font-medium text-foreground">
+                {e.currency}: {formatPercent(e.impactPct)} kursu ({formatPLN(e.impactPln)})
+              </div>
+              <div className="text-[10px] pl-2">
+                • Ekspozycja: {e.exposureNative.toFixed(2)} {e.currency}
+                {' '}({formatPLN(e.exposurePln)}, {e.exposurePctOfPortfolio.toFixed(1)}% portfela)
+              </div>
+              <div className="text-[10px] pl-2">
+                • Średni kurs: {e.avgPlnPerCurrency.toFixed(3)} → dziś: {e.todayPlnPerCurrency.toFixed(3)}
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <p className="text-muted-foreground text-[10px] pt-1 border-t border-border">
+        Metryka pokazuje zysk/stratę wynikającą wyłącznie ze zmian kursu walut
+        między datami Twoich wpłat (lub wymian FX) a dniem dzisiejszym. Nie
+        uwzględnia zwrotu z rynku.
+      </p>
     </div>
   );
 }
