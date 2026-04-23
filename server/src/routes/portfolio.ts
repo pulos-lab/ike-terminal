@@ -37,6 +37,38 @@ function loadSplitsForEngine(pid: string): DetectedSplit[] {
   }));
 }
 
+/** In-memory flag: per-portfolio dedupe dla lazy-sector-backfill.
+ *  Uruchamiamy backfill tylko raz per proces na portfel — wystarczy żeby
+ *  nadrobić brakujące sektory po upgradzie kodu. Yahoo fetchAssetProfile
+ *  i tak cache'uje wyniki 7 dni, więc powtórne uruchomienia są tanie,
+ *  ale dedupe oszczędza I/O i chroni przed rate-limitem. */
+const sectorsBackfilledForPortfolio = new Set<string>();
+
+async function lazyBackfillSectors(pid: string): Promise<void> {
+  if (sectorsBackfilledForPortfolio.has(pid)) return;
+  sectorsBackfilledForPortfolio.add(pid);
+  try {
+    const entries = getAllTickers(pid);
+    const toUpdate = entries.filter(e => !e.sector);
+    for (const entry of toUpdate) {
+      try {
+        const cfdEntry = findCfdTicker(entry.name) || findCfdTicker(entry.ticker);
+        if (cfdEntry) {
+          updateTickerSector(entry.isin, getCfdSector(cfdEntry), pid);
+          continue;
+        }
+        const profile = await fetchAssetProfile(entry.ticker);
+        if (profile?.sector) updateTickerSector(entry.isin, profile.sector, pid);
+      } catch {
+        // ignore — pojedynczy fail nie blokuje reszty
+      }
+    }
+  } catch {
+    // Najlepszy effort, nie blokujemy ruchu user'a
+    sectorsBackfilledForPortfolio.delete(pid); // pozwól na retry przy następnym requeście
+  }
+}
+
 // GET /api/portfolio/positions
 router.get('/positions', asyncHandler(async (req, res) => {
   const pid = req.portfolioId;
@@ -44,6 +76,11 @@ router.get('/positions', asyncHandler(async (req, res) => {
   const operations = getAllOperations(pid);
   const tickerMap = getTickerMap(pid);
   const savedSplits = loadSplitsForEngine(pid);
+
+  // Fire-and-forget: lazy backfill brakujących sektorów w tle (raz per proces
+  // per portfel). Nie blokuje response — user zobaczy nowe sektory po kolejnym
+  // odświeżeniu widoku.
+  void lazyBackfillSectors(pid);
   const { positions, totalValuePln: stocksValuePln, detectedSplits } = await computeOpenPositions(transactions, tickerMap, savedSplits);
 
   // Persist any newly detected splits and invalidate stale price cache
