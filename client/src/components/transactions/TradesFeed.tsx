@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
@@ -86,7 +86,9 @@ export function TradesFeed() {
     onError: (err: Error) => setError(err.message),
   });
 
-  const startEdit = (tx: TxItem) => {
+  // Stabilne handlery przez useCallback — kluczowe, żeby memo NormalRow nie re-renderowała
+  // 6000+ wierszy przy każdym setEditingId / setDeleteTarget.
+  const startEdit = useCallback((tx: TxItem) => {
     if (tx.id == null) return;
     setEditingId(tx.id);
     setEditForm({
@@ -97,14 +99,14 @@ export function TradesFeed() {
       commission: tx.commission.toString(),
     });
     setError(null);
-  };
+  }, []);
 
-  const cancelEdit = () => {
+  const cancelEdit = useCallback(() => {
     setEditingId(null);
     setError(null);
-  };
+  }, []);
 
-  const saveEdit = () => {
+  const saveEdit = useCallback(() => {
     if (editingId == null) return;
     const qty = parseFloat(editForm.quantity);
     const prc = parseFloat(editForm.price);
@@ -123,17 +125,17 @@ export function TradesFeed() {
         commission: comm,
       },
     });
-  };
+  }, [editingId, editForm, updateMutation]);
 
-  const requestDelete = (tx: TxItem) => {
+  const requestDelete = useCallback((tx: TxItem) => {
     if (tx.id == null) return;
     setDeleteTarget(tx);
-  };
+  }, []);
 
   if (isLoading) return <LoadingSpinner />;
   if (!rows.length) return <EmptyState message="Brak transakcji." />;
 
-  const isEditValid = editForm.date && parseFloat(editForm.quantity) > 0 && parseFloat(editForm.price) > 0;
+  const isEditValid = !!editForm.date && parseFloat(editForm.quantity) > 0 && parseFloat(editForm.price) > 0;
 
   return (
     <div className="space-y-3">
@@ -177,174 +179,29 @@ export function TradesFeed() {
           </thead>
           <tbody>
             {sorted.map((tx, i) => {
-              const paymentCcy = tx.paymentCurrency || tx.currency;
-              const autoFx = paymentCcy !== tx.currency;
+              const key = tx.id ?? `row-${i}`;
               const isEditing = tx.id != null && editingId === tx.id;
-
               if (isEditing) {
                 return (
-                  <tr key={tx.id ?? i} className="border-b border-border/50 bg-muted/30">
-                    <td className="py-2 pr-4">
-                      <Input
-                        type="date"
-                        value={editForm.date}
-                        onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
-                        className="h-8 w-[140px] text-xs"
-                      />
-                    </td>
-                    <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">
-                      {tx.ticker}
-                    </td>
-                    <td className="py-2 pr-4">
-                      <CcyChip ccy={paymentCcy} />
-                    </td>
-                    <td className="py-2 pr-4">
-                      <Select value={editForm.side} onValueChange={(v: 'K' | 'S') => setEditForm({ ...editForm, side: v })}>
-                        <SelectTrigger className="h-8 w-[60px]" size="sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="K">K</SelectItem>
-                          <SelectItem value="S">S</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </td>
-                    <td className="py-2 pr-4">
-                      <Input
-                        type="number"
-                        step="0.0001"
-                        min="0"
-                        value={editForm.quantity}
-                        onChange={(e) => setEditForm({ ...editForm, quantity: e.target.value })}
-                        className="h-8 w-[90px] text-right text-xs"
-                      />
-                    </td>
-                    <td className="py-2 pr-4">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={editForm.price}
-                        onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
-                        className="h-8 w-[100px] text-right text-xs"
-                      />
-                    </td>
-                    <td className="py-2 pr-4">
-                      <CcyChip ccy={tx.currency} />
-                    </td>
-                    <td className="py-2 pr-4">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={editForm.commission}
-                        onChange={(e) => setEditForm({ ...editForm, commission: e.target.value })}
-                        className="h-8 w-[80px] text-right text-xs"
-                      />
-                    </td>
-                    <td className="py-2 pr-4" />
-                    <td className="py-2 text-right">
-                      <div className="inline-flex gap-1">
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          onClick={saveEdit}
-                          disabled={!isEditValid || updateMutation.isPending}
-                          className="text-gain hover:text-gain/80"
-                          aria-label="Zapisz"
-                        >
-                          {updateMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                        </Button>
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          onClick={cancelEdit}
-                          aria-label="Anuluj"
-                        >
-                          <X className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
+                  <EditRow
+                    key={key}
+                    tx={tx}
+                    editForm={editForm}
+                    setEditForm={setEditForm}
+                    isEditValid={isEditValid}
+                    updatePending={updateMutation.isPending}
+                    saveEdit={saveEdit}
+                    cancelEdit={cancelEdit}
+                  />
                 );
               }
-
               return (
-              <tr
-                key={tx.id ?? i}
-                className="border-b border-border/50 hover:bg-accent/40"
-              >
-                <td className="py-2.5 pr-4 text-muted-foreground tabular-nums">
-                  {formatDate(tx.date)}
-                </td>
-                <td className="py-2.5 pr-4 font-mono font-semibold">
-                  <span className="inline-flex items-center gap-1">
-                    {tx.ticker}
-                    {tx.syntheticOrigin && (
-                      <span
-                        className="inline-flex cursor-help"
-                        title={`Sprzedaż wygenerowana automatycznie: ${tx.syntheticOrigin}`}
-                      >
-                        <Info className="h-3 w-3 text-amber-500/80 shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
-                      </span>
-                    )}
-                  </span>
-                </td>
-                <td className="py-2.5 pr-4">
-                  <CcyChip ccy={paymentCcy} />
-                  {autoFx && (
-                    <span
-                      className="ml-1 text-[9px] text-amber-500/80 cursor-help"
-                      aria-label="Auto-przewalutowanie"
-                      title={`Auto-przewalutowanie: broker zamienił ${paymentCcy} na ${tx.currency} przy realizacji zlecenia.`}
-                    >⇋</span>
-                  )}
-                </td>
-                <td className="py-2.5 pr-4">
-                  <SideChip side={tx.side} />
-                </td>
-                <td className="py-2.5 pr-4 text-right tabular-nums">
-                  {formatQuantity(tx.quantity)}
-                </td>
-                <td className="py-2.5 pr-4 text-right tabular-nums">
-                  {formatNumber(tx.price)}
-                </td>
-                <td className="py-2.5 pr-4">
-                  <CcyChip ccy={tx.currency} />
-                </td>
-                <td className="py-2.5 pr-4 text-right text-muted-foreground tabular-nums text-xs">
-                  {tx.commission > 0 ? formatNumber(tx.commission) : '—'}
-                </td>
-                <td className="py-2.5 pr-4 text-right tabular-nums font-medium">
-                  {formatNumber(valuePln(tx))}
-                </td>
-                <td className="py-2.5 text-right">
-                  {tx.id != null && (
-                    <div className="inline-flex gap-0.5">
-                      <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        onClick={() => startEdit(tx)}
-                        aria-label="Edytuj"
-                        title="Edytuj"
-                        className="h-6 w-6 text-muted-foreground/60 hover:text-foreground"
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        onClick={() => requestDelete(tx)}
-                        aria-label="Usuń"
-                        title="Usuń"
-                        className="h-6 w-6 text-muted-foreground/60 hover:text-destructive"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  )}
-                </td>
-              </tr>
+                <NormalRow
+                  key={key}
+                  tx={tx}
+                  onEdit={startEdit}
+                  onDelete={requestDelete}
+                />
               );
             })}
           </tbody>
@@ -530,6 +387,156 @@ function valuePln(tx: TxItem): number {
   if (tx.currency === 'PLN') return tx.total;
   if (tx.fxRate && tx.fxRate > 0) return tx.total * tx.fxRate;
   return tx.total; // fallback — we do not always have fx, best-effort
+}
+
+// ============ Row components ============
+// NormalRow jest memoizowany — to kluczowe dla wydajności. Bez memo każdy setEditingId /
+// setDeleteTarget re-renderuje wszystkie 6000+ wierszy (każdy z 10 <td> + 2 <Button>),
+// co w dev mode bierze 300-500 ms. Z memo + stabilnymi handlerami (useCallback w parent),
+// zmiana editingId re-renderuje tylko jeden wiersz — target.
+
+interface NormalRowProps {
+  tx: TxItem;
+  onEdit: (tx: TxItem) => void;
+  onDelete: (tx: TxItem) => void;
+}
+
+const NormalRow = memo(function NormalRow({ tx, onEdit, onDelete }: NormalRowProps) {
+  const paymentCcy = tx.paymentCurrency || tx.currency;
+  const autoFx = paymentCcy !== tx.currency;
+  return (
+    <tr className="border-b border-border/50 hover:bg-accent/40">
+      <td className="py-2.5 pr-4 text-muted-foreground tabular-nums">{formatDate(tx.date)}</td>
+      <td className="py-2.5 pr-4 font-mono font-semibold">
+        <span className="inline-flex items-center gap-1">
+          {tx.ticker}
+          {tx.syntheticOrigin && (
+            <span className="inline-flex cursor-help" title={`Sprzedaż wygenerowana automatycznie: ${tx.syntheticOrigin}`}>
+              <Info className="h-3 w-3 text-amber-500/80 shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
+            </span>
+          )}
+        </span>
+      </td>
+      <td className="py-2.5 pr-4">
+        <CcyChip ccy={paymentCcy} />
+        {autoFx && (
+          <span
+            className="ml-1 text-[9px] text-amber-500/80 cursor-help"
+            aria-label="Auto-przewalutowanie"
+            title={`Auto-przewalutowanie: broker zamienił ${paymentCcy} na ${tx.currency} przy realizacji zlecenia.`}
+          >⇋</span>
+        )}
+      </td>
+      <td className="py-2.5 pr-4"><SideChip side={tx.side} /></td>
+      <td className="py-2.5 pr-4 text-right tabular-nums">{formatQuantity(tx.quantity)}</td>
+      <td className="py-2.5 pr-4 text-right tabular-nums">{formatNumber(tx.price)}</td>
+      <td className="py-2.5 pr-4"><CcyChip ccy={tx.currency} /></td>
+      <td className="py-2.5 pr-4 text-right text-muted-foreground tabular-nums text-xs">
+        {tx.commission > 0 ? formatNumber(tx.commission) : '—'}
+      </td>
+      <td className="py-2.5 pr-4 text-right tabular-nums font-medium">{formatNumber(valuePln(tx))}</td>
+      <td className="py-2.5 text-right">
+        {tx.id != null && (
+          <div className="inline-flex gap-0.5">
+            <Button
+              size="icon-xs" variant="ghost"
+              onClick={() => onEdit(tx)}
+              aria-label="Edytuj" title="Edytuj"
+              className="h-6 w-6 text-muted-foreground/60 hover:text-foreground"
+            >
+              <Pencil className="h-3 w-3" />
+            </Button>
+            <Button
+              size="icon-xs" variant="ghost"
+              onClick={() => onDelete(tx)}
+              aria-label="Usuń" title="Usuń"
+              className="h-6 w-6 text-muted-foreground/60 hover:text-destructive"
+            >
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+});
+
+interface EditRowProps {
+  tx: TxItem;
+  editForm: EditForm;
+  setEditForm: (f: EditForm) => void;
+  isEditValid: boolean;
+  updatePending: boolean;
+  saveEdit: () => void;
+  cancelEdit: () => void;
+}
+
+function EditRow({ tx, editForm, setEditForm, isEditValid, updatePending, saveEdit, cancelEdit }: EditRowProps) {
+  const paymentCcy = tx.paymentCurrency || tx.currency;
+  return (
+    <tr className="border-b border-border/50 bg-muted/30">
+      <td className="py-2 pr-4">
+        <Input
+          type="date"
+          value={editForm.date}
+          onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
+          className="h-8 w-[140px] text-xs"
+        />
+      </td>
+      <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">{tx.ticker}</td>
+      <td className="py-2 pr-4"><CcyChip ccy={paymentCcy} /></td>
+      <td className="py-2 pr-4">
+        <Select value={editForm.side} onValueChange={(v: 'K' | 'S') => setEditForm({ ...editForm, side: v })}>
+          <SelectTrigger className="h-8 w-[60px]" size="sm"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="K">K</SelectItem>
+            <SelectItem value="S">S</SelectItem>
+          </SelectContent>
+        </Select>
+      </td>
+      <td className="py-2 pr-4">
+        <Input
+          type="number" step="0.0001" min="0"
+          value={editForm.quantity}
+          onChange={(e) => setEditForm({ ...editForm, quantity: e.target.value })}
+          className="h-8 w-[90px] text-right text-xs"
+        />
+      </td>
+      <td className="py-2 pr-4">
+        <Input
+          type="number" step="0.01" min="0"
+          value={editForm.price}
+          onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
+          className="h-8 w-[100px] text-right text-xs"
+        />
+      </td>
+      <td className="py-2 pr-4"><CcyChip ccy={tx.currency} /></td>
+      <td className="py-2 pr-4">
+        <Input
+          type="number" step="0.01" min="0"
+          value={editForm.commission}
+          onChange={(e) => setEditForm({ ...editForm, commission: e.target.value })}
+          className="h-8 w-[80px] text-right text-xs"
+        />
+      </td>
+      <td className="py-2 pr-4" />
+      <td className="py-2 text-right">
+        <div className="inline-flex gap-1">
+          <Button
+            size="icon-xs" variant="ghost"
+            onClick={saveEdit}
+            disabled={!isEditValid || updatePending}
+            className="text-gain hover:text-gain/80" aria-label="Zapisz"
+          >
+            {updatePending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+          </Button>
+          <Button size="icon-xs" variant="ghost" onClick={cancelEdit} aria-label="Anuluj">
+            <X className="h-3 w-3" />
+          </Button>
+        </div>
+      </td>
+    </tr>
+  );
 }
 
 function SideChip({ side, size = 'sm' }: { side: 'K' | 'S'; size?: 'sm' | 'lg' }) {
