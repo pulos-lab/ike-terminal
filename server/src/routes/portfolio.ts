@@ -600,16 +600,38 @@ router.get('/metrics', asyncHandler(async (req, res) => {
     undefined, undefined, savedSplits, baseCurrency,
   );
 
-  // FX impact — tylko dla portfeli walutowych z deposits mającymi fxRate
-  // (typowo XTB Transfer-as-deposit). Dla PLN portfeli i bez fxRate: null.
-  let fxImpact = null;
-  if (baseCurrency !== 'PLN') {
-    const todayFxTicker = `${baseCurrency}PLN`;
-    const todayPlnPerBase = await fetchFxRate(todayFxTicker) || 0;
-    if (todayPlnPerBase > 0) {
-      fxImpact = computeFxImpact(operations, metrics.currentValue, baseCurrency, todayPlnPerBase);
-    }
+  // FX impact — liczymy per-currency exposure dla każdej obcej waluty w portfelu
+  // (vs PLN jako referencja). Obsługuje zarówno XTB USD single-currency (gdzie
+  // baseCurrency='USD' a exposure=całość portfela w USD) jak i Bossa/DEGIRO
+  // multi-currency (PLN główny + USD/EUR stocks — impact tylko dla obcej części).
+  const { positions } = await computeOpenPositions(transactions, tickerMap, savedSplits);
+  const cashBalances = computeCashBalances(transactions, operations);
+
+  // foreignExposures: currency → native exposure (cash + stocks w tej walucie).
+  // Dla XTB USD portfela: baseCurrency=USD, stocks+cash USD trafiają do 'USD'
+  //   → impact liczony względem PLN (całość portfela widziana jako "obca waluta vs PLN").
+  // Dla Bossa PLN: tylko niePLN waluty trafiają tutaj (PLN jest "domowa").
+  const foreignExposures = new Map<string, number>();
+  for (const pos of positions) {
+    const cur = (pos.currency || 'PLN').toUpperCase();
+    if (cur === 'PLN') continue;
+    const native = pos.currentValue ?? 0;
+    foreignExposures.set(cur, (foreignExposures.get(cur) ?? 0) + native);
   }
+  for (const [cur, balance] of Object.entries(cashBalances)) {
+    const upperCur = cur.toUpperCase();
+    if (upperCur === 'PLN') continue;
+    if (balance > 0) foreignExposures.set(upperCur, (foreignExposures.get(upperCur) ?? 0) + balance);
+  }
+
+  // Dzisiejsze kursy PLN-per-X dla każdej obcej waluty w portfelu
+  const todayFxRatesToPln = new Map<string, number>();
+  for (const cur of foreignExposures.keys()) {
+    const rate = await fetchFxRate(`${cur}PLN`) || 0;
+    if (rate > 0) todayFxRatesToPln.set(cur, rate);
+  }
+
+  const fxImpact = computeFxImpact(operations, foreignExposures, todayFxRatesToPln);
 
   res.json({
     currentValue: metrics.currentValue,

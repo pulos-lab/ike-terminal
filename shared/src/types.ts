@@ -228,23 +228,45 @@ export interface PortfolioMetrics {
   totalDividends: number;
 }
 
-/** Metryka "Wpływ walut" — liczona tylko dla portfeli walutowych
- *  (baseCurrency != 'PLN') które mają deposity z ustawionym fxRate
- *  (np. XTB Transfer-as-deposit). Pokazuje różnicę między dzisiejszym
- *  kursem bazy (np. USDPLN) a średnim ważonym kursem zakupu. */
+/** Metryka "Wpływ walut" — różnica między dzisiejszym kursem PLN a
+ *  średnim ważonym kursem zakupu wszystkich walut obcych w portfelu.
+ *
+ *  Obsługuje dwa scenariusze:
+ *  1. Single-currency portfel (baseCurrency != 'PLN', np. XTB USD sub-konto):
+ *     deposits z fxRate są eventami "zakupu" waluty bazowej. Exposure = cały
+ *     portfel w walucie bazowej.
+ *  2. Multi-currency portfel (baseCurrency='PLN' z obcymi instrumentami,
+ *     np. Bossa/DEGIRO z USD stocks): fx_exchange ops są eventami "zakupu"
+ *     walut obcych. Exposure per waluta = cash_X + Σ stocks denominated in X.
+ *     FX impact liczony per-waluta, sumowany jako total. */
 export interface FxImpact {
-  /** Procentowa zmiana kursu waluty bazowej w PLN od średniego zakupu. */
+  /** Ważona procentowa zmiana (łączny impact / łączna exposure w PLN). */
   fxImpactPct: number;
-  /** Kwota w PLN — ile więcej/mniej user dostałby sprzedając cały portfel dziś. */
+  /** Łączna kwota w PLN — suma per-currency impactów. */
   fxImpactPln: number;
-  /** Średni ważony kurs PLN za 1 jednostkę waluty bazowej przy wpłatach. */
-  avgPlnPerBase: number;
-  /** Dzisiejszy kurs PLN za 1 jednostkę waluty bazowej. */
-  todayPlnPerBase: number;
-  /** Łączna suma wpłat w walucie bazowej (do wyświetlenia). */
-  totalBaseInvested: number;
-  /** Łączna suma PLN faktycznie wydanych przy wpłatach (Σ amount / fxRate). */
-  totalPlnSpent: number;
+  /** Rozkład per waluta obca (USD, EUR, …). Zawsze tablica, może mieć 1 lub N
+   *  elementów w zależności od liczby walut obcych w portfelu. */
+  breakdown: FxImpactCurrencyEntry[];
+}
+
+/** Pojedynczy wpis breakdown per waluta obca — składowa FxImpact. */
+export interface FxImpactCurrencyEntry {
+  /** Waluta, np. 'USD', 'EUR'. */
+  currency: string;
+  /** Dzisiejsza ekspozycja w walucie natywnej (cash + stock values). */
+  exposureNative: number;
+  /** Ekspozycja przeliczona na PLN po dzisiejszym kursie. */
+  exposurePln: number;
+  /** Średni ważony kurs PLN za 1 jednostkę waluty przy zakupach. */
+  avgPlnPerCurrency: number;
+  /** Dzisiejszy kurs PLN za 1 jednostkę waluty. */
+  todayPlnPerCurrency: number;
+  /** Wpływ walut dla tej waluty w PLN (exposureNative × (today − avg)). */
+  impactPln: number;
+  /** Wpływ walut dla tej waluty jako % (today/avg − 1). */
+  impactPct: number;
+  /** Łączna suma wydarzeń "zakupu" tej waluty (natywnie). */
+  totalAcquiredNative: number;
 }
 
 // ============ Stock Split Types ============

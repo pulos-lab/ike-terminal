@@ -1,4 +1,4 @@
-import type { Transaction, CashOperation, Position, ClosedTrade, ClosedTradeFee, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, DetectedSplit, FxImpact } from 'shared';
+import type { Transaction, CashOperation, Position, ClosedTrade, ClosedTradeFee, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, DetectedSplit, FxImpact, FxImpactCurrencyEntry } from 'shared';
 import { fetchYahooPrice, fetchFxRate, fetchYahooHistory, fetchYahooHistoryDirect } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
 import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, detectSplitFromQuantityMismatch, isPlausibleSplitRatio, snapToKnownRatio } from './split-detector.js';
@@ -874,57 +874,111 @@ export function detectBaseCurrency(operations: CashOperation[]): string {
   return curs.size === 1 ? [...curs][0] : 'PLN';
 }
 
-/** Oblicza "wpływ walut" — różnicę między dzisiejszym kursem base/PLN
- *  a średnim ważonym kursem wpłat.
+/** Konwertuje op.fxRate do jednolitej konwencji "PLN per 1 X" (direct PLN quote).
  *
- *  Zwraca `null` dla:
- *  - portfeli PLN (baseCurrency='PLN') — brak FX do analizowania
- *  - portfeli bez wpłat z ustawionym `fxRate` (np. DEGIRO/Bossa bez FX operacji)
- *    — nie mamy danych o kursach zakupu waluty
+ *  Konwencje w istniejących danych:
+ *  - Bossa/DEGIRO: fxRate = PLN per X (rate > 1 dla USD/EUR/GBP/CHF)
+ *    Przykład: "Wymiana waluty PLN/USD 3.5713" → 3.5713 PLN za 1 USD
+ *  - XTB: fxRate = X per PLN (rate < 1 dla tych samych walut)
+ *    Przykład: "Exchange rate:0.280763" → 0.280763 USD za 1 PLN
  *
- *  Dla XTB USD sub-konta: parser zapisuje `fxRate` (base per PLN) w każdym
- *  Transfer-derived deposit, więc metryka działa automatycznie po imporcie.
+ *  Rozróżniamy po `op.source`. Gdy dodajemy nowego brokera należy rozszerzyć.  */
+function plnPerXFromOp(op: CashOperation): number | null {
+  if (!op.fxRate || op.fxRate <= 0) return null;
+  if (op.source === 'xtb') return 1 / op.fxRate;
+  return op.fxRate; // bossa, degiro, mbank, manual
+}
+
+/** Oblicza "wpływ walut" — różnicę między dzisiejszym kursem PLN a średnim
+ *  ważonym kursem zakupu walut obcych w portfelu.
  *
- *  Matematyka:
- *    pln_i = amount_i / fxRate_i   (PLN wydane przy wpłacie i)
- *    avg_pln_per_base = Σ pln_i / Σ amount_i
- *    fxImpactPct = (today_pln_per_base / avg_pln_per_base - 1) × 100
- *    fxImpactPln = currentValueBase × (today_pln_per_base - avg_pln_per_base)
+ *  Dwa scenariusze obsługiwane jednolicie przez per-currency agregację:
+ *
+ *  **Scenariusz 1: Single-currency portfel** (np. XTB USD sub-konto)
+ *  - Obca waluta względem PLN = jedyna waluta portfela (USD)
+ *  - Acquisition events: deposits z ustawionym fxRate (Transfer → deposit przez
+ *    parser XTB)
+ *  - Exposure USD = całość portfela w USD (cash + stocks — przekazane jako
+ *    foreignExposures.get('USD'))
+ *
+ *  **Scenariusz 2: Multi-currency portfel** (np. Bossa PLN z USD/EUR)
+ *  - Obce waluty = każda != PLN w exposure
+ *  - Acquisition events: fx_exchange credit legs (op.currency=X, amount>0)
+ *    + deposits z fxRate (rzadko dla Bossa, ale XTB deposit też mógłby tu być)
+ *  - Exposure per waluta X = cash_X + Σ stocks denominated in X
+ *
+ *  Matematyka per waluta:
+ *    pln_per_x_i = plnPerXFromOp(event_i)
+ *    x_acquired_i = |event_i.amount|
+ *    avg_pln_per_x = Σ (x_acquired × pln_per_x) / Σ x_acquired
+ *    today_pln_per_x = fetchFxRate(X+PLN)
+ *    impact_pln = exposure_x × (today - avg)
+ *    impact_pct = (today / avg - 1) × 100
+ *
+ *  Zwraca `null` gdy:
+ *  - brak obcych walut w ekspozycji (portfel czysto PLN-owy)
+ *  - żadna obca waluta nie ma acquisition events z fxRate
  */
 export function computeFxImpact(
   operations: CashOperation[],
-  currentValueBase: number,
-  baseCurrency: string,
-  todayPlnPerBase: number,
+  foreignExposures: Map<string, number>, // currency → native exposure (cash + stocks)
+  todayFxRatesToPln: Map<string, number>, // currency → PLN per X
 ): FxImpact | null {
-  if (baseCurrency === 'PLN') return null;
+  const breakdown: FxImpactCurrencyEntry[] = [];
 
-  let totalBaseInvested = 0;
-  let totalPlnSpent = 0;
-  for (const op of operations) {
-    if (op.operationType !== 'deposit') continue;
-    if (!op.fxRate || op.fxRate <= 0) continue;
-    // fxRate to base-per-PLN (np. USD per PLN), więc PLN wydane = amount / fxRate
-    const amount = Math.abs(op.amount);
-    const plnSpent = amount / op.fxRate;
-    totalBaseInvested += amount;
-    totalPlnSpent += plnSpent;
+  for (const [currency, exposureNative] of foreignExposures) {
+    if (currency === 'PLN') continue; // PLN sam w sobie nie ma FX impact
+    if (exposureNative <= 0) continue; // brak ekspozycji → nic do liczenia
+
+    // Agreguj wszystkie wydarzenia "zakupu" tej waluty z fxRate:
+    //   - fx_exchange credit leg (amount > 0, currency = X)
+    //   - deposit w tej walucie z fxRate (XTB Transfer → deposit)
+    let totalAcquiredNative = 0;
+    let sumAcquiredTimesPlnPerX = 0; // Σ (x_acquired × pln_per_x)
+    for (const op of operations) {
+      if (op.currency?.toUpperCase() !== currency.toUpperCase()) continue;
+      const isAcquisitionFx = op.operationType === 'fx_exchange' && op.amount > 0;
+      const isDepositWithFx = op.operationType === 'deposit' && op.fxRate !== undefined;
+      if (!isAcquisitionFx && !isDepositWithFx) continue;
+      const plnPerX = plnPerXFromOp(op);
+      if (plnPerX === null || plnPerX <= 0) continue;
+      const acquired = Math.abs(op.amount);
+      totalAcquiredNative += acquired;
+      sumAcquiredTimesPlnPerX += acquired * plnPerX;
+    }
+
+    if (totalAcquiredNative <= 0) continue; // brak danych o kursach zakupu
+
+    const avgPlnPerCurrency = sumAcquiredTimesPlnPerX / totalAcquiredNative;
+    const todayPlnPerCurrency = todayFxRatesToPln.get(currency) ?? 0;
+    if (todayPlnPerCurrency <= 0) continue; // brak dzisiejszego kursu → nie możemy policzyć
+
+    const impactPln = exposureNative * (todayPlnPerCurrency - avgPlnPerCurrency);
+    const impactPct = avgPlnPerCurrency > 0
+      ? (todayPlnPerCurrency / avgPlnPerCurrency - 1) * 100
+      : 0;
+    const exposurePln = exposureNative * todayPlnPerCurrency;
+
+    breakdown.push({
+      currency,
+      exposureNative,
+      exposurePln,
+      avgPlnPerCurrency,
+      todayPlnPerCurrency,
+      impactPln,
+      impactPct,
+      totalAcquiredNative,
+    });
   }
 
-  if (totalBaseInvested <= 0 || totalPlnSpent <= 0) return null;
+  if (breakdown.length === 0) return null;
 
-  const avgPlnPerBase = totalPlnSpent / totalBaseInvested;
-  const fxImpactPct = (todayPlnPerBase / avgPlnPerBase - 1) * 100;
-  const fxImpactPln = currentValueBase * (todayPlnPerBase - avgPlnPerBase);
+  // Sumy ważone po ekspozycji PLN (bo różne waluty mają różne ekspozycje)
+  const totalExposurePln = breakdown.reduce((s, e) => s + e.exposurePln, 0);
+  const fxImpactPln = breakdown.reduce((s, e) => s + e.impactPln, 0);
+  const fxImpactPct = totalExposurePln > 0 ? (fxImpactPln / totalExposurePln) * 100 : 0;
 
-  return {
-    fxImpactPct,
-    fxImpactPln,
-    avgPlnPerBase,
-    todayPlnPerBase,
-    totalBaseInvested,
-    totalPlnSpent,
-  };
+  return { fxImpactPct, fxImpactPln, breakdown };
 }
 
 /** Benchmark currency lookup — Yahoo nie zawsze dostarcza przy fetchu, a dla
