@@ -228,6 +228,60 @@ export interface PortfolioMetrics {
   totalDividends: number;
 }
 
+/** Metryka "Wpływ walut" — różnica między dzisiejszym kursem PLN a
+ *  średnim ważonym kursem zakupu wszystkich walut obcych w portfelu.
+ *
+ *  Obsługuje dwa scenariusze:
+ *  1. Single-currency portfel (baseCurrency != 'PLN', np. XTB USD sub-konto):
+ *     deposits z fxRate są eventami "zakupu" waluty bazowej. Exposure = cały
+ *     portfel w walucie bazowej.
+ *  2. Multi-currency portfel (baseCurrency='PLN' z obcymi instrumentami,
+ *     np. Bossa/DEGIRO z USD stocks): fx_exchange ops są eventami "zakupu"
+ *     walut obcych. Exposure per waluta = cash_X + Σ stocks denominated in X.
+ *     FX impact liczony per-waluta, sumowany jako total. */
+export interface FxImpact {
+  /** **Główna metryka**: wpływ walut jako % WARTOŚCI CAŁEGO PORTFELA w PLN.
+   *  Intuicyjne: "o ile portfel urósł/spadł dzięki zmianom FX".
+   *  Mała wartość jeśli obca część to tylko mały wycinek portfela. */
+  fxImpactPct: number;
+  /** Wpływ walut jako % EKSPOZYCJI ZAGRANICZNEJ (tylko obce waluty).
+   *  Pokazuje "ile ruszyła sama walutowa część" — większa liczba niż
+   *  fxImpactPct jeśli obce waluty to tylko kawałek portfela. */
+  fxImpactPctOfForeign: number;
+  /** Łączna kwota w PLN — suma per-currency impactów. */
+  fxImpactPln: number;
+  /** Łączna ekspozycja na obce waluty w PLN (suma exposurePln z breakdown). */
+  foreignExposurePln: number;
+  /** Jaki % portfela stanowi część zagraniczna (obce waluty łącznie). */
+  foreignExposurePctOfPortfolio: number;
+  /** Wartość całego portfela w PLN (baza do liczenia % portfela). */
+  totalPortfolioValuePln: number;
+  /** Rozkład per waluta obca (USD, EUR, …). */
+  breakdown: FxImpactCurrencyEntry[];
+}
+
+/** Pojedynczy wpis breakdown per waluta obca — składowa FxImpact. */
+export interface FxImpactCurrencyEntry {
+  /** Waluta, np. 'USD', 'EUR'. */
+  currency: string;
+  /** Dzisiejsza ekspozycja w walucie natywnej (cash + stock values). */
+  exposureNative: number;
+  /** Ekspozycja przeliczona na PLN po dzisiejszym kursie. */
+  exposurePln: number;
+  /** Jaki % całego portfela stanowi ta waluta (exposurePln / totalPortfolio). */
+  exposurePctOfPortfolio: number;
+  /** Średni ważony kurs PLN za 1 jednostkę waluty przy zakupach. */
+  avgPlnPerCurrency: number;
+  /** Dzisiejszy kurs PLN za 1 jednostkę waluty. */
+  todayPlnPerCurrency: number;
+  /** Wpływ walut dla tej waluty w PLN (exposureNative × (today − avg)). */
+  impactPln: number;
+  /** Wpływ walut dla tej waluty jako % zmiany kursu (today/avg − 1). */
+  impactPct: number;
+  /** Łączna suma wydarzeń "zakupu" tej waluty (natywnie). */
+  totalAcquiredNative: number;
+}
+
 // ============ Stock Split Types ============
 
 export interface DetectedSplit {

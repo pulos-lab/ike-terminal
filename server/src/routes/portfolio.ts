@@ -18,6 +18,7 @@ import {
   computeXirr,
   computeCashBalances,
   detectBaseCurrency,
+  computeFxImpact,
 } from '../services/portfolio-engine.js';
 import { BENCHMARKS, type BenchmarkKey } from 'shared';
 import { searchTickers } from '../services/ticker-search.js';
@@ -599,6 +600,45 @@ router.get('/metrics', asyncHandler(async (req, res) => {
     undefined, undefined, savedSplits, baseCurrency,
   );
 
+  // FX impact — liczymy per-currency exposure dla każdej obcej waluty w portfelu
+  // (vs PLN jako referencja). fxImpactPct pokazywany jako % CAŁEGO portfela
+  // (intuicyjne — "o ile portfel ruszył dzięki FX"), breakdown per waluta z
+  // ekspozycją jako % portfela (user widzi skalę).
+  const { positions, totalValuePln: stocksValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
+  const cashBalances = computeCashBalances(transactions, operations);
+
+  const foreignExposures = new Map<string, number>();
+  for (const pos of positions) {
+    const cur = (pos.currency || 'PLN').toUpperCase();
+    if (cur === 'PLN') continue;
+    const native = pos.currentValue ?? 0;
+    foreignExposures.set(cur, (foreignExposures.get(cur) ?? 0) + native);
+  }
+  for (const [cur, balance] of Object.entries(cashBalances)) {
+    const upperCur = cur.toUpperCase();
+    if (upperCur === 'PLN') continue;
+    if (balance > 0) foreignExposures.set(upperCur, (foreignExposures.get(upperCur) ?? 0) + balance);
+  }
+
+  // Dzisiejsze kursy PLN-per-X dla każdej obcej waluty w portfelu
+  const todayFxRatesToPln = new Map<string, number>();
+  for (const cur of foreignExposures.keys()) {
+    const rate = await fetchFxRate(`${cur}PLN`) || 0;
+    if (rate > 0) todayFxRatesToPln.set(cur, rate);
+  }
+
+  // totalPortfolioValuePln = stocks + cash, cash konwertowany przez dzisiejszy FX.
+  // Dla PLN portfeli: stocksValuePln już w PLN, cash PLN + obce waluty konwertowane.
+  let cashValuePln = 0;
+  for (const [cur, balance] of Object.entries(cashBalances)) {
+    const upperCur = cur.toUpperCase();
+    if (upperCur === 'PLN') cashValuePln += balance;
+    else cashValuePln += balance * (todayFxRatesToPln.get(upperCur) || 0);
+  }
+  const totalPortfolioValuePln = stocksValuePln + cashValuePln;
+
+  const fxImpact = computeFxImpact(operations, foreignExposures, todayFxRatesToPln, totalPortfolioValuePln);
+
   res.json({
     currentValue: metrics.currentValue,
     totalInvested: metrics.totalInvested,
@@ -607,6 +647,7 @@ router.get('/metrics', asyncHandler(async (req, res) => {
     totalReturnPct: metrics.totalReturnPct,
     totalDividends: metrics.totalDividends,
     baseCurrency,
+    fxImpact,
   });
 }));
 

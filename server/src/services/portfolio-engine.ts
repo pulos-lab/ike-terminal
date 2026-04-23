@@ -1,4 +1,4 @@
-import type { Transaction, CashOperation, Position, ClosedTrade, ClosedTradeFee, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, DetectedSplit } from 'shared';
+import type { Transaction, CashOperation, Position, ClosedTrade, ClosedTradeFee, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, DetectedSplit, FxImpact, FxImpactCurrencyEntry } from 'shared';
 import { fetchYahooPrice, fetchFxRate, fetchYahooHistory, fetchYahooHistoryDirect } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
 import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, detectSplitFromQuantityMismatch, isPlausibleSplitRatio, snapToKnownRatio } from './split-detector.js';
@@ -872,6 +872,132 @@ export function detectBaseCurrency(operations: CashOperation[]): string {
     }
   }
   return curs.size === 1 ? [...curs][0] : 'PLN';
+}
+
+/** Konwertuje op.fxRate do jednolitej konwencji "PLN per 1 X" (direct PLN quote).
+ *
+ *  Konwencje w istniejących danych:
+ *  - Bossa/DEGIRO: fxRate = PLN per X (rate > 1 dla USD/EUR/GBP/CHF)
+ *    Przykład: "Wymiana waluty PLN/USD 3.5713" → 3.5713 PLN za 1 USD
+ *  - XTB: fxRate = X per PLN (rate < 1 dla tych samych walut)
+ *    Przykład: "Exchange rate:0.280763" → 0.280763 USD za 1 PLN
+ *
+ *  Rozróżniamy po `op.source`. Gdy dodajemy nowego brokera należy rozszerzyć.  */
+function plnPerXFromOp(op: CashOperation): number | null {
+  if (!op.fxRate || op.fxRate <= 0) return null;
+  if (op.source === 'xtb') return 1 / op.fxRate;
+  return op.fxRate; // bossa, degiro, mbank, manual
+}
+
+/** Oblicza "wpływ walut" — różnicę między dzisiejszym kursem PLN a średnim
+ *  ważonym kursem zakupu walut obcych w portfelu.
+ *
+ *  Dwa scenariusze obsługiwane jednolicie przez per-currency agregację:
+ *
+ *  **Scenariusz 1: Single-currency portfel** (np. XTB USD sub-konto)
+ *  - Obca waluta względem PLN = jedyna waluta portfela (USD)
+ *  - Acquisition events: deposits z ustawionym fxRate (Transfer → deposit przez
+ *    parser XTB)
+ *  - Exposure USD = całość portfela w USD (cash + stocks — przekazane jako
+ *    foreignExposures.get('USD'))
+ *
+ *  **Scenariusz 2: Multi-currency portfel** (np. Bossa PLN z USD/EUR)
+ *  - Obce waluty = każda != PLN w exposure
+ *  - Acquisition events: fx_exchange credit legs (op.currency=X, amount>0)
+ *    + deposits z fxRate (rzadko dla Bossa, ale XTB deposit też mógłby tu być)
+ *  - Exposure per waluta X = cash_X + Σ stocks denominated in X
+ *
+ *  Matematyka per waluta:
+ *    pln_per_x_i = plnPerXFromOp(event_i)
+ *    x_acquired_i = |event_i.amount|
+ *    avg_pln_per_x = Σ (x_acquired × pln_per_x) / Σ x_acquired
+ *    today_pln_per_x = fetchFxRate(X+PLN)
+ *    impact_pln = exposure_x × (today - avg)
+ *    impact_pct = (today / avg - 1) × 100
+ *
+ *  Zwraca `null` gdy:
+ *  - brak obcych walut w ekspozycji (portfel czysto PLN-owy)
+ *  - żadna obca waluta nie ma acquisition events z fxRate
+ */
+export function computeFxImpact(
+  operations: CashOperation[],
+  foreignExposures: Map<string, number>, // currency → native exposure (cash + stocks)
+  todayFxRatesToPln: Map<string, number>, // currency → PLN per X
+  totalPortfolioValuePln: number,         // wartość CAŁEGO portfela w PLN
+): FxImpact | null {
+  const breakdown: FxImpactCurrencyEntry[] = [];
+
+  for (const [currency, exposureNative] of foreignExposures) {
+    if (currency === 'PLN') continue;
+    if (exposureNative <= 0) continue;
+
+    let totalAcquiredNative = 0;
+    let sumAcquiredTimesPlnPerX = 0;
+    for (const op of operations) {
+      if (op.currency?.toUpperCase() !== currency.toUpperCase()) continue;
+      const isAcquisitionFx = op.operationType === 'fx_exchange' && op.amount > 0;
+      const isDepositWithFx = op.operationType === 'deposit' && op.fxRate !== undefined;
+      if (!isAcquisitionFx && !isDepositWithFx) continue;
+      const plnPerX = plnPerXFromOp(op);
+      if (plnPerX === null || plnPerX <= 0) continue;
+      const acquired = Math.abs(op.amount);
+      totalAcquiredNative += acquired;
+      sumAcquiredTimesPlnPerX += acquired * plnPerX;
+    }
+
+    if (totalAcquiredNative <= 0) continue;
+
+    const avgPlnPerCurrency = sumAcquiredTimesPlnPerX / totalAcquiredNative;
+    const todayPlnPerCurrency = todayFxRatesToPln.get(currency) ?? 0;
+    if (todayPlnPerCurrency <= 0) continue;
+
+    const impactPln = exposureNative * (todayPlnPerCurrency - avgPlnPerCurrency);
+    const impactPct = avgPlnPerCurrency > 0
+      ? (todayPlnPerCurrency / avgPlnPerCurrency - 1) * 100
+      : 0;
+    const exposurePln = exposureNative * todayPlnPerCurrency;
+    const exposurePctOfPortfolio = totalPortfolioValuePln > 0
+      ? (exposurePln / totalPortfolioValuePln) * 100
+      : 0;
+
+    breakdown.push({
+      currency,
+      exposureNative,
+      exposurePln,
+      exposurePctOfPortfolio,
+      avgPlnPerCurrency,
+      todayPlnPerCurrency,
+      impactPln,
+      impactPct,
+      totalAcquiredNative,
+    });
+  }
+
+  if (breakdown.length === 0) return null;
+
+  const foreignExposurePln = breakdown.reduce((s, e) => s + e.exposurePln, 0);
+  const fxImpactPln = breakdown.reduce((s, e) => s + e.impactPln, 0);
+  // Main: wpływ na cały portfel (intuicyjne, małe dla portfeli z małą walutową częścią)
+  const fxImpactPct = totalPortfolioValuePln > 0
+    ? (fxImpactPln / totalPortfolioValuePln) * 100
+    : 0;
+  // Secondary: wpływ na część zagraniczną (większe, pokazuje "ile ruszył walutowy kawałek")
+  const fxImpactPctOfForeign = foreignExposurePln > 0
+    ? (fxImpactPln / foreignExposurePln) * 100
+    : 0;
+  const foreignExposurePctOfPortfolio = totalPortfolioValuePln > 0
+    ? (foreignExposurePln / totalPortfolioValuePln) * 100
+    : 0;
+
+  return {
+    fxImpactPct,
+    fxImpactPctOfForeign,
+    fxImpactPln,
+    foreignExposurePln,
+    foreignExposurePctOfPortfolio,
+    totalPortfolioValuePln,
+    breakdown,
+  };
 }
 
 /** Benchmark currency lookup — Yahoo nie zawsze dostarcza przy fetchu, a dla
