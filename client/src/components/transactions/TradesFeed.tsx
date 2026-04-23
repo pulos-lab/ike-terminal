@@ -1,5 +1,6 @@
-import { memo, useCallback, useMemo, useState, useSyncExternalStore, useTransition } from 'react';
+import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore, useTransition } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { formatNumber, formatDate, formatQuantity } from '@/lib/formatters';
@@ -190,56 +191,21 @@ export const TradesFeed = memo(function TradesFeed() {
         </div>
       )}
 
-      {/* Desktop table — renderujemy TYLKO gdy szeroki viewport. Dla 6340 wierszy
-          obecność DWOCH drzew (desktop + mobile) ukrywanych CSS-em podwajała koszt
-          React rekonciliacji z ~12k nodów do ~25k buttonów przy każdym state change. */}
+      {/* Desktop table — wirtualizowana lista. Renderujemy TYLKO ~20 widocznych
+          wierszy zamiast 6334. React reconciliation O(widocznych) ≈ O(20). */}
       {isDesktop && (
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold border-b border-border">
-              <th className="text-left py-2 pr-4">Data</th>
-              <th className="text-left py-2 pr-4">Ticker</th>
-              <th className="text-left py-2 pr-4" title="Waluta rozliczenia — co zapłaciłeś">Waluta zakupu</th>
-              <th className="text-left py-2 pr-4">Strona</th>
-              <th className="text-right py-2 pr-4">Ilość</th>
-              <th className="text-right py-2 pr-4">Cena</th>
-              <th className="text-left py-2 pr-4" title="Waluta kwotowania papieru na giełdzie">Kwotowanie</th>
-              <th className="text-right py-2 pr-4">Prow.</th>
-              <th className="text-right py-2 pr-4">Wartość PLN</th>
-              <th className="text-right py-2 w-[90px]"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((tx, i) => {
-              const key = tx.id ?? `row-${i}`;
-              const isEditing = tx.id != null && editingId === tx.id;
-              if (isEditing) {
-                return (
-                  <EditRow
-                    key={key}
-                    tx={tx}
-                    editForm={editForm}
-                    setEditForm={setEditForm}
-                    isEditValid={isEditValid}
-                    updatePending={updateMutation.isPending}
-                    saveEdit={saveEdit}
-                    cancelEdit={cancelEdit}
-                  />
-                );
-              }
-              return (
-                <NormalRow
-                  key={key}
-                  tx={tx}
-                  onEdit={startEdit}
-                  onDelete={requestDelete}
-                />
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+        <VirtualTable
+          rows={sorted}
+          editingId={editingId}
+          editForm={editForm}
+          setEditForm={setEditForm}
+          isEditValid={isEditValid}
+          updatePending={updateMutation.isPending}
+          saveEdit={saveEdit}
+          cancelEdit={cancelEdit}
+          onEdit={startEdit}
+          onDelete={requestDelete}
+        />
       )}
 
       {/* Mobile cards — renderujemy TYLKO gdy wąski viewport */}
@@ -418,6 +384,99 @@ export const TradesFeed = memo(function TradesFeed() {
     </div>
   );
 });
+
+// ============ Virtual Table ============
+const ROW_HEIGHT = 40;
+
+interface VirtualTableProps {
+  rows: TxItem[];
+  editingId: number | null;
+  editForm: EditForm;
+  setEditForm: (f: EditForm) => void;
+  isEditValid: boolean;
+  updatePending: boolean;
+  saveEdit: () => void;
+  cancelEdit: () => void;
+  onEdit: (tx: TxItem) => void;
+  onDelete: (tx: TxItem) => void;
+}
+
+function VirtualTable({
+  rows, editingId, editForm, setEditForm, isEditValid,
+  updatePending, saveEdit, cancelEdit, onEdit, onDelete,
+}: VirtualTableProps) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 15,
+  });
+
+  return (
+    <div
+      ref={parentRef}
+      className="overflow-auto"
+      style={{ maxHeight: 'calc(100vh - 280px)' }}
+    >
+      <table className="w-full text-sm">
+        <thead className="sticky top-0 bg-background z-10">
+          <tr className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold border-b border-border">
+            <th className="text-left py-2 pr-4">Data</th>
+            <th className="text-left py-2 pr-4">Ticker</th>
+            <th className="text-left py-2 pr-4" title="Waluta rozliczenia — co zapłaciłeś">Waluta zakupu</th>
+            <th className="text-left py-2 pr-4">Strona</th>
+            <th className="text-right py-2 pr-4">Ilość</th>
+            <th className="text-right py-2 pr-4">Cena</th>
+            <th className="text-left py-2 pr-4" title="Waluta kwotowania papieru na giełdzie">Kwotowanie</th>
+            <th className="text-right py-2 pr-4">Prow.</th>
+            <th className="text-right py-2 pr-4">Wartość PLN</th>
+            <th className="text-right py-2 w-[90px]"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rowVirtualizer.getVirtualItems().length > 0 && (
+            <tr><td colSpan={10} style={{ height: rowVirtualizer.getVirtualItems()[0].start, padding: 0, border: 'none' }} /></tr>
+          )}
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const tx = rows[virtualRow.index];
+            const key = tx.id ?? `row-${virtualRow.index}`;
+            const isEditing = tx.id != null && editingId === tx.id;
+            if (isEditing) {
+              return (
+                <EditRow
+                  key={key}
+                  tx={tx}
+                  editForm={editForm}
+                  setEditForm={setEditForm}
+                  isEditValid={isEditValid}
+                  updatePending={updatePending}
+                  saveEdit={saveEdit}
+                  cancelEdit={cancelEdit}
+                />
+              );
+            }
+            return (
+              <NormalRow
+                key={key}
+                tx={tx}
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
+            );
+          })}
+          {rowVirtualizer.getVirtualItems().length > 0 && (
+            <tr><td colSpan={10} style={{
+              height: rowVirtualizer.getTotalSize() - (rowVirtualizer.getVirtualItems().at(-1)?.end ?? 0),
+              padding: 0, border: 'none',
+            }} /></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 function valuePln(tx: TxItem): number {
   if (tx.currency === 'PLN') return tx.total;
