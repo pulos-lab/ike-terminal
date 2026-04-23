@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState, useTransition } from 'react';
+import { memo, useCallback, useMemo, useState, useSyncExternalStore, useTransition } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
@@ -11,6 +11,21 @@ import { CcyChip } from '@/components/ui/ccy-chip';
 import { DeleteTransactionDialog } from './DeleteTransactionDialog';
 import { cn } from '@/lib/utils';
 import { Search, Info, Pencil, Trash2, Check, X, Loader2 } from 'lucide-react';
+
+// useSyncExternalStore na matchMedia — idiomatic React 18. Tailwind md: breakpoint = 768px.
+// Renderujemy TYLKO jeden widok (desktop ALBO mobile), a nie oba z display hacks — eliminuje
+// podwójny render-tree (6340 rows × 2 views = 12680 zbędnych nodów + 12680 buttonów).
+function useIsDesktop(): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      const mql = window.matchMedia('(min-width: 768px)');
+      mql.addEventListener('change', cb);
+      return () => mql.removeEventListener('change', cb);
+    },
+    () => window.matchMedia('(min-width: 768px)').matches,
+    () => true, // SSR fallback (nieużywane, ale wymagane)
+  );
+}
 
 interface TxItem {
   id?: number;
@@ -50,6 +65,7 @@ interface EditForm {
 // się tylko gdy jego własny state (search, editingId, deleteTarget) się zmieni.
 export const TradesFeed = memo(function TradesFeed() {
   const queryClient = useQueryClient();
+  const isDesktop = useIsDesktop();
   const { data, isLoading } = useQuery({
     queryKey: QUERY_KEYS.transactions,
     queryFn: () => api.getTransactions(),
@@ -174,8 +190,11 @@ export const TradesFeed = memo(function TradesFeed() {
         </div>
       )}
 
-      {/* Desktop table */}
-      <div className="hidden md:block overflow-x-auto">
+      {/* Desktop table — renderujemy TYLKO gdy szeroki viewport. Dla 6340 wierszy
+          obecność DWOCH drzew (desktop + mobile) ukrywanych CSS-em podwajała koszt
+          React rekonciliacji z ~12k nodów do ~25k buttonów przy każdym state change. */}
+      {isDesktop && (
+      <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold border-b border-border">
@@ -221,9 +240,11 @@ export const TradesFeed = memo(function TradesFeed() {
           </tbody>
         </table>
       </div>
+      )}
 
-      {/* Mobile cards */}
-      <div className="md:hidden flex flex-col gap-2">
+      {/* Mobile cards — renderujemy TYLKO gdy wąski viewport */}
+      {!isDesktop && (
+      <div className="flex flex-col gap-2">
         {sorted.map((tx, i) => {
           const paymentCcy = tx.paymentCurrency || tx.currency;
           const autoFx = paymentCcy !== tx.currency;
@@ -377,6 +398,7 @@ export const TradesFeed = memo(function TradesFeed() {
           );
         })}
       </div>
+      )}
 
       <DeleteTransactionDialog
         target={deleteTarget && deleteTarget.id != null ? {
