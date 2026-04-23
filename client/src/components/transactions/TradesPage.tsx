@@ -402,31 +402,39 @@ export function TradesPage() {
         </Card>
       )}
 
-      {/* All transactions feed — zamontowany ZAWSZE, żeby przełączanie tabu nie
-          odmontowywało i nie remontowało 6000+ wierszy. Używamy content-visibility
-          zamiast display:none — browser cachuje layout contentu gdy hidden i nie
-          musi go przeliczać od zera przy toggle. Jest to natywna browserowa
-          optymalizacja dla tego dokładnie scenariusza. */}
+      {/* Stack obu tabów (Wszystkie + Otwarte) w tej samej grid-area.
+          Aktywny tab: position:relative → w flow, kontrybuuje do wysokości parent.
+          Nieaktywny: position:absolute + visibility:hidden → out of flow, layout
+          zachowany (nie re-computowany), paint pominięty. Efekt: przełączanie
+          pomiędzy tabami to tylko toggle kilku CSS properties — bez relayoutu
+          6000+ wierszy. Browser cachuje layout pomiędzy togglami. */}
+      <div style={{ position: 'relative' }}>
+        <div
+          aria-hidden={tab !== 'all'}
+          style={{
+            position: tab === 'all' ? 'relative' : 'absolute',
+            top: 0, left: 0, right: 0,
+            visibility: tab === 'all' ? 'visible' : 'hidden',
+            pointerEvents: tab === 'all' ? 'auto' : 'none',
+          }}
+        >
+          <Card>
+            <CardContent className="pt-4">
+              <TradesFeed />
+            </CardContent>
+          </Card>
+        </div>
+
+      {/* Open positions — zamontowany ZAWSZE (overlap ze stack) */}
       <div
-        aria-hidden={tab !== 'all'}
+        aria-hidden={tab !== 'open'}
         style={{
-          contentVisibility: tab === 'all' ? 'visible' : 'hidden',
-          // containIntrinsicSize: 0 0 — gdy hidden div zajmuje zerową wysokość,
-          // więc Otwarte content (renderowane poniżej) nie jest zepchnięte w dół.
-          // Browser cachuje layout wewnątrz dzięki content-visibility, wciąż
-          // 30× szybszy powrót niż display:none mimo tej zmiany.
-          containIntrinsicSize: tab === 'all' ? undefined : '0 0',
+          position: tab === 'open' ? 'relative' : 'absolute',
+          top: 0, left: 0, right: 0,
+          visibility: tab === 'open' ? 'visible' : 'hidden',
+          pointerEvents: tab === 'open' ? 'auto' : 'none',
         }}
       >
-        <Card>
-          <CardContent className="pt-4">
-            <TradesFeed />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Open positions */}
-      {tab === 'open' && (
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Otwarte pozycje</CardTitle>
@@ -639,7 +647,8 @@ export function TradesPage() {
           )}
         </CardContent>
       </Card>
-      )}
+      </div>
+      </div>
 
       {/* Closed trades */}
       {tab === 'closed' && (
