@@ -50,7 +50,8 @@ export function initSchema(db: Database.Database): void {
       exchange TEXT,
       currency TEXT DEFAULT 'PLN',
       price_source TEXT DEFAULT 'auto',
-      sector TEXT
+      sector TEXT,
+      supersector TEXT
     );
 
     CREATE TABLE IF NOT EXISTS manual_positions (
@@ -105,6 +106,9 @@ export function initSchema(db: Database.Database): void {
   const tmColumns = db.prepare("PRAGMA table_info(ticker_map)").all() as any[];
   if (!tmColumns.some((c: any) => c.name === 'sector')) {
     db.exec("ALTER TABLE ticker_map ADD COLUMN sector TEXT");
+  }
+  if (!tmColumns.some((c: any) => c.name === 'supersector')) {
+    db.exec("ALTER TABLE ticker_map ADD COLUMN supersector TEXT");
   }
 
   const txColumns = db.prepare("PRAGMA table_info(transactions)").all() as any[];

@@ -414,6 +414,7 @@ export async function computeOpenPositions(
       weight: 0, // computed after total is known
       exchange: entry.exchange,
       sector: entry.sector,
+      supersector: entry.supersector,
       dailyChangePct,
       category,
       priceManual: priceManual || undefined,

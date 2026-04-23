@@ -68,6 +68,13 @@ Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i st
 - **CFD**: statyczna mapa (`shared/src/cfd-ticker-map.ts`) → Yahoo ticker (np. GOLD → GC=F)
 - **Zagraniczne ISINy**: Yahoo by ISIN → Yahoo by name
 
+### Klasyfikacja sektorowa (stockwatch taxonomy)
+Zunifikowana taksonomia: 8 nadsektorów × 40 podsektorów ze stockwatch.pl/gpw/sektory (pola `supersector` + `sector` w `ticker_map`).
+- **GPW / NewConnect**: `shared/src/gpw-sector-map.ts` (~740 spółek, generowany scraperem `npm run scrape:gpw-sectors -w server`)
+- **Zagraniczne (Yahoo GICS)**: `shared/src/gics-to-stockwatch.ts` — tłumaczy `sector`/`industry` z assetProfile na stockwatch nadsektor/podsektor
+- **CFD**: `getCfdSector` → supersektor Surowce/Indeksy/Forex/Krypto (podsektor = null)
+- Resolver: `server/src/services/sector-resolver.ts` — jedno źródło prawdy dla lazyBackfillSectors + endpointu refresh-sectors + isin-resolver
+
 ## Konwencje
 - TypeScript strict mode
 - Encoding: UTF-8 (nowe pliki), Windows-1250 (parsery Bossa/mBank)
