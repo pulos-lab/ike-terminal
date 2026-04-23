@@ -588,55 +588,27 @@ router.get('/metrics', asyncHandler(async (req, res) => {
   const transactions = getAllTransactions(pid);
   const operations = getAllOperations(pid);
   const tickerMap = getTickerMap(pid);
-
   const savedSplits = loadSplitsForEngine(pid);
-  const { totalValuePln: stockValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
 
-  // Add cash balances (all currencies converted to PLN)
-  const cashBalances = computeCashBalances(transactions, operations);
-  const defaultFx: Record<string, number> = {
-    USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
-    CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
-  };
-  let cashValuePln = 0;
-  for (const [currency, balance] of Object.entries(cashBalances)) {
-    if (currency === 'PLN') {
-      cashValuePln += balance;
-    } else {
-      const rate = await fetchFxRate(`${currency}PLN`) || defaultFx[currency] || 1;
-      cashValuePln += balance * rate;
-    }
-  }
-  const totalValuePln = stockValuePln + cashValuePln;
-
-  // Include both deposits (positive) and withdrawals (negative) for accurate metrics
-  const cashFlows = operations
-    .filter(op => (op.operationType === 'deposit' || op.operationType === 'withdrawal') && op.currency === 'PLN')
-    .map(op => ({ date: op.date, amount: op.amount }));
-
-  const totalDeposits = cashFlows.filter(f => f.amount > 0).reduce((s, d) => s + d.amount, 0);
-  const totalWithdrawals = cashFlows.filter(f => f.amount < 0).reduce((s, d) => s + Math.abs(d.amount), 0);
-  const totalInvested = totalDeposits - totalWithdrawals;
-
-  let xirr = 0;
-  try {
-    const raw = computeXirr(cashFlows, totalValuePln) * 100;
-    xirr = isFinite(raw) ? raw : 0;
-  } catch {
-    xirr = 0;
-  }
-
-  const totalDividends = operations
-    .filter(op => op.operationType === 'dividend')
-    .reduce((s, op) => s + op.amount, 0);
+  // Użyj computePortfolioHistory — metrics są już PLN-znormalizowane z per-day
+  // FX rates (totalInvested, xirr, totalDividends, totalReturn). Wcześniej
+  // endpoint duplikował cash-flow logikę z filtrem `currency === 'PLN'`, który
+  // wyzerowywał wpłaty dla portfeli walutowych (XTB USD sub-konto: deposits
+  // w USD → totalInvested=0 → totalReturnPct=0% → UI "WPŁATY 0,00 zł").
+  // Teraz jedno źródło prawdy, spójne z Dashboard chart.
+  const { metrics } = await computePortfolioHistory(
+    transactions, operations, tickerMap,
+    '^GSPC', 'yahoo', // benchmark ticker nie wpływa na metrics
+    undefined, undefined, savedSplits,
+  );
 
   res.json({
-    currentValue: totalValuePln,
-    totalInvested,
-    xirr,
-    totalReturn: totalValuePln - totalInvested,
-    totalReturnPct: totalInvested > 0 ? ((totalValuePln - totalInvested) / totalInvested) * 100 : 0,
-    totalDividends,
+    currentValue: metrics.currentValue,
+    totalInvested: metrics.totalInvested,
+    xirr: metrics.xirr,
+    totalReturn: metrics.totalReturn,
+    totalReturnPct: metrics.totalReturnPct,
+    totalDividends: metrics.totalDividends,
   });
 }));
 
