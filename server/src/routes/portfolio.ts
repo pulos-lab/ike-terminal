@@ -610,25 +610,48 @@ router.get('/metrics', asyncHandler(async (req, res) => {
   const baseCurrency = cashOpCurrencies.size === 1
     ? [...cashOpCurrencies][0]
     : 'PLN';
+  const isSingleCcy = baseCurrency !== 'PLN';
 
-  // Konwersja PLN-metrics → base currency. Używamy FX rate z ostatniego dnia
-  // history (spójne z tym że currentValue odzwierciedla "dziś"). Dla portfeli
-  // PLN: fxRate=1, zero zmiany w wyniku.
-  const toBase = (valuePln: number): number => {
-    if (baseCurrency === 'PLN') return valuePln;
-    const lastDate = history[history.length - 1]?.date;
-    const fx = lastDate ? dailyFxRates.get(lastDate)?.get(baseCurrency) : null;
-    if (!fx || fx <= 0) return valuePln; // fallback — zostaw w PLN niż NaN
-    return valuePln / fx;
-  };
+  // Dla currentValue: roundtrip przez fx_today jest DOKŁADNY, bo engine wycenia
+  // holdings i cash też używając fx_today (value_pln = native × fx_today dla
+  // ostatniego dnia → / fx_today = native z powrotem). Zero driftu.
+  const lastDate = history[history.length - 1]?.date;
+  const fxLast = lastDate && isSingleCcy ? dailyFxRates.get(lastDate)?.get(baseCurrency) : null;
+  const currentValueBase = fxLast && fxLast > 0 ? metrics.currentValue / fxLast : metrics.currentValue;
+
+  // Dla totalInvested/totalDividends NIE MOŻEMY roundtripować — to są sumy
+  // historyczne (Σ raw × fx_dnia), więc / fx_today daje drift gdy kursy się
+  // wahały. Sumujemy raw amounts z operations bezpośrednio — identycznie jak
+  // CashFlowPage pokazuje cumulativeDeposits. Dla portfeli PLN: raw = PLN,
+  // spójne z totalInvested z history.
+  let totalInvestedBase: number;
+  let totalDividendsBase: number;
+  if (isSingleCcy) {
+    totalInvestedBase = operations
+      .filter(op => (op.operationType === 'deposit' || op.operationType === 'withdrawal')
+                    && (op.currency || 'PLN').toUpperCase() === baseCurrency)
+      .reduce((s, op) => s + op.amount, 0);
+    totalDividendsBase = operations
+      .filter(op => op.operationType === 'dividend'
+                    && (op.currency || 'PLN').toUpperCase() === baseCurrency)
+      .reduce((s, op) => s + op.amount, 0);
+  } else {
+    totalInvestedBase = metrics.totalInvested;     // PLN
+    totalDividendsBase = metrics.totalDividends;   // PLN
+  }
+
+  const totalReturnBase = currentValueBase - totalInvestedBase;
+  const totalReturnPctBase = totalInvestedBase > 0
+    ? (totalReturnBase / totalInvestedBase) * 100
+    : 0;
 
   res.json({
-    currentValue: toBase(metrics.currentValue),
-    totalInvested: toBase(metrics.totalInvested),
-    xirr: metrics.xirr,                                // % — invariant
-    totalReturn: toBase(metrics.totalReturn),
-    totalReturnPct: metrics.totalReturnPct,            // % — invariant
-    totalDividends: toBase(metrics.totalDividends),
+    currentValue: currentValueBase,
+    totalInvested: totalInvestedBase,
+    xirr: metrics.xirr,                              // % — invariant
+    totalReturn: totalReturnBase,
+    totalReturnPct: totalReturnPctBase,
+    totalDividends: totalDividendsBase,
     baseCurrency,
   });
 }));
