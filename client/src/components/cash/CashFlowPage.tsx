@@ -11,9 +11,45 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
+import {
+  Tooltip as UITooltip,
+  TooltipContent as UITooltipContent,
+  TooltipProvider as UITooltipProvider,
+  TooltipTrigger as UITooltipTrigger,
+} from '@/components/ui/tooltip';
 import { formatPLN, formatDate } from '@/lib/formatters';
 import { useToggleSet } from '@/hooks/useToggleSet';
-import { ChevronRight, ChevronDown, Loader2, Plus, Pencil, Trash2, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, Loader2, Plus, Pencil, Trash2, Check, X, ArrowUp, ArrowDown, Info } from 'lucide-react';
+
+// XTB Transfer między sub-kontami trafia do CashOperation.description z tym prefixem.
+// Wykrywamy go, by pokazać ikonę + tooltip wyjaśniający że to wymiana walutowa,
+// ale traktowana jako depozyt/wypłata dla celów MWR/TWR.
+const FX_MARKER_RE = /^\[z wymiany walut(?:\s+(\S+)\s+@\s+([\d.]+))?\]\s*(.*)$/;
+
+function DepositDescription({ text }: { text: string }) {
+  const m = text.match(FX_MARKER_RE);
+  if (!m) {
+    return <span className="text-xs text-muted-foreground/70 ml-1">{text}</span>;
+  }
+  const [, pair, rate, rest] = m;
+  const label = pair ? `wymiana ${pair} @ ${rate}` : 'wymiana walut';
+  return (
+    <UITooltip>
+      <UITooltipTrigger asChild>
+        <span className="text-xs text-muted-foreground/70 ml-1 inline-flex items-center gap-1 cursor-help">
+          <Info className="h-3 w-3" />
+          {label}
+          {rest && <span className="opacity-70">· {rest}</span>}
+        </span>
+      </UITooltipTrigger>
+      <UITooltipContent className="max-w-xs">
+        Ta operacja powstała z wymiany walutowej w ramach XTB (Transfer między sub-kontami).
+        Traktujemy ją jako depozyt / wypłatę dla celów obliczania MWR/TWR, bo z perspektywy
+        tego sub-konta reprezentuje środki wprowadzone z zewnątrz (lub wyprowadzone na zewnątrz).
+      </UITooltipContent>
+    </UITooltip>
+  );
+}
 
 // Historyczne limity IKE/IKZE są centralne w shared/src/ike-ikze-limits.ts (2012–2026).
 // Trzymaj tam wszystkie edycje — ten komponent jest tylko konsumentem.
@@ -183,6 +219,7 @@ export function CashFlowPage() {
     : 'Przepływy gotówkowe';
 
   return (
+    <UITooltipProvider delayDuration={150}>
     <div className="space-y-4">
       <div className="flex items-center justify-end">
         <Button
@@ -439,9 +476,7 @@ export function CashFlowPage() {
                                       : <ArrowDown className="h-3 w-3 text-loss shrink-0" />
                                     }
                                     {formatDate(entry.date)}
-                                    {entry.description && (
-                                      <span className="text-xs text-muted-foreground/70 ml-1">{entry.description}</span>
-                                    )}
+                                    {entry.description && <DepositDescription text={entry.description} />}
                                   </div>
                                 </TableCell>
                                 <TableCell className={`text-right ${entry.type === 'deposit' ? 'text-gain' : ''}`}>
@@ -495,5 +530,6 @@ export function CashFlowPage() {
         </CardContent>
       </Card>
     </div>
+    </UITooltipProvider>
   );
 }

@@ -791,52 +791,48 @@ export async function parseXtbFile(
       });
 
     } else if (raw.type === 'fx_conversion') {
-      // Currency conversion between XTB sub-accounts (e.g. PLN→USD).
-      // Raw amount is in the account currency; the paired leg is derived from
-      // the exchange rate in the Comment. Emit two fx_exchange records so the
-      // cash-flow books both sides (analogously to DEGIRO's fx_credit/withdrawal).
+      // Currency conversion between XTB sub-accounts (e.g. PLN→USD subaccount).
+      // Raw amount is in the account currency — positive means the sub-account
+      // receives funds (external inflow from this sub-account's perspective),
+      // negative means it sends funds out.
+      //
+      // Design decision: treat Transfer as deposit/withdrawal in the account
+      // currency rather than a paired fx_exchange. Rationale:
+      //   • Single-subaccount portfolio (common case): Transfer IS the only
+      //     cash inflow (external zasilenie from user's bank), so it must
+      //     trigger firstDepositSeen for the history/chart to render.
+      //   • Merged multi-subaccount portfolio: the PLN-side file emits its
+      //     own withdrawal leg (raw.amount negative on the sending side),
+      //     naturally offsetting this deposit.
+      // The stable `[z wymiany walut PAIR @ RATE]` prefix is detected by the
+      // client (CashFlowPage) to render an info-tooltip explaining the origin.
       const isoTime = parseXtbTime(raw.time);
       if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date' }); continue; }
 
+      // Parse the exchange rate + pair from Comment for marker metadata.
+      // Unparseable Comment is non-fatal — we still emit the operation with
+      // a generic "[z wymiany walut]" marker so no records are silently lost.
       const m = raw.comment.match(/\b([A-Z]{3})\s+to\s+([A-Z]{3})\b[^]*?Exchange\s+rate\s*:\s*([\d.]+)/i);
-      if (!m) { opsSkipped.push({ row: raw.rowNum, reason: 'unparseable_fx_comment' }); continue; }
-
-      const [, fromCur, toCur, rateStr] = m;
-      const rate = parseFloat(rateStr);
-      if (!(rate > 0)) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_fx_rate' }); continue; }
-
-      const pair = `${fromCur}/${toCur}`;
-      // Convention: rate = toCur per 1 fromCur (i.e. amount_to = amount_from × rate)
-      let accountLegCur: string, accountLegAmt: number;
-      let otherLegCur: string,   otherLegAmt: number;
-      if (accountCurrency === toCur) {
-        accountLegCur = toCur;   accountLegAmt = raw.amount;            // credit in account
-        otherLegCur   = fromCur; otherLegAmt   = -Math.abs(raw.amount) / rate;
-      } else if (accountCurrency === fromCur) {
-        accountLegCur = fromCur; accountLegAmt = raw.amount;            // debit in account (negative expected)
-        otherLegCur   = toCur;   otherLegAmt   = Math.abs(raw.amount) * rate;
-      } else {
-        opsSkipped.push({ row: raw.rowNum, reason: 'fx_currency_mismatch' });
-        continue;
+      let marker = '[z wymiany walut]';
+      let rate: number | undefined;
+      let pair: string | undefined;
+      if (m) {
+        const [, fromCur, toCur, rateStr] = m;
+        const r = parseFloat(rateStr);
+        if (r > 0) {
+          rate = r;
+          pair = `${fromCur}/${toCur}`;
+          marker = `[z wymiany walut ${pair} @ ${rate}]`;
+        }
       }
 
+      const isCredit = raw.amount > 0;
       operations.push({
         date: isoTime,
-        operationType: 'fx_exchange',
-        description: raw.comment,
-        amount: roundTo2(accountLegAmt),
-        currency: accountLegCur,
-        fxRate: rate,
-        fxPair: pair,
-        source: 'xtb',
-        importBatch,
-      });
-      operations.push({
-        date: isoTime,
-        operationType: 'fx_exchange',
-        description: raw.comment,
-        amount: roundTo2(otherLegAmt),
-        currency: otherLegCur,
+        operationType: isCredit ? 'deposit' : 'withdrawal',
+        description: `${marker} ${raw.comment}`.trim(),
+        amount: isCredit ? Math.abs(raw.amount) : -Math.abs(raw.amount),
+        currency: accountCurrency,
         fxRate: rate,
         fxPair: pair,
         source: 'xtb',
