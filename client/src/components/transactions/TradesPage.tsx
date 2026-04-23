@@ -402,10 +402,18 @@ export function TradesPage() {
         </Card>
       )}
 
-      {/* All transactions feed — zamontowany ZAWSZE (display:none gdy nieaktywny),
-          żeby przełączanie tabu nie odmontowywało i nie remontowało 6000+ wierszy.
-          Tylko pierwsze wejście kosztuje; kolejne przełączenia = instant. */}
-      <div className={tab === 'all' ? 'block' : 'hidden'}>
+      {/* All transactions feed — zamontowany ZAWSZE, żeby przełączanie tabu nie
+          odmontowywało i nie remontowało 6000+ wierszy. Używamy content-visibility
+          zamiast display:none — browser cachuje layout contentu gdy hidden i nie
+          musi go przeliczać od zera przy toggle. Jest to natywna browserowa
+          optymalizacja dla tego dokładnie scenariusza. */}
+      <div
+        aria-hidden={tab !== 'all'}
+        style={{
+          contentVisibility: tab === 'all' ? 'visible' : 'hidden',
+          containIntrinsicSize: tab === 'all' ? undefined : '0 254000px', // 6340 × ~40px
+        }}
+      >
         <Card>
           <CardContent className="pt-4">
             <TradesFeed />
