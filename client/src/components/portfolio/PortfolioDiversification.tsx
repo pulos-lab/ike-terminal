@@ -167,13 +167,29 @@ function DonutChart({ data, size = 160 }: { data: SliceData[]; size?: number }) 
           )}
         </g>
       ))}
-      {/* Center text on hover */}
+      {/* Center text on hover — use Tailwind utility classes (fill-foreground /
+          fill-muted-foreground) zamiast SVG attribute fill="hsl(var(...))",
+          bo niektóre przeglądarki nie interpretują CSS vars w atrybucie SVG
+          i fallback do czarnego powoduje znikanie tekstu w dark mode. */}
       {hovered !== null && (
         <>
-          <text x={cx} y={cy - 6} textAnchor="middle" fill="hsl(var(--foreground))" fontSize={11} fontWeight={600}>
+          <text
+            x={cx}
+            y={cy - 6}
+            textAnchor="middle"
+            fontSize={11}
+            fontWeight={600}
+            className="fill-foreground pointer-events-none"
+          >
             {data[hovered].name}
           </text>
-          <text x={cx} y={cy + 10} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={10}>
+          <text
+            x={cx}
+            y={cy + 10}
+            textAnchor="middle"
+            fontSize={10}
+            className="fill-muted-foreground pointer-events-none"
+          >
             {data[hovered].pct.toFixed(1)}%
           </text>
         </>
