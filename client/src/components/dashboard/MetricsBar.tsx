@@ -2,8 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { plColor } from '@/components/ui/pl-badge';
-import { formatCurrency, formatPercent } from '@/lib/formatters';
-import { TrendingUp, TrendingDown, DollarSign, Target } from 'lucide-react';
+import { formatCurrency, formatPercent, formatPLN } from '@/lib/formatters';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { TrendingUp, TrendingDown, DollarSign, Target, ArrowLeftRight } from 'lucide-react';
 
 export function MetricsBar() {
   const { data } = useQuery({
@@ -60,6 +61,66 @@ export function MetricsBar() {
           {formatPercent(data.xirr)}
         </span>
       </div>
+      {data.fxImpact && (
+        <TooltipProvider delayDuration={150}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-2 cursor-help">
+                <ArrowLeftRight className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                  Wpływ walut
+                </span>
+                <span className={`font-semibold tabular-nums ${plColor(data.fxImpact.fxImpactPct)}`}>
+                  {formatPercent(data.fxImpact.fxImpactPct)}
+                </span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-sm">
+              <FxImpactTooltipBody fxImpact={data.fxImpact} baseCurrency={ccy} />
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+    </div>
+  );
+}
+
+function FxImpactTooltipBody({
+  fxImpact,
+  baseCurrency,
+}: {
+  fxImpact: {
+    fxImpactPct: number;
+    fxImpactPln: number;
+    avgPlnPerBase: number;
+    todayPlnPerBase: number;
+    totalBaseInvested: number;
+    totalPlnSpent: number;
+  };
+  baseCurrency: string;
+}) {
+  const positive = fxImpact.fxImpactPct >= 0;
+  const absPct = Math.abs(fxImpact.fxImpactPct);
+  const absPln = Math.abs(fxImpact.fxImpactPln);
+  const interpretation = positive
+    ? `Od czasu wpłat PLN osłabł w stosunku do ${baseCurrency}. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} więcej (+${absPct.toFixed(1)}%) niż gdybyś zrobił to przy średnim kursie zakupu.`
+    : `Od czasu wpłat PLN wzmocnił się w stosunku do ${baseCurrency}. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} mniej (−${absPct.toFixed(1)}%) niż gdybyś zrobił to przy średnim kursie zakupu.`;
+
+  return (
+    <div className="text-xs space-y-2">
+      <p className="font-semibold">
+        Wpływ walut: {formatPercent(fxImpact.fxImpactPct)}
+      </p>
+      <p>{interpretation}</p>
+      <ul className="space-y-0.5 text-muted-foreground">
+        <li>• Średni kurs zakupu {baseCurrency}/PLN: {fxImpact.avgPlnPerBase.toFixed(3)}</li>
+        <li>• Dzisiejszy kurs {baseCurrency}/PLN: {fxImpact.todayPlnPerBase.toFixed(3)}</li>
+        <li>• Efekt w PLN: {formatPLN(fxImpact.fxImpactPln)}</li>
+      </ul>
+      <p className="text-muted-foreground text-[10px] pt-1 border-t border-border">
+        Metryka pokazuje zysk/stratę wynikającą wyłącznie ze zmian kursu walut
+        między datami Twoich wpłat a dniem dzisiejszym. Nie uwzględnia zwrotu z rynku.
+      </p>
     </div>
   );
 }

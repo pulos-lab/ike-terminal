@@ -228,6 +228,25 @@ export interface PortfolioMetrics {
   totalDividends: number;
 }
 
+/** Metryka "Wpływ walut" — liczona tylko dla portfeli walutowych
+ *  (baseCurrency != 'PLN') które mają deposity z ustawionym fxRate
+ *  (np. XTB Transfer-as-deposit). Pokazuje różnicę między dzisiejszym
+ *  kursem bazy (np. USDPLN) a średnim ważonym kursem zakupu. */
+export interface FxImpact {
+  /** Procentowa zmiana kursu waluty bazowej w PLN od średniego zakupu. */
+  fxImpactPct: number;
+  /** Kwota w PLN — ile więcej/mniej user dostałby sprzedając cały portfel dziś. */
+  fxImpactPln: number;
+  /** Średni ważony kurs PLN za 1 jednostkę waluty bazowej przy wpłatach. */
+  avgPlnPerBase: number;
+  /** Dzisiejszy kurs PLN za 1 jednostkę waluty bazowej. */
+  todayPlnPerBase: number;
+  /** Łączna suma wpłat w walucie bazowej (do wyświetlenia). */
+  totalBaseInvested: number;
+  /** Łączna suma PLN faktycznie wydanych przy wpłatach (Σ amount / fxRate). */
+  totalPlnSpent: number;
+}
+
 // ============ Stock Split Types ============
 
 export interface DetectedSplit {

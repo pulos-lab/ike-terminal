@@ -1,4 +1,4 @@
-import type { Transaction, CashOperation, Position, ClosedTrade, ClosedTradeFee, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, DetectedSplit } from 'shared';
+import type { Transaction, CashOperation, Position, ClosedTrade, ClosedTradeFee, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, DetectedSplit, FxImpact } from 'shared';
 import { fetchYahooPrice, fetchFxRate, fetchYahooHistory, fetchYahooHistoryDirect } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
 import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, detectSplitFromQuantityMismatch, isPlausibleSplitRatio, snapToKnownRatio } from './split-detector.js';
@@ -872,6 +872,59 @@ export function detectBaseCurrency(operations: CashOperation[]): string {
     }
   }
   return curs.size === 1 ? [...curs][0] : 'PLN';
+}
+
+/** Oblicza "wpływ walut" — różnicę między dzisiejszym kursem base/PLN
+ *  a średnim ważonym kursem wpłat.
+ *
+ *  Zwraca `null` dla:
+ *  - portfeli PLN (baseCurrency='PLN') — brak FX do analizowania
+ *  - portfeli bez wpłat z ustawionym `fxRate` (np. DEGIRO/Bossa bez FX operacji)
+ *    — nie mamy danych o kursach zakupu waluty
+ *
+ *  Dla XTB USD sub-konta: parser zapisuje `fxRate` (base per PLN) w każdym
+ *  Transfer-derived deposit, więc metryka działa automatycznie po imporcie.
+ *
+ *  Matematyka:
+ *    pln_i = amount_i / fxRate_i   (PLN wydane przy wpłacie i)
+ *    avg_pln_per_base = Σ pln_i / Σ amount_i
+ *    fxImpactPct = (today_pln_per_base / avg_pln_per_base - 1) × 100
+ *    fxImpactPln = currentValueBase × (today_pln_per_base - avg_pln_per_base)
+ */
+export function computeFxImpact(
+  operations: CashOperation[],
+  currentValueBase: number,
+  baseCurrency: string,
+  todayPlnPerBase: number,
+): FxImpact | null {
+  if (baseCurrency === 'PLN') return null;
+
+  let totalBaseInvested = 0;
+  let totalPlnSpent = 0;
+  for (const op of operations) {
+    if (op.operationType !== 'deposit') continue;
+    if (!op.fxRate || op.fxRate <= 0) continue;
+    // fxRate to base-per-PLN (np. USD per PLN), więc PLN wydane = amount / fxRate
+    const amount = Math.abs(op.amount);
+    const plnSpent = amount / op.fxRate;
+    totalBaseInvested += amount;
+    totalPlnSpent += plnSpent;
+  }
+
+  if (totalBaseInvested <= 0 || totalPlnSpent <= 0) return null;
+
+  const avgPlnPerBase = totalPlnSpent / totalBaseInvested;
+  const fxImpactPct = (todayPlnPerBase / avgPlnPerBase - 1) * 100;
+  const fxImpactPln = currentValueBase * (todayPlnPerBase - avgPlnPerBase);
+
+  return {
+    fxImpactPct,
+    fxImpactPln,
+    avgPlnPerBase,
+    todayPlnPerBase,
+    totalBaseInvested,
+    totalPlnSpent,
+  };
 }
 
 /** Benchmark currency lookup — Yahoo nie zawsze dostarcza przy fetchu, a dla

@@ -18,6 +18,7 @@ import {
   computeXirr,
   computeCashBalances,
   detectBaseCurrency,
+  computeFxImpact,
 } from '../services/portfolio-engine.js';
 import { BENCHMARKS, type BenchmarkKey } from 'shared';
 import { searchTickers } from '../services/ticker-search.js';
@@ -599,6 +600,17 @@ router.get('/metrics', asyncHandler(async (req, res) => {
     undefined, undefined, savedSplits, baseCurrency,
   );
 
+  // FX impact — tylko dla portfeli walutowych z deposits mającymi fxRate
+  // (typowo XTB Transfer-as-deposit). Dla PLN portfeli i bez fxRate: null.
+  let fxImpact = null;
+  if (baseCurrency !== 'PLN') {
+    const todayFxTicker = `${baseCurrency}PLN`;
+    const todayPlnPerBase = await fetchFxRate(todayFxTicker) || 0;
+    if (todayPlnPerBase > 0) {
+      fxImpact = computeFxImpact(operations, metrics.currentValue, baseCurrency, todayPlnPerBase);
+    }
+  }
+
   res.json({
     currentValue: metrics.currentValue,
     totalInvested: metrics.totalInvested,
@@ -607,6 +619,7 @@ router.get('/metrics', asyncHandler(async (req, res) => {
     totalReturnPct: metrics.totalReturnPct,
     totalDividends: metrics.totalDividends,
     baseCurrency,
+    fxImpact,
   });
 }));
 
