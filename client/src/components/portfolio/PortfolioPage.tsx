@@ -69,15 +69,28 @@ export function PortfolioPage() {
     refetchInterval: 15 * 60 * 1000, // auto-refresh every 15 min
   });
 
+  // Waluta bazowa portfela — PLN dla polskich/mixed, USD/EUR dla single-currency
+  // (np. XTB USD sub-konto). Gdy != PLN, wyświetlamy natywne wartości pozycji
+  // (currentValue, profitLoss) zamiast PLN-konwersji.
+  const baseCurrency: string = data?.baseCurrency || 'PLN';
+  const useNativeCcy = baseCurrency !== 'PLN';
+
   const totals = useMemo(() => {
     if (!data?.positions?.length) return null;
-    const totalValuePln = data.totalValuePln ?? data.positions.reduce((s: number, p: any) => s + p.currentValuePln, 0);
+    if (useNativeCcy) {
+      // Sumy w walucie portfela — raw sum z pos.currentValue/profitLoss (native)
+      const totalValue = data.positions.reduce((s: number, p: any) => s + (p.currentValue ?? 0), 0);
+      const totalProfitLoss = data.positions.reduce((s: number, p: any) => s + (p.profitLoss ?? 0), 0);
+      const totalCostBasis = totalValue - totalProfitLoss;
+      const totalProfitLossPct = totalCostBasis > 0 ? (totalProfitLoss / totalCostBasis) * 100 : 0;
+      return { totalValue, totalProfitLoss, totalProfitLossPct, totalValuePln: data.totalValuePln ?? 0, cashValuePln: data.cashValuePln ?? 0 };
+    }
+    const totalValue = data.totalValuePln ?? data.positions.reduce((s: number, p: any) => s + p.currentValuePln, 0);
     const totalProfitLoss = data.positions.reduce((s: number, p: any) => s + (p.profitLossPln ?? p.profitLoss), 0);
-    const totalCostBasis = (data.stocksValuePln ?? totalValuePln) - totalProfitLoss;
+    const totalCostBasis = (data.stocksValuePln ?? totalValue) - totalProfitLoss;
     const totalProfitLossPct = totalCostBasis > 0 ? (totalProfitLoss / totalCostBasis) * 100 : 0;
-    const cashValuePln = data.cashValuePln ?? 0;
-    return { totalValuePln, totalProfitLoss, totalProfitLossPct, cashValuePln };
-  }, [data]);
+    return { totalValue, totalProfitLoss, totalProfitLossPct, totalValuePln: totalValue, cashValuePln: data.cashValuePln ?? 0 };
+  }, [data, useNativeCcy]);
 
   const recentSplitMap = useMemo(() => {
     const map = new Map<string, { ratio: number; date: string }>();
@@ -101,7 +114,9 @@ export function PortfolioPage() {
               Otwarte pozycje
               {data && (
                 <span className="ml-2 text-muted-foreground font-normal">
-                  ({data.positions.length} pozycji | {formatPLN(data.stocksValuePln ?? data.totalValuePln)})
+                  ({data.positions.length} pozycji | {useNativeCcy
+                    ? formatCurrency(totals?.totalValue ?? 0, baseCurrency)
+                    : formatPLN(data.stocksValuePln ?? data.totalValuePln)})
                 </span>
               )}
             </CardTitle>
@@ -161,7 +176,7 @@ export function PortfolioPage() {
                     {colVis.avgPrice && <TableHead className="text-right">Śr. cena</TableHead>}
                     <TableHead className="text-right">Kurs</TableHead>
                     {colVis.dailyChange && <TableHead className="text-right">Zmiana</TableHead>}
-                    <TableHead className="text-right">Wartość (PLN)</TableHead>
+                    <TableHead className="text-right">Wartość ({baseCurrency})</TableHead>
                     {colVis.pl && <TableHead className="text-right">P/L</TableHead>}
                     {colVis.plPct && <TableHead className="text-right">P/L %</TableHead>}
                     <TableHead className="text-right">Udział</TableHead>
@@ -213,7 +228,11 @@ export function PortfolioPage() {
                             ) : '—'}
                           </TableCell>
                         )}
-                        <TableCell className="text-right font-medium">{formatPLN(pos.currentValuePln)}</TableCell>
+                        <TableCell className="text-right font-medium">
+                          {useNativeCcy
+                            ? formatCurrency(pos.currentValue ?? 0, baseCurrency)
+                            : formatPLN(pos.currentValuePln)}
+                        </TableCell>
                         {colVis.pl && (
                           <TableCell className={`text-right font-medium ${plColor(pos.profitLossPct)}`}>
                             {formatCurrency(pos.profitLoss, pos.currency)}
@@ -232,10 +251,16 @@ export function PortfolioPage() {
                   {totals && (
                       <TableRow className="border-t-2 font-semibold">
                         <TableCell colSpan={colsBeforeValue} className="text-right">Razem</TableCell>
-                        <TableCell className="text-right">{formatPLN(totals.totalValuePln)}</TableCell>
+                        <TableCell className="text-right">
+                          {useNativeCcy
+                            ? formatCurrency(totals.totalValue, baseCurrency)
+                            : formatPLN(totals.totalValuePln)}
+                        </TableCell>
                         {colVis.pl && (
                           <TableCell className={`text-right ${plColor(totals.totalProfitLoss)}`}>
-                            {formatPLN(totals.totalProfitLoss)}
+                            {useNativeCcy
+                              ? formatCurrency(totals.totalProfitLoss, baseCurrency)
+                              : formatPLN(totals.totalProfitLoss)}
                           </TableCell>
                         )}
                         {colVis.plPct && (
@@ -279,7 +304,7 @@ export function PortfolioPage() {
                 {cashPositions.map((cp: any) => (
                   <TableRow key={cp.currency}>
                     <TableCell><CcyChip ccy={cp.currency} /></TableCell>
-                    <TableCell className="text-right tabular-nums">{formatNumber(cp.balance)} {cp.currency}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatCurrency(cp.balance, cp.currency)}</TableCell>
                     <TableCell className="text-right font-medium tabular-nums">{formatPLN(cp.valuePln)}</TableCell>
                     <TableCell className="text-right text-muted-foreground tabular-nums">
                       {formatPercent(cp.weight).replace('+', '')}

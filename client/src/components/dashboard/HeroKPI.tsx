@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
-import { formatPLN, formatPercent, formatNumber } from '@/lib/formatters';
+import { formatCurrency, formatPercent, formatNumber } from '@/lib/formatters';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -48,7 +48,9 @@ export function HeroKPI({ history }: HeroKPIProps) {
         </p>
         <p className="text-[2rem] font-bold tracking-tight leading-none tabular-nums mb-1.5">
           {formatNumber(data.currentValue, 0)}
-          <span className="ml-2 text-base font-medium text-muted-foreground">PLN</span>
+          <span className="ml-2 text-base font-medium text-muted-foreground">
+            {data.baseCurrency || 'PLN'}
+          </span>
         </p>
         <div
           className={cn(
@@ -57,7 +59,7 @@ export function HeroKPI({ history }: HeroKPIProps) {
           )}
         >
           <DeltaIcon className="h-4 w-4" />
-          <span className="tabular-nums">{formatPLN(data.totalReturn)}</span>
+          <span className="tabular-nums">{formatCurrency(data.totalReturn, data.baseCurrency || 'PLN')}</span>
           <span className="text-muted-foreground">·</span>
           <span className="tabular-nums">{formatPercent(data.totalReturnPct)}</span>
         </div>

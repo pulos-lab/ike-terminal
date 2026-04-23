@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { getAllTransactions, getTransactionById, insertTransaction, updateTransaction, deleteTransaction } from '../db/transactions-repo.js';
 import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOperation, insertOperations, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
-import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
+import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry, getAllTickers, updateTickerSector } from '../db/ticker-map-repo.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
 import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput, StockSplitInput, DetectedSplit, UpcomingDividend } from 'shared';
 import { invalidateCachedPrices } from '../services/history-cache.js';
-import { fetchYahooPrice, fetchFxRate, fetchDividendCalendar } from '../services/yahoo-finance.js';
+import { fetchYahooPrice, fetchFxRate, fetchDividendCalendar, fetchAssetProfile } from '../services/yahoo-finance.js';
+import { findCfdTicker, getCfdSector } from 'shared';
 import {
   computeOpenPositions,
   computeClosedTrades,
@@ -36,6 +37,38 @@ function loadSplitsForEngine(pid: string): DetectedSplit[] {
   }));
 }
 
+/** In-memory flag: per-portfolio dedupe dla lazy-sector-backfill.
+ *  Uruchamiamy backfill tylko raz per proces na portfel — wystarczy żeby
+ *  nadrobić brakujące sektory po upgradzie kodu. Yahoo fetchAssetProfile
+ *  i tak cache'uje wyniki 7 dni, więc powtórne uruchomienia są tanie,
+ *  ale dedupe oszczędza I/O i chroni przed rate-limitem. */
+const sectorsBackfilledForPortfolio = new Set<string>();
+
+async function lazyBackfillSectors(pid: string): Promise<void> {
+  if (sectorsBackfilledForPortfolio.has(pid)) return;
+  sectorsBackfilledForPortfolio.add(pid);
+  try {
+    const entries = getAllTickers(pid);
+    const toUpdate = entries.filter(e => !e.sector);
+    for (const entry of toUpdate) {
+      try {
+        const cfdEntry = findCfdTicker(entry.name) || findCfdTicker(entry.ticker);
+        if (cfdEntry) {
+          updateTickerSector(entry.isin, getCfdSector(cfdEntry), pid);
+          continue;
+        }
+        const profile = await fetchAssetProfile(entry.ticker);
+        if (profile?.sector) updateTickerSector(entry.isin, profile.sector, pid);
+      } catch {
+        // ignore — pojedynczy fail nie blokuje reszty
+      }
+    }
+  } catch {
+    // Najlepszy effort, nie blokujemy ruchu user'a
+    sectorsBackfilledForPortfolio.delete(pid); // pozwól na retry przy następnym requeście
+  }
+}
+
 // GET /api/portfolio/positions
 router.get('/positions', asyncHandler(async (req, res) => {
   const pid = req.portfolioId;
@@ -43,6 +76,11 @@ router.get('/positions', asyncHandler(async (req, res) => {
   const operations = getAllOperations(pid);
   const tickerMap = getTickerMap(pid);
   const savedSplits = loadSplitsForEngine(pid);
+
+  // Fire-and-forget: lazy backfill brakujących sektorów w tle (raz per proces
+  // per portfel). Nie blokuje response — user zobaczy nowe sektory po kolejnym
+  // odświeżeniu widoku.
+  void lazyBackfillSectors(pid);
   const { positions, totalValuePln: stocksValuePln, detectedSplits } = await computeOpenPositions(transactions, tickerMap, savedSplits);
 
   // Persist any newly detected splits and invalidate stale price cache
@@ -98,7 +136,18 @@ router.get('/positions', asyncHandler(async (req, res) => {
     .filter(s => s.date >= weekAgoStr)
     .map(s => ({ isin: s.isin, ticker: s.ticker, date: s.date, ratio: s.ratio }));
 
-  res.json({ positions, cashPositions, totalValuePln, stocksValuePln, cashValuePln, recentSplits });
+  // Detekcja waluty bazowej portfela (identyczna logika co /metrics i /cash-flow).
+  // Dla single-currency portfela (np. XTB USD sub-konto) pokazujemy wartości
+  // w walucie konta zamiast PLN-konwersji.
+  const cashOpCurrencies = new Set<string>();
+  for (const op of operations) {
+    if (op.operationType === 'deposit' || op.operationType === 'withdrawal') {
+      cashOpCurrencies.add((op.currency || 'PLN').toUpperCase());
+    }
+  }
+  const baseCurrency = cashOpCurrencies.size === 1 ? [...cashOpCurrencies][0] : 'PLN';
+
+  res.json({ positions, cashPositions, totalValuePln, stocksValuePln, cashValuePln, recentSplits, baseCurrency });
 }));
 
 // GET /api/portfolio/closed-trades
@@ -493,61 +542,128 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
   res.json({ cashFlow, baseCurrency });
 }));
 
+// POST /api/portfolio/ticker-map/refresh-sectors
+// Backfill pola sector dla wszystkich entries w ticker_map aktywnego portfela.
+// Dla CFD (CFD_TICKER_MAP hit) używa getCfdSector (offline). Dla pozostałych
+// wywołuje Yahoo fetchAssetProfile. Bezpieczne — aktualizuje tylko puste
+// sektory (nie nadpisuje ręcznie przypisanych).
+router.post('/ticker-map/refresh-sectors', asyncHandler(async (req, res) => {
+  const pid = req.portfolioId;
+  const entries = getAllTickers(pid);
+  const toUpdate = entries.filter(e => !e.sector);
+
+  let updatedCount = 0;
+  let fromCfdMap = 0;
+  let fromYahoo = 0;
+  const failed: string[] = [];
+
+  for (const entry of toUpdate) {
+    try {
+      // CFD-first: static map
+      const cfdEntry = findCfdTicker(entry.name) || findCfdTicker(entry.ticker);
+      if (cfdEntry) {
+        const sector = getCfdSector(cfdEntry);
+        updateTickerSector(entry.isin, sector, pid);
+        updatedCount++;
+        fromCfdMap++;
+        continue;
+      }
+
+      // Otherwise: Yahoo assetProfile
+      const profile = await fetchAssetProfile(entry.ticker);
+      if (profile?.sector) {
+        updateTickerSector(entry.isin, profile.sector, pid);
+        updatedCount++;
+        fromYahoo++;
+      } else {
+        failed.push(entry.ticker);
+      }
+    } catch {
+      failed.push(entry.ticker);
+    }
+  }
+
+  res.json({
+    total: entries.length,
+    needingUpdate: toUpdate.length,
+    updated: updatedCount,
+    fromCfdMap,
+    fromYahoo,
+    failed,
+  });
+}));
+
 // GET /api/portfolio/metrics
 router.get('/metrics', asyncHandler(async (req, res) => {
   const pid = req.portfolioId;
   const transactions = getAllTransactions(pid);
   const operations = getAllOperations(pid);
   const tickerMap = getTickerMap(pid);
-
   const savedSplits = loadSplitsForEngine(pid);
-  const { totalValuePln: stockValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
 
-  // Add cash balances (all currencies converted to PLN)
-  const cashBalances = computeCashBalances(transactions, operations);
-  const defaultFx: Record<string, number> = {
-    USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
-    CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
-  };
-  let cashValuePln = 0;
-  for (const [currency, balance] of Object.entries(cashBalances)) {
-    if (currency === 'PLN') {
-      cashValuePln += balance;
-    } else {
-      const rate = await fetchFxRate(`${currency}PLN`) || defaultFx[currency] || 1;
-      cashValuePln += balance * rate;
+  // Engine liczy wszystko w PLN (per-day FX normalizacja). Dla portfeli
+  // single-currency (np. XTB USD sub-konto) konwertujemy z powrotem do waluty
+  // bazowej portfela — spójnie z CashFlowPage gdzie też pokazujemy USD zamiast
+  // PLN dla USD portfela.
+  const { metrics, history, dailyFxRates } = await computePortfolioHistory(
+    transactions, operations, tickerMap,
+    '^GSPC', 'yahoo', // benchmark ticker nie wpływa na metrics
+    undefined, undefined, savedSplits,
+  );
+
+  // Detekcja baseCurrency (identyczna logika co /cash-flow):
+  const cashOpCurrencies = new Set<string>();
+  for (const op of operations) {
+    if (op.operationType === 'deposit' || op.operationType === 'withdrawal') {
+      cashOpCurrencies.add((op.currency || 'PLN').toUpperCase());
     }
   }
-  const totalValuePln = stockValuePln + cashValuePln;
+  const baseCurrency = cashOpCurrencies.size === 1
+    ? [...cashOpCurrencies][0]
+    : 'PLN';
+  const isSingleCcy = baseCurrency !== 'PLN';
 
-  // Include both deposits (positive) and withdrawals (negative) for accurate metrics
-  const cashFlows = operations
-    .filter(op => (op.operationType === 'deposit' || op.operationType === 'withdrawal') && op.currency === 'PLN')
-    .map(op => ({ date: op.date, amount: op.amount }));
+  // Dla currentValue: roundtrip przez fx_today jest DOKŁADNY, bo engine wycenia
+  // holdings i cash też używając fx_today (value_pln = native × fx_today dla
+  // ostatniego dnia → / fx_today = native z powrotem). Zero driftu.
+  const lastDate = history[history.length - 1]?.date;
+  const fxLast = lastDate && isSingleCcy ? dailyFxRates.get(lastDate)?.get(baseCurrency) : null;
+  const currentValueBase = fxLast && fxLast > 0 ? metrics.currentValue / fxLast : metrics.currentValue;
 
-  const totalDeposits = cashFlows.filter(f => f.amount > 0).reduce((s, d) => s + d.amount, 0);
-  const totalWithdrawals = cashFlows.filter(f => f.amount < 0).reduce((s, d) => s + Math.abs(d.amount), 0);
-  const totalInvested = totalDeposits - totalWithdrawals;
-
-  let xirr = 0;
-  try {
-    const raw = computeXirr(cashFlows, totalValuePln) * 100;
-    xirr = isFinite(raw) ? raw : 0;
-  } catch {
-    xirr = 0;
+  // Dla totalInvested/totalDividends NIE MOŻEMY roundtripować — to są sumy
+  // historyczne (Σ raw × fx_dnia), więc / fx_today daje drift gdy kursy się
+  // wahały. Sumujemy raw amounts z operations bezpośrednio — identycznie jak
+  // CashFlowPage pokazuje cumulativeDeposits. Dla portfeli PLN: raw = PLN,
+  // spójne z totalInvested z history.
+  let totalInvestedBase: number;
+  let totalDividendsBase: number;
+  if (isSingleCcy) {
+    totalInvestedBase = operations
+      .filter(op => (op.operationType === 'deposit' || op.operationType === 'withdrawal')
+                    && (op.currency || 'PLN').toUpperCase() === baseCurrency)
+      .reduce((s, op) => s + op.amount, 0);
+    totalDividendsBase = operations
+      .filter(op => op.operationType === 'dividend'
+                    && (op.currency || 'PLN').toUpperCase() === baseCurrency)
+      .reduce((s, op) => s + op.amount, 0);
+  } else {
+    totalInvestedBase = metrics.totalInvested;     // PLN
+    totalDividendsBase = metrics.totalDividends;   // PLN
   }
 
-  const totalDividends = operations
-    .filter(op => op.operationType === 'dividend')
-    .reduce((s, op) => s + op.amount, 0);
+  const totalReturnBase = currentValueBase - totalInvestedBase;
+  const totalReturnPctBase = totalInvestedBase > 0
+    ? (totalReturnBase / totalInvestedBase) * 100
+    : 0;
 
   res.json({
-    currentValue: totalValuePln,
-    totalInvested,
-    xirr,
-    totalReturn: totalValuePln - totalInvested,
-    totalReturnPct: totalInvested > 0 ? ((totalValuePln - totalInvested) / totalInvested) * 100 : 0,
-    totalDividends,
+    currentValue: currentValueBase,
+    totalInvested: totalInvestedBase,
+    xirr: metrics.xirr,                              // % — invariant
+    totalReturn: totalReturnBase,
+    totalReturnPct: totalReturnPctBase,
+    totalDividends: totalDividendsBase,
+    baseCurrency,
   });
 }));
 

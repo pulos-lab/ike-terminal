@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { CcyChip } from '@/components/ui/ccy-chip';
-import { formatNumber, formatDate, formatPLN } from '@/lib/formatters';
+import { formatNumber, formatDate, formatPLN, formatQuantity } from '@/lib/formatters';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loader2, Coins, Plus, Pencil, Trash2, Check, X, RefreshCw, Calendar, Clock } from 'lucide-react';
 import type { DividendRecord, UpcomingDividend } from 'shared';
@@ -105,7 +105,7 @@ function UpcomingDividendsPanel() {
                   <TableCell className="text-sm text-muted-foreground">{d.name}</TableCell>
                   <TableCell>{formatDate(d.exDividendDate)}</TableCell>
                   <TableCell>{d.paymentDate ? formatDate(d.paymentDate) : '—'}</TableCell>
-                  <TableCell>{d.shares}</TableCell>
+                  <TableCell>{formatQuantity(d.shares)}</TableCell>
                   <TableCell className="text-right font-medium text-gain tabular-nums">
                     {d.estimatedAmount > 0 ? formatNumber(d.estimatedAmount) : '—'}
                   </TableCell>
@@ -275,7 +275,7 @@ export function DividendsPage() {
                       itemStyle={{ color: 'var(--primary)' }}
                       formatter={(v) => [formatPLN(Number(v) || 0), 'Dywidendy']}
                     />
-                    <Bar dataKey="amount" fill="var(--primary)" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="amount" fill="var(--primary)" radius={[4, 4, 0, 0]} maxBarSize={80} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
