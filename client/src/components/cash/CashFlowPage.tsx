@@ -11,9 +11,45 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
-import { formatPLN, formatDate } from '@/lib/formatters';
+import {
+  Tooltip as UITooltip,
+  TooltipContent as UITooltipContent,
+  TooltipProvider as UITooltipProvider,
+  TooltipTrigger as UITooltipTrigger,
+} from '@/components/ui/tooltip';
+import { formatPLN, formatDate, formatCurrency } from '@/lib/formatters';
 import { useToggleSet } from '@/hooks/useToggleSet';
-import { ChevronRight, ChevronDown, Loader2, Plus, Pencil, Trash2, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, Loader2, Plus, Pencil, Trash2, Check, X, ArrowUp, ArrowDown, Info } from 'lucide-react';
+
+// XTB Transfer między sub-kontami trafia do CashOperation.description z tym prefixem.
+// Wykrywamy go, by pokazać ikonę + tooltip wyjaśniający że to wymiana walutowa,
+// ale traktowana jako depozyt/wypłata dla celów MWR/TWR.
+const FX_MARKER_RE = /^\[z wymiany walut(?:\s+(\S+)\s+@\s+([\d.]+))?\]\s*(.*)$/;
+
+function DepositDescription({ text }: { text: string }) {
+  const m = text.match(FX_MARKER_RE);
+  if (!m) {
+    return <span className="text-xs text-muted-foreground/70 ml-1">{text}</span>;
+  }
+  const [, pair, rate, rest] = m;
+  const label = pair ? `wymiana ${pair} @ ${rate}` : 'wymiana walut';
+  return (
+    <UITooltip>
+      <UITooltipTrigger asChild>
+        <span className="text-xs text-muted-foreground/70 ml-1 inline-flex items-center gap-1 cursor-help">
+          <Info className="h-3 w-3" />
+          {label}
+          {rest && <span className="opacity-70">· {rest}</span>}
+        </span>
+      </UITooltipTrigger>
+      <UITooltipContent className="max-w-xs">
+        Ta operacja powstała z wymiany walutowej w ramach XTB (Transfer między sub-kontami).
+        Traktujemy ją jako depozyt / wypłatę dla celów obliczania MWR/TWR, bo z perspektywy
+        tego sub-konta reprezentuje środki wprowadzone z zewnątrz (lub wyprowadzone na zewnątrz).
+      </UITooltipContent>
+    </UITooltip>
+  );
+}
 
 // Historyczne limity IKE/IKZE są centralne w shared/src/ike-ikze-limits.ts (2012–2026).
 // Trzymaj tam wszystkie edycje — ten komponent jest tylko konsumentem.
@@ -108,7 +144,7 @@ export function CashFlowPage() {
 
   function handleDelete(entry: CashEntry) {
     const label = entry.type === 'deposit' ? 'wpłatę' : 'wypłatę';
-    if (window.confirm(`Usunąć ${label} ${formatPLN(Math.abs(entry.amount))} z ${formatDate(entry.date)}?`)) {
+    if (window.confirm(`Usunąć ${label} ${formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN')} z ${formatDate(entry.date)}?`)) {
       deleteMutation.mutate(entry.id);
     }
   }
@@ -118,6 +154,22 @@ export function CashFlowPage() {
     type: d.type || 'deposit',
   }));
   const ikzeLimits = activeSettings.ikzeIsDG ? IKZE_DG_LIMITS : IKZE_LIMITS;
+
+  // Dominant currency across all entries — if all entries share one currency,
+  // use it for aggregates (year totals, grand totals, chart axis). For mixed-
+  // currency portfolios fall back to PLN as a common denominator (which may be
+  // imprecise — IKE/IKZE limits are PLN-only anyway and sumy bez konwersji FX
+  // nie mają sensu; osobny follow-up).
+  const displayCurrency = useMemo(() => {
+    const currencies = new Set(entries.map(e => (e.currency || 'PLN').toUpperCase()));
+    if (currencies.size === 1) return [...currencies][0];
+    return 'PLN';
+  }, [entries]);
+  const isMultiCurrency = useMemo(() => {
+    const currencies = new Set(entries.map(e => (e.currency || 'PLN').toUpperCase()));
+    return currencies.size > 1;
+  }, [entries]);
+  const fmtAgg = (v: number) => formatCurrency(v, displayCurrency);
 
   const yearGroups = useMemo(() => {
     if (!entries.length) return [];
@@ -183,6 +235,7 @@ export function CashFlowPage() {
     : 'Przepływy gotówkowe';
 
   return (
+    <UITooltipProvider delayDuration={150}>
     <div className="space-y-4">
       <div className="flex items-center justify-end">
         <Button
@@ -204,7 +257,14 @@ export function CashFlowPage() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Wpłaty netto a wycena portfela</CardTitle>
+          <CardTitle className="text-base">
+            Wpłaty netto a wycena portfela
+            {cashFlowData?.baseCurrency && cashFlowData.baseCurrency !== 'PLN' && (
+              <span className="ml-2 text-xs text-muted-foreground font-normal">
+                (w {cashFlowData.baseCurrency})
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {cashFlowLoading ? (
@@ -216,7 +276,7 @@ export function CashFlowPage() {
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
                 <Tooltip
                   formatter={(value, name) => [
-                    formatPLN(Number(value) || 0),
+                    formatCurrency(Number(value) || 0, cashFlowData?.baseCurrency || 'PLN'),
                     name === 'netCashFlow' ? 'Wpłaty netto' : 'Wartość portfela',
                   ]}
                   labelFormatter={(label) => `Data: ${label}`}
@@ -238,9 +298,10 @@ export function CashFlowPage() {
           <CardTitle className="text-base">
             {cardTitle}
             <span className="ml-2 text-muted-foreground font-normal">
-              (wpłaty: {formatPLN(grandTotalDeposits)}
-              {grandTotalWithdrawals > 0 && <>, wypłaty: {formatPLN(grandTotalWithdrawals)}</>}
-              , netto: {formatPLN(grandTotalDeposits - grandTotalWithdrawals)})
+              (wpłaty: {fmtAgg(grandTotalDeposits)}
+              {grandTotalWithdrawals > 0 && <>, wypłaty: {fmtAgg(grandTotalWithdrawals)}</>}
+              , netto: {fmtAgg(grandTotalDeposits - grandTotalWithdrawals)}
+              {isMultiCurrency && <span className="text-xs"> — uwaga: kwoty w różnych walutach, sumowane bez konwersji</span>})
             </span>
           </CardTitle>
         </CardHeader>
@@ -352,10 +413,10 @@ export function CashFlowPage() {
                               </div>
                             </TableCell>
                             <TableCell className="text-right font-medium text-gain">
-                              {group.totalDeposits > 0 ? formatPLN(group.totalDeposits) : '—'}
+                              {group.totalDeposits > 0 ? fmtAgg(group.totalDeposits) : '—'}
                             </TableCell>
                             <TableCell className="text-right font-medium text-loss">
-                              {group.totalWithdrawals > 0 ? formatPLN(group.totalWithdrawals) : '—'}
+                              {group.totalWithdrawals > 0 ? fmtAgg(group.totalWithdrawals) : '—'}
                             </TableCell>
                             {showIKE && (
                               <TableCell className="text-right text-muted-foreground">
@@ -439,16 +500,14 @@ export function CashFlowPage() {
                                       : <ArrowDown className="h-3 w-3 text-loss shrink-0" />
                                     }
                                     {formatDate(entry.date)}
-                                    {entry.description && (
-                                      <span className="text-xs text-muted-foreground/70 ml-1">{entry.description}</span>
-                                    )}
+                                    {entry.description && <DepositDescription text={entry.description} />}
                                   </div>
                                 </TableCell>
                                 <TableCell className={`text-right ${entry.type === 'deposit' ? 'text-gain' : ''}`}>
-                                  {entry.type === 'deposit' ? formatPLN(Math.abs(entry.amount)) : ''}
+                                  {entry.type === 'deposit' ? formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN') : ''}
                                 </TableCell>
                                 <TableCell className={`text-right ${entry.type === 'withdrawal' ? 'text-loss' : ''}`}>
-                                  {entry.type === 'withdrawal' ? formatPLN(Math.abs(entry.amount)) : ''}
+                                  {entry.type === 'withdrawal' ? formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN') : ''}
                                 </TableCell>
                                 <TableCell colSpan={limitColCount > 0 ? limitColCount - 1 : 0} />
                                 <TableCell className="text-right">
@@ -495,5 +554,6 @@ export function CashFlowPage() {
         </CardContent>
       </Card>
     </div>
+    </UITooltipProvider>
   );
 }

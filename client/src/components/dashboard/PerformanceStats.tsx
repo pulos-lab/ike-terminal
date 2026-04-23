@@ -8,9 +8,13 @@ interface ChartDataPoint {
   date: string;
   portfolioValue: number;
   returnPct: number;
+  twrPct: number;
   benchmarkValue: number;
   benchmarkReturnPct: number;
+  benchmarkTwrPct: number;
   investedCumulative: number;
+  cumulativeDepositsPln: number;
+  cumulativeWithdrawalsPln: number;
 }
 
 interface Props {
@@ -69,9 +73,18 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   const totalDays = Math.max((endDate.getTime() - startDate.getTime()) / msPerDay, 1);
   const years = totalDays / 365.25;
 
-  // CAGR
-  const totalGrowth = last.portfolioValue / first.portfolioValue;
-  const cagr = years > 0 ? (Math.pow(totalGrowth, 1 / years) - 1) * 100 : 0;
+  // CAGR — time-weighted (roczny ekwiwalent TWR).
+  // Użycie last.portfolioValue / first.portfolioValue byłoby błędne, bo
+  // portfolioValue rośnie także z wpłat — każdy deposit "napompowuje" wynik.
+  // TWR z definicji izoluje rynkowy zwrot od cash flows, więc jego annualizacja
+  // daje prawdziwy CAGR dla portfeli z aktywnym cash flow (dotyczy wszystkich
+  // portfeli — działa tak samo dla PLN i walutowych, bo twrPct jest już
+  // PLN-znormalizowany w engine). Dla rzeczywistej stopy zwrotu inwestora
+  // (money-weighted) porównaj z XIRR pokazywanym osobno.
+  const twrTotalGrowth = 1 + (last.twrPct - first.twrPct) / 100;
+  const cagr = years > 0 && twrTotalGrowth > 0
+    ? (Math.pow(twrTotalGrowth, 1 / years) - 1) * 100
+    : 0;
 
   // Volatility (annualized std dev of daily returns)
   const tradingDaysPerYear = 252;
@@ -94,19 +107,23 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   const downsideDev = Math.sqrt(downsideVariance);
   const sortinoRatio = downsideDev > 0 ? (meanExcess / downsideDev) * Math.sqrt(tradingDaysPerYear) : 0;
 
-  // Max Drawdown & Max Drawdown Duration
-  let peak = data[0].portfolioValue;
+  // Max Drawdown & Max Drawdown Duration — oparte o indeks TWR, nie o
+  // portfolioValue. Czysty portfolioValue rośnie z wpłat i sztucznie
+  // podnosi peak (np. wpłata 1000 PLN tuż przed korektą fałszywie
+  // zwiększa drawdown). TWR izoluje rynkowy wpływ od cash flows,
+  // więc drawdown z TWR-index odpowiada rzeczywistej obsunięciu portfela.
+  let peak = 1 + data[0].twrPct / 100;
   let maxDrawdown = 0;
   let maxDrawdownDuration = 0;
   let currentDrawdownStart = 0;
 
   for (let i = 0; i < data.length; i++) {
-    const val = data[i].portfolioValue;
-    if (val > peak) {
-      peak = val;
+    const twrIndex = 1 + data[i].twrPct / 100;
+    if (twrIndex > peak) {
+      peak = twrIndex;
       currentDrawdownStart = i;
     }
-    const drawdown = (peak - val) / peak;
+    const drawdown = peak > 0 ? (peak - twrIndex) / peak : 0;
     if (drawdown > maxDrawdown) {
       maxDrawdown = drawdown;
     }

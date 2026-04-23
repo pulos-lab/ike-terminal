@@ -212,6 +212,11 @@ export interface PortfolioHistoryPoint {
   benchmarkReturnPct: number;
   benchmarkTwrPct: number;
   investedCumulative: number;
+  /** Skumulowane wpłaty w PLN (wszystkie waluty konwertowane per-day FX).
+   * Dla portfeli multi-currency to jest MWR base. */
+  cumulativeDepositsPln: number;
+  /** Skumulowane wypłaty w PLN (wszystkie waluty konwertowane per-day FX). */
+  cumulativeWithdrawalsPln: number;
 }
 
 export interface PortfolioMetrics {

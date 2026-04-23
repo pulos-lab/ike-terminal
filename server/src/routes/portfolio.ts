@@ -469,15 +469,28 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
   const tickerMap = getTickerMap(pid);
   const savedSplits = loadSplitsForEngine(pid);
 
-  // Need portfolio history to get daily values
-  const { history } = await computePortfolioHistory(
+  // Need portfolio history to get daily values (PLN-normalized)
+  const { history, dailyFxRates } = await computePortfolioHistory(
     transactions, operations, tickerMap,
     '^GSPC', 'yahoo', // default benchmark, doesn't matter for cash flow
     undefined, undefined, savedSplits,
   );
 
-  const cashFlow = computeCashFlow(operations, history);
-  res.json({ cashFlow });
+  // Wykryj walutę bazową portfela: jeśli wszystkie deposits/withdrawals są
+  // w jednej walucie — używamy jej; w przeciwnym razie default PLN. Pozwala
+  // to pokazać wykres XTB USD sub-konta w USD (zamiast PLN-conversion).
+  const cashOpCurrencies = new Set<string>();
+  for (const op of operations) {
+    if (op.operationType === 'deposit' || op.operationType === 'withdrawal') {
+      cashOpCurrencies.add((op.currency || 'PLN').toUpperCase());
+    }
+  }
+  const baseCurrency = cashOpCurrencies.size === 1
+    ? [...cashOpCurrencies][0]
+    : 'PLN';
+
+  const cashFlow = computeCashFlow(operations, history, dailyFxRates, baseCurrency);
+  res.json({ cashFlow, baseCurrency });
 }));
 
 // GET /api/portfolio/metrics

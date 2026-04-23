@@ -870,7 +870,15 @@ export async function computePortfolioHistory(
   startDate?: string,
   endDate?: string,
   splits: DetectedSplit[] = [],
-): Promise<{ history: PortfolioHistoryPoint[]; metrics: PortfolioMetrics; detectedSplits: DetectedSplit[] }> {
+): Promise<{
+  history: PortfolioHistoryPoint[];
+  metrics: PortfolioMetrics;
+  detectedSplits: DetectedSplit[];
+  /** Per-day snapshot of FX rates (currency → PLN multiplier).
+   * Exposed dla downstream consumers (np. computeCashFlow) którzy potrzebują
+   * konwertować PLN-values history do innej waluty bazowej bez re-fetchu. */
+  dailyFxRates: Map<string, Map<string, number>>;
+}> {
   // Determine date range
   const allDates = [
     ...operations.map(o => o.date.split('T')[0]),
@@ -889,17 +897,36 @@ export async function computePortfolioHistory(
     d.setUTCDate(d.getUTCDate() + 1);
   }
 
-  // Build daily deposits and withdrawals
+  // Build daily deposits and withdrawals per currency. Conversion to PLN
+  // happens in the main loop using that day's FX rate — only PLN-normalized
+  // values are used for MWR/TWR/benchmark DCA, so totalValue (in PLN) and
+  // totalDeposited (in PLN) are on the same scale.
+  const dailyDepositByCur = new Map<string, Map<string, number>>();
+  const dailyWithdrawalByCur = new Map<string, Map<string, number>>();
+  for (const op of operations) {
+    const date = op.date.split('T')[0];
+    const cur = (op.currency || 'PLN').toUpperCase();
+    const target = op.operationType === 'deposit' && op.amount > 0
+      ? dailyDepositByCur
+      : op.operationType === 'withdrawal'
+        ? dailyWithdrawalByCur
+        : null;
+    if (!target) continue;
+    let map = target.get(date);
+    if (!map) { map = new Map(); target.set(date, map); }
+    map.set(cur, (map.get(cur) || 0) + Math.abs(op.amount));
+  }
+
+  // Keep the flat "has any deposit/withdrawal on this day" view for lastActivityDate below.
   const dailyDeposit = new Map<string, number>();
   const dailyWithdrawal = new Map<string, number>();
-  for (const op of operations) {
-    if (op.operationType === 'deposit' && op.amount > 0) {
-      const date = op.date.split('T')[0];
-      dailyDeposit.set(date, (dailyDeposit.get(date) || 0) + op.amount);
-    } else if (op.operationType === 'withdrawal') {
-      const date = op.date.split('T')[0];
-      dailyWithdrawal.set(date, (dailyWithdrawal.get(date) || 0) + Math.abs(op.amount));
-    }
+  for (const [date, curMap] of dailyDepositByCur) {
+    let s = 0; for (const v of curMap.values()) s += v;
+    dailyDeposit.set(date, s);
+  }
+  for (const [date, curMap] of dailyWithdrawalByCur) {
+    let s = 0; for (const v of curMap.values()) s += v;
+    dailyWithdrawal.set(date, s);
   }
 
   // Build daily cash flow per currency (generic — handles any currency)
@@ -1157,6 +1184,10 @@ export async function computePortfolioHistory(
   // Track previous prices for forward-fill
   const prevPrices = new Map<string, number>();
 
+  // Snapshot of per-day FX rates (used post-loop for XIRR / totalDividends
+  // PLN conversion — avoids re-fetching). Map: date → currency → PLN rate.
+  const dailyFxRates = new Map<string, Map<string, number>>();
+
   for (const date of dates) {
     // Update cash balances per currency
     for (const [cur, flowMap] of dailyCashFlowByCurrency) {
@@ -1174,16 +1205,9 @@ export async function computePortfolioHistory(
       }
     }
 
-    // Update invested cumulative (deposits increase, withdrawals decrease)
-    const deposit = dailyDeposit.get(date) || 0;
-    const withdrawal = dailyWithdrawal.get(date) || 0;
-    investedCumulative += deposit;
-    investedCumulative -= withdrawal;
-    totalDeposited += deposit;
-    totalWithdrawn += withdrawal;
-
-    // Track first deposit
-    if (deposit > 0) firstDepositSeen = true;
+    // Track first deposit (any currency) for chart start guard
+    const hadDepositToday = dailyDepositByCur.has(date);
+    if (hadDepositToday) firstDepositSeen = true;
 
     // Skip days before first deposit (no money in account yet)
     if (!firstDepositSeen) continue;
@@ -1201,6 +1225,29 @@ export async function computePortfolioHistory(
       prevPrices.set(fxTicker, rate);
       fxRates.set(cur, rate);
     }
+    dailyFxRates.set(date, new Map(fxRates));
+
+    // Convert today's deposits / withdrawals to PLN using this day's FX rates.
+    // All downstream math (totalDeposited, netCashFlow for TWR, benchmark DCA)
+    // uses PLN to stay consistent with totalValue (also in PLN).
+    let depositPln = 0;
+    const depositByCur = dailyDepositByCur.get(date);
+    if (depositByCur) {
+      for (const [cur, amt] of depositByCur) {
+        depositPln += amt * (fxRates.get(cur) ?? defaultFxRates[cur] ?? 1);
+      }
+    }
+    let withdrawalPln = 0;
+    const withdrawalByCur = dailyWithdrawalByCur.get(date);
+    if (withdrawalByCur) {
+      for (const [cur, amt] of withdrawalByCur) {
+        withdrawalPln += amt * (fxRates.get(cur) ?? defaultFxRates[cur] ?? 1);
+      }
+    }
+    investedCumulative += depositPln;
+    investedCumulative -= withdrawalPln;
+    totalDeposited += depositPln;
+    totalWithdrawn += withdrawalPln;
 
     // Compute stock value in PLN
     let stockValuePln = 0;
@@ -1246,18 +1293,18 @@ export async function computePortfolioHistory(
     const benchPrice = benchPriceAvailable ? benchRawPrice : 0;
     prevPrices.set(benchKey, benchRawPrice);
 
-    if (benchPrice > 0 && (deposit > 0 || pendingBenchDeposit > 0)) {
-      benchShares += (deposit + pendingBenchDeposit) / benchPrice;
+    if (benchPrice > 0 && (depositPln > 0 || pendingBenchDeposit > 0)) {
+      benchShares += (depositPln + pendingBenchDeposit) / benchPrice;
       pendingBenchDeposit = 0;
-    } else if (deposit > 0) {
-      pendingBenchDeposit += deposit;
+    } else if (depositPln > 0) {
+      pendingBenchDeposit += depositPln;
     }
     // Sell benchmark shares for the same PLN withdrawal amount.
     // This simulates "what if I withdrew the same cash from the benchmark?"
     // If benchmark doesn't have enough value, withdraw everything it has.
-    if (withdrawal > 0 && benchShares > 0 && benchPrice > 0) {
+    if (withdrawalPln > 0 && benchShares > 0 && benchPrice > 0) {
       const benchValueNow = benchShares * benchPrice;
-      const actualBenchWithdraw = Math.min(withdrawal, benchValueNow);
+      const actualBenchWithdraw = Math.min(withdrawalPln, benchValueNow);
       benchShares -= actualBenchWithdraw / benchPrice;
       benchTotalWithdrawn += actualBenchWithdraw;
     }
@@ -1279,7 +1326,7 @@ export async function computePortfolioHistory(
     // use mid-day timing (Modified Dietz) to prevent near-zero division artifacts.
     // When portfolio is essentially liquidated (totalValue < 1% of peak),
     // freeze TWR to avoid meaningless ratios on residual cash.
-    const netCashFlow = deposit - withdrawal;
+    const netCashFlow = depositPln - withdrawalPln;
     if (prevTotalValue > 0 && totalValue > peakTotalValue * 0.01) {
       // Guard: if prevTotalValue is negligible relative to totalValue and there
       // was no cash flow, this is a data artifact (e.g. missing price data on
@@ -1328,6 +1375,8 @@ export async function computePortfolioHistory(
       benchmarkReturnPct: benchReturnPct,
       benchmarkTwrPct,
       investedCumulative,
+      cumulativeDepositsPln: totalDeposited,
+      cumulativeWithdrawalsPln: totalWithdrawn,
     });
 
     // Stop generating history when portfolio is fully and permanently closed:
@@ -1340,14 +1389,30 @@ export async function computePortfolioHistory(
 
   // Compute metrics
   const lastPoint = history[history.length - 1];
-  // Include both deposits (positive) and withdrawals (negative) for XIRR
+
+  // Helper: convert an operation's amount to PLN using that day's FX rate.
+  // Falls back to default rate (≈ current market) if the date is outside the
+  // history range (e.g. operation pre-firstDepositSeen — rare edge case).
+  const defaultFxForXirr: Record<string, number> = {
+    USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
+    CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
+  };
+  const opAmountPln = (op: CashOperation): number => {
+    const d = op.date.split('T')[0];
+    const cur = (op.currency || 'PLN').toUpperCase();
+    const fx = dailyFxRates.get(d)?.get(cur) ?? defaultFxForXirr[cur] ?? 1;
+    return op.amount * fx;
+  };
+
+  // Include both deposits (positive) and withdrawals (negative) for XIRR,
+  // converted to PLN (portfolio.value is in PLN, so cash flows must match).
   const depositsList = operations
-    .filter(op => (op.operationType === 'deposit' || op.operationType === 'withdrawal') && op.currency === 'PLN')
-    .map(op => ({ date: op.date, amount: op.amount }));
+    .filter(op => op.operationType === 'deposit' || op.operationType === 'withdrawal')
+    .map(op => ({ date: op.date, amount: opAmountPln(op) }));
 
   const totalDividends = operations
     .filter(op => op.operationType === 'dividend')
-    .reduce((sum, op) => sum + op.amount, 0);
+    .reduce((sum, op) => sum + opAmountPln(op), 0);
 
   let xirr = 0;
   try {
@@ -1365,43 +1430,72 @@ export async function computePortfolioHistory(
     totalDividends,
   };
 
-  return { history, metrics, detectedSplits: allSplits };
+  return { history, metrics, detectedSplits: allSplits, dailyFxRates };
 }
 
 // ============ Cash Flow History ============
 
-export function computeCashFlow(operations: CashOperation[], portfolioHistory: PortfolioHistoryPoint[]): CashFlowRecord[] {
-  const historyMap = new Map(portfolioHistory.map(p => [p.date, p]));
-  const cashOps = operations.filter(
-    op => (op.operationType === 'deposit' || op.operationType === 'withdrawal') && op.currency === 'PLN',
-  );
-
-  let cumulativeDeposits = 0;
-  let cumulativeWithdrawals = 0;
-  const records: CashFlowRecord[] = [];
-
-  for (const op of cashOps.sort((a, b) => a.date.localeCompare(b.date))) {
-    const isDeposit = op.operationType === 'deposit';
-    const absAmount = Math.abs(op.amount);
-
-    if (isDeposit) {
-      cumulativeDeposits += absAmount;
-    } else {
-      cumulativeWithdrawals += absAmount;
+export function computeCashFlow(
+  operations: CashOperation[],
+  portfolioHistory: PortfolioHistoryPoint[],
+  dailyFxRates?: Map<string, Map<string, number>>,
+  baseCurrency: string = 'PLN',
+): CashFlowRecord[] {
+  // Build cash flow record for every date that has a deposit or withdrawal
+  // (in any currency). Values come from history points which are already
+  // PLN-normalized per-day using FX rates from computePortfolioHistory.
+  //
+  // For non-PLN portfolios (np. XTB USD sub-konto), konwertujemy PLN → base
+  // używając per-day FX rate — wszystkie linie wykresu (portfolioValue,
+  // netCashFlow) są wtedy w walucie portfela, a nie w PLN. Dla USD portfela
+  // z depozytami tylko w USD: portfolioValue ≈ cash balance USD + stocks_USD,
+  // a cumulativeDeposits ≈ raw sum of USD amounts.
+  const cashOpDates = new Set<string>();
+  for (const op of operations) {
+    if (op.operationType === 'deposit' || op.operationType === 'withdrawal') {
+      cashOpDates.add(op.date.split('T')[0]);
     }
+  }
 
-    const date = op.date.split('T')[0];
-    const histPoint = historyMap.get(date);
-    const netCashFlow = cumulativeDeposits - cumulativeWithdrawals;
+  const baseUpper = baseCurrency.toUpperCase();
+  const needsConversion = baseUpper !== 'PLN';
+
+  // Resolve PLN-denominated value → base currency for a given date.
+  // baseFx = how many PLN per 1 base-cur. Value in base = value_pln / baseFx.
+  const toBase = (valuePln: number, date: string): number => {
+    if (!needsConversion) return valuePln;
+    const fx = dailyFxRates?.get(date)?.get(baseUpper);
+    if (!fx || fx <= 0) return valuePln; // fallback — leave in PLN (lepsze niż NaN)
+    return valuePln / fx;
+  };
+
+  const records: CashFlowRecord[] = [];
+  let prevCumDepositsPln = 0;
+  let prevCumWithdrawalsPln = 0;
+
+  for (const p of portfolioHistory) {
+    const dCumPln = p.cumulativeDepositsPln;
+    const wCumPln = p.cumulativeWithdrawalsPln;
+    const changed = dCumPln !== prevCumDepositsPln || wCumPln !== prevCumWithdrawalsPln;
+    if (!changed && !cashOpDates.has(p.date)) continue;
+
+    const dCum = toBase(dCumPln, p.date);
+    const wCum = toBase(wCumPln, p.date);
+    const depositDeltaPln = Math.max(0, dCumPln - prevCumDepositsPln);
+    const withdrawalDeltaPln = Math.max(0, wCumPln - prevCumWithdrawalsPln);
+
     records.push({
-      date,
-      depositAmount: isDeposit ? absAmount : 0,
-      withdrawalAmount: isDeposit ? 0 : absAmount,
-      cumulativeDeposits,
-      cumulativeWithdrawals,
-      netCashFlow,
-      portfolioValue: histPoint?.portfolioValue || netCashFlow,
+      date: p.date,
+      depositAmount: toBase(depositDeltaPln, p.date),
+      withdrawalAmount: toBase(withdrawalDeltaPln, p.date),
+      cumulativeDeposits: dCum,
+      cumulativeWithdrawals: wCum,
+      netCashFlow: dCum - wCum,
+      portfolioValue: toBase(p.portfolioValue, p.date),
     });
+
+    prevCumDepositsPln = dCumPln;
+    prevCumWithdrawalsPln = wCumPln;
   }
 
   return records;
