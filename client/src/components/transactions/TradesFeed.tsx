@@ -43,7 +43,12 @@ interface EditForm {
   commission: string;
 }
 
-export function TradesFeed() {
+// TradesFeed jest memoizowany — bez tego każdy setTab w parent (TradesPage) re-renderuje
+// funkcję body i tworzy 6340 elementów JSX na nowo, przez co React.createElement × 6340
+// + reconciliation O(n) = ~100-300ms "zawieszka" na każde przełączenie tabu.
+// Komponent nie ma propsów, więc memo zawsze zwraca prev (bail-out) — re-renderuje
+// się tylko gdy jego własny state (search, editingId, deleteTarget) się zmieni.
+export const TradesFeed = memo(function TradesFeed() {
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: QUERY_KEYS.transactions,
@@ -390,7 +395,7 @@ export function TradesFeed() {
       />
     </div>
   );
-}
+});
 
 function valuePln(tx: TxItem): number {
   if (tx.currency === 'PLN') return tx.total;
@@ -413,8 +418,14 @@ interface NormalRowProps {
 const NormalRow = memo(function NormalRow({ tx, onEdit, onDelete }: NormalRowProps) {
   const paymentCcy = tx.paymentCurrency || tx.currency;
   const autoFx = paymentCcy !== tx.currency;
+  // content-visibility: auto — browser skipuje layout + paint dla wierszy poza viewportem.
+  // contain-intrinsic-size: rezerwuje miejsce w scrollu. Razem to natywny mechanizm
+  // "lazy rendering" bez React-level wirtualizacji — skaluje layout z O(n) do O(widocznych).
   return (
-    <tr className="border-b border-border/50 hover:bg-accent/40">
+    <tr
+      className="border-b border-border/50 hover:bg-accent/40"
+      style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' }}
+    >
       <td className="py-2.5 pr-4 text-muted-foreground tabular-nums">{formatDate(tx.date)}</td>
       <td className="py-2.5 pr-4 font-mono font-semibold">
         <span className="inline-flex items-center gap-1">
