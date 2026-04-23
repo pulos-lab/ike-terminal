@@ -402,14 +402,16 @@ export function TradesPage() {
         </Card>
       )}
 
-      {/* All transactions feed */}
-      {tab === 'all' && (
+      {/* All transactions feed — zamontowany ZAWSZE (display:none gdy nieaktywny),
+          żeby przełączanie tabu nie odmontowywało i nie remontowało 6000+ wierszy.
+          Tylko pierwsze wejście kosztuje; kolejne przełączenia = instant. */}
+      <div className={tab === 'all' ? 'block' : 'hidden'}>
         <Card>
           <CardContent className="pt-4">
             <TradesFeed />
           </CardContent>
         </Card>
-      )}
+      </div>
 
       {/* Open positions */}
       {tab === 'open' && (

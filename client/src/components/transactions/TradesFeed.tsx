@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState, useTransition } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
@@ -86,24 +86,33 @@ export function TradesFeed() {
     onError: (err: Error) => setError(err.message),
   });
 
+  // useTransition — state update wrzucany do low-priority queue. React robi reconciliation
+  // 6000+ wierszy w tle, browser pozostaje responsywny (scroll, hover, input działają).
+  // User nie czuje freezu na 1-2s mimo że React wciąż ma robotę O(n) do zrobienia.
+  const [, startTransition] = useTransition();
+
   // Stabilne handlery przez useCallback — kluczowe, żeby memo NormalRow nie re-renderowała
   // 6000+ wierszy przy każdym setEditingId / setDeleteTarget.
   const startEdit = useCallback((tx: TxItem) => {
     if (tx.id == null) return;
-    setEditingId(tx.id);
-    setEditForm({
-      date: tx.date.slice(0, 10),
-      side: tx.side,
-      quantity: tx.quantity.toString(),
-      price: tx.price.toString(),
-      commission: tx.commission.toString(),
+    startTransition(() => {
+      setEditingId(tx.id!);
+      setEditForm({
+        date: tx.date.slice(0, 10),
+        side: tx.side,
+        quantity: tx.quantity.toString(),
+        price: tx.price.toString(),
+        commission: tx.commission.toString(),
+      });
+      setError(null);
     });
-    setError(null);
   }, []);
 
   const cancelEdit = useCallback(() => {
-    setEditingId(null);
-    setError(null);
+    startTransition(() => {
+      setEditingId(null);
+      setError(null);
+    });
   }, []);
 
   const saveEdit = useCallback(() => {
@@ -129,7 +138,7 @@ export function TradesFeed() {
 
   const requestDelete = useCallback((tx: TxItem) => {
     if (tx.id == null) return;
-    setDeleteTarget(tx);
+    startTransition(() => setDeleteTarget(tx));
   }, []);
 
   if (isLoading) return <LoadingSpinner />;
