@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { toast } from 'sonner';
+import { useQuery } from '@tanstack/react-query';
 import { usePortfolio } from '@/lib/portfolio-context';
+import { api } from '@/lib/api-client';
+import { QUERY_KEYS } from '@/lib/query-keys';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectSeparator } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -25,6 +28,28 @@ export function PortfolioSelector() {
   // Local settings state for the dialog
   const [editName, setEditName] = useState('');
   const [editSettings, setEditSettings] = useState<PortfolioSettings>({ isIKE: false, isIKZE: false, ikzeIsDG: false, commissionPl: 0, commissionForeign: 0, minCommissionPl: 0, minCommissionForeign: 0 });
+
+  // Detect dominant currency of the active portfolio from its deposits.
+  // IKE/IKZE are PLN-only products; for non-PLN portfolios (e.g. XTB USD sub-account)
+  // the IKE/IKZE checkboxes are disabled — wpłaty do IKE/IKZE zawsze są w PLN,
+  // więc portfel walutowy nie może być IKE/IKZE.
+  const { data: depositsData } = useQuery({
+    queryKey: QUERY_KEYS.deposits,
+    queryFn: api.getDeposits,
+    enabled: !!activeId,
+    staleTime: 5 * 60 * 1000,
+  });
+  const portfolioBaseCurrency = useMemo(() => {
+    const deposits = depositsData?.deposits || [];
+    if (!deposits.length) return 'PLN'; // domyślnie — pusty portfel nie blokuje IKE/IKZE
+    const currencies = new Set<string>(deposits.map((d: any) => (d.currency || 'PLN').toUpperCase()));
+    if (currencies.size === 1) return [...currencies][0];
+    return 'PLN'; // mixed — nie blokujemy (PLN przeważa w typowym use case)
+  }, [depositsData]);
+  const isPlnPortfolio = portfolioBaseCurrency === 'PLN';
+  const ikeIkzeDisabledReason = !isPlnPortfolio
+    ? `Portfel w walucie ${portfolioBaseCurrency} — IKE/IKZE są kontami rozliczanymi w PLN.`
+    : '';
 
   const handleValueChange = (value: string) => {
     if (value === NEW_PORTFOLIO_VALUE) {
@@ -171,33 +196,47 @@ export function PortfolioSelector() {
             <div className="flex flex-col gap-3">
               <label className="text-sm font-medium">Typ portfela</label>
 
-              <label className="flex items-center gap-2 cursor-pointer">
+              {!isPlnPortfolio && (
+                <p className="text-xs text-muted-foreground bg-muted/40 rounded px-2 py-1.5">
+                  {ikeIkzeDisabledReason}
+                </p>
+              )}
+
+              <label
+                className={`flex items-center gap-2 ${isPlnPortfolio ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                title={ikeIkzeDisabledReason || undefined}
+              >
                 <input
                   type="checkbox"
                   checked={editSettings.isIKE}
+                  disabled={!isPlnPortfolio}
                   onChange={(e) => setEditSettings({ ...editSettings, isIKE: e.target.checked })}
-                  className="h-4 w-4 rounded border-input accent-primary"
+                  className="h-4 w-4 rounded border-input accent-primary disabled:cursor-not-allowed"
                 />
                 <span className="text-sm">Portfel IKE</span>
                 <span className="text-xs text-muted-foreground">— wyświetla limit wpłat IKE</span>
               </label>
 
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label
+                className={`flex items-center gap-2 ${isPlnPortfolio ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                title={ikeIkzeDisabledReason || undefined}
+              >
                 <input
                   type="checkbox"
                   checked={editSettings.isIKZE}
+                  disabled={!isPlnPortfolio}
                   onChange={(e) => setEditSettings({
                     ...editSettings,
                     isIKZE: e.target.checked,
                     ikzeIsDG: e.target.checked ? editSettings.ikzeIsDG : false,
                   })}
-                  className="h-4 w-4 rounded border-input accent-primary"
+                  className="h-4 w-4 rounded border-input accent-primary disabled:cursor-not-allowed"
                 />
                 <span className="text-sm">Portfel IKZE</span>
                 <span className="text-xs text-muted-foreground">— wyświetla limit wpłat IKZE</span>
               </label>
 
-              {editSettings.isIKZE && (
+              {editSettings.isIKZE && isPlnPortfolio && (
                 <label className="flex items-center gap-2 cursor-pointer ml-6">
                   <input
                     type="checkbox"
