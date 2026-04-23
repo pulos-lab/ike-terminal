@@ -245,9 +245,9 @@ export function TradesPage() {
 
       {/* Tab switcher — Wszystkie / Otwarte / Zamknięte */}
       <div className="flex items-center gap-1 border-b border-border overflow-x-auto overflow-y-hidden">
-        <TabButton active={tab === 'all'} onClick={() => setTab('all')} label="Wszystkie" count={txCount} />
-        <TabButton active={tab === 'open'} onClick={() => setTab('open')} label="Otwarte" count={positions.length} />
-        <TabButton active={tab === 'closed'} onClick={() => setTab('closed')} label="Zamknięte" count={closedCount} />
+        <TabButton active={tab === 'all'} onClick={() => { const t0 = performance.now(); setTab('all'); requestAnimationFrame(() => requestAnimationFrame(() => console.log(`[perf] tab→all: ${(performance.now() - t0).toFixed(0)}ms`))); }} label="Wszystkie" count={txCount} />
+        <TabButton active={tab === 'open'} onClick={() => { const t0 = performance.now(); setTab('open'); requestAnimationFrame(() => requestAnimationFrame(() => console.log(`[perf] tab→open: ${(performance.now() - t0).toFixed(0)}ms`))); }} label="Otwarte" count={positions.length} />
+        <TabButton active={tab === 'closed'} onClick={() => { const t0 = performance.now(); setTab('closed'); requestAnimationFrame(() => requestAnimationFrame(() => console.log(`[perf] tab→closed: ${(performance.now() - t0).toFixed(0)}ms`))); }} label="Zamknięte" count={closedCount} />
       </div>
 
       <TradesSummary
@@ -402,17 +402,39 @@ export function TradesPage() {
         </Card>
       )}
 
-      {/* All transactions feed */}
-      {tab === 'all' && (
-        <Card>
-          <CardContent className="pt-4">
-            <TradesFeed />
-          </CardContent>
-        </Card>
-      )}
+      {/* Stack obu tabów (Wszystkie + Otwarte) w tej samej grid-area.
+          Aktywny tab: position:relative → w flow, kontrybuuje do wysokości parent.
+          Nieaktywny: position:absolute + visibility:hidden → out of flow, layout
+          zachowany (nie re-computowany), paint pominięty. Efekt: przełączanie
+          pomiędzy tabami to tylko toggle kilku CSS properties — bez relayoutu
+          6000+ wierszy. Browser cachuje layout pomiędzy togglami. */}
+      <div style={{ position: 'relative' }}>
+        <div
+          aria-hidden={tab !== 'all'}
+          style={{
+            position: tab === 'all' ? 'relative' : 'absolute',
+            top: 0, left: 0, right: 0,
+            visibility: tab === 'all' ? 'visible' : 'hidden',
+            pointerEvents: tab === 'all' ? 'auto' : 'none',
+          }}
+        >
+          <Card>
+            <CardContent className="pt-4">
+              <TradesFeed />
+            </CardContent>
+          </Card>
+        </div>
 
-      {/* Open positions */}
-      {tab === 'open' && (
+      {/* Open positions — zamontowany ZAWSZE (overlap ze stack) */}
+      <div
+        aria-hidden={tab !== 'open'}
+        style={{
+          position: tab === 'open' ? 'relative' : 'absolute',
+          top: 0, left: 0, right: 0,
+          visibility: tab === 'open' ? 'visible' : 'hidden',
+          pointerEvents: tab === 'open' ? 'auto' : 'none',
+        }}
+      >
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Otwarte pozycje</CardTitle>
@@ -625,7 +647,8 @@ export function TradesPage() {
           )}
         </CardContent>
       </Card>
-      )}
+      </div>
+      </div>
 
       {/* Closed trades */}
       {tab === 'closed' && (

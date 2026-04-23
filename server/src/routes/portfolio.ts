@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/async-handler.js';
-import { getAllTransactions, getTransactionById, insertTransaction, updateTransaction, deleteTransaction } from '../db/transactions-repo.js';
+import { getAllTransactions, getTransactionById, insertTransaction, updateTransaction, deleteTransaction, deleteTransactions, getTransactionsByIds } from '../db/transactions-repo.js';
 import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOperation, insertOperations, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
 import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry, getAllTickers, updateTickerSectors } from '../db/ticker-map-repo.js';
 import { resolveSector } from '../services/sector-resolver.js';
@@ -19,6 +19,8 @@ import {
   computeCashBalances,
   detectBaseCurrency,
   computeFxImpact,
+  computeFifoMatching,
+  computeSmartDeletePlan,
 } from '../services/portfolio-engine.js';
 import { BENCHMARKS, type BenchmarkKey } from 'shared';
 import { searchTickers } from '../services/ticker-search.js';
@@ -577,17 +579,24 @@ router.get('/metrics', asyncHandler(async (req, res) => {
   // Engine liczy wszystko w baseCurrency (nowy refactor — commit e9db541+).
   // Wszystkie metrics zwracane są już w walucie bazowej portfela, bez FX drift
   // jaki wcześniej powodował podwójną konwersję (Σ raw × fx_dnia → PLN → /fx_today).
-  const { metrics } = await computePortfolioHistory(
-    transactions, operations, tickerMap,
-    '^GSPC', 'yahoo', // benchmark ticker nie wpływa na metrics
-    undefined, undefined, savedSplits, baseCurrency,
-  );
+  //
+  // PERF: history + positions są NIEZALEŻNE (positions nie używa metrics, metrics
+  // nie używa live-positions), lecą równolegle. Oszczędza ~1.5s na dużym portfelu
+  // (6000+ tx), bo najdłuższy sam computeOpenPositions + computePortfolioHistory
+  // wynosi max zamiast sum.
+  const [{ metrics }, { positions, totalValuePln: stocksValuePln }] = await Promise.all([
+    computePortfolioHistory(
+      transactions, operations, tickerMap,
+      '^GSPC', 'yahoo', // benchmark ticker nie wpływa na metrics
+      undefined, undefined, savedSplits, baseCurrency,
+    ),
+    computeOpenPositions(transactions, tickerMap, savedSplits),
+  ]);
 
   // FX impact — liczymy per-currency exposure dla każdej obcej waluty w portfelu
   // (vs PLN jako referencja). fxImpactPct pokazywany jako % CAŁEGO portfela
   // (intuicyjne — "o ile portfel ruszył dzięki FX"), breakdown per waluta z
   // ekspozycją jako % portfela (user widzi skalę).
-  const { positions, totalValuePln: stocksValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
   const cashBalances = computeCashBalances(transactions, operations);
 
   const foreignExposures = new Map<string, number>();
@@ -862,6 +871,104 @@ router.delete('/transactions/:id', asyncHandler((req, res) => {
     return res.status(500).json({ error: 'Nie udało się usunąć' });
   }
   res.json({ success: true });
+}));
+
+// POST /api/portfolio/transactions/bulk-delete
+// Body: { ids: number[] }  — atomic delete (SQLite transaction)
+router.post('/transactions/bulk-delete', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const { ids } = req.body as { ids?: number[] };
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Wymagane pole: ids (niepusta tablica).' });
+  }
+  const validIds = ids.filter(id => typeof id === 'number' && Number.isFinite(id));
+  if (validIds.length === 0) {
+    return res.status(400).json({ error: 'Żaden z ID nie jest prawidłowy.' });
+  }
+  const existing = getTransactionsByIds(validIds, pid);
+  if (existing.length !== validIds.length) {
+    const foundIds = new Set(existing.map(t => t.id));
+    const missing = validIds.filter(id => !foundIds.has(id));
+    return res.status(404).json({ error: `Nie znaleziono transakcji: ${missing.join(', ')}` });
+  }
+  const deleted = deleteTransactions(validIds, pid);
+  res.json({ success: true, deleted });
+}));
+
+// GET /api/portfolio/transactions/fifo-matching?isin=XXX
+// Zwraca FIFO-matching dla wszystkich transakcji danego ISIN — używane przez
+// dialog smart-delete do wizualizacji par K↔S oraz do ostrzeżeń.
+router.get('/transactions/fifo-matching', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const isin = typeof req.query.isin === 'string' ? req.query.isin : null;
+  if (!isin) {
+    return res.status(400).json({ error: 'Wymagany parametr: isin' });
+  }
+  const transactions = getAllTransactions(pid);
+  const tickerMap = getTickerMap(pid);
+  const matching = computeFifoMatching(isin, transactions);
+  const entry = tickerMap.get(isin);
+  res.json({
+    ...matching,
+    ticker: entry?.ticker ?? isin,
+    paperName: entry?.name ?? isin,
+    currency: entry?.currency ?? matching.transactions[0]?.currency ?? 'PLN',
+  });
+}));
+
+// POST /api/portfolio/transactions/:id/smart-delete-preview
+// Zwraca plan: które ID usunąć, które edytować (qty), oraz warnings/unsupported.
+router.post('/transactions/:id/smart-delete-preview', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const id = parseInt(req.params.id);
+  const existing = getTransactionById(id, pid);
+  if (!existing) {
+    return res.status(404).json({ error: 'Transakcja nie znaleziona' });
+  }
+  const transactions = getAllTransactions(pid);
+  const plan = computeSmartDeletePlan(id, transactions);
+  res.json(plan);
+}));
+
+// POST /api/portfolio/transactions/:id/smart-delete-apply
+// Wylicza plan, stosuje atomowo (wszystkie deletes + edits w jednej SQL transakcji).
+router.post('/transactions/:id/smart-delete-apply', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const id = parseInt(req.params.id);
+  const existing = getTransactionById(id, pid);
+  if (!existing) {
+    return res.status(404).json({ error: 'Transakcja nie znaleziona' });
+  }
+  const transactions = getAllTransactions(pid);
+  const plan = computeSmartDeletePlan(id, transactions);
+  if (plan.unsupported) {
+    return res.status(409).json({ error: plan.unsupported });
+  }
+
+  // Apply edits (zmiana qty + przeliczenie value/total) ...
+  for (const edit of plan.edits) {
+    const tx = getTransactionById(edit.txId, pid);
+    if (!tx) continue;
+    const newValue = edit.newQuantity * tx.price;
+    const newCommission = tx.commission * (edit.newQuantity / tx.quantity);
+    const newTotal = tx.side === 'K' ? newValue + newCommission : newValue - newCommission;
+    updateTransaction(edit.txId, {
+      quantity: edit.newQuantity,
+      value: newValue,
+      commission: newCommission,
+      total: newTotal,
+    }, pid);
+  }
+
+  // ...then deletes
+  const deleted = deleteTransactions(plan.deletes, pid);
+
+  res.json({
+    success: true,
+    deleted,
+    edited: plan.edits.length,
+    warnings: plan.warnings,
+  });
 }));
 
 // ============ Stock Splits ============
