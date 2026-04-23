@@ -601,16 +601,12 @@ router.get('/metrics', asyncHandler(async (req, res) => {
   );
 
   // FX impact — liczymy per-currency exposure dla każdej obcej waluty w portfelu
-  // (vs PLN jako referencja). Obsługuje zarówno XTB USD single-currency (gdzie
-  // baseCurrency='USD' a exposure=całość portfela w USD) jak i Bossa/DEGIRO
-  // multi-currency (PLN główny + USD/EUR stocks — impact tylko dla obcej części).
-  const { positions } = await computeOpenPositions(transactions, tickerMap, savedSplits);
+  // (vs PLN jako referencja). fxImpactPct pokazywany jako % CAŁEGO portfela
+  // (intuicyjne — "o ile portfel ruszył dzięki FX"), breakdown per waluta z
+  // ekspozycją jako % portfela (user widzi skalę).
+  const { positions, totalValuePln: stocksValuePln } = await computeOpenPositions(transactions, tickerMap, savedSplits);
   const cashBalances = computeCashBalances(transactions, operations);
 
-  // foreignExposures: currency → native exposure (cash + stocks w tej walucie).
-  // Dla XTB USD portfela: baseCurrency=USD, stocks+cash USD trafiają do 'USD'
-  //   → impact liczony względem PLN (całość portfela widziana jako "obca waluta vs PLN").
-  // Dla Bossa PLN: tylko niePLN waluty trafiają tutaj (PLN jest "domowa").
   const foreignExposures = new Map<string, number>();
   for (const pos of positions) {
     const cur = (pos.currency || 'PLN').toUpperCase();
@@ -631,7 +627,17 @@ router.get('/metrics', asyncHandler(async (req, res) => {
     if (rate > 0) todayFxRatesToPln.set(cur, rate);
   }
 
-  const fxImpact = computeFxImpact(operations, foreignExposures, todayFxRatesToPln);
+  // totalPortfolioValuePln = stocks + cash, cash konwertowany przez dzisiejszy FX.
+  // Dla PLN portfeli: stocksValuePln już w PLN, cash PLN + obce waluty konwertowane.
+  let cashValuePln = 0;
+  for (const [cur, balance] of Object.entries(cashBalances)) {
+    const upperCur = cur.toUpperCase();
+    if (upperCur === 'PLN') cashValuePln += balance;
+    else cashValuePln += balance * (todayFxRatesToPln.get(upperCur) || 0);
+  }
+  const totalPortfolioValuePln = stocksValuePln + cashValuePln;
+
+  const fxImpact = computeFxImpact(operations, foreignExposures, todayFxRatesToPln, totalPortfolioValuePln);
 
   res.json({
     currentValue: metrics.currentValue,

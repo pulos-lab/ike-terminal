@@ -923,18 +923,16 @@ export function computeFxImpact(
   operations: CashOperation[],
   foreignExposures: Map<string, number>, // currency → native exposure (cash + stocks)
   todayFxRatesToPln: Map<string, number>, // currency → PLN per X
+  totalPortfolioValuePln: number,         // wartość CAŁEGO portfela w PLN
 ): FxImpact | null {
   const breakdown: FxImpactCurrencyEntry[] = [];
 
   for (const [currency, exposureNative] of foreignExposures) {
-    if (currency === 'PLN') continue; // PLN sam w sobie nie ma FX impact
-    if (exposureNative <= 0) continue; // brak ekspozycji → nic do liczenia
+    if (currency === 'PLN') continue;
+    if (exposureNative <= 0) continue;
 
-    // Agreguj wszystkie wydarzenia "zakupu" tej waluty z fxRate:
-    //   - fx_exchange credit leg (amount > 0, currency = X)
-    //   - deposit w tej walucie z fxRate (XTB Transfer → deposit)
     let totalAcquiredNative = 0;
-    let sumAcquiredTimesPlnPerX = 0; // Σ (x_acquired × pln_per_x)
+    let sumAcquiredTimesPlnPerX = 0;
     for (const op of operations) {
       if (op.currency?.toUpperCase() !== currency.toUpperCase()) continue;
       const isAcquisitionFx = op.operationType === 'fx_exchange' && op.amount > 0;
@@ -947,22 +945,26 @@ export function computeFxImpact(
       sumAcquiredTimesPlnPerX += acquired * plnPerX;
     }
 
-    if (totalAcquiredNative <= 0) continue; // brak danych o kursach zakupu
+    if (totalAcquiredNative <= 0) continue;
 
     const avgPlnPerCurrency = sumAcquiredTimesPlnPerX / totalAcquiredNative;
     const todayPlnPerCurrency = todayFxRatesToPln.get(currency) ?? 0;
-    if (todayPlnPerCurrency <= 0) continue; // brak dzisiejszego kursu → nie możemy policzyć
+    if (todayPlnPerCurrency <= 0) continue;
 
     const impactPln = exposureNative * (todayPlnPerCurrency - avgPlnPerCurrency);
     const impactPct = avgPlnPerCurrency > 0
       ? (todayPlnPerCurrency / avgPlnPerCurrency - 1) * 100
       : 0;
     const exposurePln = exposureNative * todayPlnPerCurrency;
+    const exposurePctOfPortfolio = totalPortfolioValuePln > 0
+      ? (exposurePln / totalPortfolioValuePln) * 100
+      : 0;
 
     breakdown.push({
       currency,
       exposureNative,
       exposurePln,
+      exposurePctOfPortfolio,
       avgPlnPerCurrency,
       todayPlnPerCurrency,
       impactPln,
@@ -973,12 +975,29 @@ export function computeFxImpact(
 
   if (breakdown.length === 0) return null;
 
-  // Sumy ważone po ekspozycji PLN (bo różne waluty mają różne ekspozycje)
-  const totalExposurePln = breakdown.reduce((s, e) => s + e.exposurePln, 0);
+  const foreignExposurePln = breakdown.reduce((s, e) => s + e.exposurePln, 0);
   const fxImpactPln = breakdown.reduce((s, e) => s + e.impactPln, 0);
-  const fxImpactPct = totalExposurePln > 0 ? (fxImpactPln / totalExposurePln) * 100 : 0;
+  // Main: wpływ na cały portfel (intuicyjne, małe dla portfeli z małą walutową częścią)
+  const fxImpactPct = totalPortfolioValuePln > 0
+    ? (fxImpactPln / totalPortfolioValuePln) * 100
+    : 0;
+  // Secondary: wpływ na część zagraniczną (większe, pokazuje "ile ruszył walutowy kawałek")
+  const fxImpactPctOfForeign = foreignExposurePln > 0
+    ? (fxImpactPln / foreignExposurePln) * 100
+    : 0;
+  const foreignExposurePctOfPortfolio = totalPortfolioValuePln > 0
+    ? (foreignExposurePln / totalPortfolioValuePln) * 100
+    : 0;
 
-  return { fxImpactPct, fxImpactPln, breakdown };
+  return {
+    fxImpactPct,
+    fxImpactPctOfForeign,
+    fxImpactPln,
+    foreignExposurePln,
+    foreignExposurePctOfPortfolio,
+    totalPortfolioValuePln,
+    breakdown,
+  };
 }
 
 /** Benchmark currency lookup — Yahoo nie zawsze dostarcza przy fetchu, a dla

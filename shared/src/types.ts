@@ -240,12 +240,23 @@ export interface PortfolioMetrics {
  *     walut obcych. Exposure per waluta = cash_X + Σ stocks denominated in X.
  *     FX impact liczony per-waluta, sumowany jako total. */
 export interface FxImpact {
-  /** Ważona procentowa zmiana (łączny impact / łączna exposure w PLN). */
+  /** **Główna metryka**: wpływ walut jako % WARTOŚCI CAŁEGO PORTFELA w PLN.
+   *  Intuicyjne: "o ile portfel urósł/spadł dzięki zmianom FX".
+   *  Mała wartość jeśli obca część to tylko mały wycinek portfela. */
   fxImpactPct: number;
+  /** Wpływ walut jako % EKSPOZYCJI ZAGRANICZNEJ (tylko obce waluty).
+   *  Pokazuje "ile ruszyła sama walutowa część" — większa liczba niż
+   *  fxImpactPct jeśli obce waluty to tylko kawałek portfela. */
+  fxImpactPctOfForeign: number;
   /** Łączna kwota w PLN — suma per-currency impactów. */
   fxImpactPln: number;
-  /** Rozkład per waluta obca (USD, EUR, …). Zawsze tablica, może mieć 1 lub N
-   *  elementów w zależności od liczby walut obcych w portfelu. */
+  /** Łączna ekspozycja na obce waluty w PLN (suma exposurePln z breakdown). */
+  foreignExposurePln: number;
+  /** Jaki % portfela stanowi część zagraniczna (obce waluty łącznie). */
+  foreignExposurePctOfPortfolio: number;
+  /** Wartość całego portfela w PLN (baza do liczenia % portfela). */
+  totalPortfolioValuePln: number;
+  /** Rozkład per waluta obca (USD, EUR, …). */
   breakdown: FxImpactCurrencyEntry[];
 }
 
@@ -257,13 +268,15 @@ export interface FxImpactCurrencyEntry {
   exposureNative: number;
   /** Ekspozycja przeliczona na PLN po dzisiejszym kursie. */
   exposurePln: number;
+  /** Jaki % całego portfela stanowi ta waluta (exposurePln / totalPortfolio). */
+  exposurePctOfPortfolio: number;
   /** Średni ważony kurs PLN za 1 jednostkę waluty przy zakupach. */
   avgPlnPerCurrency: number;
   /** Dzisiejszy kurs PLN za 1 jednostkę waluty. */
   todayPlnPerCurrency: number;
   /** Wpływ walut dla tej waluty w PLN (exposureNative × (today − avg)). */
   impactPln: number;
-  /** Wpływ walut dla tej waluty jako % (today/avg − 1). */
+  /** Wpływ walut dla tej waluty jako % zmiany kursu (today/avg − 1). */
   impactPct: number;
   /** Łączna suma wydarzeń "zakupu" tej waluty (natywnie). */
   totalAcquiredNative: number;

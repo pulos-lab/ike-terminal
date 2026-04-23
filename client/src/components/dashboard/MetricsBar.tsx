@@ -89,6 +89,7 @@ interface FxImpactCurrencyEntry {
   currency: string;
   exposureNative: number;
   exposurePln: number;
+  exposurePctOfPortfolio: number;
   avgPlnPerCurrency: number;
   todayPlnPerCurrency: number;
   impactPln: number;
@@ -97,48 +98,63 @@ interface FxImpactCurrencyEntry {
 }
 
 interface FxImpactData {
-  fxImpactPct: number;
+  fxImpactPct: number;              // % portfela (main)
+  fxImpactPctOfForeign: number;     // % ekspozycji zagranicznej
   fxImpactPln: number;
+  foreignExposurePln: number;
+  foreignExposurePctOfPortfolio: number;
+  totalPortfolioValuePln: number;
   breakdown: FxImpactCurrencyEntry[];
 }
 
 function FxImpactTooltipBody({ fxImpact }: { fxImpact: FxImpactData }) {
   const positive = fxImpact.fxImpactPct >= 0;
-  const absPct = Math.abs(fxImpact.fxImpactPct);
+  const absPctPortfolio = Math.abs(fxImpact.fxImpactPct);
   const absPln = Math.abs(fxImpact.fxImpactPln);
-  const isMulti = fxImpact.breakdown.length > 1;
-  const singleCurrency = !isMulti ? fxImpact.breakdown[0].currency : null;
-
-  const headline = isMulti
-    ? `Wpływ walut (agregat): ${formatPercent(fxImpact.fxImpactPct)}`
-    : `Wpływ walut (${singleCurrency}): ${formatPercent(fxImpact.fxImpactPct)}`;
 
   const interpretation = positive
-    ? `Od czasu wpłat PLN osłabł w stosunku do walut obcych w portfelu. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} więcej (+${absPct.toFixed(1)}%) niż gdybyś zrobił to przy średnich kursach zakupu.`
-    : `Od czasu wpłat PLN wzmocnił się w stosunku do walut obcych w portfelu. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} mniej (−${absPct.toFixed(1)}%) niż gdybyś zrobił to przy średnich kursach zakupu.`;
+    ? `Od czasu wpłat PLN osłabł w stosunku do walut obcych w portfelu. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} więcej (+${absPctPortfolio.toFixed(2)}% wartości portfela) niż przy średnich kursach zakupu.`
+    : `Od czasu wpłat PLN wzmocnił się w stosunku do walut obcych w portfelu. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} mniej (−${absPctPortfolio.toFixed(2)}% wartości portfela) niż przy średnich kursach zakupu.`;
 
   return (
     <div className="text-xs space-y-2">
-      <p className="font-semibold">{headline}</p>
+      <p className="font-semibold">
+        Wpływ walut na portfel: {formatPercent(fxImpact.fxImpactPct)} ({formatPLN(fxImpact.fxImpactPln)})
+      </p>
       <p>{interpretation}</p>
+
       <div className="pt-1 border-t border-border">
-        <p className="font-medium mb-1">Rozbicie per waluta:</p>
+        <p className="font-medium mb-1">Kontekst:</p>
+        <ul className="space-y-0.5 text-muted-foreground">
+          <li>• Wartość portfela: {formatPLN(fxImpact.totalPortfolioValuePln)}</li>
+          <li>
+            • Część zagraniczna: {formatPLN(fxImpact.foreignExposurePln)}
+            {' '}({fxImpact.foreignExposurePctOfPortfolio.toFixed(1)}% portfela)
+          </li>
+          <li>• Zmiana kursów ważona: {formatPercent(fxImpact.fxImpactPctOfForeign)} (impact na część walutową)</li>
+        </ul>
+      </div>
+
+      <div className="pt-1 border-t border-border">
+        <p className="font-medium mb-1">Per waluta:</p>
         <ul className="space-y-1.5">
           {fxImpact.breakdown.map((e) => (
             <li key={e.currency} className="text-muted-foreground">
               <div className="font-medium text-foreground">
-                {e.currency}: {formatPercent(e.impactPct)} ({formatPLN(e.impactPln)})
+                {e.currency}: {formatPercent(e.impactPct)} kursu ({formatPLN(e.impactPln)})
               </div>
               <div className="text-[10px] pl-2">
-                • Ekspozycja: {e.exposureNative.toFixed(2)} {e.currency} ({formatPLN(e.exposurePln)})
+                • Ekspozycja: {e.exposureNative.toFixed(2)} {e.currency}
+                {' '}({formatPLN(e.exposurePln)}, {e.exposurePctOfPortfolio.toFixed(1)}% portfela)
               </div>
               <div className="text-[10px] pl-2">
-                • Średni kurs zakupu: {e.avgPlnPerCurrency.toFixed(3)} → dziś: {e.todayPlnPerCurrency.toFixed(3)}
+                • Średni kurs: {e.avgPlnPerCurrency.toFixed(3)} → dziś: {e.todayPlnPerCurrency.toFixed(3)}
               </div>
             </li>
           ))}
         </ul>
       </div>
+
       <p className="text-muted-foreground text-[10px] pt-1 border-t border-border">
         Metryka pokazuje zysk/stratę wynikającą wyłącznie ze zmian kursu walut
         między datami Twoich wpłat (lub wymian FX) a dniem dzisiejszym. Nie
