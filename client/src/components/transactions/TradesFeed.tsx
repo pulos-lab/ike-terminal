@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CcyChip } from '@/components/ui/ccy-chip';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DeleteTransactionDialog } from './DeleteTransactionDialog';
 import { cn } from '@/lib/utils';
 import { Search, Info, Pencil, Trash2, Check, X, Loader2 } from 'lucide-react';
@@ -137,7 +136,6 @@ export function TradesFeed() {
   const isEditValid = editForm.date && parseFloat(editForm.quantity) > 0 && parseFloat(editForm.price) > 0;
 
   return (
-    <TooltipProvider delayDuration={150}>
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <div className="relative flex-1 max-w-xs">
@@ -274,7 +272,7 @@ export function TradesFeed() {
               return (
               <tr
                 key={tx.id ?? i}
-                className="border-b border-border/50 hover:bg-accent/40 transition-colors group"
+                className="border-b border-border/50 hover:bg-accent/40"
               >
                 <td className="py-2.5 pr-4 text-muted-foreground tabular-nums">
                   {formatDate(tx.date)}
@@ -283,33 +281,23 @@ export function TradesFeed() {
                   <span className="inline-flex items-center gap-1">
                     {tx.ticker}
                     {tx.syntheticOrigin && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Info className="h-3 w-3 text-amber-500/80 cursor-help shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-[320px] text-xs leading-relaxed">
-                          <div className="font-semibold mb-1">Sprzedaż wygenerowana automatycznie</div>
-                          <div className="text-muted-foreground">{tx.syntheticOrigin}</div>
-                          <div className="text-muted-foreground mt-1">
-                            Brokerowy plik operacji zawierał wpływ z wezwania skupu / wykupu certyfikatu, ale bez informacji o liczbie sprzedanych akcji — wartości policzono na podstawie otwartej pozycji w historii.
-                          </div>
-                        </TooltipContent>
-                      </Tooltip>
+                      <span
+                        className="inline-flex cursor-help"
+                        title={`Sprzedaż wygenerowana automatycznie: ${tx.syntheticOrigin}`}
+                      >
+                        <Info className="h-3 w-3 text-amber-500/80 shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
+                      </span>
                     )}
                   </span>
                 </td>
                 <td className="py-2.5 pr-4">
                   <CcyChip ccy={paymentCcy} />
                   {autoFx && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="ml-1 text-[9px] text-amber-500/80 cursor-help" aria-label="Auto-przewalutowanie">⇋</span>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-[260px] text-xs leading-relaxed">
-                        Auto-przewalutowanie — broker zamienił {paymentCcy} na {tx.currency} przy realizacji zlecenia.
-                        Papier jest notowany w {tx.currency}, Ty zapłaciłeś w {paymentCcy}.
-                      </TooltipContent>
-                    </Tooltip>
+                    <span
+                      className="ml-1 text-[9px] text-amber-500/80 cursor-help"
+                      aria-label="Auto-przewalutowanie"
+                      title={`Auto-przewalutowanie: broker zamienił ${paymentCcy} na ${tx.currency} przy realizacji zlecenia.`}
+                    >⇋</span>
                   )}
                 </td>
                 <td className="py-2.5 pr-4">
@@ -332,35 +320,27 @@ export function TradesFeed() {
                 </td>
                 <td className="py-2.5 text-right">
                   {tx.id != null && (
-                    <div className="inline-flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            size="icon-xs"
-                            variant="ghost"
-                            onClick={() => startEdit(tx)}
-                            aria-label="Edytuj"
-                            className="h-6 w-6"
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="text-xs">Edytuj</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            size="icon-xs"
-                            variant="ghost"
-                            onClick={() => requestDelete(tx)}
-                            aria-label="Usuń"
-                            className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="text-xs">Usuń</TooltipContent>
-                      </Tooltip>
+                    <div className="inline-flex gap-0.5">
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        onClick={() => startEdit(tx)}
+                        aria-label="Edytuj"
+                        title="Edytuj"
+                        className="h-6 w-6 text-muted-foreground/60 hover:text-foreground"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        onClick={() => requestDelete(tx)}
+                        aria-label="Usuń"
+                        title="Usuń"
+                        className="h-6 w-6 text-muted-foreground/60 hover:text-destructive"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
                     </div>
                   )}
                 </td>
@@ -468,29 +448,22 @@ export function TradesFeed() {
               <div className="flex items-center gap-1.5 mb-0.5">
                 <span className="font-mono font-semibold text-sm">{tx.ticker}</span>
                 {tx.syntheticOrigin && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Info className="h-3 w-3 text-amber-500/80 cursor-help shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-[280px] text-xs leading-relaxed">
-                      <div className="font-semibold mb-1">Sprzedaż auto-wygenerowana</div>
-                      <div className="text-muted-foreground">{tx.syntheticOrigin}</div>
-                    </TooltipContent>
-                  </Tooltip>
+                  <span
+                    className="inline-flex cursor-help"
+                    title={`Sprzedaż auto-wygenerowana: ${tx.syntheticOrigin}`}
+                  >
+                    <Info className="h-3 w-3 text-amber-500/80 shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
+                  </span>
                 )}
                 {autoFx ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground cursor-help">
-                        <CcyChip ccy={paymentCcy} />
-                        <span className="text-amber-500/80">⇋</span>
-                        <CcyChip ccy={tx.currency} />
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-[240px] text-xs leading-relaxed">
-                      Auto-przewalutowanie — broker zamienił {paymentCcy} na {tx.currency} przy realizacji zlecenia.
-                    </TooltipContent>
-                  </Tooltip>
+                  <span
+                    className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground cursor-help"
+                    title={`Auto-przewalutowanie: broker zamienił ${paymentCcy} na ${tx.currency} przy realizacji zlecenia.`}
+                  >
+                    <CcyChip ccy={paymentCcy} />
+                    <span className="text-amber-500/80">⇋</span>
+                    <CcyChip ccy={tx.currency} />
+                  </span>
                 ) : (
                   <CcyChip ccy={tx.currency} />
                 )}
@@ -550,7 +523,6 @@ export function TradesFeed() {
         onClose={() => setDeleteTarget(null)}
       />
     </div>
-    </TooltipProvider>
   );
 }
 
