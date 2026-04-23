@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { plColor } from '@/components/ui/pl-badge';
-import { formatPLN, formatPercent } from '@/lib/formatters';
+import { formatCurrency, formatPercent } from '@/lib/formatters';
 import { TrendingUp, TrendingDown, DollarSign, Target } from 'lucide-react';
 
 export function MetricsBar() {
@@ -19,6 +19,10 @@ export function MetricsBar() {
     </div>
   );
 
+  // Waluta portfela — PLN dla polskich/mixed, USD/EUR dla XTB single-currency.
+  const ccy: string = data.baseCurrency || 'PLN';
+  const fmt = (v: number) => formatCurrency(v, ccy);
+
   return (
     <div className="hidden md:flex border-b px-4 md:px-6 py-3 flex-wrap items-center gap-x-8 gap-y-1 text-sm">
       <div className="flex items-center gap-2">
@@ -26,14 +30,14 @@ export function MetricsBar() {
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
           Wartość
         </span>
-        <span className="font-semibold tabular-nums">{formatPLN(data.currentValue)}</span>
+        <span className="font-semibold tabular-nums">{fmt(data.currentValue)}</span>
       </div>
       <div className="flex items-center gap-2">
         <Target className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
           Wpłaty
         </span>
-        <span className="font-medium tabular-nums">{formatPLN(data.totalInvested)}</span>
+        <span className="font-medium tabular-nums">{fmt(data.totalInvested)}</span>
       </div>
       <div className="flex items-center gap-2">
         {data.totalReturn >= 0 ? (
@@ -45,7 +49,7 @@ export function MetricsBar() {
           Zysk
         </span>
         <span className={`font-semibold tabular-nums ${plColor(data.totalReturn)}`}>
-          {formatPLN(data.totalReturn)} ({formatPercent(data.totalReturnPct)})
+          {fmt(data.totalReturn)} ({formatPercent(data.totalReturnPct)})
         </span>
       </div>
       <div className="flex items-center gap-2">

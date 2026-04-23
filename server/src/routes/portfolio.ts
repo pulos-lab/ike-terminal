@@ -590,25 +590,46 @@ router.get('/metrics', asyncHandler(async (req, res) => {
   const tickerMap = getTickerMap(pid);
   const savedSplits = loadSplitsForEngine(pid);
 
-  // Użyj computePortfolioHistory — metrics są już PLN-znormalizowane z per-day
-  // FX rates (totalInvested, xirr, totalDividends, totalReturn). Wcześniej
-  // endpoint duplikował cash-flow logikę z filtrem `currency === 'PLN'`, który
-  // wyzerowywał wpłaty dla portfeli walutowych (XTB USD sub-konto: deposits
-  // w USD → totalInvested=0 → totalReturnPct=0% → UI "WPŁATY 0,00 zł").
-  // Teraz jedno źródło prawdy, spójne z Dashboard chart.
-  const { metrics } = await computePortfolioHistory(
+  // Engine liczy wszystko w PLN (per-day FX normalizacja). Dla portfeli
+  // single-currency (np. XTB USD sub-konto) konwertujemy z powrotem do waluty
+  // bazowej portfela — spójnie z CashFlowPage gdzie też pokazujemy USD zamiast
+  // PLN dla USD portfela.
+  const { metrics, history, dailyFxRates } = await computePortfolioHistory(
     transactions, operations, tickerMap,
     '^GSPC', 'yahoo', // benchmark ticker nie wpływa na metrics
     undefined, undefined, savedSplits,
   );
 
+  // Detekcja baseCurrency (identyczna logika co /cash-flow):
+  const cashOpCurrencies = new Set<string>();
+  for (const op of operations) {
+    if (op.operationType === 'deposit' || op.operationType === 'withdrawal') {
+      cashOpCurrencies.add((op.currency || 'PLN').toUpperCase());
+    }
+  }
+  const baseCurrency = cashOpCurrencies.size === 1
+    ? [...cashOpCurrencies][0]
+    : 'PLN';
+
+  // Konwersja PLN-metrics → base currency. Używamy FX rate z ostatniego dnia
+  // history (spójne z tym że currentValue odzwierciedla "dziś"). Dla portfeli
+  // PLN: fxRate=1, zero zmiany w wyniku.
+  const toBase = (valuePln: number): number => {
+    if (baseCurrency === 'PLN') return valuePln;
+    const lastDate = history[history.length - 1]?.date;
+    const fx = lastDate ? dailyFxRates.get(lastDate)?.get(baseCurrency) : null;
+    if (!fx || fx <= 0) return valuePln; // fallback — zostaw w PLN niż NaN
+    return valuePln / fx;
+  };
+
   res.json({
-    currentValue: metrics.currentValue,
-    totalInvested: metrics.totalInvested,
-    xirr: metrics.xirr,
-    totalReturn: metrics.totalReturn,
-    totalReturnPct: metrics.totalReturnPct,
-    totalDividends: metrics.totalDividends,
+    currentValue: toBase(metrics.currentValue),
+    totalInvested: toBase(metrics.totalInvested),
+    xirr: metrics.xirr,                                // % — invariant
+    totalReturn: toBase(metrics.totalReturn),
+    totalReturnPct: metrics.totalReturnPct,            // % — invariant
+    totalDividends: toBase(metrics.totalDividends),
+    baseCurrency,
   });
 }));
 
