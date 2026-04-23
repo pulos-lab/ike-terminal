@@ -165,6 +165,33 @@ export function deleteTransaction(id: number, portfolioId: string = 'default'): 
   return result.changes > 0;
 }
 
+/** Atomic bulk delete — albo wszystkie ID, albo żadne. Używane przez multi-select
+ *  dialog w UI (usuń 1 transakcję + powiązane FIFO-matched S/K). */
+export function deleteTransactions(ids: number[], portfolioId: string = 'default'): number {
+  if (ids.length === 0) return 0;
+  const db = getDb(portfolioId);
+  const stmt = db.prepare('DELETE FROM transactions WHERE id = ?');
+  const deleteMany = db.transaction((idList: number[]) => {
+    let count = 0;
+    for (const id of idList) {
+      const result = stmt.run(id);
+      count += result.changes;
+    }
+    return count;
+  });
+  return deleteMany(ids);
+}
+
+/** Zwraca transakcje po liście ID (używane w smart-delete preview). */
+export function getTransactionsByIds(ids: number[], portfolioId: string = 'default'): Transaction[] {
+  if (ids.length === 0) return [];
+  const db = getDb(portfolioId);
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT * FROM transactions WHERE id IN (${placeholders})`).all(...ids) as any[];
+  return rows.map(mapRow);
+}
+
+
 export function getLastImportDate(portfolioId: string = 'default'): string | null {
   const db = getDb(portfolioId);
   const row = db.prepare('SELECT MAX(created_at) as last_import FROM transactions WHERE import_batch IS NOT NULL').get() as any;

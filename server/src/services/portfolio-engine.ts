@@ -1745,3 +1745,292 @@ export function computeCashBalances(
 
   return balances;
 }
+
+// ============ FIFO Matching (Smart Delete support) ============
+
+export interface FifoMatchEntry {
+  counterpartyTxId: number;
+  counterpartyDate: string;
+  counterpartyPrice: number;
+  counterpartyCurrency: string;
+  quantity: number;
+}
+
+export interface FifoMatchedTransaction {
+  txId: number;
+  date: string;
+  side: 'K' | 'S';
+  quantity: number;
+  price: number;
+  currency: string;
+  commission: number;
+  source?: string;
+  syntheticOrigin?: string;
+  isCfd: boolean;
+  matches: FifoMatchEntry[];
+  matchedQty: number;
+  residualQty: number;
+  /** fully-matched: vollständig skonsumowana (K: wszystkie akcje sprzedane; S: wszystkie pokryte K)
+   *  partial: częściowo (jakieś akcje dopasowane, jakieś nie)
+   *  open: K bez żadnej matchującej S (otwarta pozycja)
+   *  orphan: S bez żadnej matchującej K (oversold / short) */
+  status: 'fully-matched' | 'partial' | 'open' | 'orphan';
+}
+
+export interface FifoMatching {
+  isin: string;
+  transactions: FifoMatchedTransaction[];
+  /** Pozycja zawiera shortowe/CFD — smart-delete będzie wyłączony dla bezpieczeństwa. */
+  hasComplexity: boolean;
+  netOpenQty: number;
+  totalBuys: number;
+  totalSells: number;
+}
+
+/** Liczy FIFO-matching dla WSZYSTKICH transakcji danego ISIN.
+ *  Dla każdej transakcji zwraca listę counterparty (K↔S), ilości dopasowane,
+ *  residual oraz status. UI używa tego do:
+ *    - pokazania pary K→S w dialogu smart-delete
+ *    - warning gdy usunięcie stworzy orphan/oversold
+ *    - wyliczenia proporcjonalnych edycji S po usunięciu K
+ *
+ *  Uproszczona wersja: obsługuje tylko long (K-first). Pozycje z shortami lub
+ *  CFD dostają flagę `hasComplexity=true` → UI fallbackuje do multi-select
+ *  bez auto-edycji (bezpieczniej niż zgadywać). */
+export function computeFifoMatching(
+  isin: string,
+  allTransactions: Transaction[],
+): FifoMatching {
+  const txs = allTransactions
+    .filter(t => t.isin === isin && t.id != null)
+    .sort((a, b) => {
+      const d = a.date.localeCompare(b.date);
+      if (d !== 0) return d;
+      return (a.id ?? 0) - (b.id ?? 0);
+    });
+
+  const hasCfd = txs.some(t => t.category === 'cfd' || !!t.cfdPositionId);
+
+  interface State {
+    entry: FifoMatchedTransaction;
+    remaining: number;
+  }
+  const state = new Map<number, State>();
+  for (const tx of txs) {
+    state.set(tx.id!, {
+      entry: {
+        txId: tx.id!,
+        date: tx.date,
+        side: tx.side,
+        quantity: tx.quantity,
+        price: tx.price,
+        currency: tx.currency,
+        commission: tx.commission,
+        source: tx.source,
+        syntheticOrigin: tx.syntheticOrigin,
+        isCfd: !!tx.cfdPositionId || tx.category === 'cfd',
+        matches: [],
+        matchedQty: 0,
+        residualQty: tx.quantity,
+        status: tx.side === 'K' ? 'open' : 'orphan',
+      },
+      remaining: tx.quantity,
+    });
+  }
+
+  const buyQueue: Array<{ txId: number }> = [];
+  let shortDetected = false;
+
+  for (const tx of txs) {
+    const self = state.get(tx.id!)!;
+
+    if (tx.side === 'K') {
+      buyQueue.push({ txId: tx.id! });
+      continue;
+    }
+
+    // S — consume from buy queue FIFO
+    while (self.remaining > EPSILON && buyQueue.length > 0) {
+      const headRef = buyQueue[0];
+      const head = state.get(headRef.txId)!;
+      if (head.remaining < EPSILON) { buyQueue.shift(); continue; }
+
+      const matched = Math.min(self.remaining, head.remaining);
+
+      self.entry.matches.push({
+        counterpartyTxId: head.entry.txId,
+        counterpartyDate: head.entry.date,
+        counterpartyPrice: head.entry.price,
+        counterpartyCurrency: head.entry.currency,
+        quantity: matched,
+      });
+      head.entry.matches.push({
+        counterpartyTxId: self.entry.txId,
+        counterpartyDate: self.entry.date,
+        counterpartyPrice: self.entry.price,
+        counterpartyCurrency: self.entry.currency,
+        quantity: matched,
+      });
+
+      self.entry.matchedQty += matched;
+      head.entry.matchedQty += matched;
+      self.remaining -= matched;
+      head.remaining -= matched;
+      if (head.remaining < EPSILON) buyQueue.shift();
+    }
+
+    if (self.remaining > EPSILON) shortDetected = true;
+  }
+
+  // Finalize statuses
+  const finalList: FifoMatchedTransaction[] = [];
+  for (const tx of txs) {
+    const s = state.get(tx.id!)!;
+    s.entry.residualQty = Math.max(0, s.entry.quantity - s.entry.matchedQty);
+    if (s.entry.residualQty < EPSILON) {
+      s.entry.status = 'fully-matched';
+    } else if (s.entry.matchedQty > EPSILON) {
+      s.entry.status = 'partial';
+    } else {
+      s.entry.status = s.entry.side === 'S' ? 'orphan' : 'open';
+    }
+    finalList.push(s.entry);
+  }
+
+  let totalBuys = 0;
+  let totalSells = 0;
+  for (const tx of txs) {
+    if (tx.side === 'K') totalBuys += tx.quantity;
+    else totalSells += tx.quantity;
+  }
+
+  return {
+    isin,
+    transactions: finalList,
+    hasComplexity: hasCfd || shortDetected,
+    netOpenQty: totalBuys - totalSells,
+    totalBuys,
+    totalSells,
+  };
+}
+
+/** Smart-delete preview: liczy jak usunięcie danego `targetId` wpłynie na
+ *  pozostałe transakcje pod FIFO. Zwraca listę proponowanych zmian:
+ *   - deletes: ID do usunięcia całkowicie (w tym target)
+ *   - edits: transakcje do edycji z nową ilością (kiedy target był częściowo
+ *     matchowany i trzeba proporcjonalnie odjąć od counterparties)
+ *
+ *  Semantyka:
+ *   - Usuwając K: dla każdego S który konsumował tego K proporcjonalnie, jeśli
+ *     S nie ma innych K-matchy → S też idzie do delete, inaczej edycja qty.
+ *     UWAGA: samo "odjęcie qty od S" jest nieprecyzyjne bo nie wiemy które
+ *     akcje z S pochodziły z K. FIFO dicta order, więc jeśli target K był
+ *     JEDYNYM źródłem dla fragmentu S → edycja zmniejsza qty S o matched qty.
+ *   - Usuwając S: dla każdego K z którego S pobrał → K nie traci nic (K samo
+ *     w sobie wraca do "otwarte"). Czyli prosty DELETE targetu.
+ *
+ *  Kiedy NIE można użyć smart-delete (zwracamy null, UI pokaże zwykły flow):
+ *   - Pozycja ma hasComplexity (shorts/CFD)
+ *   - Target to syntetyczna transakcja
+ *   - Target to K częściowo matchowany przez wiele S (musielibyśmy edytować >1 S,
+ *     co jest skomplikowane, edytowalne ale na razie nie wspierane automatycznie) */
+export interface SmartDeletePlan {
+  deletes: number[]; // tx IDs to delete
+  edits: Array<{
+    txId: number;
+    newQuantity: number;
+    originalQuantity: number;
+  }>;
+  warnings: string[];
+  unsupported?: string; // jeśli nie da się, tu powód
+}
+
+export function computeSmartDeletePlan(
+  targetId: number,
+  allTransactions: Transaction[],
+): SmartDeletePlan {
+  const target = allTransactions.find(t => t.id === targetId);
+  if (!target) {
+    return { deletes: [], edits: [], warnings: [], unsupported: 'Nie znaleziono transakcji.' };
+  }
+  if (target.syntheticOrigin) {
+    return {
+      deletes: [],
+      edits: [],
+      warnings: [],
+      unsupported: 'Transakcja auto-wygenerowana (wezwanie/skup) — usuń operację źródłową zamiast tej transakcji.',
+    };
+  }
+
+  const matching = computeFifoMatching(target.isin, allTransactions);
+  if (matching.hasComplexity) {
+    return {
+      deletes: [],
+      edits: [],
+      warnings: [],
+      unsupported: 'Pozycja zawiera CFD lub short — smart-delete niedostępny. Użyj ręcznego multi-select.',
+    };
+  }
+
+  const entry = matching.transactions.find(t => t.txId === targetId);
+  if (!entry) {
+    return { deletes: [], edits: [], warnings: [], unsupported: 'Transakcja nie jest w FIFO-matching.' };
+  }
+
+  const deletes: number[] = [targetId];
+  const edits: Array<{ txId: number; newQuantity: number; originalQuantity: number }> = [];
+  const warnings: string[] = [];
+
+  if (entry.side === 'S') {
+    // Usunięcie S nie wymaga zmian w K (K tylko "wraca" do open).
+    // Jedyne co warto dodać: jeśli S był orphanem/oversold, silnik może był w split detection.
+    if (entry.status === 'orphan') {
+      warnings.push('Ta sprzedaż była osierocona (oversold). Usunięcie jej jest czysto kosmetyczne.');
+    }
+    return { deletes, edits, warnings };
+  }
+
+  // Usuwamy K
+  if (entry.status === 'open') {
+    // Niematchowany K — po prostu delete
+    return { deletes, edits, warnings };
+  }
+
+  if (entry.status === 'fully-matched' || entry.status === 'partial') {
+    // Musimy zaadresować S-ki które konsumowały tego K.
+    // Strategia: dla każdego S-matcha, zmniejsz qty S o matched quantity.
+    // Edge case: jeśli S po redukcji qty -> 0 ~ dodajemy do deletes zamiast edit.
+    // Edge case: jeśli ten K jest JEDYNĄ K-counterparty dla jakiegoś S (S.matches.length==1),
+    // i jednocześnie matched == S.quantity → S idzie do delete.
+    for (const m of entry.matches) {
+      const counterparty = matching.transactions.find(t => t.txId === m.counterpartyTxId);
+      if (!counterparty) continue;
+
+      // Nowa qty dla S = oryginalna - matched z tym K
+      const newQty = counterparty.quantity - m.quantity;
+
+      if (newQty < EPSILON) {
+        // Cała S wynikała z tego K → usuń S też
+        deletes.push(counterparty.txId);
+      } else {
+        edits.push({
+          txId: counterparty.txId,
+          newQuantity: roundToQty(newQty),
+          originalQuantity: counterparty.quantity,
+        });
+      }
+    }
+
+    if (entry.status === 'partial' && entry.residualQty > EPSILON) {
+      warnings.push(
+        `Ta transakcja K była częściowo otwarta (${roundToQty(entry.residualQty)} akcji niesprzedanych). Usunięcie jej zmniejszy otwartą pozycję.`,
+      );
+    }
+  }
+
+  return { deletes, edits, warnings };
+}
+
+function roundToQty(q: number): number {
+  return Math.round(q * 10000) / 10000;
+}

@@ -121,6 +121,56 @@ export const api = {
     request<{ success: boolean }>(`/portfolio/transactions/${id}`, {
       method: 'DELETE',
     }),
+  bulkDeleteTransactions: (ids: number[]) =>
+    request<{ success: boolean; deleted: number }>(`/portfolio/transactions/bulk-delete`, {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
+  getFifoMatching: (isin: string) =>
+    request<{
+      isin: string;
+      ticker: string;
+      paperName: string;
+      currency: string;
+      transactions: Array<{
+        txId: number;
+        date: string;
+        side: 'K' | 'S';
+        quantity: number;
+        price: number;
+        currency: string;
+        commission: number;
+        source?: string;
+        syntheticOrigin?: string;
+        isCfd: boolean;
+        matches: Array<{
+          counterpartyTxId: number;
+          counterpartyDate: string;
+          counterpartyPrice: number;
+          counterpartyCurrency: string;
+          quantity: number;
+        }>;
+        matchedQty: number;
+        residualQty: number;
+        status: 'fully-matched' | 'partial' | 'open' | 'orphan';
+      }>;
+      hasComplexity: boolean;
+      netOpenQty: number;
+      totalBuys: number;
+      totalSells: number;
+    }>(`/portfolio/transactions/fifo-matching?isin=${encodeURIComponent(isin)}`),
+  smartDeletePreview: (id: number) =>
+    request<{
+      deletes: number[];
+      edits: Array<{ txId: number; newQuantity: number; originalQuantity: number }>;
+      warnings: string[];
+      unsupported?: string;
+    }>(`/portfolio/transactions/${id}/smart-delete-preview`, { method: 'POST' }),
+  smartDeleteApply: (id: number) =>
+    request<{ success: boolean; deleted: number; edited: number; warnings: string[] }>(
+      `/portfolio/transactions/${id}/smart-delete-apply`,
+      { method: 'POST' },
+    ),
 
   // Ticker search
   searchTickers: (query: string) =>
