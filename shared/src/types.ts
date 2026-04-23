@@ -100,6 +100,7 @@ export interface Position {
   weight: number;
   exchange?: string;
   sector?: string;
+  supersector?: string;
   dailyChangePct: number | null;
   category?: InstrumentCategory;
   buyLots?: OpenBuyLot[];
@@ -304,6 +305,7 @@ export interface TickerMapEntry {
   currency: string;
   priceSource: 'yahoo' | 'stooq' | 'auto';
   sector?: string;
+  supersector?: string;
 }
 
 // ============ Stock Split Types ============

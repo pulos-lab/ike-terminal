@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface Position {
@@ -9,6 +9,7 @@ interface Position {
   weight: number;
   exchange?: string;
   sector?: string;
+  supersector?: string;
 }
 
 interface Props {
@@ -72,9 +73,45 @@ function groupBy(positions: Position[], keyFn: (p: Position) => string, colors: 
     }));
 }
 
-// SVG donut chart
-function DonutChart({ data, size = 160 }: { data: SliceData[]; size?: number }) {
-  const [hovered, setHovered] = useState<number | null>(null);
+/** Dzielimy długą etykietę środkową (nazwę sektora) na 2 linie, żeby nie
+ *  wychodziła poza wewnętrzny otwór donuta. Szukamy spacji najbliższej środka
+ *  tekstu; dla jedno-wyrazowych nazw zostawiamy 1 linię. Próg 12 chars
+ *  dopasowany empirycznie do innerR × 2 przy fontSize 11. */
+function splitCenterLabel(text: string, maxPerLine = 12): [string, string | null] {
+  if (text.length <= maxPerLine || !text.includes(' ')) return [text, null];
+  const mid = Math.floor(text.length / 2);
+  let bestIdx = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== ' ') continue;
+    if (bestIdx === -1 || Math.abs(i - mid) < Math.abs(bestIdx - mid)) bestIdx = i;
+  }
+  if (bestIdx === -1) return [text, null];
+  return [text.slice(0, bestIdx), text.slice(bestIdx + 1)];
+}
+
+// SVG donut chart. Może być sterowany z zewnątrz (onHoverChange, onSliceClick)
+// albo całkowicie wewnętrznie — zgodnie z użyciem w poszczególnych donutach.
+interface DonutChartProps {
+  data: SliceData[];
+  size?: number;
+  onHoverChange?: (idx: number | null) => void;
+  onSliceClick?: (slice: SliceData) => void;
+}
+
+function DonutChart({ data, size = 160, onHoverChange, onSliceClick }: DonutChartProps) {
+  const [hovered, setHoveredInner] = useState<number | null>(null);
+  const setHovered = (idx: number | null) => {
+    setHoveredInner(idx);
+    onHoverChange?.(idx);
+  };
+  // Clamp hovered gdy data się skurczy (np. drill-down sektorów → mniej slice'ów)
+  // — inaczej data[hovered] może być undefined i cały drzewko się wywala.
+  useEffect(() => {
+    if (hovered !== null && hovered >= data.length) {
+      setHoveredInner(null);
+      onHoverChange?.(null);
+    }
+  }, [data.length, hovered, onHoverChange]);
   const cx = size / 2;
   const cy = size / 2;
   const outerR = size / 2 - 4;
@@ -82,6 +119,12 @@ function DonutChart({ data, size = 160 }: { data: SliceData[]; size?: number }) 
 
   const total = data.reduce((s, d) => s + d.value, 0);
   if (total === 0) return null;
+
+  // Bezpieczne odczytanie slice'a pod kursorem; undefined gdy hovered
+  // out-of-bounds po rerenderze (efekt powyżej synchronicznie zresetuje
+  // state, ale obecny render wciąż musi działać defensywnie).
+  const hoveredSlice: SliceData | undefined =
+    hovered !== null && hovered < data.length ? data[hovered] : undefined;
 
   // Build arc paths. SVG arc z start == end (pełne koło, np. pojedynczy slice 100%) degeneruje,
   // dlatego clampujemy angle do Math.PI * 2 - 0.001 i — jeśli slice jest faktycznie pełnym kołem —
@@ -143,6 +186,7 @@ function DonutChart({ data, size = 160 }: { data: SliceData[]; size?: number }) 
         <g key={idx}>
           <path
             d={d}
+            data-slice-name={slice.name}
             fill={slice.color}
             fillRule={isFullCircle ? 'evenodd' : 'nonzero'}
             stroke="hsl(var(--card))"
@@ -150,6 +194,7 @@ function DonutChart({ data, size = 160 }: { data: SliceData[]; size?: number }) 
             opacity={hovered === null || hovered === idx ? 1 : 0.4}
             onMouseEnter={() => setHovered(idx)}
             onMouseLeave={() => setHovered(null)}
+            onClick={() => onSliceClick?.(slice)}
             className="transition-opacity duration-150 cursor-pointer"
           />
           {angle > 0.35 && (
@@ -171,29 +216,53 @@ function DonutChart({ data, size = 160 }: { data: SliceData[]; size?: number }) 
           fill-muted-foreground) zamiast SVG attribute fill="hsl(var(...))",
           bo niektóre przeglądarki nie interpretują CSS vars w atrybucie SVG
           i fallback do czarnego powoduje znikanie tekstu w dark mode. */}
-      {hovered !== null && (
-        <>
-          <text
-            x={cx}
-            y={cy - 6}
-            textAnchor="middle"
-            fontSize={11}
-            fontWeight={600}
-            className="fill-foreground pointer-events-none"
-          >
-            {data[hovered].name}
-          </text>
-          <text
-            x={cx}
-            y={cy + 10}
-            textAnchor="middle"
-            fontSize={10}
-            className="fill-muted-foreground pointer-events-none"
-          >
-            {data[hovered].pct.toFixed(1)}%
-          </text>
-        </>
-      )}
+      {hoveredSlice && (() => {
+        const [line1, line2] = splitCenterLabel(hoveredSlice.name);
+        // Rozmiar fontu zjedź do 10 gdy wciąż długo (np. "Przemysł elektromaszynowy"
+        // wraz po podziale ma 13 chars w jednej linii).
+        const maxLineLen = Math.max(line1.length, line2?.length ?? 0);
+        const labelFontSize = maxLineLen > 13 ? 10 : 11;
+        // Rozmieszczenie: 1 linia → nazwa na cy-6, pct na cy+10.
+        // 2 linie → nazwa 1 na cy-12, nazwa 2 na cy+1, pct na cy+15.
+        const nameY1 = line2 ? cy - 12 : cy - 6;
+        const nameY2 = cy + 1;
+        const pctY = line2 ? cy + 15 : cy + 10;
+        return (
+          <>
+            <text
+              x={cx}
+              y={nameY1}
+              textAnchor="middle"
+              fontSize={labelFontSize}
+              fontWeight={600}
+              className="fill-foreground pointer-events-none"
+            >
+              {line1}
+            </text>
+            {line2 && (
+              <text
+                x={cx}
+                y={nameY2}
+                textAnchor="middle"
+                fontSize={labelFontSize}
+                fontWeight={600}
+                className="fill-foreground pointer-events-none"
+              >
+                {line2}
+              </text>
+            )}
+            <text
+              x={cx}
+              y={pctY}
+              textAnchor="middle"
+              fontSize={10}
+              className="fill-muted-foreground pointer-events-none"
+            >
+              {hoveredSlice.pct.toFixed(1)}%
+            </text>
+          </>
+        );
+      })()}
     </svg>
   );
 }
@@ -226,6 +295,127 @@ function DiversificationChart({ title, data }: { title: string; data: SliceData[
   );
 }
 
+/** Panel "Sektory" — donut z drill-downem (nadsektor → podsektory) oraz listą
+ *  spółek pod wykresem, synchronizowaną z hoverem. */
+function SectorsChart({
+  positions,
+  totalValuePln,
+}: {
+  positions: Position[];
+  totalValuePln: number;
+}) {
+  const [drillSupersector, setDrillSupersector] = useState<string | null>(null);
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+
+  // Dane donuta: poziom 1 — wszystkie nadsektory; poziom 2 — podsektory wybranego
+  // nadsektora (membership liczony po p.supersector === drillSupersector).
+  const sectorData = useMemo(() => {
+    if (drillSupersector === null) {
+      return groupBy(positions, p => p.supersector || 'Inne', SECTOR_COLORS, totalValuePln);
+    }
+    const filtered = positions.filter(p => (p.supersector || 'Inne') === drillSupersector);
+    return groupBy(filtered, p => p.sector || 'Pozostałe', SECTOR_COLORS, totalValuePln);
+  }, [positions, totalValuePln, drillSupersector]);
+
+  // Spółki dopasowane do aktualnego kontekstu (hover lub drill-down).
+  // Priorytet: hover > drill-down > nic.
+  const visibleMembers = useMemo(() => {
+    const hoveredSliceName = hoveredIdx !== null ? sectorData[hoveredIdx]?.name : null;
+    if (hoveredSliceName) {
+      // Hover: filtruj po aktualnym kluczu (nadsektor lub podsektor w zależności od poziomu).
+      if (drillSupersector === null) {
+        return positions.filter(p => (p.supersector || 'Inne') === hoveredSliceName);
+      }
+      return positions.filter(
+        p =>
+          (p.supersector || 'Inne') === drillSupersector &&
+          (p.sector || 'Pozostałe') === hoveredSliceName,
+      );
+    }
+    if (drillSupersector !== null) {
+      return positions.filter(p => (p.supersector || 'Inne') === drillSupersector);
+    }
+    return [];
+  }, [positions, sectorData, hoveredIdx, drillSupersector]);
+
+  const membersSorted = useMemo(
+    () => [...visibleMembers].sort((a, b) => b.currentValuePln - a.currentValuePln),
+    [visibleMembers],
+  );
+
+  const listHeader = (() => {
+    const hoveredName = hoveredIdx !== null ? sectorData[hoveredIdx]?.name : null;
+    if (hoveredName) {
+      return drillSupersector ? `${drillSupersector}: ${hoveredName}` : hoveredName;
+    }
+    if (drillSupersector) return drillSupersector;
+    return 'Najedź na sektor, aby zobaczyć spółki';
+  })();
+
+  return (
+    <Card>
+      <CardHeader className="pb-1">
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm font-medium">Sektory</CardTitle>
+          {drillSupersector && (
+            <button
+              type="button"
+              onClick={() => {
+                setDrillSupersector(null);
+                setHoveredIdx(null);
+              }}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              ← Wszystkie sektory
+            </button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="pb-4">
+        <DonutChart
+          data={sectorData}
+          onHoverChange={setHoveredIdx}
+          onSliceClick={slice => {
+            if (drillSupersector === null && slice.name !== 'Inne') {
+              setDrillSupersector(slice.name);
+              setHoveredIdx(null);
+            }
+          }}
+        />
+        <ChartLegend data={sectorData} />
+        <div className="mt-3 border-t pt-2">
+          <div className="text-xs font-medium text-muted-foreground mb-1.5">{listHeader}</div>
+          {membersSorted.length > 0 ? (
+            <ul className="space-y-0.5 max-h-40 overflow-y-auto pr-1">
+              {membersSorted.map(p => {
+                const pct = totalValuePln > 0 ? (p.currentValuePln / totalValuePln) * 100 : 0;
+                return (
+                  <li
+                    key={p.ticker + p.paperName}
+                    className="flex items-center justify-between gap-2 text-xs"
+                  >
+                    <span className="font-medium truncate max-w-[40%]" title={p.paperName}>
+                      {p.ticker}
+                    </span>
+                    <span className="text-muted-foreground truncate flex-1" title={p.paperName}>
+                      {p.paperName}
+                    </span>
+                    <span className="tabular-nums text-foreground">{pct.toFixed(1)}%</span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="text-xs text-muted-foreground italic">
+              {drillSupersector ? 'Brak spółek w tym sektorze.' : 'Kliknij w slice aby zobaczyć podsektory.'}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-lg border bg-card p-3 text-center">
@@ -246,7 +436,9 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
     const top1 = sorted[0];
     const top5Weight = sorted.slice(0, 5).reduce((s, p) => s + p.weight, 0);
 
-    const sectors = new Set(positions.map(p => p.sector).filter(Boolean));
+    // Liczymy liczbę unikalnych nadsektorów (Sektory u góry KPI = 8 jeżeli
+    // portfel pokrywa wszystkie). Jeżeli nadsektor brak — fallback na "Inne".
+    const supers = new Set(positions.map(p => p.supersector || 'Inne'));
     const regions = new Set(positions.map(p => REGION_MAP[p.exchange || ''] || 'Inne'));
 
     return {
@@ -255,7 +447,7 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
       top1Ticker: top1.ticker,
       top1Weight: top1.weight.toFixed(1),
       top5Weight: top5Weight.toFixed(1),
-      sectorCount: sectors.size,
+      sectorCount: supers.size,
       regionCount: regions.size,
     };
   }, [positions]);
@@ -267,11 +459,6 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
 
   const currencyData = useMemo(
     () => groupBy(positions, p => p.currency, CURRENCY_COLORS, totalValuePln),
-    [positions, totalValuePln]
-  );
-
-  const sectorData = useMemo(
-    () => groupBy(positions, p => p.sector || 'Inne', SECTOR_COLORS, totalValuePln),
     [positions, totalValuePln]
   );
 
@@ -320,7 +507,7 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <DiversificationChart title="Regiony" data={regionData} />
         <DiversificationChart title="Waluty" data={currencyData} />
-        <DiversificationChart title="Sektory" data={sectorData} />
+        <SectorsChart positions={positions} totalValuePln={totalValuePln} />
         <DiversificationChart title="Top pozycje" data={topPositionsData} />
       </div>
     </div>

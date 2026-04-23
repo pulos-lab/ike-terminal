@@ -2,12 +2,12 @@ import { Router } from 'express';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { getAllTransactions, getTransactionById, insertTransaction, updateTransaction, deleteTransaction } from '../db/transactions-repo.js';
 import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOperation, insertOperations, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
-import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry, getAllTickers, updateTickerSector } from '../db/ticker-map-repo.js';
+import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry, getAllTickers, updateTickerSectors } from '../db/ticker-map-repo.js';
+import { resolveSector } from '../services/sector-resolver.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
 import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput, StockSplitInput, DetectedSplit, UpcomingDividend } from 'shared';
 import { invalidateCachedPrices } from '../services/history-cache.js';
-import { fetchYahooPrice, fetchFxRate, fetchDividendCalendar, fetchAssetProfile } from '../services/yahoo-finance.js';
-import { findCfdTicker, getCfdSector } from 'shared';
+import { fetchYahooPrice, fetchFxRate, fetchDividendCalendar } from '../services/yahoo-finance.js';
 import {
   computeOpenPositions,
   computeClosedTrades,
@@ -41,9 +41,9 @@ function loadSplitsForEngine(pid: string): DetectedSplit[] {
 
 /** In-memory flag: per-portfolio dedupe dla lazy-sector-backfill.
  *  Uruchamiamy backfill tylko raz per proces na portfel — wystarczy żeby
- *  nadrobić brakujące sektory po upgradzie kodu. Yahoo fetchAssetProfile
- *  i tak cache'uje wyniki 7 dni, więc powtórne uruchomienia są tanie,
- *  ale dedupe oszczędza I/O i chroni przed rate-limitem. */
+ *  nadrobić brakujące sektory po upgradzie kodu. Yahoo assetProfile i tak
+ *  cache'uje wyniki 7 dni, więc powtórne uruchomienia są tanie, ale dedupe
+ *  oszczędza I/O i chroni przed rate-limitem. */
 const sectorsBackfilledForPortfolio = new Set<string>();
 
 async function lazyBackfillSectors(pid: string): Promise<void> {
@@ -51,16 +51,15 @@ async function lazyBackfillSectors(pid: string): Promise<void> {
   sectorsBackfilledForPortfolio.add(pid);
   try {
     const entries = getAllTickers(pid);
-    const toUpdate = entries.filter(e => !e.sector);
+    // Backfill gdy brak supersektora — po zmianie taksonomii (stockwatch) stary
+    // `sector` z Yahoo GICS (po angielsku) nie jest już autorytatywny.
+    const toUpdate = entries.filter(e => !e.supersector);
     for (const entry of toUpdate) {
       try {
-        const cfdEntry = findCfdTicker(entry.name) || findCfdTicker(entry.ticker);
-        if (cfdEntry) {
-          updateTickerSector(entry.isin, getCfdSector(cfdEntry), pid);
-          continue;
+        const { supersector, subsector } = await resolveSector(entry);
+        if (supersector || subsector) {
+          updateTickerSectors(entry.isin, supersector, subsector, pid);
         }
-        const profile = await fetchAssetProfile(entry.ticker);
-        if (profile?.sector) updateTickerSector(entry.isin, profile.sector, pid);
       } catch {
         // ignore — pojedynczy fail nie blokuje reszty
       }
@@ -531,38 +530,24 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
 }));
 
 // POST /api/portfolio/ticker-map/refresh-sectors
-// Backfill pola sector dla wszystkich entries w ticker_map aktywnego portfela.
-// Dla CFD (CFD_TICKER_MAP hit) używa getCfdSector (offline). Dla pozostałych
-// wywołuje Yahoo fetchAssetProfile. Bezpieczne — aktualizuje tylko puste
-// sektory (nie nadpisuje ręcznie przypisanych).
+// Backfill pól sector + supersector dla wszystkich entries w ticker_map aktywnego portfela.
+// Kolejność źródeł: GPW_SECTOR_MAP (stockwatch, offline) → CFD_TICKER_MAP (offline) →
+// Yahoo fetchAssetProfile (GICS → mapGicsToStockwatch → PL). Bezpieczne — aktualizuje
+// tylko entries bez supersektora (nie nadpisuje ręcznie przypisanych).
 router.post('/ticker-map/refresh-sectors', asyncHandler(async (req, res) => {
   const pid = req.portfolioId;
   const entries = getAllTickers(pid);
-  const toUpdate = entries.filter(e => !e.sector);
+  const toUpdate = entries.filter(e => !e.supersector);
 
   let updatedCount = 0;
-  let fromCfdMap = 0;
-  let fromYahoo = 0;
   const failed: string[] = [];
 
   for (const entry of toUpdate) {
     try {
-      // CFD-first: static map
-      const cfdEntry = findCfdTicker(entry.name) || findCfdTicker(entry.ticker);
-      if (cfdEntry) {
-        const sector = getCfdSector(cfdEntry);
-        updateTickerSector(entry.isin, sector, pid);
+      const { supersector, subsector } = await resolveSector(entry);
+      if (supersector || subsector) {
+        updateTickerSectors(entry.isin, supersector, subsector, pid);
         updatedCount++;
-        fromCfdMap++;
-        continue;
-      }
-
-      // Otherwise: Yahoo assetProfile
-      const profile = await fetchAssetProfile(entry.ticker);
-      if (profile?.sector) {
-        updateTickerSector(entry.isin, profile.sector, pid);
-        updatedCount++;
-        fromYahoo++;
       } else {
         failed.push(entry.ticker);
       }
@@ -575,8 +560,6 @@ router.post('/ticker-map/refresh-sectors', asyncHandler(async (req, res) => {
     total: entries.length,
     needingUpdate: toUpdate.length,
     updated: updatedCount,
-    fromCfdMap,
-    fromYahoo,
     failed,
   });
 }));

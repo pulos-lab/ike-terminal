@@ -2,7 +2,8 @@ import type { Transaction, TickerMapEntry } from 'shared';
 import { findNcTicker, findCfdTicker, getCfdSector } from 'shared';
 import { getTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { searchYahoo, validateStooq, searchStooqByName } from './ticker-search.js';
-import { fetchYahooPrice, fetchAssetProfile } from './yahoo-finance.js';
+import { fetchYahooPrice } from './yahoo-finance.js';
+import { resolveSector } from './sector-resolver.js';
 
 interface UnresolvedIsin {
   isin: string;
@@ -362,6 +363,7 @@ async function buildEntry(
 ): Promise<TickerMapEntry> {
   const exchange = inferExchange(ticker, yahooExchange);
   const priceSource = inferPriceSource(ticker, exchange);
+  const resolvedName = name || paperName;
 
   // CFD-first: jeśli paperName/ticker pasuje do CFD_TICKER_MAP, używamy
   // statycznej kategoryzacji (Yahoo assetProfile i tak nie zwraca sensownego
@@ -371,39 +373,46 @@ async function buildEntry(
     return {
       isin,
       ticker,
-      name: name || paperName,
+      name: resolvedName,
       exchange,
       currency: cfdEntry.currency,
       priceSource,
-      sector: getCfdSector(cfdEntry),
+      sector: undefined,
+      supersector: getCfdSector(cfdEntry),
     };
   }
 
   // For .WA tickers, we know it's PLN — skip Yahoo price lookup,
-  // ale sector nadal próbujemy pobrać (GPW ma assetProfile na Yahoo).
+  // ale sektor/supersektor próbujemy pobrać (stockwatch map + Yahoo fallback).
   if (ticker.endsWith('.WA')) {
-    const profile = await fetchAssetProfile(ticker).catch(() => null);
+    const { supersector, subsector } = await resolveSector({
+      isin, ticker, name: resolvedName, exchange, currency: 'PLN', priceSource,
+    }).catch(() => ({ supersector: null, subsector: null }));
     return {
       isin,
       ticker,
-      name: name || paperName,
+      name: resolvedName,
       exchange,
       currency: 'PLN',
       priceSource,
-      sector: profile?.sector || undefined,
+      sector: subsector || undefined,
+      supersector: supersector || undefined,
     };
   }
 
-  // For other tickers, fetch currency (price) and sector (profile) in parallel.
+  // For other tickers, fetch currency (price) and klasyfikację sektorową w parallel.
   let currency = txCurrency;
-  let sector: string | undefined;
+  let subsector: string | null = null;
+  let supersector: string | null = null;
   try {
-    const [priceData, profile] = await Promise.all([
+    const [priceData, sectors] = await Promise.all([
       fetchYahooPrice(ticker).catch(() => null),
-      fetchAssetProfile(ticker).catch(() => null),
+      resolveSector({ isin, ticker, name: resolvedName, exchange, currency: txCurrency, priceSource })
+        .catch(() => ({ supersector: null, subsector: null })),
     ]);
     if (priceData?.currency) currency = priceData.currency;
-    if (profile?.sector) sector = profile.sector;
+    subsector = sectors.subsector;
+    supersector = sectors.supersector;
   } catch {
     // Fall back to transaction currency, no sector
   }
@@ -411,11 +420,12 @@ async function buildEntry(
   return {
     isin,
     ticker,
-    name: name || paperName,
+    name: resolvedName,
     exchange,
     currency,
     priceSource,
-    sector,
+    sector: subsector || undefined,
+    supersector: supersector || undefined,
   };
 }
 

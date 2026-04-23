@@ -5,13 +5,13 @@ import type { TickerMapEntry } from 'shared';
 export function seedTickerMap(portfolioId: string = 'default'): void {
   const db = getDb(portfolioId);
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO ticker_map (isin, ticker, name, exchange, currency, price_source, sector)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO ticker_map (isin, ticker, name, exchange, currency, price_source, sector, supersector)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const seedAll = db.transaction(() => {
     for (const entry of TICKER_MAP) {
-      stmt.run(entry.isin, entry.ticker, entry.name, entry.exchange, entry.currency, entry.priceSource, entry.sector || null);
+      stmt.run(entry.isin, entry.ticker, entry.name, entry.exchange, entry.currency, entry.priceSource, entry.sector || null, entry.supersector || null);
     }
   });
 
@@ -30,6 +30,7 @@ export function getTickerByIsin(isin: string, portfolioId: string = 'default'): 
     currency: row.currency,
     priceSource: row.price_source,
     sector: row.sector || undefined,
+    supersector: row.supersector || undefined,
   };
 }
 
@@ -44,6 +45,7 @@ export function getAllTickers(portfolioId: string = 'default'): TickerMapEntry[]
     currency: row.currency,
     priceSource: row.price_source,
     sector: row.sector || undefined,
+    supersector: row.supersector || undefined,
   }));
 }
 
@@ -64,6 +66,7 @@ export function getTickerBySymbol(ticker: string, portfolioId: string = 'default
     currency: row.currency,
     priceSource: row.price_source,
     sector: row.sector || undefined,
+    supersector: row.supersector || undefined,
   };
 }
 
@@ -101,6 +104,7 @@ function mapTickerRow(row: any): TickerMapEntry {
     currency: row.currency,
     priceSource: row.price_source,
     sector: row.sector || undefined,
+    supersector: row.supersector || undefined,
   };
 }
 
@@ -140,9 +144,9 @@ export function upsertTickerMapEntry(
     if (existing) return; // anchor — already resolved, do not overwrite
   }
   db.prepare(`
-    INSERT OR REPLACE INTO ticker_map (isin, ticker, name, exchange, currency, price_source, sector)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(entry.isin, entry.ticker, entry.name, entry.exchange, entry.currency, entry.priceSource, entry.sector || null);
+    INSERT OR REPLACE INTO ticker_map (isin, ticker, name, exchange, currency, price_source, sector, supersector)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(entry.isin, entry.ticker, entry.name, entry.exchange, entry.currency, entry.priceSource, entry.sector || null, entry.supersector || null);
 }
 
 /** Usuń wpis z ticker_map dla danego ISIN-u. Używane do czyszczenia legacy-stubów
@@ -158,5 +162,20 @@ export function deleteTickerMapEntry(isin: string, portfolioId: string = 'defaul
 export function updateTickerSector(isin: string, sector: string | null, portfolioId: string = 'default'): boolean {
   const db = getDb(portfolioId);
   const res = db.prepare('UPDATE ticker_map SET sector = ? WHERE isin = ?').run(sector, isin);
+  return res.changes > 0;
+}
+
+/** Update obu pól `sector` (podsektor) i `supersector` dla danego ISIN-u.
+ *  Preferowana metoda po wprowadzeniu hybrydy nadsektor+podsektor ze stockwatch/GICS. */
+export function updateTickerSectors(
+  isin: string,
+  supersector: string | null,
+  subsector: string | null,
+  portfolioId: string = 'default',
+): boolean {
+  const db = getDb(portfolioId);
+  const res = db
+    .prepare('UPDATE ticker_map SET sector = ?, supersector = ? WHERE isin = ?')
+    .run(subsector, supersector, isin);
   return res.changes > 0;
 }
