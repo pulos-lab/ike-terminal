@@ -861,6 +861,29 @@ function newtonXirr(cashflows: Array<{ date: Date; amount: number }>, guess = 0.
 
 // ============ Portfolio History ============
 
+/** Detect dominant base currency of a portfolio from deposit/withdrawal operations.
+ *  Pojedyncza waluta → ta; mixed → 'PLN' fallback. Używane przez endpointy
+ *  routes i client do decyzji "w jakiej walucie pokazać wartości".  */
+export function detectBaseCurrency(operations: CashOperation[]): string {
+  const curs = new Set<string>();
+  for (const op of operations) {
+    if (op.operationType === 'deposit' || op.operationType === 'withdrawal') {
+      curs.add((op.currency || 'PLN').toUpperCase());
+    }
+  }
+  return curs.size === 1 ? [...curs][0] : 'PLN';
+}
+
+/** Benchmark currency lookup — Yahoo nie zawsze dostarcza przy fetchu, a dla
+ *  Stooq benchmarków nie mamy metadanych. Konsensualna lista per ticker. */
+function benchmarkCurrencyFromTicker(ticker: string): string {
+  if (!ticker) return 'PLN';
+  const t = ticker.toUpperCase();
+  if (t.endsWith('.WA') || t === 'WIG' || t === 'WIG20' || t === 'MWIG40' || t === 'SWIG80') return 'PLN';
+  // ^GSPC, ^IXIC, ^DJI etc. — domyślnie USD (nasze obecne benchmark'i zagraniczne)
+  return 'USD';
+}
+
 export async function computePortfolioHistory(
   transactions: Transaction[],
   operations: CashOperation[],
@@ -870,15 +893,24 @@ export async function computePortfolioHistory(
   startDate?: string,
   endDate?: string,
   splits: DetectedSplit[] = [],
+  /** Waluta bazowa portfela — wszystkie wartości w history.portfolioValue,
+   *  totalDeposited, returnPct, twrPct, benchmark itp. są liczone w tej walucie.
+   *  Dla portfeli PLN: 'PLN' (default, zachowuje backward-compat).
+   *  Dla portfeli walutowych (np. XTB USD sub-konto): 'USD' → MWR/TWR liczone
+   *  w USD, bez FX noise z wahań USD/PLN. */
+  baseCurrency: string = 'PLN',
 ): Promise<{
   history: PortfolioHistoryPoint[];
   metrics: PortfolioMetrics;
   detectedSplits: DetectedSplit[];
-  /** Per-day snapshot of FX rates (currency → PLN multiplier).
-   * Exposed dla downstream consumers (np. computeCashFlow) którzy potrzebują
-   * konwertować PLN-values history do innej waluty bazowej bez re-fetchu. */
+  /** Per-day snapshot of FX rates (currency → baseCurrency multiplier).
+   *  Dla baseCurrency='PLN' (domyślnie) zawartość to standardowe cur → PLN rates.
+   *  Dla baseCurrency='USD' to cur → USD rates (w szczególności PLN → USD jest
+   *  1/USDPLN). Wyjście eksponowane dla downstream consumers (computeCashFlow
+   *  i inne) którzy potrzebują konwertować wartości bez re-fetchu. */
   dailyFxRates: Map<string, Map<string, number>>;
 }> {
+  const baseCur = baseCurrency.toUpperCase();
   // Determine date range
   const allDates = [
     ...operations.map(o => o.date.split('T')[0]),
@@ -1161,6 +1193,10 @@ export async function computePortfolioHistory(
     ? allActivityDates.sort().pop()!
     : end;
 
+  // Waluta benchmarku — potrzebna dla konwersji do baseCurrency portfela.
+  // Pochodzi z BENCHMARKS config (po stronie route) albo inferujemy z tickera.
+  const benchCurrency = benchmarkCurrencyFromTicker(benchmarkTicker);
+
   // Compute daily values
   const history: PortfolioHistoryPoint[] = [];
   let firstDepositSeen = false;
@@ -1212,45 +1248,62 @@ export async function computePortfolioHistory(
     // Skip days before first deposit (no money in account yet)
     if (!firstDepositSeen) continue;
 
-    // Get FX rates for the day (generic — all non-PLN currencies)
-    const fxRates = new Map<string, number>(); // currency -> PLN rate
-    fxRates.set('PLN', 1);
+    // Get FX rates for the day. Pierwszy krok: fetch wszystkie cur→PLN rates z
+    // Yahoo (standardowa ścieżka). Potem konwertujemy via PLN do baseCurrency:
+    //   fx(cur → baseCurrency) = fx(cur → PLN) / fx(baseCurrency → PLN)
+    //
+    // Dla baseCurrency='PLN': fxBaseToPln=1, fxRates jest standard cur→PLN.
+    // Dla baseCurrency='USD': fxRates to cur→USD; np. PLN→USD = 1/USDPLN.
     const defaultFxRates: Record<string, number> = {
       USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
       CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
     };
-    for (const cur of allCurrencies) {
+
+    const fxToPln = new Map<string, number>();
+    fxToPln.set('PLN', 1);
+    const currenciesToFetch = new Set<string>(allCurrencies);
+    currenciesToFetch.delete('PLN');
+    if (baseCur !== 'PLN') currenciesToFetch.add(baseCur); // zawsze potrzebujemy base→PLN
+    if (benchCurrency !== 'PLN') currenciesToFetch.add(benchCurrency); // dla konwersji benchmark price
+    for (const cur of currenciesToFetch) {
       const fxTicker = `${cur}PLN=X`;
       const rate = getPrice(fxTicker, date, prevPrices.get(fxTicker) || defaultFxRates[cur] || 1);
       prevPrices.set(fxTicker, rate);
-      fxRates.set(cur, rate);
+      fxToPln.set(cur, rate);
+    }
+    const fxBaseToPln = fxToPln.get(baseCur) ?? 1;
+
+    // fxRates: currency → baseCurrency multiplier (amt × fxRates.get(cur) daje wartość w baseCurrency)
+    const fxRates = new Map<string, number>();
+    for (const [cur, ratePln] of fxToPln) {
+      fxRates.set(cur, ratePln / fxBaseToPln);
     }
     dailyFxRates.set(date, new Map(fxRates));
 
-    // Convert today's deposits / withdrawals to PLN using this day's FX rates.
-    // All downstream math (totalDeposited, netCashFlow for TWR, benchmark DCA)
-    // uses PLN to stay consistent with totalValue (also in PLN).
-    let depositPln = 0;
+    // Convert today's deposits / withdrawals do baseCurrency. Zmiana nazw
+    // lokalnych *Pln → *Base — wartości teraz są w walucie bazowej portfela
+    // (dla PLN portfela: PLN, dla USD portfela: USD).
+    let depositBase = 0;
     const depositByCur = dailyDepositByCur.get(date);
     if (depositByCur) {
       for (const [cur, amt] of depositByCur) {
-        depositPln += amt * (fxRates.get(cur) ?? defaultFxRates[cur] ?? 1);
+        depositBase += amt * (fxRates.get(cur) ?? 1);
       }
     }
-    let withdrawalPln = 0;
+    let withdrawalBase = 0;
     const withdrawalByCur = dailyWithdrawalByCur.get(date);
     if (withdrawalByCur) {
       for (const [cur, amt] of withdrawalByCur) {
-        withdrawalPln += amt * (fxRates.get(cur) ?? defaultFxRates[cur] ?? 1);
+        withdrawalBase += amt * (fxRates.get(cur) ?? 1);
       }
     }
-    investedCumulative += depositPln;
-    investedCumulative -= withdrawalPln;
-    totalDeposited += depositPln;
-    totalWithdrawn += withdrawalPln;
+    investedCumulative += depositBase;
+    investedCumulative -= withdrawalBase;
+    totalDeposited += depositBase;
+    totalWithdrawn += withdrawalBase;
 
-    // Compute stock value in PLN
-    let stockValuePln = 0;
+    // Compute stock value in baseCurrency
+    let stockValueBase = 0;
 
     for (const [isin, shares] of holdings) {
       if (shares < EPSILON) continue;
@@ -1267,44 +1320,49 @@ export async function computePortfolioHistory(
         price = price / 100;
       }
 
-      const fx = fxRates.get(upperCur === 'GBX' ? 'GBP' : upperCur) || 1;
-      stockValuePln += shares * price * fx;
+      const fx = fxRates.get(upperCur === 'GBX' ? 'GBP' : upperCur) ?? 1;
+      stockValueBase += shares * price * fx;
     }
 
-    // Total cash in PLN (convert all foreign currency balances)
-    let totalCashPln = 0;
+    // Total cash in baseCurrency (convert all foreign currency balances)
+    let totalCashBase = 0;
     for (const [cur, balance] of cashByCurrency) {
-      const fx = fxRates.get(cur) || 1;
-      totalCashPln += balance * fx;
+      const fx = fxRates.get(cur) ?? 1;
+      totalCashBase += balance * fx;
     }
 
-    const totalValue = stockValuePln + totalCashPln;
+    const totalValue = stockValueBase + totalCashBase;
 
-    // Benchmark DCA — only buy once real price data is available
+    // Benchmark DCA — konwertujemy cenę benchmarka z jego natywnej waluty do
+    // baseCurrency portfela, żeby DCA kwot (depositBase) było porównywalne z
+    // "ile jednostek benchmarku bym kupił". Dla PLN portfela z WIG: fx=1.
+    // Dla USD portfela z S&P: fx=1. Dla USD portfela z WIG (rzadki): PLN→USD.
     const benchKey = `benchmark_${benchmarkTicker}`;
     const benchRawPrice = getPrice(benchKey, date, prevPrices.get(benchKey) || 0);
+    const benchFx = fxRates.get(benchCurrency) ?? 1;
+    const benchPriceBase = benchRawPrice * benchFx;
     if (!benchPriceAvailable && benchRawPrice > 0) {
       const benchPriceMap = historicalPrices.get(benchKey);
       if (benchPriceMap && benchPriceMap.has(date)) {
         benchPriceAvailable = true;
-        firstBenchPrice = benchRawPrice;
+        firstBenchPrice = benchPriceBase;
       }
     }
-    const benchPrice = benchPriceAvailable ? benchRawPrice : 0;
+    const benchPrice = benchPriceAvailable ? benchPriceBase : 0;
     prevPrices.set(benchKey, benchRawPrice);
 
-    if (benchPrice > 0 && (depositPln > 0 || pendingBenchDeposit > 0)) {
-      benchShares += (depositPln + pendingBenchDeposit) / benchPrice;
+    if (benchPrice > 0 && (depositBase > 0 || pendingBenchDeposit > 0)) {
+      benchShares += (depositBase + pendingBenchDeposit) / benchPrice;
       pendingBenchDeposit = 0;
-    } else if (depositPln > 0) {
-      pendingBenchDeposit += depositPln;
+    } else if (depositBase > 0) {
+      pendingBenchDeposit += depositBase;
     }
-    // Sell benchmark shares for the same PLN withdrawal amount.
-    // This simulates "what if I withdrew the same cash from the benchmark?"
-    // If benchmark doesn't have enough value, withdraw everything it has.
-    if (withdrawalPln > 0 && benchShares > 0 && benchPrice > 0) {
+    // Sell benchmark shares for the same baseCurrency withdrawal amount.
+    // Symuluje "gdybym wypłacił tyle samo cash z benchmarku". Jeśli benchmark
+    // nie ma wystarczającej wartości, wypłacamy wszystko co ma.
+    if (withdrawalBase > 0 && benchShares > 0 && benchPrice > 0) {
       const benchValueNow = benchShares * benchPrice;
-      const actualBenchWithdraw = Math.min(withdrawalPln, benchValueNow);
+      const actualBenchWithdraw = Math.min(withdrawalBase, benchValueNow);
       benchShares -= actualBenchWithdraw / benchPrice;
       benchTotalWithdrawn += actualBenchWithdraw;
     }
@@ -1326,7 +1384,7 @@ export async function computePortfolioHistory(
     // use mid-day timing (Modified Dietz) to prevent near-zero division artifacts.
     // When portfolio is essentially liquidated (totalValue < 1% of peak),
     // freeze TWR to avoid meaningless ratios on residual cash.
-    const netCashFlow = depositPln - withdrawalPln;
+    const netCashFlow = depositBase - withdrawalBase;
     if (prevTotalValue > 0 && totalValue > peakTotalValue * 0.01) {
       // Guard: if prevTotalValue is negligible relative to totalValue and there
       // was no cash flow, this is a data artifact (e.g. missing price data on
@@ -1390,29 +1448,32 @@ export async function computePortfolioHistory(
   // Compute metrics
   const lastPoint = history[history.length - 1];
 
-  // Helper: convert an operation's amount to PLN using that day's FX rate.
-  // Falls back to default rate (≈ current market) if the date is outside the
-  // history range (e.g. operation pre-firstDepositSeen — rare edge case).
-  const defaultFxForXirr: Record<string, number> = {
+  // Helper: konwertuj kwotę operacji do baseCurrency używając FX z daty operacji.
+  // Fallback: domyślne rate PLN-based, skorygowane przez fxBaseToPln (dla baseCurrency='PLN' → 1).
+  const defaultFxToPln: Record<string, number> = {
     USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
     CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
   };
-  const opAmountPln = (op: CashOperation): number => {
+  const defaultBaseToPln = baseCur === 'PLN' ? 1 : (defaultFxToPln[baseCur] ?? 1);
+  const opAmountBase = (op: CashOperation): number => {
     const d = op.date.split('T')[0];
     const cur = (op.currency || 'PLN').toUpperCase();
-    const fx = dailyFxRates.get(d)?.get(cur) ?? defaultFxForXirr[cur] ?? 1;
-    return op.amount * fx;
+    const fxFromMap = dailyFxRates.get(d)?.get(cur);
+    if (fxFromMap !== undefined) return op.amount * fxFromMap;
+    // Fallback: ratio of PLN-defaults (default_cur_pln / default_base_pln = default_cur_base)
+    const defaultCurToPln = cur === 'PLN' ? 1 : (defaultFxToPln[cur] ?? 1);
+    return op.amount * (defaultCurToPln / defaultBaseToPln);
   };
 
   // Include both deposits (positive) and withdrawals (negative) for XIRR,
-  // converted to PLN (portfolio.value is in PLN, so cash flows must match).
+  // converted to baseCurrency (totalValue też jest w base, więc spójne).
   const depositsList = operations
     .filter(op => op.operationType === 'deposit' || op.operationType === 'withdrawal')
-    .map(op => ({ date: op.date, amount: opAmountPln(op) }));
+    .map(op => ({ date: op.date, amount: opAmountBase(op) }));
 
   const totalDividends = operations
     .filter(op => op.operationType === 'dividend')
-    .reduce((sum, op) => sum + opAmountPln(op), 0);
+    .reduce((sum, op) => sum + opAmountBase(op), 0);
 
   let xirr = 0;
   try {
