@@ -877,15 +877,23 @@ export function detectBaseCurrency(operations: CashOperation[]): string {
 
 /** Konwertuje op.fxRate do jednolitej konwencji "PLN per 1 X" (direct PLN quote).
  *
- *  Konwencje w istniejących danych:
- *  - Bossa/DEGIRO: fxRate = PLN per X (rate > 1 dla USD/EUR/GBP/CHF)
- *    Przykład: "Wymiana waluty PLN/USD 3.5713" → 3.5713 PLN za 1 USD
- *  - XTB: fxRate = X per PLN (rate < 1 dla tych samych walut)
- *    Przykład: "Exchange rate:0.280763" → 0.280763 USD za 1 PLN
+ *  Działa TYLKO dla par zawierających PLN ('PLN/USD', 'USD/PLN', 'EUR/PLN', …).
+ *  Zwraca null dla cross-rate par ('USD/EUR', 'EUR/GBP', …) — tam op.fxRate
+ *  nie jest kursem vs PLN, więc caller musi użyć historical PLN rate
+ *  przekazany przez `historicalCrossRates` do computeFxImpact.
  *
- *  Rozróżniamy po `op.source`. Gdy dodajemy nowego brokera należy rozszerzyć.  */
+ *  Konwencje w istniejących danych:
+ *  - Bossa/DEGIRO PLN-involved: fxRate = PLN per X (rate > 1 dla USD/EUR/GBP/CHF)
+ *    Przykład: "Wymiana waluty PLN/USD 3.5713" → 3.5713 PLN za 1 USD
+ *  - XTB PLN-involved: fxRate = X per PLN (rate < 1 dla tych samych walut)
+ *    Przykład: "Exchange rate:0.280763" → 0.280763 USD za 1 PLN
+ *  - Cross-rate (DEGIRO USD↔EUR): fxRate = np. USD per EUR (rate ~1.1),
+ *    NIE vs PLN → trzeba historical PLN rate.
+ */
 function plnPerXFromOp(op: CashOperation): number | null {
   if (!op.fxRate || op.fxRate <= 0) return null;
+  const pair = op.fxPair?.toUpperCase();
+  if (!pair || !pair.includes('PLN')) return null; // cross-rate — caller użyje historical
   if (op.source === 'xtb') return 1 / op.fxRate;
   return op.fxRate; // bossa, degiro, mbank, manual
 }
@@ -925,6 +933,13 @@ export function computeFxImpact(
   foreignExposures: Map<string, number>, // currency → native exposure (cash + stocks)
   todayFxRatesToPln: Map<string, number>, // currency → PLN per X
   totalPortfolioValuePln: number,         // wartość CAŁEGO portfela w PLN
+  /** Historical PLN rates dla cross-rate ops (fxPair bez PLN, np. USD/EUR).
+   *  Mapa: date (YYYY-MM-DD) → currency → PLN per X na ten dzień.
+   *  Caller (route) pre-fetchuje Yahoo history dla cross-rate fx_exchange ops,
+   *  żeby engine mógł użyć historycznego kursu jako proxy dla "ile PLN
+   *  kosztowałoby kupno tej waluty na rynku tego dnia" — dla ops gdzie
+   *  op.fxRate to cross-rate (np. USD per EUR), nie vs PLN. */
+  historicalCrossRates: Map<string, Map<string, number>> = new Map(),
 ): FxImpact | null {
   const breakdown: FxImpactCurrencyEntry[] = [];
 
@@ -939,7 +954,16 @@ export function computeFxImpact(
       const isAcquisitionFx = op.operationType === 'fx_exchange' && op.amount > 0;
       const isDepositWithFx = op.operationType === 'deposit' && op.fxRate !== undefined;
       if (!isAcquisitionFx && !isDepositWithFx) continue;
-      const plnPerX = plnPerXFromOp(op);
+
+      // Dwa źródła kursu PLN per X:
+      //   1. Direct (fxPair zawiera PLN) — plnPerXFromOp rozpoznaje Bossa/DEGIRO/XTB conv.
+      //   2. Cross-rate (np. USD/EUR) — op.fxRate nie jest vs PLN, użyj historical Yahoo
+      //      rate dla currency → PLN na dacie operacji (przekazane przez caller).
+      let plnPerX = plnPerXFromOp(op);
+      if (plnPerX === null) {
+        const dateKey = op.date.split('T')[0];
+        plnPerX = historicalCrossRates.get(dateKey)?.get(currency.toUpperCase()) ?? null;
+      }
       if (plnPerX === null || plnPerX <= 0) continue;
       const acquired = Math.abs(op.amount);
       totalAcquiredNative += acquired;

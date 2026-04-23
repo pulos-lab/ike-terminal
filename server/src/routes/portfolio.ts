@@ -7,7 +7,7 @@ import { resolveSector } from '../services/sector-resolver.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
 import type { DividendInput, DepositInput, TransactionInput, TickerMapEntry, FxExchangeInput, StockSplitInput, DetectedSplit, UpcomingDividend } from 'shared';
 import { invalidateCachedPrices } from '../services/history-cache.js';
-import { fetchYahooPrice, fetchFxRate, fetchDividendCalendar } from '../services/yahoo-finance.js';
+import { fetchYahooPrice, fetchFxRate, fetchDividendCalendar, fetchYahooHistory } from '../services/yahoo-finance.js';
 import {
   computeOpenPositions,
   computeClosedTrades,
@@ -620,7 +620,59 @@ router.get('/metrics', asyncHandler(async (req, res) => {
   }
   const totalPortfolioValuePln = stocksValuePln + cashValuePln;
 
-  const fxImpact = computeFxImpact(operations, foreignExposures, todayFxRatesToPln, totalPortfolioValuePln);
+  // Historical PLN rates dla cross-rate fx_exchange (np. DEGIRO USD↔EUR, gdzie
+  // op.fxRate nie jest kursem vs PLN). Skanujemy operations dla cross-rate
+  // credit legs (amount > 0, fxPair bez 'PLN'), zbieramy (currency, date) sets,
+  // fetchujemy zakres historii z Yahoo per waluta, budujemy mapę którą engine
+  // użyje jako proxy ("ile PLN kosztowałoby kupno waluty na rynku tego dnia").
+  const crossRateDatesByCurrency = new Map<string, Set<string>>();
+  for (const op of operations) {
+    if (op.operationType !== 'fx_exchange') continue;
+    if (op.amount <= 0) continue;
+    if (!op.fxPair || op.fxPair.toUpperCase().includes('PLN')) continue;
+    const cur = (op.currency || '').toUpperCase();
+    if (!cur || cur === 'PLN') continue;
+    const dates = crossRateDatesByCurrency.get(cur) ?? new Set<string>();
+    dates.add(op.date.split('T')[0]);
+    crossRateDatesByCurrency.set(cur, dates);
+  }
+
+  const historicalCrossRates = new Map<string, Map<string, number>>();
+  if (crossRateDatesByCurrency.size > 0) {
+    await Promise.all([...crossRateDatesByCurrency.entries()].map(async ([cur, dates]) => {
+      const sortedDates = [...dates].sort();
+      const start = sortedDates[0];
+      const end = sortedDates[sortedDates.length - 1];
+      try {
+        const history = await fetchYahooHistory(`${cur}PLN=X`, start, end);
+        const dateToRate = new Map<string, number>();
+        for (const d of history) dateToRate.set(d.date, d.close);
+        for (const date of dates) {
+          let rate = dateToRate.get(date);
+          // Weekend/holiday fallback — najbliższa wcześniejsza data
+          if (!rate) {
+            const earlier = [...dateToRate.keys()].filter(d => d <= date).sort().pop();
+            if (earlier) rate = dateToRate.get(earlier);
+          }
+          if (rate && rate > 0) {
+            let dateMap = historicalCrossRates.get(date);
+            if (!dateMap) { dateMap = new Map(); historicalCrossRates.set(date, dateMap); }
+            dateMap.set(cur, rate);
+          }
+        }
+      } catch {
+        // Brak historii → cross-rate ops dla tej waluty pomijane (null plnPerX)
+      }
+    }));
+  }
+
+  const fxImpact = computeFxImpact(
+    operations,
+    foreignExposures,
+    todayFxRatesToPln,
+    totalPortfolioValuePln,
+    historicalCrossRates,
+  );
 
   res.json({
     currentValue: metrics.currentValue,
