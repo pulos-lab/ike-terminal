@@ -424,7 +424,7 @@ function VirtualTable({
     count: rows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_HEIGHT,
-    overscan: 15,
+    overscan: 30,
   });
 
   return (
