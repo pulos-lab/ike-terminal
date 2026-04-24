@@ -357,20 +357,24 @@ export const TradesFeed = memo(function TradesFeed() {
                 <span className="font-mono font-semibold text-sm">{tx.ticker}</span>
                 {tx.syntheticOrigin && <SyntheticOriginTooltip origin={tx.syntheticOrigin} />}
                 {autoFx ? (
-                  <span
-                    className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground cursor-help"
-                    title={`Auto-przewalutowanie: broker zamienił ${paymentCcy} na ${tx.currency} przy realizacji zlecenia.`}
-                  >
-                    <CcyChip ccy={paymentCcy} />
-                    <span className="text-amber-500/80">⇋</span>
-                    <CcyChip ccy={tx.currency} />
-                  </span>
+                  <Tooltip delayDuration={150}>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground cursor-help">
+                        <CcyChip ccy={paymentCcy} />
+                        <span className="text-amber-500/80">⇋</span>
+                        <CcyChip ccy={tx.currency} />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="text-xs">
+                      Auto-przewalutowanie: broker zamienił {paymentCcy} na {tx.currency} przy realizacji zlecenia.
+                    </TooltipContent>
+                  </Tooltip>
                 ) : (
                   <CcyChip ccy={tx.currency} />
                 )}
               </div>
               <p className="text-[11px] text-muted-foreground tabular-nums">
-                {formatDate(tx.date)} · {formatQuantity(tx.quantity)} × {formatNumber(tx.price)}
+                {formatDate(tx.date)} · {formatQuantity(tx.quantity)} × {formatNumber(quotePrice(tx))}
               </p>
             </div>
             <div className="text-right flex-shrink-0">
@@ -595,6 +599,13 @@ interface NormalRowProps {
   onDelete: (tx: TxItem) => void;
 }
 
+/** Cena w walucie kwotowania — gdy autoFx i fxRate dostępny, przelicz z PLN na quote currency. */
+function quotePrice(tx: TxItem): number {
+  const autoFx = (tx.paymentCurrency || tx.currency) !== tx.currency;
+  if (autoFx && tx.fxRate && tx.fxRate > 0) return tx.price / tx.fxRate;
+  return tx.price;
+}
+
 const NormalRow = memo(function NormalRow({ tx, onEdit, onDelete }: NormalRowProps) {
   const paymentCcy = tx.paymentCurrency || tx.currency;
   const autoFx = paymentCcy !== tx.currency;
@@ -616,16 +627,19 @@ const NormalRow = memo(function NormalRow({ tx, onEdit, onDelete }: NormalRowPro
       <td className="py-2.5 pr-4">
         <CcyChip ccy={paymentCcy} />
         {autoFx && (
-          <span
-            className="ml-1 text-[9px] text-amber-500/80 cursor-help"
-            aria-label="Auto-przewalutowanie"
-            title={`Auto-przewalutowanie: broker zamienił ${paymentCcy} na ${tx.currency} przy realizacji zlecenia.`}
-          >⇋</span>
+          <Tooltip delayDuration={150}>
+            <TooltipTrigger asChild>
+              <span className="ml-1 text-[9px] text-amber-500/80 cursor-help">⇋</span>
+            </TooltipTrigger>
+            <TooltipContent className="text-xs">
+              Auto-przewalutowanie: broker zamienił {paymentCcy} na {tx.currency} przy realizacji zlecenia.
+            </TooltipContent>
+          </Tooltip>
         )}
       </td>
       <td className="py-2.5 pr-4"><SideChip side={tx.side} /></td>
       <td className="py-2.5 pr-4 text-right tabular-nums">{formatQuantity(tx.quantity)}</td>
-      <td className="py-2.5 pr-4 text-right tabular-nums">{formatNumber(tx.price)}</td>
+      <td className="py-2.5 pr-4 text-right tabular-nums">{formatNumber(quotePrice(tx))}</td>
       <td className="py-2.5 pr-4"><CcyChip ccy={tx.currency} /></td>
       <td className="py-2.5 pr-4 text-right text-muted-foreground tabular-nums text-xs">
         {tx.commission > 0 ? formatNumber(tx.commission) : '—'}
