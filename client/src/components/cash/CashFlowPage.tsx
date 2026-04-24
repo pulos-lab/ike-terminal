@@ -268,12 +268,6 @@ export function CashFlowPage() {
         <CardHeader className="pb-2">
           <CardTitle className="text-base">
             {cardTitle}
-            <span className="ml-2 text-muted-foreground font-normal">
-              (wpłaty: {fmtAgg(grandTotalDeposits)}
-              {grandTotalWithdrawals > 0 && <>, wypłaty: {fmtAgg(grandTotalWithdrawals)}</>}
-              , netto: {fmtAgg(grandTotalDeposits - grandTotalWithdrawals)}
-              {isMultiCurrency && <span className="text-xs"> — uwaga: kwoty w różnych walutach, sumowane bez konwersji</span>})
-            </span>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -416,6 +410,30 @@ export function CashFlowPage() {
                         </Fragment>
                       );
                     })
+                  )}
+                  {yearGroups.length > 0 && (
+                    <TableRow className="font-semibold border-t-2">
+                      <TableCell>Razem</TableCell>
+                      <TableCell className="text-right">{fmtAgg(grandTotalDeposits)}</TableCell>
+                      <TableCell className="text-right">{grandTotalWithdrawals > 0 ? fmtAgg(grandTotalWithdrawals) : '—'}</TableCell>
+                      {showLimits && <TableCell colSpan={showIKE && showIKZE ? 4 : 3} />}
+                      <TableCell />
+                    </TableRow>
+                  )}
+                  {yearGroups.length > 0 && (
+                    <TableRow className="font-semibold">
+                      <TableCell className="text-muted-foreground">Netto</TableCell>
+                      <TableCell colSpan={2} className="text-right">
+                        {fmtAgg(grandTotalDeposits - grandTotalWithdrawals)}
+                        {isMultiCurrency && (
+                          <span className="ml-2 text-xs text-muted-foreground font-normal">
+                            (różne waluty, bez konwersji)
+                          </span>
+                        )}
+                      </TableCell>
+                      {showLimits && <TableCell colSpan={showIKE && showIKZE ? 4 : 3} />}
+                      <TableCell />
+                    </TableRow>
                   )}
                 </TableBody>
               </Table>
