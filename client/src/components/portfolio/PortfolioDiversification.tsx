@@ -26,7 +26,7 @@ interface SliceData {
 
 // Ember palette — warm tones harmonizujące z amber #f59e0b
 // amber → rust → sage → plum → stone → ochre
-const EMBER_PALETTE = [
+const EMBER_PALETTE_DARK = [
   '#f59e0b', // amber (primary)
   '#c46a4e', // rust
   '#a3b96c', // sage
@@ -39,10 +39,23 @@ const EMBER_PALETTE = [
   '#87a27a', // moss
 ];
 
-const REGION_COLORS = EMBER_PALETTE;
-const CURRENCY_COLORS = EMBER_PALETTE;
-const SECTOR_COLORS = EMBER_PALETTE;
-const TOP_COLORS = EMBER_PALETTE;
+// Warm Parchment — żywe, ciepłe tony na jasnym tle
+const EMBER_PALETTE_LIGHT = [
+  '#d48a08', // amber (żywy, nie za jasny)
+  '#c0654a', // rust (ciepły ceglasty)
+  '#7da352', // sage (świeży zielony)
+  '#9664a0', // plum (fioletowy)
+  '#9e9590', // stone (ciepły szary)
+  '#c8944a', // ochre (miodowy)
+  '#5a9e96', // teal (morski)
+  '#b89060', // tawny (karmelowy)
+  '#a87da8', // mauve (lawendowy)
+  '#7a9e68', // moss (oliwkowy)
+];
+
+function getEmberPalette() {
+  return document.documentElement.classList.contains('dark') ? EMBER_PALETTE_DARK : EMBER_PALETTE_LIGHT;
+}
 
 const REGION_MAP: Record<string, string> = {
   GPW: 'Polska',
@@ -311,10 +324,10 @@ function SectorsChart({
   // nadsektora (membership liczony po p.supersector === drillSupersector).
   const sectorData = useMemo(() => {
     if (drillSupersector === null) {
-      return groupBy(positions, p => p.supersector || 'Inne', SECTOR_COLORS, totalValuePln);
+      return groupBy(positions, p => p.supersector || 'Inne', getEmberPalette(), totalValuePln);
     }
     const filtered = positions.filter(p => (p.supersector || 'Inne') === drillSupersector);
-    return groupBy(filtered, p => p.sector || 'Pozostałe', SECTOR_COLORS, totalValuePln);
+    return groupBy(filtered, p => p.sector || 'Pozostałe', getEmberPalette(), totalValuePln);
   }, [positions, totalValuePln, drillSupersector]);
 
   // Spółki dopasowane do aktualnego kontekstu (hover lub drill-down).
@@ -453,12 +466,12 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
   }, [positions]);
 
   const regionData = useMemo(
-    () => groupBy(positions, p => REGION_MAP[p.exchange || ''] || 'Inne', REGION_COLORS, totalValuePln),
+    () => groupBy(positions, p => REGION_MAP[p.exchange || ''] || 'Inne', getEmberPalette(), totalValuePln),
     [positions, totalValuePln]
   );
 
   const currencyData = useMemo(
-    () => groupBy(positions, p => p.currency, CURRENCY_COLORS, totalValuePln),
+    () => groupBy(positions, p => p.currency, getEmberPalette(), totalValuePln),
     [positions, totalValuePln]
   );
 
@@ -468,7 +481,7 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
       name: p.ticker,
       value: p.currentValuePln,
       pct: totalValuePln > 0 ? (p.currentValuePln / totalValuePln) * 100 : 0,
-      color: TOP_COLORS[i],
+      color: getEmberPalette()[i],
     }));
     const restValue = sorted.slice(5).reduce((s, p) => s + p.currentValuePln, 0);
     if (restValue > 0) {
@@ -476,7 +489,7 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
         name: 'Pozostałe',
         value: restValue,
         pct: totalValuePln > 0 ? (restValue / totalValuePln) * 100 : 0,
-        color: TOP_COLORS[5],
+        color: getEmberPalette()[5],
       });
     }
     return top5;
