@@ -36,23 +36,23 @@ export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr', showBenchma
       height: 400,
       layout: {
         background: { color: 'transparent' },
-        textColor: isDark ? '#a1a1aa' : '#71717a',
+        textColor: isDark ? '#a1a1aa' : '#787068',
         fontFamily: 'Inter, system-ui, sans-serif',
       },
       grid: {
-        vertLines: { color: isDark ? '#27272a' : '#f4f4f5' },
-        horzLines: { color: isDark ? '#27272a' : '#f4f4f5' },
+        vertLines: { color: isDark ? '#27272a' : '#ede9df' },
+        horzLines: { color: isDark ? '#27272a' : '#ede9df' },
       },
       rightPriceScale: {
-        borderColor: isDark ? '#27272a' : '#e4e4e7',
+        borderColor: isDark ? '#27272a' : '#ddd5c8',
       },
       timeScale: {
-        borderColor: isDark ? '#27272a' : '#e4e4e7',
+        borderColor: isDark ? '#27272a' : '#ddd5c8',
         timeVisible: false,
       },
       crosshair: {
-        horzLine: { labelBackgroundColor: isDark ? '#27272a' : '#18181b' },
-        vertLine: { labelBackgroundColor: isDark ? '#27272a' : '#18181b' },
+        horzLine: { labelBackgroundColor: isDark ? '#27272a' : '#1c1917' },
+        vertLine: { labelBackgroundColor: isDark ? '#27272a' : '#1c1917' },
       },
     });
 
@@ -60,7 +60,7 @@ export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr', showBenchma
 
     const isTwr = mode === 'twr';
     const portfolioSeries = chart.addSeries(LineSeries, {
-      color: '#f59e0b',
+      color: isDark ? '#f59e0b' : '#c27a0a',
       lineWidth: 2,
       title: isTwr ? 'Portfel TWR %' : 'Portfel %',
       priceFormat: { type: 'custom', formatter: (v: number) => `${v.toFixed(2)}%` },
@@ -78,7 +78,7 @@ export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr', showBenchma
 
     if (hasBenchmarkData) {
       const benchmarkSeries = chart.addSeries(LineSeries, {
-        color: '#71717a',
+        color: isDark ? '#71717a' : '#787068',
         lineWidth: 1,
         lineStyle: 2,
         title: `${benchmarkLabel} ${isTwr ? 'TWR ' : ''}%`,

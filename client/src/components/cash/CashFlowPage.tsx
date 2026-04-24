@@ -236,7 +236,7 @@ export function CashFlowPage() {
                   labelFormatter={(label) => `Data: ${label}`}
                 />
                 <Area type="monotone" dataKey="portfolioValue" stroke="var(--primary)" fill="var(--primary)" fillOpacity={0.12} strokeWidth={2} name="portfolioValue" />
-                <Area type="stepAfter" dataKey="netCashFlow" stroke="#71717a" fill="#71717a" fillOpacity={0.05} strokeWidth={1} strokeDasharray="4 4" name="netCashFlow" />
+                <Area type="stepAfter" dataKey="netCashFlow" stroke="var(--muted-foreground)" fill="var(--muted-foreground)" fillOpacity={0.05} strokeWidth={1} strokeDasharray="4 4" name="netCashFlow" />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
