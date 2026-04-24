@@ -15,6 +15,7 @@ import {
   extractFxExchanges,
   computePortfolioHistory,
   computeCashFlow,
+  computeCashFlowChartData,
   computeXirr,
   computeCashBalances,
   detectBaseCurrency,
@@ -762,7 +763,8 @@ router.get('/cash-flow', asyncHandler(async (req, res) => {
   );
 
   const cashFlow = computeCashFlow(operations, history, dailyFxRates, baseCurrency);
-  res.json({ cashFlow, baseCurrency });
+  const chartData = computeCashFlowChartData(history, dailyFxRates, baseCurrency);
+  res.json({ cashFlow, chartData, baseCurrency });
 }));
 
 // POST /api/portfolio/ticker-map/refresh-sectors

@@ -1663,6 +1663,32 @@ export async function computePortfolioHistory(
 
 // ============ Cash Flow History ============
 
+/** Dzienna seria wykresu: portfolioValue (codzienny) + netCashFlow (carry-forward). */
+export function computeCashFlowChartData(
+  portfolioHistory: PortfolioHistoryPoint[],
+  dailyFxRates?: Map<string, Map<string, number>>,
+  baseCurrency: string = 'PLN',
+): { date: string; portfolioValue: number; netCashFlow: number }[] {
+  const baseUpper = baseCurrency.toUpperCase();
+  const needsConversion = baseUpper !== 'PLN';
+  const toBase = (valuePln: number, date: string): number => {
+    if (!needsConversion) return valuePln;
+    const fx = dailyFxRates?.get(date)?.get(baseUpper);
+    if (!fx || fx <= 0) return valuePln;
+    return valuePln / fx;
+  };
+
+  const all = portfolioHistory.map(p => ({
+    date: p.date,
+    portfolioValue: toBase(p.portfolioValue, p.date),
+    netCashFlow: toBase(p.cumulativeDepositsPln - p.cumulativeWithdrawalsPln, p.date),
+  }));
+
+  // Obcinamy początkowe punkty gdzie nic się nie dzieje (0/0)
+  const firstActive = all.findIndex(p => p.portfolioValue !== 0 || p.netCashFlow !== 0);
+  return firstActive > 0 ? all.slice(firstActive) : all;
+}
+
 export function computeCashFlow(
   operations: CashOperation[],
   portfolioHistory: PortfolioHistoryPoint[],

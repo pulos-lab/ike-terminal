@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { AddDepositDialog } from './AddDepositDialog';
-import { XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
+import { CashFlowChart } from './CashFlowChart';
 import {
   Tooltip as UITooltip,
   TooltipContent as UITooltipContent,
@@ -95,6 +95,8 @@ export function CashFlowPage() {
   });
 
   const [expandedYears, toggleYear] = useToggleSet<number>();
+  const [showPortfolio, setShowPortfolio] = useState(true);
+  const [showCashFlow, setShowCashFlow] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<CashEntry | null>(null);
   const [deleting, setDeleting] = useState<CashEntry | null>(null);
@@ -221,24 +223,39 @@ export function CashFlowPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
+          <div className="flex items-center gap-2 mb-3">
+            <button
+              onClick={() => setShowPortfolio(v => !v)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                showPortfolio
+                  ? 'bg-primary/10 text-primary'
+                  : 'bg-muted text-muted-foreground'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-[#f59e0b]" style={{ opacity: showPortfolio ? 1 : 0.3 }} />
+              Wartość portfela
+            </button>
+            <button
+              onClick={() => setShowCashFlow(v => !v)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                showCashFlow
+                  ? 'bg-secondary text-foreground'
+                  : 'bg-muted text-muted-foreground'
+              }`}
+            >
+              <span className="w-3 h-0.5 border-t-2 border-dashed border-current" style={{ opacity: showCashFlow ? 1 : 0.3 }} />
+              Wpłaty netto
+            </button>
+          </div>
           {cashFlowLoading ? (
             <LoadingSpinner />
-          ) : cashFlowData?.cashFlow?.length ? (
-            <ResponsiveContainer width="100%" height={400}>
-              <AreaChart data={cashFlowData.cashFlow}>
-                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
-                <Tooltip
-                  formatter={(value, name) => [
-                    formatCurrency(Number(value) || 0, cashFlowData?.baseCurrency || 'PLN'),
-                    name === 'netCashFlow' ? 'Wpłaty netto' : 'Wartość portfela',
-                  ]}
-                  labelFormatter={(label) => `Data: ${label}`}
-                />
-                <Area type="monotone" dataKey="portfolioValue" stroke="var(--primary)" fill="var(--primary)" fillOpacity={0.12} strokeWidth={2} name="portfolioValue" />
-                <Area type="stepAfter" dataKey="netCashFlow" stroke="var(--muted-foreground)" fill="var(--muted-foreground)" fillOpacity={0.05} strokeWidth={1} strokeDasharray="4 4" name="netCashFlow" />
-              </AreaChart>
-            </ResponsiveContainer>
+          ) : cashFlowData?.chartData?.length ? (
+            <CashFlowChart
+              data={cashFlowData.chartData}
+              currency={cashFlowData.baseCurrency || 'PLN'}
+              showPortfolio={showPortfolio}
+              showCashFlow={showCashFlow}
+            />
           ) : (
             <div className="flex items-center justify-center h-80 text-muted-foreground">
               Brak danych.
@@ -251,12 +268,6 @@ export function CashFlowPage() {
         <CardHeader className="pb-2">
           <CardTitle className="text-base">
             {cardTitle}
-            <span className="ml-2 text-muted-foreground font-normal">
-              (wpłaty: {fmtAgg(grandTotalDeposits)}
-              {grandTotalWithdrawals > 0 && <>, wypłaty: {fmtAgg(grandTotalWithdrawals)}</>}
-              , netto: {fmtAgg(grandTotalDeposits - grandTotalWithdrawals)}
-              {isMultiCurrency && <span className="text-xs"> — uwaga: kwoty w różnych walutach, sumowane bez konwersji</span>})
-            </span>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -399,6 +410,30 @@ export function CashFlowPage() {
                         </Fragment>
                       );
                     })
+                  )}
+                  {yearGroups.length > 0 && (
+                    <TableRow className="font-semibold border-t-2">
+                      <TableCell>Razem</TableCell>
+                      <TableCell className="text-right">{fmtAgg(grandTotalDeposits)}</TableCell>
+                      <TableCell className="text-right">{grandTotalWithdrawals > 0 ? fmtAgg(grandTotalWithdrawals) : '—'}</TableCell>
+                      {showLimits && <TableCell colSpan={showIKE && showIKZE ? 4 : 3} />}
+                      <TableCell />
+                    </TableRow>
+                  )}
+                  {yearGroups.length > 0 && grandTotalWithdrawals > 0 && (
+                    <TableRow className="font-semibold">
+                      <TableCell className="text-muted-foreground">Netto</TableCell>
+                      <TableCell colSpan={2} className="text-right">
+                        {fmtAgg(grandTotalDeposits - grandTotalWithdrawals)}
+                        {isMultiCurrency && (
+                          <span className="ml-2 text-xs text-muted-foreground font-normal">
+                            (różne waluty, bez konwersji)
+                          </span>
+                        )}
+                      </TableCell>
+                      {showLimits && <TableCell colSpan={showIKE && showIKZE ? 4 : 3} />}
+                      <TableCell />
+                    </TableRow>
                   )}
                 </TableBody>
               </Table>

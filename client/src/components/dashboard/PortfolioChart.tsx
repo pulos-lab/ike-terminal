@@ -93,6 +93,21 @@ export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr', showBenchma
 
     chart.timeScale().fitContent();
 
+    // Ograniczenie zakresu — nie wyjeżdżamy poza dane (z małym buforem)
+    const maxIdx = data.length - 1;
+    const buffer = Math.ceil(data.length * 0.03);
+    let clamping = false;
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (!range || clamping) return;
+      const from = Math.max(range.from, -buffer);
+      const to = Math.min(range.to, maxIdx + buffer);
+      if (from !== range.from || to !== range.to) {
+        clamping = true;
+        chart.timeScale().setVisibleLogicalRange({ from, to });
+        clamping = false;
+      }
+    });
+
     const observer = new ResizeObserver(() => {
       if (containerRef.current) {
         chart.applyOptions({ width: containerRef.current.clientWidth });
