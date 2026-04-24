@@ -15,7 +15,7 @@ const tabs = [
   { to: '/app/trades', label: 'Trades', icon: ArrowLeftRight },
   { to: '/app/dividends', label: 'Dywidendy', icon: Coins },
   { to: '/app/currency', label: 'Waluty', icon: DollarSign },
-  { to: '/app/cash', label: 'Gotówka', icon: Wallet },
+  { to: '/app/cash', label: 'Depozyty', icon: Wallet },
 ];
 
 export function BottomTabBar() {

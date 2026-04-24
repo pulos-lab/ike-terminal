@@ -24,6 +24,7 @@ import type {
   ImportResult,
   RedemptionMarker,
   IpoSubscriptionMarker,
+  CapitalReturnMarker,
   ParseResult,
 } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
@@ -43,7 +44,7 @@ import {
   updateTransaction,
   detectOrphanedSells,
 } from '../db/transactions-repo.js';
-import { insertOperationsWithDedup, getAllOperations } from '../db/operations-repo.js';
+import { insertOperationsWithDedup, insertOperation, getAllOperations } from '../db/operations-repo.js';
 import { seedTickerMap, findIsinByName, upsertTickerMapEntry, getTickerByIsin, deleteTickerMapEntry } from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
 import { reconcilePaymentCurrencies } from './payment-currency-reconciler.js';
@@ -270,8 +271,16 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       syntheticSells += r;
     }
 
-    // 3a'. Bossa — wezwania skupu zostały zapisane jako deposit; emit warning
-    // zachęcający do ręcznego dodania sprzedaży (nie znamy liczby akcji i ceny tendera).
+    // 3a'''. Bossa — capital return markers (obniżenie nominału, wyrównanie wykupu).
+    // Wstawiamy jako CashOperation(operation_type='capital_return'); qty pozycji bez zmian.
+    // Engine traktuje capital_return jak "dywidendę z kapitału" — wchodzi do totalValue,
+    // nie do totalDeposited → MWR/TWR poprawnie.
+    if (parsedOps && 'capitalReturns' in parsedOps && parsedOps.capitalReturns.length > 0) {
+      reconcileBossaCapitalReturns(parsedOps.capitalReturns, pid, importBatch, crossFileWarnings);
+    }
+
+    // 3a'. Bossa — nieznane wezwania skupu (corporate_action_pending/unknown_tender);
+    // emit warning zachęcający do domknięcia sprzedaży (nie znamy liczby akcji i ceny tendera).
     if (opsFile?.broker === 'bossa') {
       warnAboutTenderOffers(pid, crossFileWarnings);
     }
@@ -659,20 +668,81 @@ function reconcileBossaIpos(
 }
 
 /**
- * Warnings dla wezwań skupu (`Rozliczenie oferty`) — gotówka jest już wpisana jako deposit,
- * ale user musi ręcznie dodać sprzedaż (nie wiemy ile szt i po jakiej cenie).
- * Wywoływane PO insertach operacji, skanuje operacje typu `deposit` z description
- * rozpoczynającym się od "Wykup w ofercie skupu" (patrz humanizeDescription).
+ * Warnings dla nieznanych wezwań skupu (operation_type='corporate_action_pending',
+ * subkind='unknown_tender'). Parser zapisał je jako pending, bo ticker nie ma wpisu w
+ * tender-offers-map.ts. User może:
+ *   a) domknąć ręcznie przez endpoint POST /api/portfolio/corporate-actions/:id/resolve
+ *      (synthetic SELL z własnym qty+price), albo
+ *   b) dopisać ticker do tender-offers-map.ts i zaimportować ponownie (wtedy reconciliation
+ *      zamyka pozycję automatycznie).
+ * Wywoływane PO insertach operacji.
  */
 function warnAboutTenderOffers(pid: string, warnings: string[]): void {
   const allOps = getAllOperations(pid);
-  const tenders = allOps.filter(op => op.description.startsWith('Wykup w ofercie skupu'));
+  const tenders = allOps.filter(op =>
+    op.operationType === 'corporate_action_pending' && op.subkind === 'unknown_tender'
+  );
   for (const op of tenders) {
     warnings.push(
       `Bossa: ${op.description} (${op.date.slice(0, 10)}, ${op.amount.toFixed(2)} ${op.currency}) — ` +
-      `broker zapisał tylko kwotę netto, bez liczby akcji. Dodaj ręcznie sprzedaż w panelu Transakcje ` +
-      `(typowa cena tendera widnieje w komunikacie espi spółki).`
+      `broker zapisał tylko kwotę netto, bez liczby akcji. Domknij w panelu Zdarzenia korporacyjne ` +
+      `(CTA "Domknij sprzedaż") albo dopisz ticker do tender-offers-map.ts i zaimportuj ponownie.`
     );
+  }
+}
+
+/**
+ * Bossa reconciliation dla zwrotów kapitałowych (CapitalReturnMarker).
+ *
+ * Parser emituje markery dla:
+ *   - 'nominal_reduction' — obniżenie wartości nominalnej (np. GETIN 8250 PLN 2022-12-30).
+ *     Kapitał wraca do akcjonariusza, qty akcji bez zmian. MWR: liczy się jak zrealizowany
+ *     zwrot (totalValue rośnie, totalDeposited bez zmian → return % rośnie poprawnie).
+ *     TWR: portfolio value rośnie o amount w tym dniu bez netCashFlow → daily return pozytywny.
+ *   - 'redemption_adjustment' — "Wykup PW - wyrównanie" (korekta po wcześniejszym wykupie).
+ *     Najczęściej mała kwota (±kilka jednostek), czasem ujemna.
+ *
+ * Reconciliation wstawia do `cash_operations` jako operation_type='capital_return',
+ * subkind=marker.kind, z dedup na (date, capital_return, amount, currency, ticker) — idempotent.
+ * Nie tworzy transakcji — pozycja posiadana pozostaje nietknięta (źródłowa prawdą z CSV jest,
+ * że akcje dalej są w portfelu, tylko nominał został obniżony).
+ */
+function reconcileBossaCapitalReturns(
+  markers: CapitalReturnMarker[],
+  pid: string,
+  importBatch: string,
+  warnings: string[]
+): void {
+  if (markers.length === 0) return;
+  const allOps = getAllOperations(pid);
+
+  for (const m of markers) {
+    // Dedup: nie wstawiamy jeśli już istnieje identyczny capital_return dla tego ticker+date+amount.
+    const exists = allOps.some(op =>
+      op.operationType === 'capital_return'
+      && op.date === m.date
+      && op.ticker === m.ticker
+      && Math.abs(op.amount - m.amount) < 0.001
+      && op.currency === m.currency
+    );
+    if (exists) {
+      warnings.push(`Bossa: Zwrot kapitału ${m.ticker} (${m.date.slice(0, 10)}, ${m.amount.toFixed(2)} ${m.currency}) już zaimportowany — pomijam duplikat.`);
+      continue;
+    }
+
+    const op: CashOperation = {
+      date: m.date,
+      operationType: 'capital_return',
+      description: m.description,
+      details: m.originalTitle,
+      amount: m.amount,
+      currency: m.currency,
+      ticker: m.ticker,
+      source: 'bossa',
+      importBatch,
+      subkind: m.kind,
+    };
+    insertOperation(op, pid);
   }
 }
 

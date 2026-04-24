@@ -56,7 +56,54 @@ export interface Transaction {
 
 // ============ Cash Operation Types ============
 
-export type OperationType = 'deposit' | 'withdrawal' | 'dividend' | 'fx_exchange' | 'fee' | 'trade_fee' | 'commission_refund' | 'other';
+/**
+ * Typ operacji gotówkowej.
+ *
+ * Dwa typy "zdarzenia korporacyjnego" zostały dodane po P17:
+ * - `capital_return` — zwrot kapitału z istniejącej pozycji (obniżenie wartości nominalnej,
+ *   korekta wykupu PW). Cash wpływa na konto, qty pozycji bez zmian. Dla MWR liczy się jak
+ *   "zysk zrealizowany" (nie powiększa mianownika totalDeposited, ale wchodzi do totalValue),
+ *   dla TWR jak "dywidenda" (portfolio value rośnie o amount, brak netCashFlow → return pozytywny).
+ * - `corporate_action_pending` — zdarzenie wykryte ale niedomknięte (np. nieznane wezwanie
+ *   skupu, nieznany wzorzec). Nie wchodzi do cashflow portfela dopóki user ręcznie nie domknie
+ *   (tworzy synthetic SELL). Widoczne w panelu "Zdarzenia korporacyjne" z CTA "Domknij".
+ */
+export type OperationType =
+  | 'deposit'
+  | 'withdrawal'
+  | 'dividend'
+  | 'fx_exchange'
+  | 'fee'
+  | 'trade_fee'
+  | 'commission_refund'
+  | 'capital_return'
+  | 'corporate_action_pending'
+  | 'other';
+
+/**
+ * Subkategoria zdarzenia korporacyjnego (gdy `operationType` jest jednym z typów CA).
+ *
+ * - `nominal_reduction` — obniżenie wartości nominalnej akcji (np. GETIN 2022-12-30).
+ *   Kapitał zwracany bez zmiany liczby akcji. MWR/TWR: liczy się jak zrealizowany zwrot.
+ * - `redemption_adjustment` — "Wykup PW - wyrównanie TICKER", końcowa dopłata/korekta po
+ *   wcześniejszym wykupie papieru wartościowego. Zwykle mała kwota, czasem ujemna.
+ * - `unknown_tender` — "Rozliczenie oferty TICKER" z tickerem spoza `tender-offers-map`.
+ *   Reconciliation nie potrafi wyliczyć qty/ceny → czeka na ręczne domknięcie przez user.
+ * - `unknown_warrant` — "Wykup PW - wyrównanie TICKER" bez kontekstu wcześniejszego wykupu
+ *   (wcześniej wpadał w `unknown → other`). Czeka na manualną klasyfikację.
+ */
+export type CashOperationSubkind =
+  | 'nominal_reduction'
+  | 'redemption_adjustment'
+  | 'unknown_tender'
+  | 'unknown_warrant'
+  /**
+   * `interest` — odsetki (od wolnych środków na rachunku brokerskim, lokaty overnight itp.).
+   * Używane razem z `operationType='other'` (nie `dividend`, bo to nie zysk ze spółki).
+   * Dodatni cashflow, zielony badge w panelu "Pozostałe przepływy". UI traktuje subkind
+   * jako wirtualną kategorię ("Odsetki") żeby odróżnić od innych `other`.
+   */
+  | 'interest';
 
 export interface CashOperation {
   id?: number;
@@ -71,6 +118,8 @@ export interface CashOperation {
   fxPair?: string; // e.g., 'PLN/USD'
   source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
   importBatch?: string;
+  /** Opcjonalna subkategoria — używana gdy `operationType` ∈ { capital_return, corporate_action_pending }. */
+  subkind?: CashOperationSubkind;
 }
 
 // ============ Portfolio Types ============
@@ -227,6 +276,10 @@ export interface PortfolioMetrics {
   totalReturn: number;
   totalReturnPct: number;
   totalDividends: number;
+  /** Suma zwrotów kapitałowych (capital_return) w walucie bazowej portfela.
+   *  Osobna metryka obok dywidend — GETIN obniżenie nominału, wyrównania PW itp.
+   *  Wchodzi do totalValue (cash na koncie) ale NIE do totalDeposited (nie jest wpłatą). */
+  totalCapitalReturn: number;
 }
 
 /** Metryka "Wpływ walut" — różnica między dzisiejszym kursem PLN a
@@ -377,6 +430,7 @@ export type SkipReason =
   | 'missing_description' | 'unmatched_fx_credit'
   | 'duplicate'
   | 'redemption_reconciled' // Wykup certyfikatów / Rozliczenie oferty — obsłużone przez reconciliation jako synthetic sell
+  | 'capital_return_reconciled' // Obniżenie nominału / wyrównanie — obsłużone przez reconciliation jako CashOperation(capital_return)
   | 'unknown_operation_type' // Nierozpoznany tytuł operacji — wrzucone jako 'other', ale raportowane w warnings
   | 'unparseable_fx_comment' // XTB Transfer — brak pary walutowej + kursu w Comment
   | 'invalid_fx_rate'        // XTB Transfer — Exchange rate ≤ 0 w Comment
@@ -421,6 +475,41 @@ export interface IpoSubscriptionMarker {
   series?: string;
   /** URL źródłowy komunikatu ESPI. */
   sourceUrl?: string;
+}
+
+/**
+ * Marker zwrotu kapitału z istniejącej pozycji — obniżenie wartości nominalnej, korekta wykupu.
+ *
+ * RÓŻNICA w stosunku do `RedemptionMarker`:
+ *  - RedemptionMarker emituje synthetic SELL → qty pozycji spada, cash rośnie z proceeds.
+ *  - CapitalReturnMarker emituje tylko CashOperation(type='capital_return') → qty pozycji
+ *    się NIE zmienia, cash rośnie, a engine traktuje to jak "dywidendę w kapitale" (wchodzi
+ *    do totalValue ale nie do totalDeposited / nie jako netCashFlow dla TWR).
+ *
+ * Typowy przykład (dane z Bossa IKE): "Obniżenie wartości nominalnej GETIN" — emitent obniża
+ * nominał akcji i zwraca różnicę akcjonariuszom. Akcji jest dalej tyle samo, ale użytkownik
+ * otrzymuje gotówkę. To NIE jest ani dywidenda (nie z zysku, tylko z kapitału), ani sprzedaż
+ * (qty bez zmian), ani wpłata (pochodzi z trzymanej pozycji).
+ *
+ * Parser emituje te markery w pre-scanie; reconciliation w import-service wstawia je do
+ * `cash_operations` jako operationType='capital_return' + subkind=marker.kind.
+ */
+export interface CapitalReturnMarker {
+  /**
+   * Rodzaj zwrotu kapitału:
+   * - 'nominal_reduction' — obniżenie wartości nominalnej (bez zmiany qty akcji).
+   * - 'redemption_adjustment' — "Wykup PW - wyrównanie" (korekta po wcześniejszym wykupie).
+   */
+  kind: 'nominal_reduction' | 'redemption_adjustment';
+  date: string; // ISO 8601
+  ticker: string;
+  amount: number; // dodatni (wpływ gotówki) lub ujemny (korekta w drugą stronę)
+  currency: string;
+  source: 'bossa'; // rozszerzymy gdy inni brokerzy pokażą podobne eventy
+  /** Ludzki opis (z humanizeDescription) — pokazywany w UI. */
+  description: string;
+  /** Oryginalny tytuł z CSV — przydatne do debugu. */
+  originalTitle: string;
 }
 
 /**

@@ -5,23 +5,15 @@ import { QUERY_KEYS, invalidateDividends } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { CcyChip } from '@/components/ui/ccy-chip';
-import { formatNumber, formatDate, formatPLN, formatQuantity } from '@/lib/formatters';
+import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
+import { AddDividendDialog } from './AddDividendDialog';
+import { formatNumber, formatDate, formatPLN, formatQuantity, formatCurrency } from '@/lib/formatters';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { Loader2, Coins, Plus, Pencil, Trash2, Check, X, RefreshCw, Calendar, Clock } from 'lucide-react';
+import { Loader2, Coins, Plus, Pencil, Trash2, RefreshCw, Calendar, Clock } from 'lucide-react';
+import { toast } from 'sonner';
 import type { DividendRecord, UpcomingDividend } from 'shared';
-
-interface DividendForm {
-  date: string;
-  ticker: string;
-  amount: string;
-  currency: string;
-}
-
-const emptyForm: DividendForm = { date: '', ticker: '', amount: '', currency: 'PLN' };
 
 const SOURCE_LABELS: Record<string, { label: string; className: string }> = {
   'auto-yahoo': { label: 'Auto', className: 'bg-blue-500/15 text-blue-500' },
@@ -132,43 +124,23 @@ export function DividendsPage() {
     queryFn: api.getDividends,
   });
 
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm] = useState<DividendForm>(emptyForm);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<DividendForm>(emptyForm);
-
-  const createMutation = useMutation({
-    mutationFn: (form: DividendForm) =>
-      api.createDividend({
-        date: form.date,
-        ticker: form.ticker,
-        amount: parseFloat(form.amount),
-        currency: form.currency,
-      }),
-    onSuccess: () => {
-      invalidateDividends(queryClient);
-      setAddForm(emptyForm);
-      setShowAddForm(false);
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, form }: { id: number; form: DividendForm }) =>
-      api.updateDividend(id, {
-        date: form.date,
-        ticker: form.ticker,
-        amount: parseFloat(form.amount),
-        currency: form.currency,
-      }),
-    onSuccess: () => {
-      invalidateDividends(queryClient);
-      setEditingId(null);
-    },
-  });
+  const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<DividendRecord | null>(null);
+  const [deleting, setDeleting] = useState<DividendRecord | null>(null);
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.deleteDividend(id),
-    onSuccess: () => invalidateDividends(queryClient),
+    onSuccess: (_, id) => {
+      invalidateDividends(queryClient);
+      const d = deleting;
+      if (d && d.id === id) {
+        toast.success(`Usunięto dywidendę ${d.ticker} — ${formatCurrency(d.amount, d.currency)} z ${formatDate(d.date)}`);
+      } else {
+        toast.success('Usunięto dywidendę.');
+      }
+      setDeleting(null);
+    },
+    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
   });
 
   const scanMutation = useMutation({
@@ -177,31 +149,13 @@ export function DividendsPage() {
       invalidateDividends(queryClient);
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.upcomingDividends });
       if (result.newDividends > 0) {
-        alert(`Znaleziono ${result.newDividends} nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
+        toast.success(`Znaleziono ${result.newDividends} nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
       } else {
-        alert(`Brak nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
+        toast.info(`Brak nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
       }
     },
+    onError: (e: Error) => toast.error(`Skan nie powiódł się: ${e.message}`),
   });
-
-  function startEdit(d: DividendRecord) {
-    setEditingId(d.id);
-    setEditForm({
-      date: d.date.split('T')[0],
-      ticker: d.ticker,
-      amount: d.amount.toString(),
-      currency: d.currency,
-    });
-  }
-
-  function handleDelete(d: DividendRecord) {
-    if (window.confirm(`Czy na pewno chcesz usunac dywidende ${d.ticker} z ${formatDate(d.date)}?`)) {
-      deleteMutation.mutate(d.id);
-    }
-  }
-
-  const isAddValid = addForm.date && addForm.ticker && addForm.amount && parseFloat(addForm.amount) > 0;
-  const isEditValid = editForm.date && editForm.ticker && editForm.amount && parseFloat(editForm.amount) > 0;
 
   const dividends: DividendRecord[] = data?.dividends || [];
 
@@ -225,10 +179,7 @@ export function DividendsPage() {
           {scanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           Skanuj dywidendy
         </Button>
-        <Button
-          size="sm"
-          onClick={() => { setShowAddForm(!showAddForm); setEditingId(null); }}
-        >
+        <Button size="sm" onClick={() => setAddOpen(true)}>
           <Plus className="h-4 w-4" />
           Dodaj dywidende
         </Button>
@@ -314,167 +265,30 @@ export function DividendsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {showAddForm && (
-                    <TableRow className="bg-muted/30">
-                      <TableCell>
-                        <Input
-                          type="date"
-                          value={addForm.date}
-                          onChange={e => setAddForm({ ...addForm, date: e.target.value })}
-                          className="h-8 w-[140px]"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          placeholder="np. AAPL"
-                          value={addForm.ticker}
-                          onChange={e => setAddForm({ ...addForm, ticker: e.target.value.toUpperCase() })}
-                          className="h-8 w-[100px] font-mono"
-                        />
-                      </TableCell>
-                      <TableCell className="text-muted-foreground text-sm">
-                        {addForm.ticker ? `Wyplata dywidendy ${addForm.ticker}` : ''}
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="0.00"
-                          value={addForm.amount}
-                          onChange={e => setAddForm({ ...addForm, amount: e.target.value })}
-                          className="h-8 w-[100px] text-right"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Select value={addForm.currency} onValueChange={v => setAddForm({ ...addForm, currency: v })}>
-                          <SelectTrigger className="h-8 w-[80px]" size="sm">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="PLN">PLN</SelectItem>
-                            <SelectItem value="USD">USD</SelectItem>
-                            <SelectItem value="EUR">EUR</SelectItem>
-                            <SelectItem value="CAD">CAD</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        <SourceBadge source="manual" />
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button
-                            size="icon-xs"
-                            variant="ghost"
-                            onClick={() => createMutation.mutate(addForm)}
-                            disabled={!isAddValid || createMutation.isPending}
-                            className="text-gain hover:text-gain/80"
-                          >
-                            {createMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                          </Button>
-                          <Button
-                            size="icon-xs"
-                            variant="ghost"
-                            onClick={() => { setShowAddForm(false); setAddForm(emptyForm); }}
-                          >
-                            <X className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {dividends.length === 0 && !showAddForm ? (
+                  {dividends.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                         Brak danych. Kliknij &quot;Dodaj dywidende&quot; aby dodac pierwsza.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    dividends.map((d: DividendRecord) =>
-                      editingId === d.id ? (
-                        <TableRow key={d.id} className="bg-muted/30">
-                          <TableCell>
-                            <Input
-                              type="date"
-                              value={editForm.date}
-                              onChange={e => setEditForm({ ...editForm, date: e.target.value })}
-                              className="h-8 w-[140px]"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              value={editForm.ticker}
-                              onChange={e => setEditForm({ ...editForm, ticker: e.target.value.toUpperCase() })}
-                              className="h-8 w-[100px] font-mono"
-                            />
-                          </TableCell>
-                          <TableCell className="text-muted-foreground text-sm">
-                            {editForm.ticker ? `Wyplata dywidendy ${editForm.ticker}` : ''}
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={editForm.amount}
-                              onChange={e => setEditForm({ ...editForm, amount: e.target.value })}
-                              className="h-8 w-[100px] text-right"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Select value={editForm.currency} onValueChange={v => setEditForm({ ...editForm, currency: v })}>
-                              <SelectTrigger className="h-8 w-[80px]" size="sm">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="PLN">PLN</SelectItem>
-                                <SelectItem value="USD">USD</SelectItem>
-                                <SelectItem value="EUR">EUR</SelectItem>
-                                <SelectItem value="CAD">CAD</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                          <TableCell>
-                            <SourceBadge source={d.source} />
-                          </TableCell>
-                          <TableCell>
+                    dividends.map((d: DividendRecord) => (
+                      <TableRow key={d.id}>
+                        <TableCell>{formatDate(d.date)}</TableCell>
+                        <TableCell className="font-mono font-medium">{d.ticker}</TableCell>
+                        <TableCell className="text-muted-foreground text-sm">{d.description}</TableCell>
+                        <TableCell className="text-right font-medium text-gain tabular-nums">{formatNumber(d.amount)}</TableCell>
+                        <TableCell><CcyChip ccy={d.currency} /></TableCell>
+                        <TableCell>
+                          <SourceBadge source={d.source} />
+                        </TableCell>
+                        <TableCell>
+                          {d.source === 'manual' && (
                             <div className="flex gap-1">
                               <Button
                                 size="icon-xs"
                                 variant="ghost"
-                                onClick={() => updateMutation.mutate({ id: d.id, form: editForm })}
-                                disabled={!isEditValid || updateMutation.isPending}
-                                className="text-gain hover:text-gain/80"
-                              >
-                                {updateMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                              </Button>
-                              <Button
-                                size="icon-xs"
-                                variant="ghost"
-                                onClick={() => setEditingId(null)}
-                              >
-                                <X className="h-3 w-3" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        <TableRow key={d.id}>
-                          <TableCell>{formatDate(d.date)}</TableCell>
-                          <TableCell className="font-mono font-medium">{d.ticker}</TableCell>
-                          <TableCell className="text-muted-foreground text-sm">{d.description}</TableCell>
-                          <TableCell className="text-right font-medium text-gain tabular-nums">{formatNumber(d.amount)}</TableCell>
-                          <TableCell><CcyChip ccy={d.currency} /></TableCell>
-                          <TableCell>
-                            <SourceBadge source={d.source} />
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex gap-1">
-                              <Button
-                                size="icon-xs"
-                                variant="ghost"
-                                onClick={() => startEdit(d)}
+                                onClick={() => setEditing(d)}
                                 className="text-muted-foreground hover:text-foreground"
                               >
                                 <Pencil className="h-3 w-3" />
@@ -482,17 +296,17 @@ export function DividendsPage() {
                               <Button
                                 size="icon-xs"
                                 variant="ghost"
-                                onClick={() => handleDelete(d)}
+                                onClick={() => setDeleting(d)}
                                 disabled={deleteMutation.isPending}
                                 className="text-muted-foreground hover:text-destructive"
                               >
                                 <Trash2 className="h-3 w-3" />
                               </Button>
                             </div>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    )
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
                   )}
                 </TableBody>
               </Table>
@@ -500,6 +314,24 @@ export function DividendsPage() {
           )}
         </CardContent>
       </Card>
+
+      <AddDividendDialog open={addOpen} onClose={() => setAddOpen(false)} />
+      <AddDividendDialog
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        defaultValues={editing ? { id: editing.id, date: editing.date, ticker: editing.ticker, amount: editing.amount, currency: editing.currency } : undefined}
+      />
+      <ConfirmDeleteDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
+        description={
+          deleting
+            ? `Usunąć dywidendę ${deleting.ticker} — ${formatCurrency(deleting.amount, deleting.currency)} z ${formatDate(deleting.date)}?`
+            : ''
+        }
+        loading={deleteMutation.isPending}
+      />
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CcyChip } from '@/components/ui/ccy-chip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DeleteTransactionDialog } from './DeleteTransactionDialog';
 import { cn } from '@/lib/utils';
 import { Search, Info, Pencil, Trash2, Check, X, Loader2 } from 'lucide-react';
@@ -49,6 +50,42 @@ interface TxItem {
   source?: string;
   /** Ustawiane przez reconciliation (Bossa wykupy certyfikatów / wezwania skupu) — źródło auto-generowanej sprzedaży. */
   syntheticOrigin?: string;
+}
+
+/**
+ * Tooltip z opisem syntetycznej transakcji (Radix zamiast native `title` — native
+ * miał 1-2s delay zanim się pokazał). Parsuje URL jako klikalny link.
+ */
+function SyntheticOriginTooltip({ origin }: { origin: string }) {
+  // "Wykup w ofercie skupu MOSTALZAB — 333 szt @ 11.50 PLN (cena z tender-offers-map, źródło: https://stockwatch.pl/…)"
+  const urlMatch = origin.match(/(https?:\/\/\S+?)(?:[.,;)\s]|$)/);
+  const url = urlMatch?.[1];
+  const textWithoutUrl = url ? origin.replace(url, '').replace(/,?\s*źródło:\s*$/i, '').replace(/\s*\(\s*\)\s*$/,'').trim() : origin;
+
+  return (
+    <Tooltip delayDuration={150}>
+      <TooltipTrigger asChild>
+        <span className="inline-flex cursor-help">
+          <Info className="h-3 w-3 text-amber-500/80 shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-sm text-xs">
+        <p className="font-medium mb-1">Transakcja wygenerowana automatycznie</p>
+        <p className="text-muted-foreground">{textWithoutUrl}</p>
+        {url && (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 inline-block text-primary underline break-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            Źródło ↗
+          </a>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 interface EditForm {
@@ -318,14 +355,7 @@ export const TradesFeed = memo(function TradesFeed() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 mb-0.5">
                 <span className="font-mono font-semibold text-sm">{tx.ticker}</span>
-                {tx.syntheticOrigin && (
-                  <span
-                    className="inline-flex cursor-help"
-                    title={`Sprzedaż auto-wygenerowana: ${tx.syntheticOrigin}`}
-                  >
-                    <Info className="h-3 w-3 text-amber-500/80 shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
-                  </span>
-                )}
+                {tx.syntheticOrigin && <SyntheticOriginTooltip origin={tx.syntheticOrigin} />}
                 {autoFx ? (
                   <span
                     className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground cursor-help"
@@ -580,11 +610,7 @@ const NormalRow = memo(function NormalRow({ tx, onEdit, onDelete }: NormalRowPro
       <td className="py-2.5 pr-4 font-mono font-semibold">
         <span className="inline-flex items-center gap-1">
           {tx.ticker}
-          {tx.syntheticOrigin && (
-            <span className="inline-flex cursor-help" title={`Sprzedaż wygenerowana automatycznie: ${tx.syntheticOrigin}`}>
-              <Info className="h-3 w-3 text-amber-500/80 shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
-            </span>
-          )}
+          {tx.syntheticOrigin && <SyntheticOriginTooltip origin={tx.syntheticOrigin} />}
         </span>
       </td>
       <td className="py-2.5 pr-4">

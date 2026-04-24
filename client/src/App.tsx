@@ -16,7 +16,7 @@ import { TradesPage } from '@/components/transactions/TradesPage';
 import { DividendsPage } from '@/components/dividends/DividendsPage';
 import { CurrencyExchangePage } from '@/components/currency/CurrencyExchangePage';
 import { CashFlowPage } from '@/components/cash/CashFlowPage';
-import { CostsPage } from '@/components/costs/CostsPage';
+import { CorrectionsAndCostsPage } from '@/components/corrections-and-costs/CorrectionsAndCostsPage';
 import { BugReportsPage } from '@/components/admin/BugReportsPage';
 
 const queryClient = new QueryClient({
@@ -34,7 +34,7 @@ function App() {
     <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Toaster richColors position="top-right" closeButton theme="system" />
+        <Toaster richColors position="bottom-center" closeButton theme="system" />
         <BrowserRouter>
           <Routes>
             {/* Public routes */}
@@ -55,7 +55,10 @@ function App() {
                       <Route path="/dividends" element={<DividendsPage />} />
                       <Route path="/currency" element={<CurrencyExchangePage />} />
                       <Route path="/cash" element={<CashFlowPage />} />
-                      <Route path="/costs" element={<CostsPage />} />
+                      <Route path="/corrections-and-costs" element={<CorrectionsAndCostsPage />} />
+                      {/* Stare ścieżki — redirect do nowego panelu dla backward compat (bookmarks) */}
+                      <Route path="/corporate-actions" element={<Navigate to="/app/corrections-and-costs" replace />} />
+                      <Route path="/costs" element={<Navigate to="/app/corrections-and-costs" replace />} />
                       <Route path="/admin/bugs" element={<BugReportsPage />} />
                       <Route path="*" element={<Navigate to="/app" replace />} />
                     </Routes>
