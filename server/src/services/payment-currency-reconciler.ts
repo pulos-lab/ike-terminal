@@ -100,16 +100,15 @@ export function simulateLedger(
         // Auto-FX fallback: broker converted baseCurrency → quoteCurrency.
         computed.set(tx.id!, baseCurrency);
         const fxRate = tx.fxRate && tx.fxRate > 0 ? tx.fxRate : 1;
+        const prevBase = balance.get(baseCurrency) ?? 0;
         addBalance(baseCurrency, -tx.total * fxRate);
-        // If even the base balance goes negative, we have a real data gap —
-        // surface it so the user knows something's missing in the CSV.
-        const baseBal = balance.get(baseCurrency) ?? 0;
-        if (baseBal < -BALANCE_EPSILON) {
+        const newBase = balance.get(baseCurrency) ?? 0;
+        // Warning tylko przy przejściu ≥0 → <0 — kolejne tx w minusie to follow-up tej samej luki w CSV.
+        if (prevBase >= -BALANCE_EPSILON && newBase < -BALANCE_EPSILON) {
           const date = tx.date.slice(0, 10);
           warnings.push(
-            `Transakcja ${tx.paperName} ${date}: saldo ${tx.currency} niewystarczające ` +
-            `(${quoteBalance.toFixed(2)} < ${tx.total.toFixed(2)}), przypisano do ${baseCurrency}; ` +
-            `saldo ${baseCurrency} po transakcji ujemne (${baseBal.toFixed(2)}).`,
+            `Transakcja ${tx.paperName} ${date}: saldo ${baseCurrency} spadło poniżej zera ` +
+            `(${newBase.toFixed(2)}) — brak pokrycia w CSV (możliwa brakująca wpłata/FX).`,
           );
         }
       }
@@ -162,9 +161,30 @@ export function reconcilePaymentCurrencies(
     }
 
     if (sourceWarnings.length > 0) {
-      warnings.push(...sourceWarnings.map(w => `[${source}] ${w}`));
+      warnings.push(...aggregateWarnings(source, sourceWarnings));
     }
   }
 
   return { updatedCount, warnings };
+}
+
+/** Przy > N warningach z jednego źródła: jeden zbiorczy komunikat + TOP5 przykładów.
+ *  Systematyczna seria dziur najczęściej oznacza niekompletny eksport operacji,
+ *  nie N niezależnych incydentów — użytkownik potrzebuje wskazówki, nie listy. */
+const AGGREGATE_THRESHOLD = 10;
+const TOP_EXAMPLES = 5;
+
+function aggregateWarnings(source: ReconcileSource, sourceWarnings: string[]): string[] {
+  if (sourceWarnings.length <= AGGREGATE_THRESHOLD) {
+    return sourceWarnings.map(w => `[${source}] ${w}`);
+  }
+  const examples = sourceWarnings
+    .slice(0, TOP_EXAMPLES)
+    .map(w => `  • ${w}`)
+    .join('\n');
+  const summary =
+    `[${source}] Wykryto ${sourceWarnings.length} transakcji z niepełnym pokryciem gotówki ` +
+    `w walucie bazowej — prawdopodobnie niekompletny eksport operacji kasowych ` +
+    `(brakujące wpłaty/FX/dywidendy).\nPierwsze ${TOP_EXAMPLES} przykładów:\n${examples}`;
+  return [summary];
 }
