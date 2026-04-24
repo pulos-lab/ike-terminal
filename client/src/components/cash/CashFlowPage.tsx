@@ -420,7 +420,7 @@ export function CashFlowPage() {
                       <TableCell />
                     </TableRow>
                   )}
-                  {yearGroups.length > 0 && (
+                  {yearGroups.length > 0 && grandTotalWithdrawals > 0 && (
                     <TableRow className="font-semibold">
                       <TableCell className="text-muted-foreground">Netto</TableCell>
                       <TableCell colSpan={2} className="text-right">
