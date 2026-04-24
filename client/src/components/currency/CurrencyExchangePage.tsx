@@ -1,35 +1,18 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidateFx } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { CcyChip } from '@/components/ui/ccy-chip';
+import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
+import { AddFxExchangeDialog } from './AddFxExchangeDialog';
 import { formatNumber, formatDate } from '@/lib/formatters';
-import { Loader2, Plus, Trash2, Check, X } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import type { FxExchangeRecord } from 'shared';
-
-const CURRENCIES = ['PLN', 'USD', 'EUR', 'GBP'] as const;
-
-interface FxForm {
-  date: string;
-  currencyFrom: string;
-  currencyTo: string;
-  amountFrom: string;
-  rate: string;
-}
-
-const emptyForm: FxForm = {
-  date: new Date().toISOString().slice(0, 10),
-  currencyFrom: 'PLN',
-  currencyTo: 'USD',
-  amountFrom: '',
-  rate: '',
-};
 
 export function CurrencyExchangePage() {
   const queryClient = useQueryClient();
@@ -45,92 +28,36 @@ export function CurrencyExchangePage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm] = useState<FxForm>(emptyForm);
+  const [addOpen, setAddOpen] = useState(false);
+  const [deleting, setDeleting] = useState<FxExchangeRecord | null>(null);
 
   const fx = pricesData?.fx;
   const usdEur = fx?.USDPLN && fx?.EURPLN ? fx.USDPLN / fx.EURPLN : null;
 
-  // Pre-fill rate from live FX data when currency pair changes
-  const getLiveRate = (from: string, to: string): string => {
-    if (!fx) return '';
-    // Direct rates available: USDPLN, EURPLN, GBPPLN
-    if (from === 'PLN' && to === 'USD' && fx.USDPLN) return fx.USDPLN.toFixed(4);
-    if (from === 'PLN' && to === 'EUR' && fx.EURPLN) return fx.EURPLN.toFixed(4);
-    if (from === 'PLN' && to === 'GBP' && fx.GBPPLN) return fx.GBPPLN.toFixed(4);
-    if (from === 'USD' && to === 'PLN' && fx.USDPLN) return (1 / fx.USDPLN).toFixed(4);
-    if (from === 'EUR' && to === 'PLN' && fx.EURPLN) return (1 / fx.EURPLN).toFixed(4);
-    if (from === 'GBP' && to === 'PLN' && fx.GBPPLN) return (1 / fx.GBPPLN).toFixed(4);
-    // Cross rates
-    if (from === 'USD' && to === 'EUR' && fx.USDPLN && fx.EURPLN) return (fx.USDPLN / fx.EURPLN).toFixed(4);
-    if (from === 'EUR' && to === 'USD' && fx.USDPLN && fx.EURPLN) return (fx.EURPLN / fx.USDPLN).toFixed(4);
-    if (from === 'USD' && to === 'GBP' && fx.USDPLN && fx.GBPPLN) return (fx.USDPLN / fx.GBPPLN).toFixed(4);
-    if (from === 'GBP' && to === 'USD' && fx.USDPLN && fx.GBPPLN) return (fx.GBPPLN / fx.USDPLN).toFixed(4);
-    if (from === 'EUR' && to === 'GBP' && fx.EURPLN && fx.GBPPLN) return (fx.EURPLN / fx.GBPPLN).toFixed(4);
-    if (from === 'GBP' && to === 'EUR' && fx.EURPLN && fx.GBPPLN) return (fx.GBPPLN / fx.EURPLN).toFixed(4);
-    return '';
-  };
-
-  const computedAmountTo = useMemo(() => {
-    const amount = parseFloat(addForm.amountFrom);
-    const rate = parseFloat(addForm.rate);
-    if (amount > 0 && rate > 0) return (amount / rate).toFixed(2);
-    return '—';
-  }, [addForm.amountFrom, addForm.rate]);
-
-  const createMutation = useMutation({
-    mutationFn: (form: FxForm) =>
-      api.createFxExchange({
-        date: form.date,
-        currencyFrom: form.currencyFrom,
-        currencyTo: form.currencyTo,
-        amountFrom: parseFloat(form.amountFrom),
-        rate: parseFloat(form.rate),
-      }),
-    onSuccess: () => {
-      invalidateFx(queryClient);
-      setAddForm(emptyForm);
-      setShowAddForm(false);
-    },
-  });
-
   const deleteMutation = useMutation({
     mutationFn: ({ fromId, toId }: { fromId: number; toId: number }) =>
       api.deleteFxExchange(fromId, toId),
-    onSuccess: () => invalidateFx(queryClient),
+    onSuccess: () => {
+      invalidateFx(queryClient);
+      const ex = deleting;
+      if (ex) {
+        toast.success(`Usunięto wymianę ${ex.currencyFrom} → ${ex.currencyTo} (${formatNumber(ex.amountFrom)} ${ex.currencyFrom})`);
+      } else {
+        toast.success('Usunięto wymianę.');
+      }
+      setDeleting(null);
+    },
+    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
   });
-
-  const handleCurrencyChange = (field: 'currencyFrom' | 'currencyTo', value: string) => {
-    const updated = { ...addForm, [field]: value };
-    // Auto-swap if same currency selected
-    if (updated.currencyFrom === updated.currencyTo) {
-      if (field === 'currencyFrom') updated.currencyTo = addForm.currencyFrom;
-      else updated.currencyFrom = addForm.currencyTo;
-    }
-    updated.rate = getLiveRate(updated.currencyFrom, updated.currencyTo);
-    setAddForm(updated);
-  };
-
-  const isFormValid =
-    addForm.date &&
-    addForm.currencyFrom !== addForm.currencyTo &&
-    parseFloat(addForm.amountFrom) > 0 &&
-    parseFloat(addForm.rate) > 0;
 
   return (
     <div className="space-y-4">
-      {!showAddForm && (
-        <div className="flex items-center justify-end">
-          <Button size="sm" onClick={() => {
-            const form = { ...emptyForm, date: new Date().toISOString().slice(0, 10) };
-            form.rate = getLiveRate(form.currencyFrom, form.currencyTo);
-            setAddForm(form);
-            setShowAddForm(true);
-          }}>
-            <Plus className="h-4 w-4 mr-1" /> Dodaj wymianę
-          </Button>
-        </div>
-      )}
+      <div className="flex items-center justify-end">
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="h-4 w-4" />
+          Dodaj wymianę
+        </Button>
+      </div>
 
       {fx && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -176,83 +103,6 @@ export function CurrencyExchangePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {showAddForm && (
-                    <TableRow className="bg-muted/50">
-                      <TableCell>
-                        <Input
-                          type="date"
-                          value={addForm.date}
-                          onChange={(e) => setAddForm({ ...addForm, date: e.target.value })}
-                          className="w-[140px]"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Select value={addForm.currencyFrom} onValueChange={(v) => handleCurrencyChange('currencyFrom', v)}>
-                            <SelectTrigger className="w-[80px]">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {CURRENCIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                          <span className="text-muted-foreground">→</span>
-                          <Select value={addForm.currencyTo} onValueChange={(v) => handleCurrencyChange('currencyTo', v)}>
-                            <SelectTrigger className="w-[80px]">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {CURRENCIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          step="0.0001"
-                          placeholder="Kurs"
-                          value={addForm.rate}
-                          onChange={(e) => setAddForm({ ...addForm, rate: e.target.value })}
-                          className="w-[100px] text-right"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          placeholder="Kwota"
-                          value={addForm.amountFrom}
-                          onChange={(e) => setAddForm({ ...addForm, amountFrom: e.target.value })}
-                          className="w-[110px] text-right"
-                        />
-                      </TableCell>
-                      <TableCell className="text-right text-gain font-mono">
-                        {computedAmountTo !== '—' ? `+${computedAmountTo}` : '—'} {addForm.currencyTo}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7"
-                            disabled={!isFormValid || createMutation.isPending}
-                            onClick={() => createMutation.mutate(addForm)}
-                          >
-                            {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7"
-                            onClick={() => { setShowAddForm(false); setAddForm(emptyForm); }}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )}
                   {data?.exchanges?.length ? (
                     data.exchanges.map((ex: FxExchangeRecord, i: number) => (
                       <TableRow key={i}>
@@ -272,13 +122,13 @@ export function CurrencyExchangePage() {
                           +{formatNumber(ex.amountTo)} {ex.currencyTo}
                         </TableCell>
                         <TableCell>
-                          {ex.source === 'manual' && ex.fromOperationId && ex.toOperationId && (
+                          {ex.source === 'manual' && (
                             <Button
                               size="icon"
                               variant="ghost"
                               className="h-7 w-7 text-muted-foreground hover:text-destructive"
                               disabled={deleteMutation.isPending}
-                              onClick={() => deleteMutation.mutate({ fromId: ex.fromOperationId!, toId: ex.toOperationId! })}
+                              onClick={() => setDeleting(ex)}
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
@@ -286,19 +136,36 @@ export function CurrencyExchangePage() {
                         </TableCell>
                       </TableRow>
                     ))
-                  ) : !showAddForm ? (
+                  ) : (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
                         Brak danych.
                       </TableCell>
                     </TableRow>
-                  ) : null}
+                  )}
                 </TableBody>
               </Table>
             </div>
           )}
         </CardContent>
       </Card>
+
+      <AddFxExchangeDialog open={addOpen} onClose={() => setAddOpen(false)} />
+      <ConfirmDeleteDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        onConfirm={() => {
+          if (deleting?.fromOperationId && deleting?.toOperationId) {
+            deleteMutation.mutate({ fromId: deleting.fromOperationId, toId: deleting.toOperationId });
+          }
+        }}
+        description={
+          deleting
+            ? `Usunąć wymianę ${deleting.currencyFrom} → ${deleting.currencyTo} z ${formatDate(deleting.date)} (−${formatNumber(deleting.amountFrom)} ${deleting.currencyFrom})?`
+            : ''
+        }
+        loading={deleteMutation.isPending}
+      />
     </div>
   );
 }

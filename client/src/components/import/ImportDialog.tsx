@@ -33,6 +33,7 @@ const SKIP_REASON_LABELS: Record<SkipReason, string> = {
   unmatched_fx_credit: 'niesparowana wymiana walut',
   duplicate: 'duplikat (już zaimportowano)',
   redemption_reconciled: 'wykup/wezwanie (domknięte syntetyczną sprzedażą)',
+  capital_return_reconciled: 'zwrot kapitału (widoczny w Zdarzeniach korporacyjnych)',
   unknown_operation_type: 'nierozpoznany typ operacji',
   unparseable_fx_comment: 'Transfer XTB — nie udało się odczytać pary walut/kursu',
   invalid_fx_rate: 'Transfer XTB — nieprawidłowy kurs wymiany',

@@ -239,15 +239,20 @@ async function resolveIsin(
   // Strategy 1: Yahoo search by ISIN (exact identifier — reliable)
   const byIsin = await searchYahoo(isin);
   if (byIsin.length > 0) {
-    if (isPolishTicker) {
-      // Dla polskich akcji preferujemy .WA. Jeśli Yahoo wyrzuci w odpowiedzi TYLKO zagraniczne
-      // listingi (np. TSGAMES → `1HQ.SG` Stuttgart), NIE akceptujemy ich od razu — niżej
-      // Strategy 2 (Stooq) znajdzie TEN.WA, a dopiero potem wracamy do zagranicznego fallbacku.
+    // Preferencja .WA: zarówno dla polskich tickerów (isPolishTicker) jak i dla dual-listed
+    // spółek gdzie user kupuje przez GPW (txCurrency === 'PLN'). Przykład: GreenX Metals
+    // (AU0000198939) — Yahoo zwraca [GRX.AX (Sydney AUD), GRX.WA (Warsaw PLN)]; user kupuje
+    // przez Bossę w PLN, więc GRX.WA jest właściwe dla live prices i historii.
+    const preferWa = isPolishTicker || txCurrency === 'PLN';
+    if (preferWa) {
       const waHit = byIsin.find(r => r.symbol.endsWith('.WA'));
       if (waHit) {
         return await buildEntry(isin, waHit.symbol, waHit.name, waHit.exchange, paperName, txCurrency);
       }
-    } else {
+    }
+    // Polish ticker z pseudoISIN/realPL bez .WA hita → NIE akceptujemy zagranicznego listingu,
+    // niżej Strategy 2 (Stooq) spróbuje znaleźć .WA po nazwie.
+    if (!isPolishTicker) {
       return await buildEntry(isin, byIsin[0].symbol, byIsin[0].name, byIsin[0].exchange, paperName, txCurrency);
     }
   }

@@ -1127,6 +1127,14 @@ export async function computePortfolioHistory(
 
   for (const op of operations) {
     const date = op.date.split('T')[0];
+    // `corporate_action_pending` — zdarzenie niedomknięte (np. nieznane wezwanie skupu
+    // bez tender-offers-map). Cash z CSV fizycznie wpłynął na konto brokerskie, ALE
+    // pozycja akcyjna nie została jeszcze zmniejszona (brak synthetic SELL). Gdybyśmy
+    // zaliczyli tu ten cash do bilansu, portfel byłby zawyżony: market value ghost-shares
+    // + cash z ich sprzedaży jednocześnie. Dlatego pomijamy — user musi domknąć przez
+    // endpoint /corporate-actions/:id/resolve (tworzy synthetic SELL, cash wtedy wchodzi
+    // do bilansu normalnie jako różnica total-commission w transakcji).
+    if (op.operationType === 'corporate_action_pending') continue;
     const map = getCashFlowMap(op.currency);
     map.set(date, (map.get(date) || 0) + op.amount);
   }
@@ -1626,6 +1634,13 @@ export async function computePortfolioHistory(
     .filter(op => op.operationType === 'dividend')
     .reduce((sum, op) => sum + opAmountBase(op), 0);
 
+  // Capital return (obniżenie nominału, korekta wykupu) — osobna metryka obok dywidend.
+  // Trzymamy oddzielnie żeby UI mogło pokazać breakdown "Dywidendy X zł / Zwrot kapitału Y zł",
+  // ale ekonomicznie obie pozycje są częścią realnego zwrotu z trzymania portfela.
+  const totalCapitalReturn = operations
+    .filter(op => op.operationType === 'capital_return')
+    .reduce((sum, op) => sum + opAmountBase(op), 0);
+
   let xirr = 0;
   try {
     xirr = computeXirr(depositsList, lastPoint?.portfolioValue || 0) * 100;
@@ -1640,6 +1655,7 @@ export async function computePortfolioHistory(
     totalReturn: (lastPoint?.portfolioValue || 0) - (lastPoint?.investedCumulative || 0),
     totalReturnPct: lastPoint?.returnPct || 0,
     totalDividends,
+    totalCapitalReturn,
   };
 
   return { history, metrics, detectedSplits: allSplits, dailyFxRates };

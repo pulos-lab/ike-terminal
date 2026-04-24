@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/async-handler.js';
-import { getAllTransactions, getTransactionById, insertTransaction, updateTransaction, deleteTransaction, deleteTransactions, getTransactionsByIds } from '../db/transactions-repo.js';
+import { getAllTransactions, getTransactionById, insertTransaction, updateTransaction, deleteTransaction, deleteTransactions, getTransactionsByIds, insertTransactionsWithDedup } from '../db/transactions-repo.js';
 import { getAllOperations, getOperationsByType, getOperationsByTypes, insertOperation, insertOperations, updateOperation, deleteOperation, getOperationById } from '../db/operations-repo.js';
 import { getTickerMap, getTickerBySymbol, upsertTickerMapEntry, getAllTickers, updateTickerSectors } from '../db/ticker-map-repo.js';
 import { resolveSector } from '../services/sector-resolver.js';
@@ -279,6 +279,8 @@ router.get('/dividends/upcoming', asyncHandler(async (req, res) => {
 }));
 
 // GET /api/portfolio/fees — returns fee operations (interest, payment charges, etc.)
+// Zachowane dla backward compat (panel CostsPage zostanie usunięty, ale endpoint jest
+// taniutki do utrzymania i mógłby być konsumowany przez przyszłe integracje).
 router.get('/fees', asyncHandler((req, res) => {
   const fees = getOperationsByType('fee', req.portfolioId)
     .map(op => ({
@@ -293,6 +295,129 @@ router.get('/fees', asyncHandler((req, res) => {
   const total = fees.reduce((s, f) => s + f.amount, 0);
   res.json({ fees, total });
 }));
+
+// GET /api/portfolio/additional-costs — ujednolicony endpoint dla sekcji "Dodatkowe koszty"
+// w panelu "Korekty i koszty". Zwraca wszystkie operacje nie-kapitałowe / nie-dywidendowe /
+// nie-wpłatowe: fee, trade_fee, commission_refund, other. Każda kategoria ma osobne totals,
+// a frontend pokazuje je w jednej tabeli z badge'ami per kategoria.
+//
+// Dlaczego to istnieje: przed P18 commission_refund (90 wpisów w portfelu sda, +800 PLN) oraz
+// trade_fee (XTB swap/rollover) nie miały żadnego widoku w UI — były w DB ale niewidoczne.
+// Ten endpoint zamyka tę lukę. Engine dalej traktuje je tak samo (wchodzą w cash balance,
+// nie w MWR).
+router.get('/additional-costs', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const operations = getOperationsByTypes(
+    ['fee', 'trade_fee', 'commission_refund', 'other'],
+    pid,
+  )
+    .map(op => ({
+      id: op.id,
+      date: op.date,
+      category: op.operationType as 'fee' | 'trade_fee' | 'commission_refund' | 'other',
+      subkind: op.subkind,
+      ticker: op.ticker,
+      amount: op.amount,
+      currency: op.currency,
+      description: op.description,
+      source: op.source,
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  const totals = {
+    fees: operations.filter(o => o.category === 'fee').reduce((s, o) => s + o.amount, 0),
+    commissionRefunds: operations.filter(o => o.category === 'commission_refund').reduce((s, o) => s + o.amount, 0),
+    tradeFees: operations.filter(o => o.category === 'trade_fee').reduce((s, o) => s + o.amount, 0),
+    other: operations.filter(o => o.category === 'other').reduce((s, o) => s + o.amount, 0),
+    grandTotal: operations.reduce((s, o) => s + o.amount, 0),
+  };
+
+  // Base currency = jedyna waluta wpłat/wypłat lub PLN fallback. UI używa tego do
+  // wyświetlenia sum na kaflach w odpowiedniej walucie (XTB USD sub-account → USD, nie PLN).
+  const baseCurrency = detectBaseCurrency(getAllOperations(pid));
+
+  res.json({ operations, totals, baseCurrency });
+}));
+
+// POST /api/portfolio/additional-costs — ręczne dodanie operacji do panelu
+// "Pozostałe przepływy". Source='manual' żeby odróżnić od importowanych.
+//
+// UI-level kategoria "Odsetki" jest mapowana na operation_type='other' + subkind='interest'
+// (tak samo jak zrobi to parser XTB w follow-up dla rzeczywistych "Free funds interest").
+// Dzięki temu silnik traktuje odsetki jak inne `other` (cash balance tak, MWR nie), a UI
+// odróżnia je po subkind żeby pokazać zielony badge.
+router.post('/additional-costs', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const { date, category, amount, currency, description, subkind } = req.body as {
+    date?: string;
+    category?: 'fee' | 'trade_fee' | 'commission_refund' | 'other';
+    amount?: number;
+    currency?: string;
+    description?: string;
+    subkind?: string;
+  };
+
+  if (!date) return res.status(400).json({ error: 'Wymagane pole: date' });
+  if (!category || !['fee', 'trade_fee', 'commission_refund', 'other'].includes(category)) {
+    return res.status(400).json({ error: 'category musi być jednym z: fee, trade_fee, commission_refund, other' });
+  }
+  if (typeof amount !== 'number' || !isFinite(amount) || amount === 0) {
+    return res.status(400).json({ error: 'amount musi być liczbą różną od 0 (dodatnia = wpływ, ujemna = wypływ)' });
+  }
+  // Tylko wartości subkind używane w "Pozostałych przepływach" — `interest` dla odsetek
+  // na other (inne dozwolone subkindy są zarezerwowane dla capital_return / pending).
+  const allowedSubkinds = ['interest'];
+  const effectiveSubkind = subkind && allowedSubkinds.includes(subkind) ? subkind : undefined;
+
+  const cur = (currency || 'PLN').toUpperCase();
+  const desc = description?.trim() || labelForCategory(category, effectiveSubkind);
+
+  const id = insertOperation({
+    date,
+    operationType: category,
+    description: desc,
+    amount,
+    currency: cur,
+    source: 'manual',
+    subkind: effectiveSubkind as 'interest' | undefined,
+  }, pid);
+
+  res.json({ id });
+}));
+
+// DELETE /api/portfolio/additional-costs/:id — usuń ręcznie dodaną operację.
+// Blokujemy kasowanie operacji z importu (source != 'manual') żeby user nie sprzątał
+// rekordów pochodzących z CSV — do tego celu powinien usunąć cały import.
+router.delete('/additional-costs/:id', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const id = parseInt(req.params.id);
+  const existing = getOperationById(id, pid);
+  if (!existing) return res.status(404).json({ error: 'Operacja nie znaleziona' });
+
+  const allowedTypes = ['fee', 'trade_fee', 'commission_refund', 'other'];
+  if (!allowedTypes.includes(existing.operationType)) {
+    return res.status(400).json({ error: 'Nie można usunąć: to nie jest operacja z Pozostałych przepływów' });
+  }
+  if (existing.source !== 'manual') {
+    return res.status(403).json({ error: 'Nie można usunąć operacji z importu — usuń cały import żeby ją skasować' });
+  }
+
+  const deleted = deleteOperation(id, pid);
+  if (!deleted) return res.status(500).json({ error: 'Nie udało się usunąć' });
+  res.json({ success: true });
+}));
+
+// Helper — domyślny opis gdy user nie wpisał własnego (dla ręcznie dodawanej operacji).
+function labelForCategory(
+  cat: 'fee' | 'trade_fee' | 'commission_refund' | 'other',
+  subkind?: string,
+): string {
+  if (cat === 'fee') return 'Opłata';
+  if (cat === 'commission_refund') return 'Zwrot prowizji';
+  if (cat === 'trade_fee') return 'Podatek transakcyjny';
+  if (cat === 'other' && subkind === 'interest') return 'Odsetki od wolnych środków';
+  return 'Inne';
+}
 
 // GET /api/portfolio/deposits — returns deposits + withdrawals
 router.get('/deposits', asyncHandler((req, res) => {
@@ -363,6 +488,115 @@ router.delete('/deposits/:id', asyncHandler((req, res) => {
   if (!deleted) {
     return res.status(500).json({ error: 'Nie udało się usunąć' });
   }
+  res.json({ success: true });
+}));
+
+// ─── Corporate actions (capital_return + corporate_action_pending) ───────────
+// P17: zdarzenia korporacyjne — zwrot kapitału (obniżenie nominału, wyrównanie wykupu) oraz
+// niedomknięte zdarzenia pending (nieznane wezwania skupu / wyrównania PW). Parser Bossy
+// wstawia je automatycznie; tu tylko read + manual resolve pending → synthetic SELL.
+
+// GET /api/portfolio/corporate-actions
+router.get('/corporate-actions', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const actions = getOperationsByTypes(['capital_return', 'corporate_action_pending'], pid)
+    .map(op => ({
+      id: op.id,
+      date: op.date,
+      operationType: op.operationType as 'capital_return' | 'corporate_action_pending',
+      subkind: op.subkind,
+      ticker: op.ticker,
+      amount: op.amount,
+      currency: op.currency,
+      description: op.description,
+      source: op.source,
+      status: op.operationType === 'capital_return' ? 'resolved' : 'pending' as 'resolved' | 'pending',
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const totals = {
+    capitalReturn: actions.filter(a => a.operationType === 'capital_return').reduce((s, a) => s + a.amount, 0),
+    pendingCount: actions.filter(a => a.operationType === 'corporate_action_pending').length,
+  };
+  const baseCurrency = detectBaseCurrency(getAllOperations(pid));
+  res.json({ actions, totals, baseCurrency });
+}));
+
+// POST /api/portfolio/corporate-actions/:id/resolve — domknij pending przez synthetic SELL
+router.post('/corporate-actions/:id/resolve', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const id = parseInt(req.params.id);
+  const existing = getOperationById(id, pid);
+  if (!existing || existing.operationType !== 'corporate_action_pending') {
+    return res.status(404).json({ error: 'Zdarzenie pending nie znalezione' });
+  }
+
+  const { quantity, price, ticker, isin } = req.body as {
+    quantity?: number;
+    price?: number;
+    ticker?: string;
+    isin?: string;
+  };
+  if (!quantity || !price || quantity <= 0 || price <= 0) {
+    return res.status(400).json({ error: 'Wymagane pola: quantity (>0), price (>0)' });
+  }
+
+  const targetTicker = ticker?.trim() || existing.ticker || '';
+  if (!targetTicker) {
+    return res.status(400).json({ error: 'Brak tickera — dostarcz w body albo w operacji pending' });
+  }
+
+  // Znajdź ISIN z historii transakcji (po paperName = ticker z Bossa). User może też podać ręcznie.
+  let targetIsin = isin?.trim() || '';
+  if (!targetIsin) {
+    const existingTx = getAllTransactions(pid).find(t => t.paperName === targetTicker);
+    if (existingTx) targetIsin = existingTx.isin;
+  }
+  if (!targetIsin) {
+    return res.status(400).json({
+      error: `Nie znaleziono ISIN dla tickera "${targetTicker}" w historii transakcji. Podaj ISIN ręcznie w body.`,
+    });
+  }
+
+  // Synthetic SELL na dacie zdarzenia pending. Kwota brutto z operacji jest użyta jako `value`
+  // i `total` (brak prowizji — user może potem edytować ręcznie jeśli trzeba).
+  const syntheticSell = {
+    date: existing.date,
+    paperName: targetTicker,
+    isin: targetIsin,
+    quantity,
+    side: 'S' as const,
+    price,
+    value: existing.amount,
+    commission: 0,
+    total: existing.amount,
+    currency: existing.currency,
+    paymentCurrency: 'PLN',
+    source: 'bossa' as const,
+    syntheticOrigin: `Domknięcie: ${existing.description} — ${quantity} szt @ ${price.toFixed(2)} ${existing.currency} (ręczne domknięcie przez user)`,
+  };
+  const insertResult = insertTransactionsWithDedup([syntheticSell], pid);
+
+  // Usuwamy operację pending — cash inflow jest teraz reprezentowany przez synthetic SELL
+  // (przez transactionsCashFlow w engine).
+  deleteOperation(id, pid);
+
+  res.json({
+    success: true,
+    transactionsInserted: insertResult.inserted,
+    duplicates: insertResult.duplicates.length,
+  });
+}));
+
+// DELETE /api/portfolio/corporate-actions/:id — ręczne usunięcie (np. omyłkowo zaimportowane)
+router.delete('/corporate-actions/:id', asyncHandler((req, res) => {
+  const pid = req.portfolioId;
+  const id = parseInt(req.params.id);
+  const existing = getOperationById(id, pid);
+  if (!existing || (existing.operationType !== 'capital_return' && existing.operationType !== 'corporate_action_pending')) {
+    return res.status(404).json({ error: 'Zdarzenie korporacyjne nie znalezione' });
+  }
+  const deleted = deleteOperation(id, pid);
+  if (!deleted) return res.status(500).json({ error: 'Nie udało się usunąć' });
   res.json({ success: true });
 }));
 

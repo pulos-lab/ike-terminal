@@ -200,8 +200,86 @@ export const api = {
       method: 'DELETE',
     }),
 
-  // Fees
+  // Fees (legacy — zachowane dla backward compat, UI używa getAdditionalCosts)
   getFees: () => request<{ fees: any[]; total: number }>('/portfolio/fees'),
+
+  // Additional costs (ujednolicony endpoint: fee + trade_fee + commission_refund + other)
+  // Konsumowany przez CorrectionsAndCostsPage w sekcji "Pozostałe przepływy".
+  getAdditionalCosts: () =>
+    request<{
+      operations: Array<{
+        id: number;
+        date: string;
+        category: 'fee' | 'trade_fee' | 'commission_refund' | 'other';
+        /** Opcjonalny subkind. 'interest' oznacza odsetki (UI pokazuje je jako osobną kategorię). */
+        subkind?: 'interest' | string;
+        ticker?: string;
+        amount: number;
+        currency: string;
+        description: string;
+        source: string;
+      }>;
+      totals: {
+        fees: number;
+        commissionRefunds: number;
+        tradeFees: number;
+        other: number;
+        grandTotal: number;
+      };
+      /** Waluta bazowa portfela (np. 'PLN' dla Bossa, 'USD' dla XTB USD sub-account). */
+      baseCurrency: string;
+    }>('/portfolio/additional-costs'),
+
+  // Ręczne dodanie operacji do "Pozostałe przepływy". Subkind opcjonalnie —
+  // używane dla kategorii "Odsetki" (category='other', subkind='interest').
+  createAdditionalCost: (body: {
+    date: string;
+    category: 'fee' | 'trade_fee' | 'commission_refund' | 'other';
+    amount: number;
+    currency?: string;
+    description?: string;
+    subkind?: 'interest';
+  }) =>
+    request<{ id: number }>('/portfolio/additional-costs', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deleteAdditionalCost: (id: number) =>
+    request<{ success: boolean }>(`/portfolio/additional-costs/${id}`, {
+      method: 'DELETE',
+    }),
+
+  // Corporate actions (capital_return + corporate_action_pending)
+  getCorporateActions: () =>
+    request<{
+      actions: Array<{
+        id: number;
+        date: string;
+        operationType: 'capital_return' | 'corporate_action_pending';
+        subkind?: 'nominal_reduction' | 'redemption_adjustment' | 'unknown_tender' | 'unknown_warrant';
+        ticker?: string;
+        amount: number;
+        currency: string;
+        description: string;
+        source: string;
+        status: 'resolved' | 'pending';
+      }>;
+      totals: { capitalReturn: number; pendingCount: number };
+      /** Waluta bazowa portfela (np. 'PLN' dla Bossa, 'USD' dla XTB USD sub-account). */
+      baseCurrency: string;
+    }>('/portfolio/corporate-actions'),
+  resolveCorporateAction: (
+    id: number,
+    body: { quantity: number; price: number; ticker?: string; isin?: string },
+  ) =>
+    request<{ success: boolean; transactionsInserted: number; duplicates: number }>(
+      `/portfolio/corporate-actions/${id}/resolve`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  deleteCorporateAction: (id: number) =>
+    request<{ success: boolean }>(`/portfolio/corporate-actions/${id}`, {
+      method: 'DELETE',
+    }),
 
   getFxHistory: () => request<any>('/portfolio/fx-history'),
   createFxExchange: (body: { date: string; currencyFrom: string; currencyTo: string; amountFrom: number; rate: number }) =>

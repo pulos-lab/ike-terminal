@@ -5,14 +5,14 @@ import type { InsertWithDedupResult } from './transactions-repo.js';
 export function insertOperations(operations: CashOperation[], portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
   const stmt = db.prepare(`
-    INSERT INTO cash_operations (date, operation_type, description, details, amount, currency, ticker, fx_rate, fx_pair, source, import_batch)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO cash_operations (date, operation_type, description, details, amount, currency, ticker, fx_rate, fx_pair, source, import_batch, subkind)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertMany = db.transaction((ops: CashOperation[]) => {
     let count = 0;
     for (const op of ops) {
-      stmt.run(op.date, op.operationType, op.description, op.details || null, op.amount, op.currency, op.ticker || null, op.fxRate || null, op.fxPair || null, op.source, op.importBatch);
+      stmt.run(op.date, op.operationType, op.description, op.details || null, op.amount, op.currency, op.ticker || null, op.fxRate || null, op.fxPair || null, op.source, op.importBatch, op.subkind || null);
       count++;
     }
     return count;
@@ -34,8 +34,8 @@ export function insertOperationsWithDedup(
       AND (ticker IS ? OR (ticker IS NULL AND ? IS NULL))
   `);
   const insertStmt = db.prepare(`
-    INSERT INTO cash_operations (date, operation_type, description, details, amount, currency, ticker, fx_rate, fx_pair, source, import_batch)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO cash_operations (date, operation_type, description, details, amount, currency, ticker, fx_rate, fx_pair, source, import_batch, subkind)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   // Group by dedup key
@@ -62,7 +62,7 @@ export function insertOperationsWithDedup(
 
       for (let i = 0; i < toInsert; i++) {
         const op = opGroup[i];
-        insertStmt.run(op.date, op.operationType, op.description, op.details || null, op.amount, op.currency, op.ticker || null, op.fxRate || null, op.fxPair || null, op.source, op.importBatch);
+        insertStmt.run(op.date, op.operationType, op.description, op.details || null, op.amount, op.currency, op.ticker || null, op.fxRate || null, op.fxPair || null, op.source, op.importBatch, op.subkind || null);
         inserted++;
       }
 
@@ -114,9 +114,9 @@ export function getOperationById(id: number, portfolioId: string = 'default'): C
 export function insertOperation(op: CashOperation, portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
   const result = db.prepare(`
-    INSERT INTO cash_operations (date, operation_type, description, details, amount, currency, ticker, fx_rate, fx_pair, source, import_batch)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(op.date, op.operationType, op.description, op.details || null, op.amount, op.currency, op.ticker || null, op.fxRate || null, op.fxPair || null, op.source, op.importBatch || null);
+    INSERT INTO cash_operations (date, operation_type, description, details, amount, currency, ticker, fx_rate, fx_pair, source, import_batch, subkind)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(op.date, op.operationType, op.description, op.details || null, op.amount, op.currency, op.ticker || null, op.fxRate || null, op.fxPair || null, op.source, op.importBatch || null, op.subkind || null);
   return Number(result.lastInsertRowid);
 }
 
@@ -127,9 +127,9 @@ export function updateOperation(id: number, op: Partial<CashOperation>, portfoli
 
   const merged = { ...existing, ...op };
   const result = db.prepare(`
-    UPDATE cash_operations SET date = ?, operation_type = ?, description = ?, details = ?, amount = ?, currency = ?, ticker = ?, fx_rate = ?, fx_pair = ?, source = ?
+    UPDATE cash_operations SET date = ?, operation_type = ?, description = ?, details = ?, amount = ?, currency = ?, ticker = ?, fx_rate = ?, fx_pair = ?, source = ?, subkind = ?
     WHERE id = ?
-  `).run(merged.date, merged.operationType, merged.description, merged.details || null, merged.amount, merged.currency, merged.ticker || null, merged.fxRate || null, merged.fxPair || null, merged.source, id);
+  `).run(merged.date, merged.operationType, merged.description, merged.details || null, merged.amount, merged.currency, merged.ticker || null, merged.fxRate || null, merged.fxPair || null, merged.source, merged.subkind || null, id);
   return result.changes > 0;
 }
 
@@ -215,5 +215,6 @@ function mapRow(row: any): CashOperation {
     fxPair: row.fx_pair,
     source: row.source,
     importBatch: row.import_batch,
+    subkind: row.subkind ?? undefined,
   };
 }

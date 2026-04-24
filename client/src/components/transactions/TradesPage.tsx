@@ -7,11 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
-import { TickerAutocomplete } from '@/components/shared/TickerAutocomplete';
 import { formatNumber, formatCurrency, formatQuantity, formatDate } from '@/lib/formatters';
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { Loader2, Plus, Check, X, TrendingDown, ChevronRight, ChevronDown } from 'lucide-react';
@@ -19,6 +17,8 @@ import { ClosedTradesPage } from './ClosedTradesPage';
 import { TradesSummary } from './TradesSummary';
 import { PositionCardMobile } from './PositionCardMobile';
 import { TradesFeed } from './TradesFeed';
+import { AddTransactionDialog } from './AddTransactionDialog';
+import { toast } from 'sonner';
 
 interface BuyLot {
   quantity: number;
@@ -45,18 +45,6 @@ interface Position {
   buyLots?: BuyLot[];
 }
 
-interface TxForm {
-  date: string;
-  ticker: string;
-  side: 'K' | 'S';
-  quantity: string;
-  price: string;
-  commission: string;
-  currency: string; // 'auto' | 'PLN' | 'USD' | 'EUR' | 'GBP'
-  fxRate: string;
-  category: 'stock' | 'etf' | 'cfd';
-}
-
 interface SellForm {
   date: string;
   quantity: string;
@@ -64,8 +52,6 @@ interface SellForm {
   commission: string;
 }
 
-const CURRENCIES = ['auto', 'PLN', 'USD', 'EUR', 'GBP'] as const;
-const emptyTxForm: TxForm = { date: '', ticker: '', side: 'K', quantity: '', price: '', commission: '0', currency: 'auto', fxRate: '', category: 'stock' };
 const today = () => new Date().toISOString().slice(0, 10);
 
 export function TradesPage() {
@@ -75,12 +61,6 @@ export function TradesPage() {
   const { data: posData, isLoading: posLoading } = useQuery({
     queryKey: QUERY_KEYS.positions,
     queryFn: api.getPositions,
-  });
-
-  const { data: pricesData } = useQuery({
-    queryKey: QUERY_KEYS.livePrices,
-    queryFn: api.getLivePrices,
-    staleTime: 5 * 60 * 1000,
   });
 
   const { data: txData } = useQuery({
@@ -95,12 +75,12 @@ export function TradesPage() {
   });
   const closedCount = closedData?.trades?.length ?? 0;
 
-  // Add transaction form state
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm] = useState<TxForm>(emptyTxForm);
-  const [error, setError] = useState<string | null>(null);
+  // Add transaction dialog state (unified Modal pattern — jak w pozostałych panelach)
+  const [addOpen, setAddOpen] = useState(false);
 
-  // Sell form state
+  // Sell form — kontekstowa akcja z pozycji (inline w rzędzie, NIE modal).
+  // Justyfikacja: user klika "Sprzedaj" w rzędzie otwartej pozycji i oczekuje natychmiastowej
+  // prefillowanej formy (qty=shares, price=currentPrice). Modal byłby tu UX regresą.
   const [sellingTicker, setSellingTicker] = useState<string | null>(null);
   const [sellForm, setSellForm] = useState<SellForm>({ date: '', quantity: '', price: '', commission: '0' });
 
@@ -116,9 +96,7 @@ export function TradesPage() {
   const [closedCustomFrom, setClosedCustomFrom] = useState('');
   const [closedCustomTo, setClosedCustomTo] = useState('');
 
-  const invalidateAll = () => invalidatePortfolio(queryClient);
-
-  // Auto-calculate commission based on portfolio settings
+  // Calc prowizji — używane do pre-fill dla kontekstowej sprzedaży z pozycji.
   const calcCommission = (ticker: string, quantity: string, price: string): string => {
     const qty = parseFloat(quantity);
     const prc = parseFloat(price);
@@ -132,56 +110,6 @@ export function TradesPage() {
     return (Math.round(commission * 100) / 100).toString();
   };
 
-  // Determine effective currency for display
-  const effectiveCurrency = addForm.currency !== 'auto' ? addForm.currency : (addForm.ticker.endsWith('.WA') || addForm.ticker.endsWith('.NC') ? 'PLN' : '');
-  const showFxRate = effectiveCurrency && effectiveCurrency !== 'PLN';
-
-  // Get live FX rate for pre-fill
-  const getLiveFxRate = (currency: string): string => {
-    const fx = pricesData?.fx;
-    if (!fx) return '';
-    if (currency === 'USD' && fx.USDPLN) return fx.USDPLN.toFixed(4);
-    if (currency === 'EUR' && fx.EURPLN) return fx.EURPLN.toFixed(4);
-    if (currency === 'GBP' && fx.GBPPLN) return fx.GBPPLN.toFixed(4);
-    return '';
-  };
-
-  // Auto-fill commission when ticker/quantity/price changes
-  const updateFormWithCommission = (form: TxForm, changedField?: string): TxForm => {
-    const updated = { ...form };
-    // Auto-calc commission unless user manually edited it
-    if (changedField !== 'commission' && updated.ticker && updated.quantity && updated.price) {
-      updated.commission = calcCommission(updated.ticker, updated.quantity, updated.price);
-    }
-    // Pre-fill FX rate when currency changes
-    if (changedField === 'currency' && updated.currency !== 'auto' && updated.currency !== 'PLN') {
-      updated.fxRate = getLiveFxRate(updated.currency);
-    }
-    return updated;
-  };
-
-  const createMutation = useMutation({
-    mutationFn: (form: TxForm) =>
-      api.createTransaction({
-        date: form.date,
-        ticker: form.ticker,
-        side: form.side,
-        quantity: parseFloat(form.quantity),
-        price: parseFloat(form.price),
-        commission: parseFloat(form.commission) || 0,
-        currency: form.currency !== 'auto' ? form.currency : undefined,
-        fxRate: form.fxRate ? parseFloat(form.fxRate) : undefined,
-        category: form.category,
-      }),
-    onSuccess: () => {
-      invalidateAll();
-      setAddForm(emptyTxForm);
-      setShowAddForm(false);
-      setError(null);
-    },
-    onError: (err: Error) => setError(err.message),
-  });
-
   const sellMutation = useMutation({
     mutationFn: ({ ticker, form, category }: { ticker: string; form: SellForm; category?: 'stock' | 'etf' | 'cfd' }) =>
       api.createTransaction({
@@ -193,12 +121,12 @@ export function TradesPage() {
         commission: parseFloat(form.commission) || 0,
         category,
       }),
-    onSuccess: () => {
-      invalidateAll();
+    onSuccess: (_data, vars) => {
+      invalidatePortfolio(queryClient);
+      toast.success(`Sprzedano ${vars.form.quantity} szt ${vars.ticker} @ ${vars.form.price}`);
       setSellingTicker(null);
-      setError(null);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => toast.error(`Nie udało się sprzedać: ${err.message}`),
   });
 
   function startSell(pos: Position) {
@@ -212,24 +140,8 @@ export function TradesPage() {
       price,
       commission,
     });
-    setShowAddForm(false);
-    setError(null);
   }
 
-  function openAddForm() {
-    setShowAddForm(!showAddForm);
-    setSellingTicker(null);
-    setAddForm({ ...emptyTxForm, date: today() });
-    setError(null);
-  }
-
-  // Helper to update add form field and recalculate commission
-  const setField = (field: keyof TxForm, value: string) => {
-    const updated = { ...addForm, [field]: value };
-    setAddForm(updateFormWithCommission(updated, field));
-  };
-
-  const isAddValid = addForm.date && addForm.ticker && addForm.quantity && parseFloat(addForm.quantity) > 0 && addForm.price && parseFloat(addForm.price) > 0;
   const isSellValid = sellForm.date && sellForm.quantity && parseFloat(sellForm.quantity) > 0 && sellForm.price && parseFloat(sellForm.price) > 0;
 
   const positions: Position[] = posData?.positions || [];
@@ -237,7 +149,7 @@ export function TradesPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-end">
-        <Button size="sm" onClick={openAddForm}>
+        <Button size="sm" onClick={() => setAddOpen(true)}>
           <Plus className="h-4 w-4" />
           Dodaj transakcję
         </Button>
@@ -257,150 +169,6 @@ export function TradesPage() {
         closedCustomFrom={closedCustomFrom}
         closedCustomTo={closedCustomTo}
       />
-
-      {error && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
-
-      {/* Add transaction form */}
-      {showAddForm && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Nowa transakcja</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="flex flex-col gap-2">
-                <label className="text-xs text-muted-foreground">Data</label>
-                <Input
-                  type="date"
-                  value={addForm.date}
-                  onChange={e => setField('date', e.target.value)}
-                  className="h-8 w-[140px]"
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-xs text-muted-foreground">Ticker</label>
-                <TickerAutocomplete
-                  value={addForm.ticker}
-                  onChange={(val) => setField('ticker', val)}
-                  className="w-[160px]"
-                  placeholder="Ticker"
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-xs text-muted-foreground">K/S</label>
-                <Select value={addForm.side} onValueChange={(v: 'K' | 'S') => setField('side', v)}>
-                  <SelectTrigger className="h-8 w-[65px]" size="sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="K">K</SelectItem>
-                    <SelectItem value="S">S</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-xs text-muted-foreground">Ilość</label>
-                <Input
-                  type="number"
-                  min="0"
-                  placeholder="0"
-                  value={addForm.quantity}
-                  onChange={e => setField('quantity', e.target.value)}
-                  className="h-8 w-[80px] text-right"
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-xs text-muted-foreground">Cena</label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  value={addForm.price}
-                  onChange={e => setField('price', e.target.value)}
-                  className="h-8 w-[100px] text-right"
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-xs text-muted-foreground">Rozliczenie</label>
-                <Select value={addForm.currency} onValueChange={(v) => setField('currency', v)}>
-                  <SelectTrigger className="h-8 w-[80px]" size="sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CURRENCIES.map(c => <SelectItem key={c} value={c}>{c === 'auto' ? 'Auto' : c}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-xs text-muted-foreground">Prowizja</label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0"
-                  value={addForm.commission}
-                  onChange={e => setField('commission', e.target.value)}
-                  className="h-8 w-[80px] text-right"
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-xs text-muted-foreground">Kategoria</label>
-                <Select value={addForm.category} onValueChange={(v: 'stock' | 'etf' | 'cfd') => setField('category', v)}>
-                  <SelectTrigger className="h-8 w-[80px]" size="sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="stock">Stock</SelectItem>
-                    <SelectItem value="cfd">CFD</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              {showFxRate && (
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs text-muted-foreground">Kurs {effectiveCurrency}/PLN</label>
-                  <Input
-                    type="number"
-                    step="0.0001"
-                    min="0"
-                    placeholder="0.0000"
-                    value={addForm.fxRate}
-                    onChange={e => setField('fxRate', e.target.value)}
-                    className="h-8 w-[100px] text-right"
-                  />
-                </div>
-              )}
-              <div className="flex gap-1">
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  onClick={() => createMutation.mutate(addForm)}
-                  disabled={!isAddValid || createMutation.isPending}
-                  className="text-gain hover:text-gain/80"
-                >
-                  {createMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                </Button>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  onClick={() => { setShowAddForm(false); setError(null); }}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              </div>
-            </div>
-            {showFxRate && addForm.fxRate && addForm.quantity && addForm.price && (
-              <div className="mt-2 text-xs text-muted-foreground">
-                Wartość w PLN: {formatNumber(parseFloat(addForm.quantity) * parseFloat(addForm.price) * parseFloat(addForm.fxRate))} zł
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       {/* Stack obu tabów (Wszystkie + Otwarte) w tej samej grid-area.
           Aktywny tab: position:relative → w flow, kontrybuuje do wysokości parent.
@@ -626,7 +394,7 @@ export function TradesPage() {
                                   <Button
                                     size="icon-xs"
                                     variant="ghost"
-                                    onClick={() => { setSellingTicker(null); setError(null); }}
+                                    onClick={() => setSellingTicker(null)}
                                   >
                                     <X className="h-3 w-3" />
                                   </Button>
@@ -661,6 +429,8 @@ export function TradesPage() {
           onCustomToChange={setClosedCustomTo}
         />
       )}
+
+      <AddTransactionDialog open={addOpen} onClose={() => setAddOpen(false)} />
     </div>
   );
 }

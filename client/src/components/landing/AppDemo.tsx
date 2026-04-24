@@ -46,7 +46,7 @@ const NAV_ITEMS: { id: DemoTab; label: string; icon: typeof LayoutDashboard }[] 
   { id: 'portfolio', label: 'Portfel', icon: Briefcase },
   { id: 'trades', label: 'Transakcje', icon: ArrowLeftRight },
   { id: 'dividends', label: 'Dywidendy', icon: Coins },
-  { id: 'cashflow', label: 'Gotówka', icon: Wallet },
+  { id: 'cashflow', label: 'Depozyty', icon: Wallet },
 ];
 
 function formatPLN(v: number) {

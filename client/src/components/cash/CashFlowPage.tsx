@@ -7,9 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
+import { AddDepositDialog } from './AddDepositDialog';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import {
   Tooltip as UITooltip,
@@ -19,7 +19,8 @@ import {
 } from '@/components/ui/tooltip';
 import { formatPLN, formatDate, formatCurrency } from '@/lib/formatters';
 import { useToggleSet } from '@/hooks/useToggleSet';
-import { ChevronRight, ChevronDown, Loader2, Plus, Pencil, Trash2, Check, X, ArrowUp, ArrowDown, Info } from 'lucide-react';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, ArrowUp, ArrowDown, Info } from 'lucide-react';
+import { toast } from 'sonner';
 
 // XTB Transfer między sub-kontami trafia do CashOperation.description z tym prefixem.
 // Wykrywamy go, by pokazać ikonę + tooltip wyjaśniający że to wymiana walutowa,
@@ -65,12 +66,6 @@ interface CashEntry {
   type: 'deposit' | 'withdrawal';
 }
 
-interface EntryForm {
-  date: string;
-  amount: string;
-  type: 'deposit' | 'withdrawal';
-}
-
 interface YearGroup {
   year: number;
   totalDeposits: number;
@@ -79,8 +74,6 @@ interface YearGroup {
   ikzeLimit: number;
   entries: CashEntry[];
 }
-
-const emptyForm: EntryForm = { date: '', amount: '', type: 'deposit' };
 
 export function CashFlowPage() {
   const queryClient = useQueryClient();
@@ -102,52 +95,27 @@ export function CashFlowPage() {
   });
 
   const [expandedYears, toggleYear] = useToggleSet<number>();
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm] = useState<EntryForm>(emptyForm);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<EntryForm>(emptyForm);
-
-  const invalidateAll = () => invalidateCashFlow(queryClient);
-
-  const createMutation = useMutation({
-    mutationFn: (form: EntryForm) =>
-      api.createDeposit({ date: form.date, amount: parseFloat(form.amount) }, form.type),
-    onSuccess: () => {
-      invalidateAll();
-      setAddForm(emptyForm);
-      setShowAddForm(false);
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, form }: { id: number; form: EntryForm }) =>
-      api.updateDeposit(id, { date: form.date, amount: parseFloat(form.amount) }),
-    onSuccess: () => {
-      invalidateAll();
-      setEditingId(null);
-    },
-  });
+  const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<CashEntry | null>(null);
+  const [deleting, setDeleting] = useState<CashEntry | null>(null);
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.deleteDeposit(id),
-    onSuccess: () => invalidateAll(),
+    onSuccess: (_, id) => {
+      invalidateCashFlow(queryClient);
+      const entry = deleting;
+      if (entry && entry.id === id) {
+        const label = entry.type === 'deposit' ? 'wpłatę' : 'wypłatę';
+        toast.success(
+          `Usunięto ${label} ${formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN')} z ${formatDate(entry.date)}`,
+        );
+      } else {
+        toast.success('Usunięto operację.');
+      }
+      setDeleting(null);
+    },
+    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
   });
-
-  function startEdit(entry: CashEntry) {
-    setEditingId(entry.id);
-    setEditForm({
-      date: entry.date.split('T')[0],
-      amount: Math.abs(entry.amount).toString(),
-      type: entry.type,
-    });
-  }
-
-  function handleDelete(entry: CashEntry) {
-    const label = entry.type === 'deposit' ? 'wpłatę' : 'wypłatę';
-    if (window.confirm(`Usunąć ${label} ${formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN')} z ${formatDate(entry.date)}?`)) {
-      deleteMutation.mutate(entry.id);
-    }
-  }
 
   const entries: CashEntry[] = (depositsData?.deposits || []).map((d: any) => ({
     ...d,
@@ -203,9 +171,6 @@ export function CashFlowPage() {
   const grandTotalDeposits = useMemo(() => yearGroups.reduce((s, g) => s + g.totalDeposits, 0), [yearGroups]);
   const grandTotalWithdrawals = useMemo(() => yearGroups.reduce((s, g) => s + g.totalWithdrawals, 0), [yearGroups]);
 
-  const isAddValid = addForm.date && addForm.amount && parseFloat(addForm.amount) > 0;
-  const isEditValid = editForm.date && editForm.amount && parseFloat(editForm.amount) > 0;
-
   const getYearLimit = (group: YearGroup) => {
     let total = 0;
     if (showIKE) total += group.ikeLimit;
@@ -238,18 +203,7 @@ export function CashFlowPage() {
     <UITooltipProvider delayDuration={150}>
     <div className="space-y-4">
       <div className="flex items-center justify-end">
-        <Button
-          size="sm"
-          onClick={() => {
-            if (!showAddForm) {
-              setAddForm({ date: new Date().toISOString().slice(0, 10), amount: '', type: 'deposit' });
-            } else {
-              setAddForm(emptyForm);
-            }
-            setShowAddForm(!showAddForm);
-            setEditingId(null);
-          }}
-        >
+        <Button size="sm" onClick={() => setAddOpen(true)}>
           <Plus className="h-4 w-4" />
           Dodaj operację
         </Button>
@@ -324,64 +278,7 @@ export function CashFlowPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {showAddForm && (
-                    <TableRow className="bg-muted/30">
-                      <TableCell>
-                        <Input
-                          type="date"
-                          value={addForm.date}
-                          onChange={e => setAddForm({ ...addForm, date: e.target.value })}
-                          className="h-8 w-[140px]"
-                        />
-                      </TableCell>
-                      <TableCell colSpan={2}>
-                        <div className="flex items-center gap-2">
-                          <Select value={addForm.type} onValueChange={v => setAddForm({ ...addForm, type: v as 'deposit' | 'withdrawal' })}>
-                            <SelectTrigger className="h-8 w-[110px]">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="deposit">Wpłata</SelectItem>
-                              <SelectItem value="withdrawal">Wypłata</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="0.00"
-                            value={addForm.amount}
-                            onChange={e => setAddForm({ ...addForm, amount: e.target.value })}
-                            className="h-8 w-[120px] text-right"
-                          />
-                        </div>
-                      </TableCell>
-                      <TableCell colSpan={limitColCount || 1} className="text-muted-foreground text-sm">
-                        PLN
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button
-                            size="icon-xs"
-                            variant="ghost"
-                            onClick={() => createMutation.mutate(addForm)}
-                            disabled={!isAddValid || createMutation.isPending}
-                            className="text-gain hover:text-gain/80"
-                          >
-                            {createMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                          </Button>
-                          <Button
-                            size="icon-xs"
-                            variant="ghost"
-                            onClick={() => { setShowAddForm(false); setAddForm(emptyForm); }}
-                          >
-                            <X className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {yearGroups.length === 0 && !showAddForm ? (
+                  {yearGroups.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={totalCols} className="text-center py-12 text-muted-foreground">
                         Brak operacji gotówkowych. Kliknij &quot;Dodaj operację&quot; aby dodać pierwszą.
@@ -448,101 +345,57 @@ export function CashFlowPage() {
                             <TableCell />
                           </TableRow>
 
-                          {isExpanded && group.entries.map((entry) =>
-                            editingId === entry.id ? (
-                              <TableRow key={entry.id} className="bg-muted/30">
-                                <TableCell className="pl-9">
-                                  <Input
-                                    type="date"
-                                    value={editForm.date}
-                                    onChange={e => setEditForm({ ...editForm, date: e.target.value })}
-                                    className="h-8 w-[140px]"
-                                  />
-                                </TableCell>
-                                <TableCell colSpan={2}>
-                                  <Input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={editForm.amount}
-                                    onChange={e => setEditForm({ ...editForm, amount: e.target.value })}
-                                    className="h-8 w-[120px] text-right"
-                                  />
-                                </TableCell>
-                                <TableCell colSpan={limitColCount || 1} />
-                                <TableCell>
+                          {isExpanded && group.entries.map((entry) => (
+                            <TableRow key={entry.id} className="bg-muted/30">
+                              <TableCell className="text-muted-foreground pl-9 text-sm">
+                                <div className="flex items-center gap-1.5">
+                                  {entry.type === 'deposit'
+                                    ? <ArrowUp className="h-3 w-3 text-gain shrink-0" />
+                                    : <ArrowDown className="h-3 w-3 text-loss shrink-0" />
+                                  }
+                                  {formatDate(entry.date)}
+                                  {entry.description && <DepositDescription text={entry.description} />}
+                                </div>
+                              </TableCell>
+                              <TableCell className={`text-right ${entry.type === 'deposit' ? 'text-gain' : ''}`}>
+                                {entry.type === 'deposit' ? formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN') : ''}
+                              </TableCell>
+                              <TableCell className={`text-right ${entry.type === 'withdrawal' ? 'text-loss' : ''}`}>
+                                {entry.type === 'withdrawal' ? formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN') : ''}
+                              </TableCell>
+                              <TableCell colSpan={limitColCount > 0 ? limitColCount - 1 : 0} />
+                              <TableCell className="text-right">
+                                {entry.source === 'manual' && (
+                                  <Badge variant="secondary" className="text-xs bg-blue-500/10 text-blue-500">
+                                    ręczna
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {entry.source === 'manual' && (
                                   <div className="flex gap-1">
                                     <Button
                                       size="icon-xs"
                                       variant="ghost"
-                                      onClick={() => updateMutation.mutate({ id: entry.id, form: editForm })}
-                                      disabled={!isEditValid || updateMutation.isPending}
-                                      className="text-gain hover:text-gain/80"
+                                      onClick={(e) => { e.stopPropagation(); setEditing(entry); }}
+                                      className="text-muted-foreground hover:text-foreground"
                                     >
-                                      {updateMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                      <Pencil className="h-3 w-3" />
                                     </Button>
                                     <Button
                                       size="icon-xs"
                                       variant="ghost"
-                                      onClick={() => setEditingId(null)}
+                                      onClick={(e) => { e.stopPropagation(); setDeleting(entry); }}
+                                      disabled={deleteMutation.isPending}
+                                      className="text-muted-foreground hover:text-destructive"
                                     >
-                                      <X className="h-3 w-3" />
+                                      <Trash2 className="h-3 w-3" />
                                     </Button>
                                   </div>
-                                </TableCell>
-                              </TableRow>
-                            ) : (
-                              <TableRow key={entry.id} className="bg-muted/30">
-                                <TableCell className="text-muted-foreground pl-9 text-sm">
-                                  <div className="flex items-center gap-1.5">
-                                    {entry.type === 'deposit'
-                                      ? <ArrowUp className="h-3 w-3 text-gain shrink-0" />
-                                      : <ArrowDown className="h-3 w-3 text-loss shrink-0" />
-                                    }
-                                    {formatDate(entry.date)}
-                                    {entry.description && <DepositDescription text={entry.description} />}
-                                  </div>
-                                </TableCell>
-                                <TableCell className={`text-right ${entry.type === 'deposit' ? 'text-gain' : ''}`}>
-                                  {entry.type === 'deposit' ? formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN') : ''}
-                                </TableCell>
-                                <TableCell className={`text-right ${entry.type === 'withdrawal' ? 'text-loss' : ''}`}>
-                                  {entry.type === 'withdrawal' ? formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN') : ''}
-                                </TableCell>
-                                <TableCell colSpan={limitColCount > 0 ? limitColCount - 1 : 0} />
-                                <TableCell className="text-right">
-                                  {entry.source === 'manual' && (
-                                    <Badge variant="secondary" className="text-xs bg-blue-500/10 text-blue-500">
-                                      ręczna
-                                    </Badge>
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  {entry.source === 'manual' && (
-                                    <div className="flex gap-1">
-                                      <Button
-                                        size="icon-xs"
-                                        variant="ghost"
-                                        onClick={(e) => { e.stopPropagation(); startEdit(entry); }}
-                                        className="text-muted-foreground hover:text-foreground"
-                                      >
-                                        <Pencil className="h-3 w-3" />
-                                      </Button>
-                                      <Button
-                                        size="icon-xs"
-                                        variant="ghost"
-                                        onClick={(e) => { e.stopPropagation(); handleDelete(entry); }}
-                                        disabled={deleteMutation.isPending}
-                                        className="text-muted-foreground hover:text-destructive"
-                                      >
-                                        <Trash2 className="h-3 w-3" />
-                                      </Button>
-                                    </div>
-                                  )}
-                                </TableCell>
-                              </TableRow>
-                            )
-                          )}
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))}
                         </Fragment>
                       );
                     })
@@ -553,6 +406,24 @@ export function CashFlowPage() {
           )}
         </CardContent>
       </Card>
+
+      <AddDepositDialog open={addOpen} onClose={() => setAddOpen(false)} />
+      <AddDepositDialog
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        defaultValues={editing ? { id: editing.id, date: editing.date, amount: editing.amount, type: editing.type } : undefined}
+      />
+      <ConfirmDeleteDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        onConfirm={() => deleting && deleteMutation.mutate(deleting.id)}
+        description={
+          deleting
+            ? `Usunąć ${deleting.type === 'deposit' ? 'wpłatę' : 'wypłatę'} ${formatCurrency(Math.abs(deleting.amount), deleting.currency || 'PLN')} z ${formatDate(deleting.date)}?`
+            : ''
+        }
+        loading={deleteMutation.isPending}
+      />
     </div>
     </UITooltipProvider>
   );

@@ -5,8 +5,8 @@ import { api } from '@/lib/api-client';
 import { useSession, signOut } from '@/lib/auth-client';
 import {
   LayoutDashboard, Briefcase, ArrowLeftRight, Coins,
-  DollarSign, Wallet, Receipt, Upload, Moon, Sun, LogOut, MoreHorizontal,
-  KeyRound, Bug, ChevronUp, PanelLeftClose,
+  DollarSign, Wallet, Upload, Moon, Sun, LogOut, MoreHorizontal,
+  KeyRound, Bug, ChevronUp, PanelLeftClose, Landmark,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -21,7 +21,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { QUERY_KEYS } from '@/lib/query-keys';
 import { MetricsBar } from '@/components/dashboard/MetricsBar';
 import { ImportDialog } from '@/components/import/ImportDialog';
 import { BugReportDialog } from '@/components/shared/BugReportDialog';
@@ -36,7 +35,8 @@ const baseNavItems = [
   { to: '/app/trades', label: 'Transakcje', icon: ArrowLeftRight },
   { to: '/app/dividends', label: 'Dywidendy', icon: Coins },
   { to: '/app/currency', label: 'Waluty', icon: DollarSign },
-  { to: '/app/cash', label: 'Gotówka', icon: Wallet },
+  { to: '/app/cash', label: 'Depozyty', icon: Wallet },
+  { to: '/app/corrections-and-costs', label: 'Korekty i koszty', icon: Landmark },
 ];
 
 function NavItem({
@@ -85,16 +85,10 @@ function NavItem({
 }
 
 function NavContent({ onNavigate, collapsed = false }: { onNavigate?: () => void; collapsed?: boolean }) {
-  const { data: feesData } = useQuery({
-    queryKey: QUERY_KEYS.fees,
-    queryFn: () => api.getFees(),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const hasFees = (feesData?.fees?.length ?? 0) > 0;
-  const navItems = hasFees
-    ? [...baseNavItems, { to: '/app/costs', label: 'Inne koszty', icon: Receipt }]
-    : baseNavItems;
+  // Korekty i koszty ma stały wpis w baseNavItems (panel łączy zdarzenia korporacyjne
+  // + dodatkowe koszty; wcześniejsze osobne "Inne koszty" i "Zdarzenia korp." zostały
+  // zunifikowane). Link zawsze widoczny — panel pokazuje empty state gdy brak danych.
+  const navItems = baseNavItems;
 
   return (
     <TooltipProvider delayDuration={0}>

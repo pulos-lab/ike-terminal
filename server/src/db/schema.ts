@@ -37,6 +37,7 @@ export function initSchema(db: Database.Database): void {
       fx_pair TEXT,
       source TEXT DEFAULT 'bossa',
       import_batch TEXT,
+      subkind TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -200,5 +201,123 @@ export function initSchema(db: Database.Database): void {
       WHERE payment_currency IS NULL OR payment_currency = currency;
     `);
     db.prepare("INSERT INTO portfolio_metadata (key, value) VALUES (?, ?)").run('pr15_backfill_done', new Date().toISOString());
+  }
+
+  // P17 — subkind column na cash_operations + reklasyfikacja istniejących rekordów
+  // Bossa dla zdarzeń korporacyjnych (capital_return / corporate_action_pending).
+  //
+  // PRZED P17: "Obniżenie wartości nominalnej GETIN" → operation_type='deposit' (zawyżało MWR).
+  //            "Wykup PW - wyrównanie SOLV" → operation_type='other' (ukryte, nie rozpoznane).
+  //            "Rozliczenie oferty TICKER" bez cen w tender-offers-map → operation_type='deposit'
+  //            (phantom wpłata, inflowuje mianownik XIRR).
+  //
+  // PO P17: capital_return + subkind=nominal_reduction / redemption_adjustment dla 2 pierwszych;
+  //         corporate_action_pending + subkind=unknown_tender / unknown_warrant dla niesparowanych.
+  //
+  // Migracja idempotentna — WHERE blokują re-apply, a flag w portfolio_metadata gwarantuje
+  // że UPDATE'y nie ruszą user's manual edits po pierwszym uruchomieniu.
+  const opsColumns = db.prepare("PRAGMA table_info(cash_operations)").all() as any[];
+  if (!opsColumns.some((c: any) => c.name === 'subkind')) {
+    db.exec("ALTER TABLE cash_operations ADD COLUMN subkind TEXT");
+  }
+  // Flag v2: wersja v1 błędnie klasyfikowała "Wykup PW - wyrównanie" jako unknown_warrant.
+  // Fix reclassyfikuje to na capital_return/redemption_adjustment. Bumpowanie flagi zapewnia
+  // że istniejące bazy z v1 dostaną poprawkę na następnym starcie.
+  const p17Flag = db.prepare("SELECT value FROM portfolio_metadata WHERE key = ?").get('p17_corp_actions_done_v2') as any;
+  if (!p17Flag) {
+    // 1. Obniżenie nominału (np. GETIN 8250 PLN 2022-12-30) — był zapisany jako deposit.
+    //    Humanized description zaczynał się od "Umorzenie akcji % (obniżenie nominału)".
+    db.exec(`
+      UPDATE cash_operations
+      SET operation_type = 'capital_return',
+          subkind = 'nominal_reduction'
+      WHERE source = 'bossa'
+        AND operation_type = 'deposit'
+        AND (description LIKE 'Umorzenie akcji%'
+             OR description LIKE '%obniżenie nominału%'
+             OR description LIKE '%obni\u017cenie nomina\u0142u%');
+    `);
+
+    // 2. Wykup PW - wyrównanie (np. SOLV -15.76 USD) — parser nowych importów klasyfikuje
+    //    to jako capital_return/redemption_adjustment (korekta po wcześniejszym wykupie —
+    //    cash do/z konta, pozycja bez zmian). Migracja uspójnia stare dane.
+    //
+    //    DWA ŹRÓDŁA rekordów do naprawy:
+    //    (a) przed P17 wpadały w 'other' (unknown_operation_type)
+    //    (b) przejściowa wersja P17 (v1 migration) klasyfikowała je błędnie jako
+    //        corporate_action_pending/unknown_warrant — to było niepoprawne, bo "Wykup PW -
+    //        wyrównanie" jest zawsze zamkniętym zdarzeniem (korekta, nie "nieznane"). Fix
+    //        przenosi je do właściwej kategorii capital_return.
+    //
+    //    UWAGA: opis po humanize dla starych rekordów to "Wykup PW - wyrównanie SOLV (kwota brutto)"
+    //    (stary humanize nie skracał tego; nowy parser zamienia na "Wyrównanie wykupu SOLV").
+    db.exec(`
+      UPDATE cash_operations
+      SET operation_type = 'capital_return',
+          subkind = 'redemption_adjustment'
+      WHERE source = 'bossa'
+        AND (operation_type = 'other'
+             OR (operation_type = 'corporate_action_pending' AND subkind = 'unknown_warrant'))
+        AND (description LIKE '%Wykup PW - wyrównanie%'
+             OR description LIKE '%Wykup PW - wyr\u00f3wnanie%');
+    `);
+
+    // 3. Nieznane wezwania skupu — "Wykup w ofercie skupu TICKER" jako deposit, którego NIE ma
+    //    pasującej syntetycznej sprzedaży (transactions.synthetic_origin zawiera 'Wykup w ofercie').
+    //    Takie wezwania nigdy nie weszły przez RedemptionMarker (ticker był spoza tender-offers-map).
+    //    Reklasyfikuj na corporate_action_pending/unknown_tender. User domknie przez UI.
+    db.exec(`
+      UPDATE cash_operations
+      SET operation_type = 'corporate_action_pending',
+          subkind = 'unknown_tender'
+      WHERE source = 'bossa'
+        AND operation_type = 'deposit'
+        AND description LIKE 'Wykup w ofercie skupu%'
+        AND NOT EXISTS (
+          SELECT 1 FROM transactions t
+          WHERE t.synthetic_origin IS NOT NULL
+            AND t.synthetic_origin LIKE ('%' || REPLACE(cash_operations.description, 'Wykup w ofercie skupu ', '') || '%')
+            AND date(t.date) = date(cash_operations.date)
+        );
+    `);
+
+    db.prepare("INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)").run('p17_corp_actions_done_v2', new Date().toISOString());
+  }
+
+  // P17 follow-up: deposit z ujemnym amount → withdrawal. Parser Bossy sklasyfikowało
+  // "Zwrot nadpłaty — przekroczony limit IKE/IKZE" (i analogiczne) jako `deposit`, ale
+  // amount był ujemny — engine filtrował deposit wymagając amount>0, więc te wypływy
+  // nie liczyły się do totalWithdrawn ani totalDeposited (znikały z MWR). Fix w parserze
+  // naprawia to na nowych importach; migracja uspójnia stare dane. Idempotent — WHERE
+  // wymaga amount<0, po UPDATE rekord jest 'withdrawal' → warunek nie matchuje.
+  const p17SignFlag = db.prepare("SELECT value FROM portfolio_metadata WHERE key = ?").get('p17_deposit_sign_fix') as any;
+  if (!p17SignFlag) {
+    db.exec(`
+      UPDATE cash_operations
+      SET operation_type = 'withdrawal'
+      WHERE operation_type = 'deposit'
+        AND amount < 0;
+    `);
+    db.prepare("INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)").run('p17_deposit_sign_fix', new Date().toISOString());
+  }
+
+  // P17 follow-up: GreenX Metals (AU0000198939) — dual-listed na ASX Sydney (GRX.AX, AUD)
+  // i GPW Warsaw (GRX.WA, PLN). ISIN resolver domyślnie dobierał pierwszy wynik Yahoo by-ISIN
+  // (GRX.AX) nawet gdy user kupował przez Bossę w PLN — czyli w UI widoczna była cena z Sydney
+  // zamiast GPW. Fix w isin-resolver.ts naprawia to dla NOWYCH importów (preferuje .WA przy
+  // txCurrency='PLN'), ale istniejące ticker_map entries zostały z GRX.AX. Ta migracja
+  // przestawia je na GRX.WA. Idempotent — WHERE ticker='GRX.AX' po UPDATE nie matchuje.
+  const p17GreenxFlag = db.prepare("SELECT value FROM portfolio_metadata WHERE key = ?").get('p17_greenx_fix') as any;
+  if (!p17GreenxFlag) {
+    db.exec(`
+      UPDATE ticker_map
+      SET ticker = 'GRX.WA',
+          exchange = 'GPW',
+          currency = 'PLN',
+          price_source = 'yahoo'
+      WHERE isin = 'AU0000198939'
+        AND ticker = 'GRX.AX';
+    `);
+    db.prepare("INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)").run('p17_greenx_fix', new Date().toISOString());
   }
 }

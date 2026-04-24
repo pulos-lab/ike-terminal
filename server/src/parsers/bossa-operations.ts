@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import type { CashOperation, OperationType, RedemptionMarker, IpoSubscriptionMarker, SkippedRow } from 'shared';
+import type { CashOperation, OperationType, RedemptionMarker, IpoSubscriptionMarker, CapitalReturnMarker, SkippedRow } from 'shared';
 import { lookupTenderPrice, lookupIpoSubscription } from 'shared';
 import { parseNumber } from './utils.js';
 
@@ -28,6 +28,17 @@ export interface BossaOperationsParseResult {
    * z poprawnym qty (netto / ipoPrice), eliminując "pozycję znikąd" w portfelu.
    */
   ipoSubscriptions: IpoSubscriptionMarker[];
+  /**
+   * Markery zwrotu kapitału z istniejącej pozycji: obniżenie wartości nominalnej
+   * (np. GETIN 2022-12-30), "Wykup PW - wyrównanie" (np. SOLV). Reconciliation wstawia
+   * je jako CashOperation(type='capital_return', subkind=marker.kind) — to zapewnia:
+   *   - brak zafałszowanego `deposit` w MWR denominator
+   *   - widoczność w Zdarzeniach korporacyjnych
+   *   - qty pozycji bez zmian (nikt nie sprzedał akcji)
+   *   - amount wchodzi do portfolio_value (cash na koncie) → MWR/TWR poprawnie traktują
+   *     to jak zrealizowany zwrot z trzymania pozycji.
+   */
+  capitalReturns: CapitalReturnMarker[];
 }
 
 export function parseBossaOperations(csvContent: string, importBatch: string): BossaOperationsParseResult {
@@ -42,7 +53,7 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
   const hasDataCol = headers.some(h => h.toLowerCase() === 'data');
   const hasKwotaCol = headers.some(h => h.toLowerCase() === 'kwota');
   if (!hasDataCol || !hasKwotaCol) {
-    return { data: [], skipped: [], redemptions: [], ipoSubscriptions: [] };
+    return { data: [], skipped: [], redemptions: [], ipoSubscriptions: [], capitalReturns: [] };
   }
 
   const operations: CashOperation[] = [];
@@ -120,6 +131,7 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
 
   const redemptions: RedemptionMarker[] = [];
   const ipoSubscriptions: IpoSubscriptionMarker[] = [];
+  const capitalReturns: CapitalReturnMarker[] = [];
   const ipoConsumedRows = new Set<number>(); // rowNum wierszy Zapisy/Zwrot skonsumowanych przez marker IPO
 
   // Budowanie markerów IPO: dla każdej pary (Zapisy ↔ Zwrot) po normalizowanym tickerze
@@ -209,6 +221,45 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
       }
     }
 
+    // 4. Obniżenie wartości nominalnej (np. GETIN 8250 PLN 2022-12-30) — zwrot kapitału
+    // z istniejącej pozycji bez zmiany qty. Emit CapitalReturnMarker zamiast deposit/other.
+    // Engine traktuje to jak "dywidendę w kapitale" — wchodzi do totalValue ale NIE do
+    // totalDeposited. MWR/TWR odzwierciedlą to jako zrealizowany zwrot z trzymania.
+    const nominalReductionMatch = title.match(/Obni(?:żenie|\u017cenie) warto(?:ści|\u015bci) nominalnej\s+(\S+)/);
+    if (nominalReductionMatch) {
+      capitalReturns.push({
+        kind: 'nominal_reduction',
+        date: `${dateStr}T00:00:00`,
+        ticker: nominalReductionMatch[1],
+        amount,
+        currency,
+        source: 'bossa',
+        description: humanizeDescription(title),
+        originalTitle: title,
+      });
+      skipped.push({ row: rowNum, reason: 'capital_return_reconciled', paperName: title });
+      continue;
+    }
+
+    // 5. Wykup PW - wyrównanie TICKER (np. SOLV) — końcowa korekta/dopłata po wcześniejszym
+    // wykupie papieru wartościowego. Emit CapitalReturnMarker z kind='redemption_adjustment'.
+    // Widoczne w Zdarzeniach korporacyjnych; wcześniej wpadało w 'unknown → other' (niewidoczne).
+    const warrantAdjustMatch = title.match(/Wykup PW\s*-\s*wyr(?:ównanie|\u00f3wnanie)\s+(\S+)/);
+    if (warrantAdjustMatch) {
+      capitalReturns.push({
+        kind: 'redemption_adjustment',
+        date: `${dateStr}T00:00:00`,
+        ticker: warrantAdjustMatch[1],
+        amount,
+        currency,
+        source: 'bossa',
+        description: humanizeDescription(title),
+        originalTitle: title,
+      });
+      skipped.push({ row: rowNum, reason: 'capital_return_reconciled', paperName: title });
+      continue;
+    }
+
     const operationType = classifyOperation(title);
 
     // Settlement records (Rozliczenie transakcji) → skip, należą do transakcji.
@@ -224,7 +275,31 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
       skipped.push({ row: rowNum, reason: 'unknown_operation_type', paperName: title });
     }
 
-    const effectiveType: OperationType = operationType === 'unknown' ? 'other' : operationType;
+    // Nieznane wezwanie skupu — Bossa parser wpuszcza "Rozliczenie oferty TICKER" tu
+    // (gdy ticker NIE jest w tender-offers-map, krok 2 wyżej nie wyemitował RedemptionMarker).
+    // Wcześniej wpadało jako `deposit` → inflowowało XIRR/MWR. Teraz → `corporate_action_pending`
+    // z subkind='unknown_tender' — neutralne dla MWR, widoczne w Zdarzeniach korporacyjnych z CTA
+    // "Domknij" (user dodaje synthetic SELL przez endpoint resolve).
+    let effectiveType: OperationType = operationType === 'unknown' ? 'other' : operationType;
+    let subkind: CashOperation['subkind'] = undefined;
+    const tenderFallbackMatch = title.match(/^Rozliczenie oferty\s+(\S+)/);
+    if (tenderFallbackMatch && operationType === 'deposit') {
+      effectiveType = 'corporate_action_pending';
+      subkind = 'unknown_tender';
+    }
+
+    // Sign check: jeśli classifyOperation sklasyfikowało jako 'deposit' ale kwota jest UJEMNA,
+    // to faktycznie wypływ gotówki — reklasyfikuj na 'withdrawal'. Typowe przypadki:
+    //   - "Zwrot nadpłaty — przekroczony limit IKE/IKZE" (broker oddaje user'owi nadpłatę
+    //     która przekroczyła roczny limit wpłat, cash wychodzi z rachunku)
+    //   - ewentualne "Przelew" z ujemnym znakiem (choć Bossa zwykle używa dedykowanych tytułów)
+    // Bez tego fixa engine filtruje deposity wymagając amount>0 (line 1092 portfolio-engine.ts),
+    // więc ujemne deposity zostają cichaczem zignorowane z MWR/XIRR — totalWithdrawn nie
+    // powiększa licznika, a cash balance i tak spada — return % przekłamany w dół.
+    if (effectiveType === 'deposit' && amount < 0) {
+      effectiveType = 'withdrawal';
+    }
+
     const ticker = parseDividendTicker(title);
     const fxInfo = parseFxRate(title);
 
@@ -240,10 +315,11 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
       fxPair: fxInfo?.pair,
       source: 'bossa',
       importBatch,
+      subkind,
     });
   }
 
-  return { data: operations, skipped, redemptions, ipoSubscriptions };
+  return { data: operations, skipped, redemptions, ipoSubscriptions, capitalReturns };
 }
 
 /**
@@ -293,7 +369,11 @@ function humanizeDescription(title: string): string {
   if (refundMatch) return `Zwrot nadpłaty z subskrypcji ${refundMatch[1].replace(/\s+S\.A\.$/, '')}`;
 
   const nominalMatch = title.match(/Obni(?:żenie|[\u017c]enie) warto(?:ści|[\u015b]ci) nominalnej\s+(\S+)/);
-  if (nominalMatch) return `Umorzenie akcji ${nominalMatch[1]} (obniżenie nominału)`;
+  if (nominalMatch) return `Zwrot kapitału ${nominalMatch[1]} (obniżenie nominału)`;
+
+  // Wykup PW - wyrównanie TICKER → "Wyrównanie wykupu TICKER"
+  const warrantAdjust = title.match(/Wykup PW\s*-\s*wyr(?:ównanie|[\u00f3]wnanie)\s+(\S+)/);
+  if (warrantAdjust) return `Wyrównanie wykupu ${warrantAdjust[1]}`;
 
   return title;
 }
@@ -340,7 +420,8 @@ function classifyOperation(title: string): OperationType | 'skip' | 'unknown' {
   // nie zniekształca metryk. Parowanie heurystyczne miałoby duże ryzyko false-positive.
   if (title.includes('Zapisy na akcje')) return 'withdrawal';
   if (title.includes('Zwrot nadpłaty') || title.includes('Zwrot nadp\u0142aty')) return 'deposit'; // caller może zmienić na withdrawal wg znaku
-  if (title.includes('Obniżenie wartości nominalnej') || title.includes('Obni\u017cenie warto\u015bci nominalnej')) return 'deposit';
+  // UWAGA: "Obniżenie wartości nominalnej" i "Wykup PW - wyrównanie" NIE przechodzą już przez
+  // tę funkcję — są przechwytywane w głównej pętli jako CapitalReturnMarker.
 
   return 'unknown';
 }
