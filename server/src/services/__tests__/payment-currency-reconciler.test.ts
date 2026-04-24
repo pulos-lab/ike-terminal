@@ -82,6 +82,36 @@ describe('simulateLedger — Bossa', () => {
     expect(warnings[0]).toMatch(/saldo PLN/);
   });
 
+  it('trzy kolejne zakupy bez pokrycia → 1 warning (tylko tx wpychająca saldo w minus)', () => {
+    const operations: CashOperation[] = [];
+    const transactions = [
+      tx({ id: 100, date: '2026-02-01', side: 'K', quantity: 1, price: 200, currency: 'USD', paperName: 'AAPL' }),
+      tx({ id: 101, date: '2026-02-02', side: 'K', quantity: 1, price: 300, currency: 'USD', paperName: 'MSFT' }),
+      tx({ id: 102, date: '2026-02-03', side: 'K', quantity: 1, price: 400, currency: 'USD', paperName: 'GOOGL' }),
+    ];
+
+    const { warnings } = simulateLedger(transactions, operations, 'PLN');
+
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toMatch(/AAPL/);
+  });
+
+  it('dwie niezależne dziury (wpłata wraca saldo na plus, potem znów minus) → 2 warningi', () => {
+    const operations = [
+      op({ id: 1, date: '2026-03-01', operationType: 'deposit', amount: 1000, currency: 'PLN' }),
+    ];
+    const transactions = [
+      tx({ id: 100, date: '2026-02-01', side: 'K', quantity: 1, price: 200, currency: 'USD', paperName: 'AAPL', fxRate: 4.0 }),
+      tx({ id: 101, date: '2026-04-01', side: 'K', quantity: 1, price: 500, currency: 'USD', paperName: 'MSFT', fxRate: 4.0 }),
+    ];
+
+    const { warnings } = simulateLedger(transactions, operations, 'PLN');
+
+    expect(warnings.length).toBe(2);
+    expect(warnings[0]).toMatch(/AAPL/);
+    expect(warnings[1]).toMatch(/MSFT/);
+  });
+
   it('sprzedaż w USD → paymentCurrency = USD, saldo USD rośnie', () => {
     const operations = [
       op({ id: 1, date: '2026-01-01', operationType: 'deposit', amount: 500, currency: 'USD' }),
