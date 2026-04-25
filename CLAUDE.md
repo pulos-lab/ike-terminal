@@ -2,7 +2,7 @@
 
 ## Opis projektu
 Aplikacja webowa do zarządzania portfelem inwestycyjnym. Monorepo TypeScript (client + server + shared).
-W przyszłości ma umożliwić łatwe stworzenie pełnej aplikacji webowej.
+W przyszłości ma umożliwić łatwe stworzenie pełnej aplikacji mobilnej.
 Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i stosować najlepsze praktyki architektoniczne.
 
 ## Architektura
