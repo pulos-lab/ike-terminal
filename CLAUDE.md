@@ -6,28 +6,34 @@ W przyszłości ma umożliwić łatwe stworzenie pełnej aplikacji webowej.
 Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i stosować najlepsze praktyki architektoniczne.
 
 ## Architektura
-- **Client**: React 19 + Vite + Tailwind CSS + shadcn/ui + Zustand + TanStack Query + Recharts/Lightweight Charts
-- **Server**: Express + better-sqlite3 + PapaParse + yahoo-finance2
+- **Client**: React 19 + Vite + Tailwind CSS + shadcn/ui + Zustand + TanStack Query + Recharts/Lightweight Charts + @tanstack/react-virtual (wirtualizacja list)
+- **Server**: Express + better-sqlite3 + PapaParse + ExcelJS + yahoo-finance2
+- **Auth**: better-auth (email + OTP) — strony Landing/Login/VerifyOTP/ForgotPassword, ochrona ścieżek `/app/*`
 - **Shared**: Typy TypeScript współdzielone między client/server
-- **Baza**: SQLite (osobna DB per portfel) + price_history.db (cache cen)
+- **Baza**: SQLite (osobna DB per portfel) + price_history.db (cache cen) + auth.db
 - **Porty**: Backend :3001, Frontend :5173
+- **Theming**: tryb dark + light ("Warm Parchment")
 
 ## Struktura katalogów
-- `client/src/components/` — strony i komponenty React
-- `server/src/routes/` — endpointy API (portfolios, portfolio, prices, import)
-- `server/src/parsers/` — parsery CSV brokerów (bossa, mbank, degiro)
-- `server/src/services/` — logika biznesowa (portfolio-engine, price-cache, isin-resolver)
-- `shared/src/` — typy, stałe, seed ticker map
-- `data/` — bazy SQLite
-- `Import/` — pliki CSV użytkownika (IKE/, IKZE/, Degiro/)
+- `client/src/components/` — strony i komponenty React (`dashboard`, `portfolio`, `transactions`, `dividends`, `currency`, `cash`, `corrections-and-costs`, `admin`, `auth`, `landing`, `layout`, `shared`, `ui`)
+- `server/src/routes/` — endpointy API: `portfolios`, `portfolio`, `prices`, `import`, `bug-reports`
+- `server/src/parsers/` — parsery brokerów: `bossa-transactions`, `bossa-operations`, `mbank-transactions`, `degiro-transactions`, `degiro-operations`, `xtb-transactions` (XLSX) + `registry`, `encoding`, `utils`, `__tests__/`
+- `server/src/services/` — logika biznesowa: `portfolio-engine`, `price-cache`, `history-cache`, `isin-resolver`, `sector-resolver`, `ticker-search`, `dividend-scanner`, `split-detector`, `payment-currency-reconciler`, `benchmark-updater`, `import-service`, `yahoo-finance`, `stooq` + `__tests__/`
+- `shared/src/` — typy, stałe, mapy: `ticker-map`, `nc-ticker-map`, `cfd-ticker-map`, `gpw-sector-map`, `gics-to-stockwatch`, `isin-aliases-map`, `ipo-subscriptions-map`, `tender-offers-map`, `ike-ikze-limits`
+- `data/` — bazy SQLite (per portfel + `price_history.db` + `auth.db`)
+- `Import/` — pliki CSV/XLSX użytkownika (IKE/, IKZE/, Degiro/)
 
-## 6 paneli aplikacji
-1. **Dashboard** — wykres MWR portfela vs benchmark (S&P 500), statystyki
-2. **Portfel** — otwarte pozycje z bieżącymi cenami
-3. **Transakcje** — pełna historia transakcji K/S z edycją ręczną
-4. **Dywidendy** — historia dywidend z edycją ręczną
-5. **Waluty** — kursy walut + historia operacji FX
-6. **Wpłaty** — historia wpłat z wyceną portfela
+## Panele aplikacji (po zalogowaniu, prefix `/app`)
+1. **Dashboard** (`/`) — wykres MWR portfela vs benchmark (S&P 500), statystyki
+2. **Portfel** (`/portfolio`) — otwarte pozycje z bieżącymi cenami
+3. **Transakcje** (`/trades`) — pełna historia transakcji K/S z edycją ręczną (wirtualizacja listy)
+4. **Dywidendy** (`/dividends`) — historia dywidend z edycją ręczną
+5. **Waluty** (`/currency`) — kursy walut + historia operacji FX
+6. **Cash flow** (`/cash`) — historia wpłat/wypłat + wykres na Lightweight Charts
+7. **Korekty i koszty** (`/corrections-and-costs`) — corporate actions, korekty, koszty (zastąpiło dawne Corporate Actions)
+8. **Bug reports** (`/admin/bugs`) — panel admina dla zgłoszeń (kategorie: import, wykres, portfel, transakcje, dywidendy, waluty, inne)
+
+Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPassword.
 
 ## Import danych — obsługiwane domy maklerskie
 1. **Bossa** — transakcje + operacje (średnik, Windows-1250, CSV)
@@ -85,10 +91,12 @@ Zunifikowana taksonomia: 8 nadsektorów × 40 podsektorów ze stockwatch.pl/gpw/
 - Przed wprowadzeniem nowej funkcjonalności — przetestuj na obecnych danych lub stwórz przykładowe dane jeżeli nie da się przetestować na obecnych
 - Po testach przywróć portfel do stanu pierwotnego (usunięcie nadmiarowych i niepotrzebnych danych)
 - Upewniej się za każdym razem, że logika importu działa tak samo w przypadku wszystkich parserów
+- Testy jednostkowe parserów i serwisów: `server/src/parsers/__tests__/` i `server/src/services/__tests__/`
 - W razie wątpliwości — zadawaj pytania i weryfikuj
 
 ## Uruchomienie
 - `npm run dev` — start client + server (concurrently)
 - `npm run build` — build all workspaces
 - `npm run seed -w server` — seed bazy danych
+- `npm run scrape:gpw-sectors -w server` — regeneracja `gpw-sector-map.ts` ze stockwatch.pl
 - `start.command` — alternatywny skrypt startowy (kill portów + start + open browser)
