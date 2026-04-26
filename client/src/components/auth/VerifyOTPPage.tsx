@@ -46,10 +46,12 @@ export function VerifyOTPPage() {
     const from = searchParams.get('from');
     if (from === 'signin' && email) {
       // User tried to sign in but email not verified — send OTP
-      authClient.emailOtp.sendVerificationOtp({
-        email,
-        type: 'email-verification',
-      }).catch(() => {});
+      authClient.emailOtp
+        .sendVerificationOtp({
+          email,
+          type: 'email-verification',
+        })
+        .catch(() => {});
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -167,7 +169,8 @@ export function VerifyOTPPage() {
           <Logo size="xl" className="mb-2 mx-auto" />
           <CardTitle className="text-lg font-semibold">Weryfikacja email</CardTitle>
           <CardDescription>
-            Wysłaliśmy 6-cyfrowy kod na<br />
+            Wysłaliśmy 6-cyfrowy kod na
+            <br />
             <span className="text-foreground font-medium">{email}</span>
           </CardDescription>
         </CardHeader>
@@ -176,7 +179,9 @@ export function VerifyOTPPage() {
             {otp.map((digit, index) => (
               <Input
                 key={index}
-                ref={(el) => { inputRefs.current[index] = el; }}
+                ref={(el) => {
+                  inputRefs.current[index] = el;
+                }}
                 type="text"
                 inputMode="numeric"
                 maxLength={1}
@@ -189,12 +194,12 @@ export function VerifyOTPPage() {
             ))}
           </div>
 
-          {error && (
-            <p className="text-sm text-destructive text-center">{error}</p>
-          )}
+          {error && <p className="text-sm text-destructive text-center">{error}</p>}
 
           {success && (
-            <p className="text-sm text-success text-center">Email zweryfikowany! Przekierowywanie...</p>
+            <p className="text-sm text-success text-center">
+              Email zweryfikowany! Przekierowywanie...
+            </p>
           )}
 
           <Button

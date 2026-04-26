@@ -23,13 +23,11 @@ function buildCsv(lines: string[]): string {
 
 describe('parseBossaOperations — P17 corporate actions', () => {
   it('Obniżenie wartości nominalnej → CapitalReturnMarker(nominal_reduction), NIE deposit', () => {
-    const csv = buildCsv([
-      '2022-12-30;Obniżenie wartości nominalnej GETIN;;8250.00;PLN',
-    ]);
+    const csv = buildCsv(['2022-12-30;Obniżenie wartości nominalnej GETIN;;8250.00;PLN']);
     const result = parseBossaOperations(csv, 'batch-test');
 
     // Żadnego CashOperation('deposit') dla tego wiersza
-    expect(result.data.find(op => op.operationType === 'deposit')).toBeUndefined();
+    expect(result.data.find((op) => op.operationType === 'deposit')).toBeUndefined();
 
     // CapitalReturnMarker powinien się pojawić
     expect(result.capitalReturns).toHaveLength(1);
@@ -42,14 +40,12 @@ describe('parseBossaOperations — P17 corporate actions', () => {
     expect(marker.description).toBe('Zwrot kapitału GETIN (obniżenie nominału)');
 
     // Skipped z nowym reasonem
-    const skipRow = result.skipped.find(s => s.reason === 'capital_return_reconciled');
+    const skipRow = result.skipped.find((s) => s.reason === 'capital_return_reconciled');
     expect(skipRow).toBeDefined();
   });
 
   it('Wykup PW - wyrównanie → CapitalReturnMarker(redemption_adjustment)', () => {
-    const csv = buildCsv([
-      '2024-04-10;Wykup PW - wyrównanie SOLV (kwota brutto);;-15.76;USD',
-    ]);
+    const csv = buildCsv(['2024-04-10;Wykup PW - wyrównanie SOLV (kwota brutto);;-15.76;USD']);
     const result = parseBossaOperations(csv, 'batch-test');
 
     // Nie trafia do CashOperation
@@ -65,18 +61,16 @@ describe('parseBossaOperations — P17 corporate actions', () => {
   });
 
   it('Rozliczenie oferty TICKER dla nieznanego tickera → corporate_action_pending/unknown_tender', () => {
-    const csv = buildCsv([
-      '2025-11-05;Rozliczenie oferty XYZ123;;3500.00;PLN',
-    ]);
+    const csv = buildCsv(['2025-11-05;Rozliczenie oferty XYZ123;;3500.00;PLN']);
     const result = parseBossaOperations(csv, 'batch-test');
 
     // Nieznany tender NIE wchodzi przez RedemptionMarker
     expect(result.redemptions).toHaveLength(0);
     // NIE powstaje synthetic deposit
-    expect(result.data.find(op => op.operationType === 'deposit')).toBeUndefined();
+    expect(result.data.find((op) => op.operationType === 'deposit')).toBeUndefined();
 
     // Powstaje pending entry
-    const pending = result.data.find(op => op.operationType === 'corporate_action_pending');
+    const pending = result.data.find((op) => op.operationType === 'corporate_action_pending');
     expect(pending).toBeDefined();
     expect(pending?.subkind).toBe('unknown_tender');
     expect(pending?.amount).toBe(3500);
@@ -84,9 +78,7 @@ describe('parseBossaOperations — P17 corporate actions', () => {
   });
 
   it('Zwykły przelew → deposit (nietknięty przez P17)', () => {
-    const csv = buildCsv([
-      '2024-01-15;Przelew do DM BO;;10000.00;PLN',
-    ]);
+    const csv = buildCsv(['2024-01-15;Przelew do DM BO;;10000.00;PLN']);
     const result = parseBossaOperations(csv, 'batch-test');
 
     expect(result.data).toHaveLength(1);
@@ -95,9 +87,7 @@ describe('parseBossaOperations — P17 corporate actions', () => {
   });
 
   it('Dywidenda → dividend (nietknięta przez P17)', () => {
-    const csv = buildCsv([
-      '2024-06-15;Wypłata dywidendy PLAYWAY;;1234.56;PLN',
-    ]);
+    const csv = buildCsv(['2024-06-15;Wypłata dywidendy PLAYWAY;;1234.56;PLN']);
     const result = parseBossaOperations(csv, 'batch-test');
 
     expect(result.data).toHaveLength(1);
@@ -113,7 +103,7 @@ describe('parseBossaOperations — P17 corporate actions', () => {
     ]);
     const result = parseBossaOperations(csv, 'batch-test');
     expect(result.capitalReturns).toHaveLength(2);
-    expect(result.capitalReturns.map(m => m.ticker).sort()).toEqual(['ABCD', 'GETIN']);
+    expect(result.capitalReturns.map((m) => m.ticker).sort()).toEqual(['ABCD', 'GETIN']);
   });
 
   it('Zwrot nadpłaty przekroczony limit (ujemny amount) → withdrawal, NIE deposit', () => {
@@ -132,9 +122,7 @@ describe('parseBossaOperations — P17 corporate actions', () => {
 
   it('Zwykły zwrot nadpłaty z IPO (dodatni amount, nieznana spółka) → deposit', () => {
     // Regresja — nie chcemy przełączać deposit→withdrawal gdy kwota dodatnia.
-    const csv = buildCsv([
-      '2022-03-15;Zwrot nadpłaty UNKNOWNCO S.A.;;150.00;PLN',
-    ]);
+    const csv = buildCsv(['2022-03-15;Zwrot nadpłaty UNKNOWNCO S.A.;;150.00;PLN']);
     const result = parseBossaOperations(csv, 'batch-test');
     expect(result.data).toHaveLength(1);
     expect(result.data[0].operationType).toBe('deposit');

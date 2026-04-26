@@ -1,0 +1,12 @@
+node_modules
+dist
+build
+coverage
+data
+Import
+benchmark
+package-lock.json
+*.md
+*.csv
+*.xlsx
+*.db

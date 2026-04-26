@@ -54,7 +54,9 @@ const EMBER_PALETTE_LIGHT = [
 ];
 
 function getEmberPalette() {
-  return document.documentElement.classList.contains('dark') ? EMBER_PALETTE_DARK : EMBER_PALETTE_LIGHT;
+  return document.documentElement.classList.contains('dark')
+    ? EMBER_PALETTE_DARK
+    : EMBER_PALETTE_LIGHT;
 }
 
 const REGION_MAP: Record<string, string> = {
@@ -66,7 +68,12 @@ const REGION_MAP: Record<string, string> = {
   OTHER: 'Inne',
 };
 
-function groupBy(positions: Position[], keyFn: (p: Position) => string, colors: string[], _total: number): SliceData[] {
+function groupBy(
+  positions: Position[],
+  keyFn: (p: Position) => string,
+  colors: string[],
+  _total: number,
+): SliceData[] {
   const map = new Map<string, number>();
   for (const pos of positions) {
     const key = keyFn(pos);
@@ -229,53 +236,54 @@ function DonutChart({ data, size = 160, onHoverChange, onSliceClick }: DonutChar
           fill-muted-foreground) zamiast SVG attribute fill="hsl(var(...))",
           bo niektóre przeglądarki nie interpretują CSS vars w atrybucie SVG
           i fallback do czarnego powoduje znikanie tekstu w dark mode. */}
-      {hoveredSlice && (() => {
-        const [line1, line2] = splitCenterLabel(hoveredSlice.name);
-        // Rozmiar fontu zjedź do 10 gdy wciąż długo (np. "Przemysł elektromaszynowy"
-        // wraz po podziale ma 13 chars w jednej linii).
-        const maxLineLen = Math.max(line1.length, line2?.length ?? 0);
-        const labelFontSize = maxLineLen > 13 ? 10 : 11;
-        // Rozmieszczenie: 1 linia → nazwa na cy-6, pct na cy+10.
-        // 2 linie → nazwa 1 na cy-12, nazwa 2 na cy+1, pct na cy+15.
-        const nameY1 = line2 ? cy - 12 : cy - 6;
-        const nameY2 = cy + 1;
-        const pctY = line2 ? cy + 15 : cy + 10;
-        return (
-          <>
-            <text
-              x={cx}
-              y={nameY1}
-              textAnchor="middle"
-              fontSize={labelFontSize}
-              fontWeight={600}
-              className="fill-foreground pointer-events-none"
-            >
-              {line1}
-            </text>
-            {line2 && (
+      {hoveredSlice &&
+        (() => {
+          const [line1, line2] = splitCenterLabel(hoveredSlice.name);
+          // Rozmiar fontu zjedź do 10 gdy wciąż długo (np. "Przemysł elektromaszynowy"
+          // wraz po podziale ma 13 chars w jednej linii).
+          const maxLineLen = Math.max(line1.length, line2?.length ?? 0);
+          const labelFontSize = maxLineLen > 13 ? 10 : 11;
+          // Rozmieszczenie: 1 linia → nazwa na cy-6, pct na cy+10.
+          // 2 linie → nazwa 1 na cy-12, nazwa 2 na cy+1, pct na cy+15.
+          const nameY1 = line2 ? cy - 12 : cy - 6;
+          const nameY2 = cy + 1;
+          const pctY = line2 ? cy + 15 : cy + 10;
+          return (
+            <>
               <text
                 x={cx}
-                y={nameY2}
+                y={nameY1}
                 textAnchor="middle"
                 fontSize={labelFontSize}
                 fontWeight={600}
                 className="fill-foreground pointer-events-none"
               >
-                {line2}
+                {line1}
               </text>
-            )}
-            <text
-              x={cx}
-              y={pctY}
-              textAnchor="middle"
-              fontSize={10}
-              className="fill-muted-foreground pointer-events-none"
-            >
-              {hoveredSlice.pct.toFixed(1)}%
-            </text>
-          </>
-        );
-      })()}
+              {line2 && (
+                <text
+                  x={cx}
+                  y={nameY2}
+                  textAnchor="middle"
+                  fontSize={labelFontSize}
+                  fontWeight={600}
+                  className="fill-foreground pointer-events-none"
+                >
+                  {line2}
+                </text>
+              )}
+              <text
+                x={cx}
+                y={pctY}
+                textAnchor="middle"
+                fontSize={10}
+                className="fill-muted-foreground pointer-events-none"
+              >
+                {hoveredSlice.pct.toFixed(1)}%
+              </text>
+            </>
+          );
+        })()}
     </svg>
   );
 }
@@ -285,7 +293,10 @@ function ChartLegend({ data }: { data: SliceData[] }) {
     <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-2">
       {data.map((item, i) => (
         <div key={i} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: item.color }} />
+          <div
+            className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+            style={{ backgroundColor: item.color }}
+          />
           <span>{item.name}</span>
           <span className="font-medium text-foreground">{item.pct.toFixed(1)}%</span>
         </div>
@@ -324,10 +335,10 @@ function SectorsChart({
   // nadsektora (membership liczony po p.supersector === drillSupersector).
   const sectorData = useMemo(() => {
     if (drillSupersector === null) {
-      return groupBy(positions, p => p.supersector || 'Inne', getEmberPalette(), totalValuePln);
+      return groupBy(positions, (p) => p.supersector || 'Inne', getEmberPalette(), totalValuePln);
     }
-    const filtered = positions.filter(p => (p.supersector || 'Inne') === drillSupersector);
-    return groupBy(filtered, p => p.sector || 'Pozostałe', getEmberPalette(), totalValuePln);
+    const filtered = positions.filter((p) => (p.supersector || 'Inne') === drillSupersector);
+    return groupBy(filtered, (p) => p.sector || 'Pozostałe', getEmberPalette(), totalValuePln);
   }, [positions, totalValuePln, drillSupersector]);
 
   // Spółki dopasowane do aktualnego kontekstu (hover lub drill-down).
@@ -337,16 +348,16 @@ function SectorsChart({
     if (hoveredSliceName) {
       // Hover: filtruj po aktualnym kluczu (nadsektor lub podsektor w zależności od poziomu).
       if (drillSupersector === null) {
-        return positions.filter(p => (p.supersector || 'Inne') === hoveredSliceName);
+        return positions.filter((p) => (p.supersector || 'Inne') === hoveredSliceName);
       }
       return positions.filter(
-        p =>
+        (p) =>
           (p.supersector || 'Inne') === drillSupersector &&
           (p.sector || 'Pozostałe') === hoveredSliceName,
       );
     }
     if (drillSupersector !== null) {
-      return positions.filter(p => (p.supersector || 'Inne') === drillSupersector);
+      return positions.filter((p) => (p.supersector || 'Inne') === drillSupersector);
     }
     return [];
   }, [positions, sectorData, hoveredIdx, drillSupersector]);
@@ -388,7 +399,7 @@ function SectorsChart({
         <DonutChart
           data={sectorData}
           onHoverChange={setHoveredIdx}
-          onSliceClick={slice => {
+          onSliceClick={(slice) => {
             if (drillSupersector === null && slice.name !== 'Inne') {
               setDrillSupersector(slice.name);
               setHoveredIdx(null);
@@ -400,7 +411,7 @@ function SectorsChart({
           <div className="text-xs font-medium text-muted-foreground mb-1.5">{listHeader}</div>
           {membersSorted.length > 0 ? (
             <ul className="space-y-0.5 max-h-40 overflow-y-auto pr-1">
-              {membersSorted.map(p => {
+              {membersSorted.map((p) => {
                 const pct = totalValuePln > 0 ? (p.currentValuePln / totalValuePln) * 100 : 0;
                 return (
                   <li
@@ -420,7 +431,9 @@ function SectorsChart({
             </ul>
           ) : (
             <div className="text-xs text-muted-foreground italic">
-              {drillSupersector ? 'Brak spółek w tym sektorze.' : 'Kliknij w slice aby zobaczyć podsektory.'}
+              {drillSupersector
+                ? 'Brak spółek w tym sektorze.'
+                : 'Kliknij w slice aby zobaczyć podsektory.'}
             </div>
           )}
         </div>
@@ -451,8 +464,8 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
 
     // Liczymy liczbę unikalnych nadsektorów (Sektory u góry KPI = 8 jeżeli
     // portfel pokrywa wszystkie). Jeżeli nadsektor brak — fallback na "Inne".
-    const supers = new Set(positions.map(p => p.supersector || 'Inne'));
-    const regions = new Set(positions.map(p => REGION_MAP[p.exchange || ''] || 'Inne'));
+    const supers = new Set(positions.map((p) => p.supersector || 'Inne'));
+    const regions = new Set(positions.map((p) => REGION_MAP[p.exchange || ''] || 'Inne'));
 
     return {
       count: positions.length,
@@ -466,13 +479,19 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
   }, [positions]);
 
   const regionData = useMemo(
-    () => groupBy(positions, p => REGION_MAP[p.exchange || ''] || 'Inne', getEmberPalette(), totalValuePln),
-    [positions, totalValuePln]
+    () =>
+      groupBy(
+        positions,
+        (p) => REGION_MAP[p.exchange || ''] || 'Inne',
+        getEmberPalette(),
+        totalValuePln,
+      ),
+    [positions, totalValuePln],
   );
 
   const currencyData = useMemo(
-    () => groupBy(positions, p => p.currency, getEmberPalette(), totalValuePln),
-    [positions, totalValuePln]
+    () => groupBy(positions, (p) => p.currency, getEmberPalette(), totalValuePln),
+    [positions, totalValuePln],
   );
 
   const topPositionsData = useMemo(() => {
@@ -509,7 +528,17 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
             <StatCard label="Pozycje" value={String(metrics.count)} />
             <StatCard label="Sektory" value={String(metrics.sectorCount)} />
             <StatCard label="Rynki" value={String(metrics.regionCount)} />
-            <StatCard label="HHI" value={String(metrics.hhi)} sub={metrics.hhi < 1500 ? 'Zdywersyfikowany' : metrics.hhi < 2500 ? 'Umiarkowany' : 'Skoncentrowany'} />
+            <StatCard
+              label="HHI"
+              value={String(metrics.hhi)}
+              sub={
+                metrics.hhi < 1500
+                  ? 'Zdywersyfikowany'
+                  : metrics.hhi < 2500
+                    ? 'Umiarkowany'
+                    : 'Skoncentrowany'
+              }
+            />
             <StatCard label="Top 1" value={`${metrics.top1Weight}%`} sub={metrics.top1Ticker} />
             <StatCard label="Top 5" value={`${metrics.top5Weight}%`} sub="łącznie" />
           </div>

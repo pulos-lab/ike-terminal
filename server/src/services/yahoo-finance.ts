@@ -1,5 +1,10 @@
 import { getCached, setCached } from './price-cache.js';
-import { storeHistoricalPrices, loadHistoricalPrices, getLastCachedDate, getFirstCachedDate } from './history-cache.js';
+import {
+  storeHistoricalPrices,
+  loadHistoricalPrices,
+  getLastCachedDate,
+  getFirstCachedDate,
+} from './history-cache.js';
 
 const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const YAHOO_V10_BASE = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary';
@@ -24,7 +29,7 @@ async function refreshYahooCrumb(): Promise<void> {
       redirect: 'manual',
     });
     const setCookieHeaders = resp1.headers.getSetCookie?.() || [];
-    cachedCookies = setCookieHeaders.map(c => c.split(';')[0]).join('; ');
+    cachedCookies = setCookieHeaders.map((c) => c.split(';')[0]).join('; ');
 
     if (!cachedCookies) {
       console.warn('[yahoo-auth] No cookies received from fc.yahoo.com');
@@ -33,7 +38,7 @@ async function refreshYahooCrumb(): Promise<void> {
 
     // Step 2: Get crumb with cookies
     const resp2 = await fetch('https://query2.finance.yahoo.com/v1/test/getcrumb', {
-      headers: { 'User-Agent': USER_AGENT, 'Cookie': cachedCookies },
+      headers: { 'User-Agent': USER_AGENT, Cookie: cachedCookies },
     });
     if (!resp2.ok) {
       console.warn(`[yahoo-auth] Crumb fetch failed: HTTP ${resp2.status}`);
@@ -68,7 +73,7 @@ async function yahooQuoteSummary(ticker: string, modules: string[]): Promise<any
   const url = `${YAHOO_V10_BASE}/${encodeURIComponent(ticker)}?${params}`;
 
   const resp = await fetch(url, {
-    headers: { 'User-Agent': USER_AGENT, 'Cookie': auth.cookies },
+    headers: { 'User-Agent': USER_AGENT, Cookie: auth.cookies },
   });
 
   if (resp.status === 401 || resp.status === 403) {
@@ -83,7 +88,7 @@ async function yahooQuoteSummary(ticker: string, modules: string[]): Promise<any
     });
     const url2 = `${YAHOO_V10_BASE}/${encodeURIComponent(ticker)}?${params2}`;
     const resp2 = await fetch(url2, {
-      headers: { 'User-Agent': USER_AGENT, 'Cookie': auth2.cookies },
+      headers: { 'User-Agent': USER_AGENT, Cookie: auth2.cookies },
     });
     if (!resp2.ok) return null;
     const json2 = await resp2.json();
@@ -198,9 +203,13 @@ async function yahooChart(ticker: string, params: Record<string, string>): Promi
 /**
  * Fetch current price from Yahoo Finance (v8 chart API)
  */
-export async function fetchYahooPrice(ticker: string): Promise<{ price: number; currency: string; previousClose: number | null } | null> {
+export async function fetchYahooPrice(
+  ticker: string,
+): Promise<{ price: number; currency: string; previousClose: number | null } | null> {
   const cacheKey = `yahoo_live_${ticker}`;
-  const cached = getCached<{ price: number; currency: string; previousClose: number | null }>(cacheKey);
+  const cached = getCached<{ price: number; currency: string; previousClose: number | null }>(
+    cacheKey,
+  );
   if (cached) return cached;
 
   try {
@@ -226,7 +235,7 @@ export async function fetchYahooPrice(ticker: string): Promise<{ price: number; 
 export async function fetchYahooHistory(
   ticker: string,
   startDate: string,
-  endDate?: string
+  endDate?: string,
 ): Promise<Array<{ date: string; close: number }>> {
   const end = endDate || new Date().toISOString().split('T')[0];
   const cacheKey = `yahoo_history_${ticker}_${startDate}_${end}`;
@@ -322,7 +331,7 @@ export async function fetchYahooHistory(
 export async function fetchYahooDividendEvents(
   ticker: string,
   startDate: string,
-  endDate?: string
+  endDate?: string,
 ): Promise<Array<{ date: string; amount: number }>> {
   const end = endDate || new Date().toISOString().split('T')[0];
   const cacheKey = `yahoo_divevents_${ticker}_${startDate}_${end}`;
@@ -347,7 +356,7 @@ export async function fetchYahooDividendEvents(
 
     const dividends: Record<string, { date: number; amount: number }> = result.events.dividends;
     const events = Object.values(dividends)
-      .map(d => ({
+      .map((d) => ({
         date: new Date(d.date * 1000).toISOString().split('T')[0],
         amount: d.amount,
       }))

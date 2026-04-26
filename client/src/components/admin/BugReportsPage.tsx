@@ -1,6 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -14,7 +21,11 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 export function BugReportsPage() {
-  const { data: reports, isLoading, error } = useQuery({
+  const {
+    data: reports,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['bug-reports'],
     queryFn: api.getBugReports,
   });
@@ -58,8 +69,11 @@ export function BugReportsPage() {
                 <TableRow key={r.id}>
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                     {new Date(r.createdAt + 'Z').toLocaleString('pl-PL', {
-                      day: '2-digit', month: '2-digit', year: 'numeric',
-                      hour: '2-digit', minute: '2-digit',
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
                     })}
                   </TableCell>
                   <TableCell>
@@ -68,7 +82,7 @@ export function BugReportsPage() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-sm max-w-md">
-                    <p className="whitespace-pre-wrap break-words">{r.description}</p>
+                    <p className="whitespace-pre-wrap wrap-break-words">{r.description}</p>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{r.userEmail}</TableCell>
                 </TableRow>

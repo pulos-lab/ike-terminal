@@ -26,16 +26,21 @@ function rowToSplit(row: SplitRow): StockSplit {
 export function getSplits(portfolioId: string, isin?: string): StockSplit[] {
   const db = getDb(portfolioId);
   if (isin) {
-    const rows = db.prepare('SELECT * FROM stock_splits WHERE isin = ? ORDER BY split_date').all(isin) as SplitRow[];
+    const rows = db
+      .prepare('SELECT * FROM stock_splits WHERE isin = ? ORDER BY split_date')
+      .all(isin) as SplitRow[];
     return rows.map(rowToSplit);
   }
-  const rows = db.prepare('SELECT * FROM stock_splits ORDER BY ticker, split_date').all() as SplitRow[];
+  const rows = db
+    .prepare('SELECT * FROM stock_splits ORDER BY ticker, split_date')
+    .all() as SplitRow[];
   return rows.map(rowToSplit);
 }
 
 export function upsertSplit(portfolioId: string, split: StockSplit): void {
   const db = getDb(portfolioId);
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO stock_splits (isin, ticker, split_date, ratio, source)
     VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(isin) DO UPDATE SET
@@ -43,7 +48,8 @@ export function upsertSplit(portfolioId: string, split: StockSplit): void {
       ratio = excluded.ratio,
       ticker = excluded.ticker,
       source = excluded.source
-  `).run(split.isin, split.ticker, split.splitDate, split.ratio, split.source);
+  `,
+  ).run(split.isin, split.ticker, split.splitDate, split.ratio, split.source);
 }
 
 export function upsertSplits(portfolioId: string, splits: StockSplit[]): void {

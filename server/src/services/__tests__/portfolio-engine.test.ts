@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { computePositionMetrics } from '../portfolio-engine.js';
 import type { Transaction } from 'shared';
 
-function makeTx(overrides: Partial<Transaction> & { side: 'K' | 'S'; quantity: number; price: number }): Transaction {
+function makeTx(
+  overrides: Partial<Transaction> & { side: 'K' | 'S'; quantity: number; price: number },
+): Transaction {
   const commission = overrides.commission ?? 0;
   const value = overrides.quantity * overrides.price;
   return {
@@ -80,9 +82,7 @@ describe('computePositionMetrics', () => {
   });
 
   it('handles fractional shares', () => {
-    const txs = [
-      makeTx({ side: 'K', quantity: 0.5, price: 494.15, date: '2024-01-01' }),
-    ];
+    const txs = [makeTx({ side: 'K', quantity: 0.5, price: 494.15, date: '2024-01-01' })];
     const result = computePositionMetrics(txs);
     expect(result.shares).toBeCloseTo(0.5);
     expect(result.avgBuyPrice).toBeCloseTo(494.15);

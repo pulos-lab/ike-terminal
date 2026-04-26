@@ -3,13 +3,26 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidateDividends } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { AddDividendDialog } from './AddDividendDialog';
-import { formatNumber, formatDate, formatPLN, formatQuantity, formatCurrency } from '@/lib/formatters';
+import {
+  formatNumber,
+  formatDate,
+  formatPLN,
+  formatQuantity,
+  formatCurrency,
+} from '@/lib/formatters';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loader2, Coins, Plus, Pencil, Trash2, RefreshCw, Calendar, Clock } from 'lucide-react';
 import { toast } from 'sonner';
@@ -25,9 +38,14 @@ const SOURCE_LABELS: Record<string, { label: string; className: string }> = {
 };
 
 function SourceBadge({ source }: { source: string }) {
-  const info = SOURCE_LABELS[source] || { label: source, className: 'bg-gray-500/15 text-gray-400' };
+  const info = SOURCE_LABELS[source] || {
+    label: source,
+    className: 'bg-gray-500/15 text-gray-400',
+  };
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${info.className}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${info.className}`}
+    >
       {info.label}
     </span>
   );
@@ -101,7 +119,9 @@ function UpcomingDividendsPanel() {
                   <TableCell className="text-right font-medium text-gain tabular-nums">
                     {d.estimatedAmount > 0 ? formatNumber(d.estimatedAmount) : '—'}
                   </TableCell>
-                  <TableCell><CcyChip ccy={d.currency} /></TableCell>
+                  <TableCell>
+                    <CcyChip ccy={d.currency} />
+                  </TableCell>
                   <TableCell>
                     <StatusBadge exDate={d.exDividendDate} payDate={d.paymentDate} />
                   </TableCell>
@@ -134,7 +154,9 @@ export function DividendsPage() {
       invalidateDividends(queryClient);
       const d = deleting;
       if (d && d.id === id) {
-        toast.success(`Usunięto dywidendę ${d.ticker} — ${formatCurrency(d.amount, d.currency)} z ${formatDate(d.date)}`);
+        toast.success(
+          `Usunięto dywidendę ${d.ticker} — ${formatCurrency(d.amount, d.currency)} z ${formatDate(d.date)}`,
+        );
       } else {
         toast.success('Usunięto dywidendę.');
       }
@@ -149,7 +171,9 @@ export function DividendsPage() {
       invalidateDividends(queryClient);
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.upcomingDividends });
       if (result.newDividends > 0) {
-        toast.success(`Znaleziono ${result.newDividends} nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
+        toast.success(
+          `Znaleziono ${result.newDividends} nowych dywidend (przeskanowano ${result.scanned} tickerów)`,
+        );
       } else {
         toast.info(`Brak nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
       }
@@ -159,13 +183,18 @@ export function DividendsPage() {
 
   const dividends: DividendRecord[] = data?.dividends || [];
 
-  const yearlyData = dividends.reduce((acc: any[], d) => {
-    const year = new Date(d.date).getFullYear().toString();
-    const existing = acc.find((a: any) => a.year === year);
-    if (existing) { existing.amount += d.amount; }
-    else { acc.push({ year, amount: d.amount }); }
-    return acc;
-  }, []).sort((a: any, b: any) => a.year.localeCompare(b.year));
+  const yearlyData = dividends
+    .reduce((acc: any[], d) => {
+      const year = new Date(d.date).getFullYear().toString();
+      const existing = acc.find((a: any) => a.year === year);
+      if (existing) {
+        existing.amount += d.amount;
+      } else {
+        acc.push({ year, amount: d.amount });
+      }
+      return acc;
+    }, [])
+    .sort((a: any, b: any) => a.year.localeCompare(b.year));
 
   return (
     <div className="space-y-4">
@@ -176,7 +205,11 @@ export function DividendsPage() {
           onClick={() => scanMutation.mutate()}
           disabled={scanMutation.isPending}
         >
-          {scanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          {scanMutation.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
           Skanuj dywidendy
         </Button>
         <Button size="sm" onClick={() => setAddOpen(true)}>
@@ -226,7 +259,12 @@ export function DividendsPage() {
                       itemStyle={{ color: 'var(--primary)' }}
                       formatter={(v) => [formatPLN(Number(v) || 0), 'Dywidendy']}
                     />
-                    <Bar dataKey="amount" fill="var(--primary)" radius={[4, 4, 0, 0]} maxBarSize={80} />
+                    <Bar
+                      dataKey="amount"
+                      fill="var(--primary)"
+                      radius={[4, 4, 0, 0]}
+                      maxBarSize={80}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -276,9 +314,15 @@ export function DividendsPage() {
                       <TableRow key={d.id}>
                         <TableCell>{formatDate(d.date)}</TableCell>
                         <TableCell className="font-mono font-medium">{d.ticker}</TableCell>
-                        <TableCell className="text-muted-foreground text-sm">{d.description}</TableCell>
-                        <TableCell className="text-right font-medium text-gain tabular-nums">{formatNumber(d.amount)}</TableCell>
-                        <TableCell><CcyChip ccy={d.currency} /></TableCell>
+                        <TableCell className="text-muted-foreground text-sm">
+                          {d.description}
+                        </TableCell>
+                        <TableCell className="text-right font-medium text-gain tabular-nums">
+                          {formatNumber(d.amount)}
+                        </TableCell>
+                        <TableCell>
+                          <CcyChip ccy={d.currency} />
+                        </TableCell>
                         <TableCell>
                           <SourceBadge source={d.source} />
                         </TableCell>
@@ -319,7 +363,17 @@ export function DividendsPage() {
       <AddDividendDialog
         open={!!editing}
         onClose={() => setEditing(null)}
-        defaultValues={editing ? { id: editing.id, date: editing.date, ticker: editing.ticker, amount: editing.amount, currency: editing.currency } : undefined}
+        defaultValues={
+          editing
+            ? {
+                id: editing.id,
+                date: editing.date,
+                ticker: editing.ticker,
+                amount: editing.amount,
+                currency: editing.currency,
+              }
+            : undefined
+        }
       />
       <ConfirmDeleteDialog
         open={!!deleting}

@@ -41,10 +41,7 @@ export function BottomTabBar() {
               {isActive && (
                 <span className="absolute top-0 left-[42%] right-[42%] h-[2px] rounded-full bg-primary" />
               )}
-              <tab.icon
-                className={cn('h-5 w-5', isActive && 'stroke-[2.25]')}
-                aria-hidden
-              />
+              <tab.icon className={cn('h-5 w-5', isActive && 'stroke-[2.25]')} aria-hidden />
               <span
                 className={cn(
                   'text-[10px] leading-none tracking-tight',

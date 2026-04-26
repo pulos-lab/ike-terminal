@@ -171,10 +171,13 @@ export function ForgotPasswordPage() {
           <Logo size="xl" className="mb-2 mx-auto" />
           <CardTitle className="text-lg font-semibold">Reset hasła</CardTitle>
           <CardDescription>
-            {step === 'email'
-              ? 'Podaj adres email powiązany z kontem'
-              : <>Wysłaliśmy kod na <span className="text-foreground font-medium">{email}</span></>
-            }
+            {step === 'email' ? (
+              'Podaj adres email powiązany z kontem'
+            ) : (
+              <>
+                Wysłaliśmy kod na <span className="text-foreground font-medium">{email}</span>
+              </>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -184,7 +187,10 @@ export function ForgotPasswordPage() {
                 type="email"
                 placeholder="Email"
                 value={email}
-                onChange={(e) => { setEmail(e.target.value); setError(''); }}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setError('');
+                }}
                 required
                 autoFocus
               />
@@ -205,7 +211,9 @@ export function ForgotPasswordPage() {
                   {otp.map((digit, index) => (
                     <Input
                       key={index}
-                      ref={(el) => { inputRefs.current[index] = el; }}
+                      ref={(el) => {
+                        inputRefs.current[index] = el;
+                      }}
                       type="text"
                       inputMode="numeric"
                       maxLength={1}
@@ -224,7 +232,10 @@ export function ForgotPasswordPage() {
                   type="password"
                   placeholder="Nowe hasło (min. 8 znaków)"
                   value={password}
-                  onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setError('');
+                  }}
                   required
                   minLength={8}
                   disabled={loading || success}
@@ -233,7 +244,10 @@ export function ForgotPasswordPage() {
                   type="password"
                   placeholder="Potwierdź hasło"
                   value={confirmPassword}
-                  onChange={(e) => { setConfirmPassword(e.target.value); setError(''); }}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    setError('');
+                  }}
                   required
                   minLength={8}
                   disabled={loading || success}
@@ -260,7 +274,11 @@ export function ForgotPasswordPage() {
                       Wyślij ponownie za {resendCooldown}s
                     </span>
                   ) : (
-                    <button type="button" onClick={handleResend} className="text-primary font-medium hover:underline">
+                    <button
+                      type="button"
+                      onClick={handleResend}
+                      className="text-primary font-medium hover:underline"
+                    >
                       Wyślij ponownie
                     </button>
                   )}

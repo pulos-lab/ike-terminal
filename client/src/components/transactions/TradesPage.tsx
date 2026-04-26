@@ -4,7 +4,14 @@ import { api } from '@/lib/api-client';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
@@ -82,7 +89,12 @@ export function TradesPage() {
   // Justyfikacja: user klika "Sprzedaj" w rzędzie otwartej pozycji i oczekuje natychmiastowej
   // prefillowanej formy (qty=shares, price=currentPrice). Modal byłby tu UX regresą.
   const [sellingTicker, setSellingTicker] = useState<string | null>(null);
-  const [sellForm, setSellForm] = useState<SellForm>({ date: '', quantity: '', price: '', commission: '0' });
+  const [sellForm, setSellForm] = useState<SellForm>({
+    date: '',
+    quantity: '',
+    price: '',
+    commission: '0',
+  });
 
   // Expand/collapse lot details
   const [expandedPositions, togglePosition] = useToggleSet<string>();
@@ -103,15 +115,27 @@ export function TradesPage() {
     if (!qty || !prc || qty <= 0 || prc <= 0) return '0';
     const value = qty * prc;
     const isPolish = ticker.endsWith('.WA') || ticker.endsWith('.NC');
-    const rate = isPolish ? (activeSettings?.commissionPl || 0) : (activeSettings?.commissionForeign || 0);
-    const min = isPolish ? (activeSettings?.minCommissionPl || 0) : (activeSettings?.minCommissionForeign || 0);
+    const rate = isPolish
+      ? activeSettings?.commissionPl || 0
+      : activeSettings?.commissionForeign || 0;
+    const min = isPolish
+      ? activeSettings?.minCommissionPl || 0
+      : activeSettings?.minCommissionForeign || 0;
     if (rate <= 0 && min <= 0) return '0';
-    const commission = Math.max(value * rate / 100, min);
+    const commission = Math.max((value * rate) / 100, min);
     return (Math.round(commission * 100) / 100).toString();
   };
 
   const sellMutation = useMutation({
-    mutationFn: ({ ticker, form, category }: { ticker: string; form: SellForm; category?: 'stock' | 'etf' | 'cfd' }) =>
+    mutationFn: ({
+      ticker,
+      form,
+      category,
+    }: {
+      ticker: string;
+      form: SellForm;
+      category?: 'stock' | 'etf' | 'cfd';
+    }) =>
       api.createTransaction({
         date: form.date,
         ticker,
@@ -142,7 +166,12 @@ export function TradesPage() {
     });
   }
 
-  const isSellValid = sellForm.date && sellForm.quantity && parseFloat(sellForm.quantity) > 0 && sellForm.price && parseFloat(sellForm.price) > 0;
+  const isSellValid =
+    sellForm.date &&
+    sellForm.quantity &&
+    parseFloat(sellForm.quantity) > 0 &&
+    sellForm.price &&
+    parseFloat(sellForm.price) > 0;
 
   const positions: Position[] = posData?.positions || [];
 
@@ -157,9 +186,48 @@ export function TradesPage() {
 
       {/* Tab switcher — Wszystkie / Otwarte / Zamknięte */}
       <div className="flex items-center gap-1 border-b border-border overflow-x-auto overflow-y-hidden">
-        <TabButton active={tab === 'all'} onClick={() => { const t0 = performance.now(); setTab('all'); requestAnimationFrame(() => requestAnimationFrame(() => console.log(`[perf] tab→all: ${(performance.now() - t0).toFixed(0)}ms`))); }} label="Wszystkie" count={txCount} />
-        <TabButton active={tab === 'open'} onClick={() => { const t0 = performance.now(); setTab('open'); requestAnimationFrame(() => requestAnimationFrame(() => console.log(`[perf] tab→open: ${(performance.now() - t0).toFixed(0)}ms`))); }} label="Otwarte" count={positions.length} />
-        <TabButton active={tab === 'closed'} onClick={() => { const t0 = performance.now(); setTab('closed'); requestAnimationFrame(() => requestAnimationFrame(() => console.log(`[perf] tab→closed: ${(performance.now() - t0).toFixed(0)}ms`))); }} label="Zamknięte" count={closedCount} />
+        <TabButton
+          active={tab === 'all'}
+          onClick={() => {
+            const t0 = performance.now();
+            setTab('all');
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() =>
+                console.log(`[perf] tab→all: ${(performance.now() - t0).toFixed(0)}ms`),
+              ),
+            );
+          }}
+          label="Wszystkie"
+          count={txCount}
+        />
+        <TabButton
+          active={tab === 'open'}
+          onClick={() => {
+            const t0 = performance.now();
+            setTab('open');
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() =>
+                console.log(`[perf] tab→open: ${(performance.now() - t0).toFixed(0)}ms`),
+              ),
+            );
+          }}
+          label="Otwarte"
+          count={positions.length}
+        />
+        <TabButton
+          active={tab === 'closed'}
+          onClick={() => {
+            const t0 = performance.now();
+            setTab('closed');
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() =>
+                console.log(`[perf] tab→closed: ${(performance.now() - t0).toFixed(0)}ms`),
+              ),
+            );
+          }}
+          label="Zamknięte"
+          count={closedCount}
+        />
       </div>
 
       <TradesSummary
@@ -181,7 +249,9 @@ export function TradesPage() {
           aria-hidden={tab !== 'all'}
           style={{
             position: tab === 'all' ? 'relative' : 'absolute',
-            top: 0, left: 0, right: 0,
+            top: 0,
+            left: 0,
+            right: 0,
             visibility: tab === 'all' ? 'visible' : 'hidden',
             pointerEvents: tab === 'all' ? 'auto' : 'none',
           }}
@@ -193,229 +263,297 @@ export function TradesPage() {
           </Card>
         </div>
 
-      {/* Open positions — zamontowany ZAWSZE (overlap ze stack) */}
-      <div
-        aria-hidden={tab !== 'open'}
-        style={{
-          position: tab === 'open' ? 'relative' : 'absolute',
-          top: 0, left: 0, right: 0,
-          visibility: tab === 'open' ? 'visible' : 'hidden',
-          pointerEvents: tab === 'open' ? 'auto' : 'none',
-        }}
-      >
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Otwarte pozycje</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {posLoading ? (
-            <LoadingSpinner />
-          ) : positions.length ? (
-            <>
-              {/* Mobile cards */}
-              <div className="md:hidden flex flex-col gap-2">
-                {positions.map((pos) => (
-                  <PositionCardMobile
-                    key={pos.ticker}
-                    position={pos}
-                    onSell={() => sellingTicker === pos.ticker ? setSellingTicker(null) : startSell(pos)}
-                  />
-                ))}
-              </div>
+        {/* Open positions — zamontowany ZAWSZE (overlap ze stack) */}
+        <div
+          aria-hidden={tab !== 'open'}
+          style={{
+            position: tab === 'open' ? 'relative' : 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            visibility: tab === 'open' ? 'visible' : 'hidden',
+            pointerEvents: tab === 'open' ? 'auto' : 'none',
+          }}
+        >
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Otwarte pozycje</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {posLoading ? (
+                <LoadingSpinner />
+              ) : positions.length ? (
+                <>
+                  {/* Mobile cards */}
+                  <div className="md:hidden flex flex-col gap-2">
+                    {positions.map((pos) => (
+                      <PositionCardMobile
+                        key={pos.ticker}
+                        position={pos}
+                        onSell={() =>
+                          sellingTicker === pos.ticker ? setSellingTicker(null) : startSell(pos)
+                        }
+                      />
+                    ))}
+                  </div>
 
-              {/* Desktop table */}
-              <div className="hidden md:block overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Ticker</TableHead>
-                    <TableHead className="text-right">Ilość</TableHead>
-                    <TableHead>Data kupna</TableHead>
-                    <TableHead className="text-right">Śr. cena kupna</TableHead>
-                    <TableHead className="text-right">Prowizja</TableHead>
-                    <TableHead className="text-right">Cena bieżąca</TableHead>
-                    <TableHead className="text-right">Wartość (PLN)</TableHead>
-                    <TableHead className="text-right">P/L</TableHead>
-                    <TableHead className="text-right">P/L %</TableHead>
-                    <TableHead className="w-[80px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {positions.map((pos) => {
-                    const isSelling = sellingTicker === pos.ticker;
-                    const lots = pos.buyLots || [];
-                    const isMultiLot = lots.length > 1;
-                    const isExpanded = expandedPositions.has(pos.ticker);
-
-                    // Buy date range
-                    const buyDates = lots.map(l => l.date).sort();
-                    const minBuyDate = buyDates[0] || '';
-                    const maxBuyDate = buyDates[buyDates.length - 1] || '';
-                    const sameBuyDate = minBuyDate.slice(0, 10) === maxBuyDate.slice(0, 10);
-
-                    const totalCommission = lots.reduce((s, l) => s + l.commission, 0);
-
-                    return (
-                      <Fragment key={pos.ticker}>
-                        <TableRow
-                          className={isMultiLot ? 'cursor-pointer hover:bg-muted/50' : undefined}
-                          onClick={isMultiLot ? () => togglePosition(pos.ticker) : undefined}
-                          role={isMultiLot ? 'button' : undefined}
-                          tabIndex={isMultiLot ? 0 : undefined}
-                          onKeyDown={isMultiLot ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePosition(pos.ticker); } } : undefined}
-                        >
-                          <TableCell className="font-mono font-medium">
-                            <div className="flex items-center gap-1">
-                              {isMultiLot && (
-                                isExpanded
-                                  ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                                  : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                              )}
-                              {pos.ticker}
-                              <CategoryBadge category={pos.category} />
-                              {isMultiLot && <span className="text-xs text-muted-foreground ml-1">({lots.length})</span>}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
-                          <TableCell className="text-muted-foreground text-sm">
-                            {minBuyDate
-                              ? sameBuyDate
-                                ? formatDate(minBuyDate)
-                                : `${formatDate(minBuyDate)} – ${formatDate(maxBuyDate)}`
-                              : '—'}
-                          </TableCell>
-                          <TableCell className="text-right">{formatNumber(pos.avgBuyPrice)}</TableCell>
-                          <TableCell className="text-right text-muted-foreground text-xs">
-                            {totalCommission > 0 ? formatNumber(totalCommission) : '—'}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {pos.currentPrice != null ? formatNumber(pos.currentPrice) : '—'}
-                            <span className="text-xs text-muted-foreground ml-1">{pos.currency}</span>
-                          </TableCell>
-                          <TableCell className="text-right">{formatNumber(pos.currentValuePln)}</TableCell>
-                          <TableCell className={`text-right font-medium ${plColor(pos.profitLossPct)}`}>
-                            {formatCurrency(pos.profitLoss, pos.currency)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <PLBadge value={pos.profitLossPct} />
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              size="xs"
-                              variant="ghost"
-                              onClick={(e) => { e.stopPropagation(); isSelling ? setSellingTicker(null) : startSell(pos); }}
-                              className="text-muted-foreground hover:text-destructive"
-                            >
-                              <TrendingDown className="h-3 w-3 mr-1" />
-                              Sprzedaj
-                            </Button>
-                          </TableCell>
+                  {/* Desktop table */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Ticker</TableHead>
+                          <TableHead className="text-right">Ilość</TableHead>
+                          <TableHead>Data kupna</TableHead>
+                          <TableHead className="text-right">Śr. cena kupna</TableHead>
+                          <TableHead className="text-right">Prowizja</TableHead>
+                          <TableHead className="text-right">Cena bieżąca</TableHead>
+                          <TableHead className="text-right">Wartość (PLN)</TableHead>
+                          <TableHead className="text-right">P/L</TableHead>
+                          <TableHead className="text-right">P/L %</TableHead>
+                          <TableHead className="w-[80px]"></TableHead>
                         </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {positions.map((pos) => {
+                          const isSelling = sellingTicker === pos.ticker;
+                          const lots = pos.buyLots || [];
+                          const isMultiLot = lots.length > 1;
+                          const isExpanded = expandedPositions.has(pos.ticker);
 
-                        {isExpanded && lots.map((lot, j) => (
-                          <TableRow key={`${pos.ticker}-lot-${j}`} className="bg-muted/30">
-                            <TableCell className="font-mono text-muted-foreground pl-9 text-sm">
-                              └ lot {j + 1}
-                            </TableCell>
-                            <TableCell className="text-right text-muted-foreground">{formatQuantity(lot.quantity)}</TableCell>
-                            <TableCell className="text-muted-foreground">{formatDate(lot.date)}</TableCell>
-                            <TableCell className="text-right text-muted-foreground">{formatNumber(lot.price)}</TableCell>
-                            <TableCell className="text-right text-muted-foreground text-xs">
-                              {lot.commission > 0 ? formatNumber(lot.commission) : '—'}
-                            </TableCell>
-                            <TableCell />
-                            <TableCell />
-                            <TableCell />
-                            <TableCell />
-                            <TableCell />
-                          </TableRow>
-                        ))}
+                          // Buy date range
+                          const buyDates = lots.map((l) => l.date).sort();
+                          const minBuyDate = buyDates[0] || '';
+                          const maxBuyDate = buyDates[buyDates.length - 1] || '';
+                          const sameBuyDate = minBuyDate.slice(0, 10) === maxBuyDate.slice(0, 10);
 
-                        {isSelling && (
-                          <TableRow className="bg-muted/30">
-                            <TableCell colSpan={10} className="px-4 py-3">
-                              <div className="flex items-center gap-2 mb-3">
-                                <TrendingDown className="h-3.5 w-3.5 text-muted-foreground" />
-                                <span className="text-sm font-medium">Sprzedaż {pos.ticker}</span>
-                              </div>
-                              <div className="flex flex-wrap items-end gap-4">
-                                <div className="flex flex-col gap-2">
-                                  <label className="text-xs text-muted-foreground">Ilość</label>
-                                  <Input
-                                    type="number"
-                                    min="1"
-                                    max={pos.shares}
-                                    value={sellForm.quantity}
-                                    onChange={e => setSellForm({ ...sellForm, quantity: e.target.value })}
-                                    className="h-8 w-[90px] text-right"
-                                  />
-                                </div>
-                                <div className="flex flex-col gap-2">
-                                  <label className="text-xs text-muted-foreground">Cena</label>
-                                  <Input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={sellForm.price}
-                                    onChange={e => setSellForm({ ...sellForm, price: e.target.value })}
-                                    className="h-8 w-[110px] text-right"
-                                  />
-                                </div>
-                                <div className="flex flex-col gap-2">
-                                  <label className="text-xs text-muted-foreground">Data</label>
-                                  <Input
-                                    type="date"
-                                    value={sellForm.date}
-                                    onChange={e => setSellForm({ ...sellForm, date: e.target.value })}
-                                    className="h-8 w-[140px]"
-                                  />
-                                </div>
-                                <div className="flex flex-col gap-2">
-                                  <label className="text-xs text-muted-foreground">Prowizja</label>
-                                  <Input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={sellForm.commission}
-                                    onChange={e => setSellForm({ ...sellForm, commission: e.target.value })}
-                                    className="h-8 w-[90px] text-right"
-                                  />
-                                </div>
-                                <div className="flex gap-1 pb-0.5">
+                          const totalCommission = lots.reduce((s, l) => s + l.commission, 0);
+
+                          return (
+                            <Fragment key={pos.ticker}>
+                              <TableRow
+                                className={
+                                  isMultiLot ? 'cursor-pointer hover:bg-muted/50' : undefined
+                                }
+                                onClick={isMultiLot ? () => togglePosition(pos.ticker) : undefined}
+                                role={isMultiLot ? 'button' : undefined}
+                                tabIndex={isMultiLot ? 0 : undefined}
+                                onKeyDown={
+                                  isMultiLot
+                                    ? (e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                          e.preventDefault();
+                                          togglePosition(pos.ticker);
+                                        }
+                                      }
+                                    : undefined
+                                }
+                              >
+                                <TableCell className="font-mono font-medium">
+                                  <div className="flex items-center gap-1">
+                                    {isMultiLot &&
+                                      (isExpanded ? (
+                                        <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                                      ) : (
+                                        <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                                      ))}
+                                    {pos.ticker}
+                                    <CategoryBadge category={pos.category} />
+                                    {isMultiLot && (
+                                      <span className="text-xs text-muted-foreground ml-1">
+                                        ({lots.length})
+                                      </span>
+                                    )}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {formatQuantity(pos.shares)}
+                                </TableCell>
+                                <TableCell className="text-muted-foreground text-sm">
+                                  {minBuyDate
+                                    ? sameBuyDate
+                                      ? formatDate(minBuyDate)
+                                      : `${formatDate(minBuyDate)} – ${formatDate(maxBuyDate)}`
+                                    : '—'}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {formatNumber(pos.avgBuyPrice)}
+                                </TableCell>
+                                <TableCell className="text-right text-muted-foreground text-xs">
+                                  {totalCommission > 0 ? formatNumber(totalCommission) : '—'}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {pos.currentPrice != null ? formatNumber(pos.currentPrice) : '—'}
+                                  <span className="text-xs text-muted-foreground ml-1">
+                                    {pos.currency}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {formatNumber(pos.currentValuePln)}
+                                </TableCell>
+                                <TableCell
+                                  className={`text-right font-medium ${plColor(pos.profitLossPct)}`}
+                                >
+                                  {formatCurrency(pos.profitLoss, pos.currency)}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <PLBadge value={pos.profitLossPct} />
+                                </TableCell>
+                                <TableCell>
                                   <Button
-                                    size="icon-xs"
+                                    size="xs"
                                     variant="ghost"
-                                    onClick={() => sellMutation.mutate({ ticker: pos.ticker, form: sellForm, category: pos.category })}
-                                    disabled={!isSellValid || sellMutation.isPending}
-                                    className="text-gain hover:text-gain/80"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      isSelling ? setSellingTicker(null) : startSell(pos);
+                                    }}
+                                    className="text-muted-foreground hover:text-destructive"
                                   >
-                                    {sellMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                    <TrendingDown className="h-3 w-3 mr-1" />
+                                    Sprzedaj
                                   </Button>
-                                  <Button
-                                    size="icon-xs"
-                                    variant="ghost"
-                                    onClick={() => setSellingTicker(null)}
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </Button>
-                                </div>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-              </div>
-            </>
-          ) : (
-            <EmptyState message="Brak otwartych pozycji." />
-          )}
-        </CardContent>
-      </Card>
-      </div>
+                                </TableCell>
+                              </TableRow>
+
+                              {isExpanded &&
+                                lots.map((lot, j) => (
+                                  <TableRow key={`${pos.ticker}-lot-${j}`} className="bg-muted/30">
+                                    <TableCell className="font-mono text-muted-foreground pl-9 text-sm">
+                                      └ lot {j + 1}
+                                    </TableCell>
+                                    <TableCell className="text-right text-muted-foreground">
+                                      {formatQuantity(lot.quantity)}
+                                    </TableCell>
+                                    <TableCell className="text-muted-foreground">
+                                      {formatDate(lot.date)}
+                                    </TableCell>
+                                    <TableCell className="text-right text-muted-foreground">
+                                      {formatNumber(lot.price)}
+                                    </TableCell>
+                                    <TableCell className="text-right text-muted-foreground text-xs">
+                                      {lot.commission > 0 ? formatNumber(lot.commission) : '—'}
+                                    </TableCell>
+                                    <TableCell />
+                                    <TableCell />
+                                    <TableCell />
+                                    <TableCell />
+                                    <TableCell />
+                                  </TableRow>
+                                ))}
+
+                              {isSelling && (
+                                <TableRow className="bg-muted/30">
+                                  <TableCell colSpan={10} className="px-4 py-3">
+                                    <div className="flex items-center gap-2 mb-3">
+                                      <TrendingDown className="h-3.5 w-3.5 text-muted-foreground" />
+                                      <span className="text-sm font-medium">
+                                        Sprzedaż {pos.ticker}
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap items-end gap-4">
+                                      <div className="flex flex-col gap-2">
+                                        <label className="text-xs text-muted-foreground">
+                                          Ilość
+                                        </label>
+                                        <Input
+                                          type="number"
+                                          min="1"
+                                          max={pos.shares}
+                                          value={sellForm.quantity}
+                                          onChange={(e) =>
+                                            setSellForm({ ...sellForm, quantity: e.target.value })
+                                          }
+                                          className="h-8 w-[90px] text-right"
+                                        />
+                                      </div>
+                                      <div className="flex flex-col gap-2">
+                                        <label className="text-xs text-muted-foreground">
+                                          Cena
+                                        </label>
+                                        <Input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={sellForm.price}
+                                          onChange={(e) =>
+                                            setSellForm({ ...sellForm, price: e.target.value })
+                                          }
+                                          className="h-8 w-[110px] text-right"
+                                        />
+                                      </div>
+                                      <div className="flex flex-col gap-2">
+                                        <label className="text-xs text-muted-foreground">
+                                          Data
+                                        </label>
+                                        <Input
+                                          type="date"
+                                          value={sellForm.date}
+                                          onChange={(e) =>
+                                            setSellForm({ ...sellForm, date: e.target.value })
+                                          }
+                                          className="h-8 w-[140px]"
+                                        />
+                                      </div>
+                                      <div className="flex flex-col gap-2">
+                                        <label className="text-xs text-muted-foreground">
+                                          Prowizja
+                                        </label>
+                                        <Input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={sellForm.commission}
+                                          onChange={(e) =>
+                                            setSellForm({ ...sellForm, commission: e.target.value })
+                                          }
+                                          className="h-8 w-[90px] text-right"
+                                        />
+                                      </div>
+                                      <div className="flex gap-1 pb-0.5">
+                                        <Button
+                                          size="icon-xs"
+                                          variant="ghost"
+                                          onClick={() =>
+                                            sellMutation.mutate({
+                                              ticker: pos.ticker,
+                                              form: sellForm,
+                                              category: pos.category,
+                                            })
+                                          }
+                                          disabled={!isSellValid || sellMutation.isPending}
+                                          className="text-gain hover:text-gain/80"
+                                        >
+                                          {sellMutation.isPending ? (
+                                            <Loader2 className="h-3 w-3 animate-spin" />
+                                          ) : (
+                                            <Check className="h-3 w-3" />
+                                          )}
+                                        </Button>
+                                        <Button
+                                          size="icon-xs"
+                                          variant="ghost"
+                                          onClick={() => setSellingTicker(null)}
+                                        >
+                                          <X className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              ) : (
+                <EmptyState message="Brak otwartych pozycji." />
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {/* Closed trades */}
@@ -451,14 +589,14 @@ function TabButton({
       type="button"
       onClick={onClick}
       className={`relative px-3 py-2 text-sm font-medium transition-colors ${
-        active
-          ? 'text-foreground'
-          : 'text-muted-foreground hover:text-foreground'
+        active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
       }`}
     >
       <span className="inline-flex items-center gap-1.5">
         {label}
-        <span className={`text-[10px] font-semibold tabular-nums ${active ? 'text-primary' : 'text-muted-foreground/70'}`}>
+        <span
+          className={`text-[10px] font-semibold tabular-nums ${active ? 'text-primary' : 'text-muted-foreground/70'}`}
+        >
           {count}
         </span>
       </span>

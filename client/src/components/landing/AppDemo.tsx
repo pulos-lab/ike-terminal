@@ -55,7 +55,9 @@ function formatPLN(v: number) {
 
 function formatPct(v: number) {
   const sign = v >= 0 ? '+' : '';
-  return sign + v.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+  return (
+    sign + v.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%'
+  );
 }
 
 // ── Dashboard View ─────────────────────────────────────────────────────────
@@ -67,11 +69,23 @@ function DashboardView() {
     const now = new Date('2026-04-01');
     let from: Date;
     switch (range) {
-      case '1M': from = new Date(now); from.setMonth(from.getMonth() - 1); break;
-      case '3M': from = new Date(now); from.setMonth(from.getMonth() - 3); break;
-      case '6M': from = new Date(now); from.setMonth(from.getMonth() - 6); break;
-      case 'YTD': from = new Date('2026-01-01'); break;
-      default: from = new Date('2025-04-01');
+      case '1M':
+        from = new Date(now);
+        from.setMonth(from.getMonth() - 1);
+        break;
+      case '3M':
+        from = new Date(now);
+        from.setMonth(from.getMonth() - 3);
+        break;
+      case '6M':
+        from = new Date(now);
+        from.setMonth(from.getMonth() - 6);
+        break;
+      case 'YTD':
+        from = new Date('2026-01-01');
+        break;
+      default:
+        from = new Date('2025-04-01');
     }
     const fromStr = from.toISOString().slice(0, 10);
     return DEMO_CHART_DATA.filter((d) => d.date >= fromStr);
@@ -226,8 +240,11 @@ function PortfolioView() {
                 <td className="py-2 px-2 text-right font-medium text-white">
                   {formatPLN(p.valuePLN)}
                 </td>
-                <td className={`py-2 px-2 text-right hidden md:table-cell ${p.pl >= 0 ? 'text-gain' : 'text-loss'}`}>
-                  {p.pl >= 0 ? '+' : ''}{formatPLN(p.pl)}
+                <td
+                  className={`py-2 px-2 text-right hidden md:table-cell ${p.pl >= 0 ? 'text-gain' : 'text-loss'}`}
+                >
+                  {p.pl >= 0 ? '+' : ''}
+                  {formatPLN(p.pl)}
                 </td>
                 <td className="py-2 px-2 text-right">
                   <span
@@ -250,7 +267,9 @@ function PortfolioView() {
               <td />
               <td />
               <td className="py-2 px-2 text-right text-white">{formatPLN(total.valuePLN)}</td>
-              <td className={`py-2 px-2 text-right hidden md:table-cell ${total.pl >= 0 ? 'text-gain' : 'text-loss'}`}>
+              <td
+                className={`py-2 px-2 text-right hidden md:table-cell ${total.pl >= 0 ? 'text-gain' : 'text-loss'}`}
+              >
                 +{formatPLN(total.pl)}
               </td>
               <td className="py-2 px-2 text-right">
@@ -269,7 +288,10 @@ function PortfolioView() {
         <div className="text-sm font-medium text-zinc-300 mb-2">Gotówka</div>
         <div className="grid grid-cols-2 gap-2">
           {DEMO_CASH.map((c) => (
-            <div key={c.currency} className="bg-[#0d0d0d] border border-zinc-800/50 rounded-lg p-2.5">
+            <div
+              key={c.currency}
+              className="bg-[#0d0d0d] border border-zinc-800/50 rounded-lg p-2.5"
+            >
               <p className="text-xs text-zinc-500">{c.currency}</p>
               <p className="text-sm font-semibold text-white">
                 {c.balance.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
@@ -285,11 +307,13 @@ function PortfolioView() {
 // ── Trades View (closed trades, FIFO grouped) ────────────────────────────
 function TradesView() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['CDR|2026-03-10']));
-  const toggle = (key: string) => setExpanded(prev => {
-    const next = new Set(prev);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
+  const toggle = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   return (
     <div className="space-y-3">
@@ -321,10 +345,12 @@ function TradesView() {
                     onClick={() => hasLots && toggle(key)}
                   >
                     <td className="py-2 px-2 text-zinc-500">
-                      {hasLots && (isExpanded
-                        ? <ChevronDown className="w-3.5 h-3.5" />
-                        : <ChevronRight className="w-3.5 h-3.5" />
-                      )}
+                      {hasLots &&
+                        (isExpanded ? (
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        ))}
                     </td>
                     <td className="py-2 px-2">
                       <span className="font-mono font-bold text-white">{g.ticker}</span>
@@ -338,15 +364,20 @@ function TradesView() {
                     <td className="py-2 px-2 text-zinc-500 hidden sm:table-cell">
                       {hasLots
                         ? `${fmtDate(g.trades[0].buyDate)} – ${fmtDate(g.trades[g.trades.length - 1].buyDate)}`
-                        : fmtDate(g.trades[0].buyDate)
-                      }
+                        : fmtDate(g.trades[0].buyDate)}
                     </td>
                     <td className="py-2 px-2 text-zinc-500 hidden sm:table-cell">
                       {fmtDate(g.sellDate)}
                     </td>
                     <td className="py-2 px-2 text-right text-zinc-300 hidden md:table-cell">
-                      {hasLots ? '—' : g.trades[0].buyPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
-                      {!hasLots && <span className="text-[10px] text-zinc-600 ml-0.5">{g.currency}</span>}
+                      {hasLots
+                        ? '—'
+                        : g.trades[0].buyPrice.toLocaleString('pl-PL', {
+                            minimumFractionDigits: 2,
+                          })}
+                      {!hasLots && (
+                        <span className="text-[10px] text-zinc-600 ml-0.5">{g.currency}</span>
+                      )}
                     </td>
                     <td className="py-2 px-2 text-right text-zinc-300">
                       {g.sellPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
@@ -355,43 +386,52 @@ function TradesView() {
                     <td className="py-2 px-2 text-right">
                       <span
                         className={`inline-block text-xs px-1.5 py-0.5 rounded ${
-                          g.weightedProfitLossPct >= 0 ? 'bg-gain/10 text-gain' : 'bg-loss/15 text-loss'
+                          g.weightedProfitLossPct >= 0
+                            ? 'bg-gain/10 text-gain'
+                            : 'bg-loss/15 text-loss'
                         }`}
                       >
                         {formatPct(g.weightedProfitLossPct)}
                       </span>
                     </td>
                   </tr>
-                  {hasLots && isExpanded && g.trades.map((t, i) => (
-                    <tr key={`${key}-${i}`} className="border-b border-zinc-800/30 bg-zinc-900/40">
-                      <td className="py-1.5 px-2"></td>
-                      <td className="py-1.5 px-2 text-zinc-500 text-xs pl-5">lot {i + 1}</td>
-                      <td className="py-1.5 px-2 text-right text-zinc-400 text-xs">{t.quantity}</td>
-                      <td className="py-1.5 px-2 text-zinc-500 text-xs hidden sm:table-cell">
-                        {fmtDate(t.buyDate)}
-                        <span className="text-zinc-600 ml-1">({t.holdingDays}d)</span>
-                      </td>
-                      <td className="py-1.5 px-2 text-zinc-500 text-xs hidden sm:table-cell">
-                        {fmtDate(t.sellDate)}
-                      </td>
-                      <td className="py-1.5 px-2 text-right text-zinc-400 text-xs hidden md:table-cell">
-                        {t.buyPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
-                        <span className="text-[10px] text-zinc-600 ml-0.5">{t.currency}</span>
-                      </td>
-                      <td className="py-1.5 px-2 text-right text-zinc-400 text-xs">
-                        {t.sellPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-1.5 px-2 text-right">
-                        <span
-                          className={`inline-block text-[11px] px-1 py-0.5 rounded ${
-                            t.profitLossPct >= 0 ? 'bg-gain/10 text-gain' : 'bg-loss/15 text-loss'
-                          }`}
-                        >
-                          {formatPct(t.profitLossPct)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {hasLots &&
+                    isExpanded &&
+                    g.trades.map((t, i) => (
+                      <tr
+                        key={`${key}-${i}`}
+                        className="border-b border-zinc-800/30 bg-zinc-900/40"
+                      >
+                        <td className="py-1.5 px-2"></td>
+                        <td className="py-1.5 px-2 text-zinc-500 text-xs pl-5">lot {i + 1}</td>
+                        <td className="py-1.5 px-2 text-right text-zinc-400 text-xs">
+                          {t.quantity}
+                        </td>
+                        <td className="py-1.5 px-2 text-zinc-500 text-xs hidden sm:table-cell">
+                          {fmtDate(t.buyDate)}
+                          <span className="text-zinc-600 ml-1">({t.holdingDays}d)</span>
+                        </td>
+                        <td className="py-1.5 px-2 text-zinc-500 text-xs hidden sm:table-cell">
+                          {fmtDate(t.sellDate)}
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-zinc-400 text-xs hidden md:table-cell">
+                          {t.buyPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
+                          <span className="text-[10px] text-zinc-600 ml-0.5">{t.currency}</span>
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-zinc-400 text-xs">
+                          {t.sellPrice.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-1.5 px-2 text-right">
+                          <span
+                            className={`inline-block text-[11px] px-1 py-0.5 rounded ${
+                              t.profitLossPct >= 0 ? 'bg-gain/10 text-gain' : 'bg-loss/15 text-loss'
+                            }`}
+                          >
+                            {formatPct(t.profitLossPct)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
                 </>
               );
             })}
@@ -403,7 +443,11 @@ function TradesView() {
 }
 
 function fmtDate(d: string) {
-  return new Date(d).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: '2-digit' });
+  return new Date(d).toLocaleDateString('pl-PL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+  });
 }
 
 // ── Dividends View ─────────────────────────────────────────────────────────
@@ -423,7 +467,10 @@ function DividendsView() {
         <div className="bg-[#0d0d0d] border border-zinc-800/50 rounded-lg p-3">
           <p className="text-xs text-zinc-500 mb-2">Dywidendy rocznie</p>
           <ResponsiveContainer width="100%" height={80}>
-            <BarChart data={DEMO_DIVIDEND_YEARLY} margin={{ top: 0, right: 0, left: -25, bottom: 0 }}>
+            <BarChart
+              data={DEMO_DIVIDEND_YEARLY}
+              margin={{ top: 0, right: 0, left: -25, bottom: 0 }}
+            >
               <XAxis
                 dataKey="year"
                 tick={{ fill: '#52525b', fontSize: 10 }}
@@ -493,7 +540,8 @@ function CashFlowView() {
           Wpłaty: <span className="text-gain font-medium">{formatPLN(summary.totalDeposits)}</span>
         </span>
         <span>
-          Wypłaty: <span className="text-loss font-medium">{formatPLN(summary.totalWithdrawals)}</span>
+          Wypłaty:{' '}
+          <span className="text-loss font-medium">{formatPLN(summary.totalWithdrawals)}</span>
         </span>
         <span>
           Netto: <span className="text-white font-medium">{formatPLN(summary.net)}</span>
@@ -507,7 +555,8 @@ function CashFlowView() {
             <span className="w-3 h-0.5 bg-primary inline-block rounded" /> Wartość portfela
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-3 h-0.5 bg-zinc-500 inline-block rounded border-dashed" /> Wpłaty netto
+            <span className="w-3 h-0.5 bg-zinc-500 inline-block rounded border-dashed" /> Wpłaty
+            netto
           </span>
         </div>
         <ResponsiveContainer width="100%" height={200}>
@@ -599,8 +648,11 @@ function CashFlowView() {
                       </span>
                     </span>
                   </td>
-                  <td className={`py-2 px-2 text-right font-semibold ${isDeposit ? 'text-gain' : 'text-loss'}`}>
-                    {isDeposit ? '+' : '-'}{entry.amount.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
+                  <td
+                    className={`py-2 px-2 text-right font-semibold ${isDeposit ? 'text-gain' : 'text-loss'}`}
+                  >
+                    {isDeposit ? '+' : '-'}
+                    {entry.amount.toLocaleString('pl-PL', { minimumFractionDigits: 2 })}
                   </td>
                   <td className="py-2 px-2 text-right text-zinc-400">PLN</td>
                 </tr>
@@ -693,9 +745,7 @@ export function AppDemo() {
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
                   className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] transition-colors ${
-                    isActive
-                      ? 'text-amber-500 border-b-2 border-amber-500'
-                      : 'text-stone-500'
+                    isActive ? 'text-amber-500 border-b-2 border-amber-500' : 'text-stone-500'
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5" />
@@ -725,9 +775,7 @@ export function AppDemo() {
           </div>
 
           {/* Page content */}
-          <div className="flex-1 overflow-auto p-4">
-            {views[activeTab]}
-          </div>
+          <div className="flex-1 overflow-auto p-4">{views[activeTab]}</div>
         </div>
       </div>
     </div>

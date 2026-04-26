@@ -10,7 +10,13 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { api } from '@/lib/api-client';
 import { invalidateDividends } from '@/lib/query-keys';
 import { Loader2 } from 'lucide-react';
@@ -58,8 +64,7 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
   }, [open, defaultValues?.id]);
 
   const createMut = useMutation({
-    mutationFn: () =>
-      api.createDividend({ date, ticker, amount: parseFloat(amount), currency }),
+    mutationFn: () => api.createDividend({ date, ticker, amount: parseFloat(amount), currency }),
     onSuccess: () => {
       invalidateDividends(qc);
       toast.success(`Dodano dywidendę ${ticker} — ${amount} ${currency}`);
@@ -95,7 +100,8 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
         <DialogHeader>
           <DialogTitle>{isEdit ? 'Edytuj dywidendę' : 'Dodaj dywidendę'}</DialogTitle>
           <DialogDescription>
-            Ręcznie wprowadzona dywidenda. Wlicza się do sumy dywidend i MWR/TWR jako zrealizowany zwrot.
+            Ręcznie wprowadzona dywidenda. Wlicza się do sumy dywidend i MWR/TWR jako zrealizowany
+            zwrot.
           </DialogDescription>
         </DialogHeader>
 
@@ -136,7 +142,9 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
                 </SelectTrigger>
                 <SelectContent>
                   {CURRENCY_OPTIONS.map((c) => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                    <SelectItem key={c} value={c}>
+                      {c}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>

@@ -28,11 +28,7 @@ import type {
   ParseResult,
 } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
-import {
-  detectBroker,
-  detectBinaryBroker,
-  PARSER_REGISTRY,
-} from '../parsers/registry.js';
+import { detectBroker, detectBinaryBroker, PARSER_REGISTRY } from '../parsers/registry.js';
 import {
   parseBossaOperations,
   type BossaOperationsParseResult,
@@ -44,8 +40,18 @@ import {
   updateTransaction,
   detectOrphanedSells,
 } from '../db/transactions-repo.js';
-import { insertOperationsWithDedup, insertOperation, getAllOperations } from '../db/operations-repo.js';
-import { seedTickerMap, findIsinByName, upsertTickerMapEntry, getTickerByIsin, deleteTickerMapEntry } from '../db/ticker-map-repo.js';
+import {
+  insertOperationsWithDedup,
+  insertOperation,
+  getAllOperations,
+} from '../db/operations-repo.js';
+import {
+  seedTickerMap,
+  findIsinByName,
+  upsertTickerMapEntry,
+  getTickerByIsin,
+  deleteTickerMapEntry,
+} from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
 import { reconcilePaymentCurrencies } from './payment-currency-reconciler.js';
 import { getDb } from '../db/connection.js';
@@ -60,7 +66,10 @@ export interface ClassifiedFile {
   originalName: string;
 }
 
-export async function classifyFile(file: { buffer: Buffer; originalname: string }): Promise<ClassifiedFile> {
+export async function classifyFile(file: {
+  buffer: Buffer;
+  originalname: string;
+}): Promise<ClassifiedFile> {
   const isBinary = file.originalname.toLowerCase().endsWith('.xlsx');
 
   if (isBinary) {
@@ -78,30 +87,56 @@ export async function classifyFile(file: { buffer: Buffer; originalname: string 
 
   // Najpierw sprawdź czy to plik operacji — operations detection ma pierwszeństwo
   // (DEGIRO Account, Bossa operacje_bez_transakcji).
-  const opsParser = PARSER_REGISTRY.find(p => p.detectOperations?.(content));
+  const opsParser = PARSER_REGISTRY.find((p) => p.detectOperations?.(content));
   if (opsParser) {
-    return { role: 'operations', broker: opsParser.id, isBinary: false, buffer: file.buffer, originalName: file.originalname };
+    return {
+      role: 'operations',
+      broker: opsParser.id,
+      isBinary: false,
+      buffer: file.buffer,
+      originalName: file.originalname,
+    };
   }
 
   // Bossa operacje wykrywamy osobno (header check bez dedykowanego detectOperations w registry).
   if (isBossaOperationsFile(content)) {
-    return { role: 'operations', broker: 'bossa', isBinary: false, buffer: file.buffer, originalName: file.originalname };
+    return {
+      role: 'operations',
+      broker: 'bossa',
+      isBinary: false,
+      buffer: file.buffer,
+      originalName: file.originalname,
+    };
   }
 
   // Jeśli to nie operacje, próbujemy transakcji.
   const txParser = detectBroker(content);
   if (txParser) {
-    return { role: 'transactions', broker: txParser.id, isBinary: false, buffer: file.buffer, originalName: file.originalname };
+    return {
+      role: 'transactions',
+      broker: txParser.id,
+      isBinary: false,
+      buffer: file.buffer,
+      originalName: file.originalname,
+    };
   }
 
-  return { role: 'unknown', broker: null, isBinary: false, buffer: file.buffer, originalName: file.originalname };
+  return {
+    role: 'unknown',
+    broker: null,
+    isBinary: false,
+    buffer: file.buffer,
+    originalName: file.originalname,
+  };
 }
 
 function isBossaOperationsFile(content: string): boolean {
   const firstLine = (content.split('\n')[0] || '').toLowerCase();
-  return firstLine.includes('data')
-    && firstLine.includes('kwota')
-    && (firstLine.includes('tytuł operacji') || firstLine.includes('tytu\u0142 operacji'));
+  return (
+    firstLine.includes('data') &&
+    firstLine.includes('kwota') &&
+    (firstLine.includes('tytuł operacji') || firstLine.includes('tytu\u0142 operacji'))
+  );
 }
 
 /**
@@ -136,31 +171,35 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   }
 
   // Klasyfikacja każdego pliku transakcji osobno
-  const txFiles = await Promise.all(transactionsFiles.map(f => classifyFile(f)));
+  const txFiles = await Promise.all(transactionsFiles.map((f) => classifyFile(f)));
   const opsFile = operationsFile ? await classifyFile(operationsFile) : null;
 
   // Walidacja ról
   for (const tx of txFiles) {
     if (tx.role !== 'transactions') {
-      return emptyResult(importBatch, [`Plik "${tx.originalName}" nie wygląda na eksport transakcji (wykryto: ${tx.role}).`]);
+      return emptyResult(importBatch, [
+        `Plik "${tx.originalName}" nie wygląda na eksport transakcji (wykryto: ${tx.role}).`,
+      ]);
     }
   }
   if (opsFile && opsFile.role !== 'operations') {
-    return emptyResult(importBatch, [`Plik "${opsFile.originalName}" nie wygląda na eksport operacji gotówkowych (wykryto: ${opsFile.role}).`]);
+    return emptyResult(importBatch, [
+      `Plik "${opsFile.originalName}" nie wygląda na eksport operacji gotówkowych (wykryto: ${opsFile.role}).`,
+    ]);
   }
 
   // Wszystkie pliki transakcji muszą być z tego samego brokera (mixowanie
   // Bossa+DEGIRO w jednej paczce byłoby niejednoznaczne dla reconciliation).
   if (txFiles.length > 1) {
-    const brokers = new Set(txFiles.map(t => t.broker));
+    const brokers = new Set(txFiles.map((t) => t.broker));
     if (brokers.size > 1) {
       return emptyResult(importBatch, [
         `Pliki transakcji pochodzą z różnych brokerów (${[...brokers].join(', ')}). ` +
-        `Wgraj pliki z jednego brokera na raz.`,
+          `Wgraj pliki z jednego brokera na raz.`,
       ]);
     }
     // Multi-file wspierane tylko dla CSV brokerów. XTB XLSX to pojedynczy plik.
-    if (txFiles.some(t => t.isBinary)) {
+    if (txFiles.some((t) => t.isBinary)) {
       return emptyResult(importBatch, [
         'Wgrywanie wielu plików nie jest wspierane dla XTB XLSX — wgraj jeden plik XTB naraz.',
       ]);
@@ -190,7 +229,9 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       const content = decodeCSVBuffer(file.buffer);
       const parser = detectBroker(content);
       if (!parser) {
-        return emptyResult(importBatch, [`Nie rozpoznano formatu pliku transakcji: ${file.originalName}`]);
+        return emptyResult(importBatch, [
+          `Nie rozpoznano formatu pliku transakcji: ${file.originalName}`,
+        ]);
       }
       if (txParserId && parser.id !== txParserId) {
         return emptyResult(importBatch, [
@@ -223,7 +264,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       parsedOps = parseBossaOperations(content, importBatch);
       opsParserId = 'bossa';
     } else {
-      const opsParser = PARSER_REGISTRY.find(p => p.id === opsFile.broker && p.parseOperations);
+      const opsParser = PARSER_REGISTRY.find((p) => p.id === opsFile.broker && p.parseOperations);
       if (opsParser?.parseOperations) {
         parsedOps = opsParser.parseOperations(content, importBatch);
         opsParserId = opsParser.id;
@@ -261,7 +302,12 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
 
     // 3a. Bossa — redemption markers (tylko wykupy certyfikatów; tendery idą jako deposit + warning)
     if (parsedOps && 'redemptions' in parsedOps && parsedOps.redemptions.length > 0) {
-      const r = reconcileBossaRedemptions(parsedOps.redemptions, pid, importBatch, crossFileWarnings);
+      const r = reconcileBossaRedemptions(
+        parsedOps.redemptions,
+        pid,
+        importBatch,
+        crossFileWarnings,
+      );
       syntheticSells += r;
     }
 
@@ -287,23 +333,26 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
 
     // 3b. DEGIRO — transaction taxes applied cross-batch (nawet jeśli user wgrał osobno wcześniej)
     if (opsFile?.broker === 'degiro' && opsContentRaw) {
-      const degiroParser = PARSER_REGISTRY.find(p => p.id === 'degiro');
+      const degiroParser = PARSER_REGISTRY.find((p) => p.id === 'degiro');
       if (degiroParser?.parseTransactionTaxes) {
         const taxes = degiroParser.parseTransactionTaxes(opsContentRaw);
         let applied = 0;
         for (const tax of taxes) {
           const txs = getTransactionsByIsin(tax.isin, pid);
           const taxDate = tax.date.split('T')[0];
-          const match = txs.find(t => t.date.startsWith(taxDate));
+          const match = txs.find((t) => t.date.startsWith(taxDate));
           if (match?.id) {
             const newCommission = Math.round((match.commission + tax.amount) * 100) / 100;
-            const newTotal = match.side === 'K'
-              ? Math.round((match.value + newCommission) * 100) / 100
-              : Math.round((match.value - newCommission) * 100) / 100;
+            const newTotal =
+              match.side === 'K'
+                ? Math.round((match.value + newCommission) * 100) / 100
+                : Math.round((match.value - newCommission) * 100) / 100;
             updateTransaction(match.id, { commission: newCommission, total: newTotal }, pid);
             applied++;
           } else {
-            crossFileWarnings.push(`DEGIRO: ${tax.description} dla ISIN ${tax.isin} z ${taxDate} nie znalazł pasującej transakcji`);
+            crossFileWarnings.push(
+              `DEGIRO: ${tax.description} dla ISIN ${tax.isin} z ${taxDate} nie znalazł pasującej transakcji`,
+            );
           }
         }
         if (applied > 0) result.taxesApplied = applied;
@@ -329,7 +378,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     for (const red of parsedOps.redemptions) {
       if (red.kind !== 'certificate') {
         // Znajdź ISIN z transakcji dla tego tickera
-        const tx = parsedTx?.data.find(t => t.paperName === red.ticker);
+        const tx = parsedTx?.data.find((t) => t.paperName === red.ticker);
         if (tx) reconciledIsinsNeedingRealTicker.add(tx.isin);
       }
     }
@@ -356,7 +405,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   if (paymentRecon.updatedCount > 0) {
     crossFileWarnings.push(
       `Zrekonsyliowano walutę rozliczenia dla ${paymentRecon.updatedCount} ` +
-      `transakcji na podstawie salda walut (Bossa/DEGIRO).`,
+        `transakcji na podstawie salda walut (Bossa/DEGIRO).`,
     );
   }
   if (paymentRecon.warnings.length > 0) {
@@ -373,26 +422,32 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
 
     // Fallback ticker_map entries dla nierozwiązanych z otwartymi pozycjami
     for (const u of unresolved) {
-      const isinTxs = parsedTx.data.filter(t => t.isin === u.isin);
+      const isinTxs = parsedTx.data.filter((t) => t.isin === u.isin);
       const net = isinTxs.reduce((sum, t) => sum + (t.side === 'K' ? t.quantity : -t.quantity), 0);
       if (Math.abs(net) > 0.001) {
-        upsertTickerMapEntry({
-          isin: u.isin,
-          ticker: u.paperName,
-          name: u.paperName,
-          exchange: 'GPW',
-          currency: 'PLN',
-          priceSource: 'stooq',
-        }, pid);
+        upsertTickerMapEntry(
+          {
+            isin: u.isin,
+            ticker: u.paperName,
+            name: u.paperName,
+            exchange: 'GPW',
+            currency: 'PLN',
+            priceSource: 'stooq',
+          },
+          pid,
+        );
       }
     }
   }
 
   // Filtr unresolved: pokazuj tylko te z otwartymi pozycjami
   const unresolvedVisible = parsedTx
-    ? unresolved.filter(u => {
-        const isinTxs = parsedTx!.data.filter(t => t.isin === u.isin);
-        const net = isinTxs.reduce((sum, t) => sum + (t.side === 'K' ? t.quantity : -t.quantity), 0);
+    ? unresolved.filter((u) => {
+        const isinTxs = parsedTx!.data.filter((t) => t.isin === u.isin);
+        const net = isinTxs.reduce(
+          (sum, t) => sum + (t.side === 'K' ? t.quantity : -t.quantity),
+          0,
+        );
         return Math.abs(net) > 0.001;
       })
     : [];
@@ -412,7 +467,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     ...result,
     success: true,
     tickersResolved: resolved.length,
-    tickersUnresolved: unresolvedVisible.map(u => u.paperName),
+    tickersUnresolved: unresolvedVisible.map((u) => u.paperName),
     skipped: allSkipped.length > 0 ? allSkipped : undefined,
     duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
     orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
@@ -423,7 +478,11 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
 
 // ─── XTB XLSX (single-file) path ─────────────────────────────────────────────
 
-async function importBinary(file: ClassifiedFile, importBatch: string, pid: string): Promise<ImportResult> {
+async function importBinary(
+  file: ClassifiedFile,
+  importBatch: string,
+  pid: string,
+): Promise<ImportResult> {
   const binary = await detectBinaryBroker(file.buffer);
   if (!binary) {
     return emptyResult(importBatch, ['Nie rozpoznano formatu XLSX']);
@@ -465,12 +524,13 @@ async function importBinary(file: ClassifiedFile, importBatch: string, pid: stri
   });
   run();
 
-  const { resolved, unresolved } = txResult.data.length > 0
-    ? await resolveUnknownIsins(txResult.data, pid)
-    : { resolved: [], unresolved: [] };
+  const { resolved, unresolved } =
+    txResult.data.length > 0
+      ? await resolveUnknownIsins(txResult.data, pid)
+      : { resolved: [], unresolved: [] };
 
-  const unresolvedVisible = unresolved.filter(u => {
-    const isinTxs = txResult.data.filter(t => t.isin === u.isin);
+  const unresolvedVisible = unresolved.filter((u) => {
+    const isinTxs = txResult.data.filter((t) => t.isin === u.isin);
     const net = isinTxs.reduce((sum, t) => sum + (t.side === 'K' ? t.quantity : -t.quantity), 0);
     return Math.abs(net) > 0.001;
   });
@@ -486,9 +546,9 @@ async function importBinary(file: ClassifiedFile, importBatch: string, pid: stri
     importBatch,
     detectedSource: binary.id,
     tickersResolved: resolved.length,
-    tickersUnresolved: unresolvedVisible.map(u => u.paperName),
+    tickersUnresolved: unresolvedVisible.map((u) => u.paperName),
     skipped: allSkipped.length > 0 ? allSkipped : undefined,
-    duplicatesSkipped: (insertedTxDuplicates.length + insertedOpsDuplicates.length) || undefined,
+    duplicatesSkipped: insertedTxDuplicates.length + insertedOpsDuplicates.length || undefined,
     orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
     warnings: parserWarnings.length > 0 ? parserWarnings : undefined,
   };
@@ -517,24 +577,28 @@ function reconcileBossaRedemptions(
   redemptions: RedemptionMarker[],
   pid: string,
   importBatch: string,
-  warnings: string[]
+  warnings: string[],
 ): number {
   if (redemptions.length === 0) return 0;
   let added = 0;
 
   for (const red of redemptions) {
-    const allTxForTicker = getAllTransactions(pid).filter(t => t.paperName === red.ticker);
+    const allTxForTicker = getAllTransactions(pid).filter((t) => t.paperName === red.ticker);
     if (allTxForTicker.length === 0) {
-      warnings.push(`Bossa: ${red.description} bez pasujących zakupów w historii (ticker: ${red.ticker}) — pomijam syntetyczną sprzedaż`);
+      warnings.push(
+        `Bossa: ${red.description} bez pasujących zakupów w historii (ticker: ${red.ticker}) — pomijam syntetyczną sprzedaż`,
+      );
       continue;
     }
 
     const isin = allTxForTicker[0].isin;
-    const bought = allTxForTicker.filter(t => t.side === 'K').reduce((s, t) => s + t.quantity, 0);
-    const sold = allTxForTicker.filter(t => t.side === 'S').reduce((s, t) => s + t.quantity, 0);
+    const bought = allTxForTicker.filter((t) => t.side === 'K').reduce((s, t) => s + t.quantity, 0);
+    const sold = allTxForTicker.filter((t) => t.side === 'S').reduce((s, t) => s + t.quantity, 0);
     const openQty = bought - sold;
     if (openQty <= 0) {
-      warnings.push(`Bossa: ${red.description} — pozycja ${red.ticker} już zamknięta (open=${openQty}), pomijam`);
+      warnings.push(
+        `Bossa: ${red.description} — pozycja ${red.ticker} już zamknięta (open=${openQty}), pomijam`,
+      );
       continue;
     }
 
@@ -547,11 +611,15 @@ function reconcileBossaRedemptions(
       // Wezwanie skupu ze znaną ceną — qty liczone po cenie z mapy.
       qty = Math.round(red.amount / red.tenderPrice);
       if (qty <= 0) {
-        warnings.push(`Bossa: ${red.description} — wyliczona ilość akcji <= 0 (amount=${red.amount}, tenderPrice=${red.tenderPrice}); pomijam`);
+        warnings.push(
+          `Bossa: ${red.description} — wyliczona ilość akcji <= 0 (amount=${red.amount}, tenderPrice=${red.tenderPrice}); pomijam`,
+        );
         continue;
       }
       if (qty > openQty) {
-        warnings.push(`Bossa: ${red.description} — wyliczono ${qty} szt, ale otwarta pozycja to tylko ${openQty}. Sprawdź czy pliki są kompletne.`);
+        warnings.push(
+          `Bossa: ${red.description} — wyliczono ${qty} szt, ale otwarta pozycja to tylko ${openQty}. Sprawdź czy pliki są kompletne.`,
+        );
       }
       price = red.tenderPrice;
       commission = red.commission;
@@ -590,14 +658,17 @@ function reconcileBossaRedemptions(
     // MOSTALZAB=MSZ.WA itd.) — zostawiamy pustą mapę, żeby `resolveUnknownIsins` poszedł
     // swoją ścieżką i znalazł prawdziwy Yahoo ticker + źródło cen live.
     if (red.kind === 'certificate') {
-      upsertTickerMapEntry({
-        isin,
-        ticker: red.ticker,
-        name: red.ticker,
-        exchange: 'GPW',
-        currency: 'PLN',
-        priceSource: 'stooq',
-      }, pid);
+      upsertTickerMapEntry(
+        {
+          isin,
+          ticker: red.ticker,
+          name: red.ticker,
+          exchange: 'GPW',
+          currency: 'PLN',
+          priceSource: 'stooq',
+        },
+        pid,
+      );
     }
   }
 
@@ -619,7 +690,7 @@ function reconcileBossaIpos(
   ipos: IpoSubscriptionMarker[],
   pid: string,
   importBatch: string,
-  warnings: string[]
+  warnings: string[],
 ): number {
   if (ipos.length === 0) return 0;
   let added = 0;
@@ -627,13 +698,17 @@ function reconcileBossaIpos(
   for (const ipo of ipos) {
     const nettoCost = ipo.subscriptionAmount - ipo.refundAmount;
     if (nettoCost <= 0) {
-      warnings.push(`Bossa: subskrypcja IPO ${ipo.ticker} — koszt netto ${nettoCost.toFixed(2)} ${ipo.currency} jest ≤ 0 (pełny zwrot?); pomijam syntetyczną K.`);
+      warnings.push(
+        `Bossa: subskrypcja IPO ${ipo.ticker} — koszt netto ${nettoCost.toFixed(2)} ${ipo.currency} jest ≤ 0 (pełny zwrot?); pomijam syntetyczną K.`,
+      );
       continue;
     }
 
     const qty = Math.round(nettoCost / ipo.ipoPrice);
     if (qty <= 0) {
-      warnings.push(`Bossa: subskrypcja IPO ${ipo.ticker} — wyliczona liczba akcji ≤ 0 (netto ${nettoCost}, cena ${ipo.ipoPrice}); pomijam.`);
+      warnings.push(
+        `Bossa: subskrypcja IPO ${ipo.ticker} — wyliczona liczba akcji ≤ 0 (netto ${nettoCost}, cena ${ipo.ipoPrice}); pomijam.`,
+      );
       continue;
     }
 
@@ -679,14 +754,14 @@ function reconcileBossaIpos(
  */
 function warnAboutTenderOffers(pid: string, warnings: string[]): void {
   const allOps = getAllOperations(pid);
-  const tenders = allOps.filter(op =>
-    op.operationType === 'corporate_action_pending' && op.subkind === 'unknown_tender'
+  const tenders = allOps.filter(
+    (op) => op.operationType === 'corporate_action_pending' && op.subkind === 'unknown_tender',
   );
   for (const op of tenders) {
     warnings.push(
       `Bossa: ${op.description} (${op.date.slice(0, 10)}, ${op.amount.toFixed(2)} ${op.currency}) — ` +
-      `broker zapisał tylko kwotę netto, bez liczby akcji. Domknij w panelu Zdarzenia korporacyjne ` +
-      `(CTA "Domknij sprzedaż") albo dopisz ticker do tender-offers-map.ts i zaimportuj ponownie.`
+        `broker zapisał tylko kwotę netto, bez liczby akcji. Domknij w panelu Zdarzenia korporacyjne ` +
+        `(CTA "Domknij sprzedaż") albo dopisz ticker do tender-offers-map.ts i zaimportuj ponownie.`,
     );
   }
 }
@@ -711,22 +786,25 @@ function reconcileBossaCapitalReturns(
   markers: CapitalReturnMarker[],
   pid: string,
   importBatch: string,
-  warnings: string[]
+  warnings: string[],
 ): void {
   if (markers.length === 0) return;
   const allOps = getAllOperations(pid);
 
   for (const m of markers) {
     // Dedup: nie wstawiamy jeśli już istnieje identyczny capital_return dla tego ticker+date+amount.
-    const exists = allOps.some(op =>
-      op.operationType === 'capital_return'
-      && op.date === m.date
-      && op.ticker === m.ticker
-      && Math.abs(op.amount - m.amount) < 0.001
-      && op.currency === m.currency
+    const exists = allOps.some(
+      (op) =>
+        op.operationType === 'capital_return' &&
+        op.date === m.date &&
+        op.ticker === m.ticker &&
+        Math.abs(op.amount - m.amount) < 0.001 &&
+        op.currency === m.currency,
     );
     if (exists) {
-      warnings.push(`Bossa: Zwrot kapitału ${m.ticker} (${m.date.slice(0, 10)}, ${m.amount.toFixed(2)} ${m.currency}) już zaimportowany — pomijam duplikat.`);
+      warnings.push(
+        `Bossa: Zwrot kapitału ${m.ticker} (${m.date.slice(0, 10)}, ${m.amount.toFixed(2)} ${m.currency}) już zaimportowany — pomijam duplikat.`,
+      );
       continue;
     }
 

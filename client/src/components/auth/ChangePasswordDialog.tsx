@@ -17,7 +17,11 @@ interface ChangePasswordDialogProps {
   hideTrigger?: boolean;
 }
 
-export function ChangePasswordDialog({ open: controlledOpen, onOpenChange, hideTrigger }: ChangePasswordDialogProps = {}) {
+export function ChangePasswordDialog({
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger,
+}: ChangePasswordDialogProps = {}) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : internalOpen;
@@ -78,7 +82,13 @@ export function ChangePasswordDialog({ open: controlledOpen, onOpenChange, hideT
   };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) reset();
+      }}
+    >
       {!hideTrigger && (
         <DialogTrigger asChild>
           <Button variant="ghost" size="sm" title="Zmień hasło">

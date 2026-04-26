@@ -13,7 +13,10 @@ import { parseNumber, roundTo2, parseDottedDate } from './utils.js';
  * mBank does NOT provide ISIN — only instrument name ("Papier").
  * The ISIN field is set to the ticker name; real ISINs are resolved after import.
  */
-export function parseMbankTransactions(csvContent: string, importBatch: string): ParseResult<Transaction> {
+export function parseMbankTransactions(
+  csvContent: string,
+  importBatch: string,
+): ParseResult<Transaction> {
   const lines = csvContent.split('\n');
 
   // Find header row — look for line containing "Czas" and "Papier" (or legacy "Walor")
@@ -37,7 +40,10 @@ export function parseMbankTransactions(csvContent: string, importBatch: string):
     const rowNum = headerIdx + 2 + i; // 1-based, accounting for header offset
     const paperName = row ? row[colMap.paper]?.trim() : undefined;
 
-    if (!row || row.length < 9) { skipped.push({ row: rowNum, reason: 'short_row', paperName }); continue; }
+    if (!row || row.length < 9) {
+      skipped.push({ row: rowNum, reason: 'short_row', paperName });
+      continue;
+    }
 
     const dateStr = row[colMap.date]?.trim();
     const side = row[colMap.side]?.trim();
@@ -47,17 +53,30 @@ export function parseMbankTransactions(csvContent: string, importBatch: string):
     const commission = parseNumber(row[colMap.commission]);
     const commissionCurrency = row[colMap.commissionCurrency]?.trim() || priceCurrency;
 
-    if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date', paperName }); continue; }
-    if (!paperName) { skipped.push({ row: rowNum, reason: 'missing_name' }); continue; }
-    if (side !== 'K' && side !== 'S') { skipped.push({ row: rowNum, reason: 'invalid_side', paperName }); continue; }
-    if (quantity <= 0) { skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName }); continue; }
-    if (price <= 0) { skipped.push({ row: rowNum, reason: 'invalid_price', paperName }); continue; }
+    if (!dateStr) {
+      skipped.push({ row: rowNum, reason: 'missing_date', paperName });
+      continue;
+    }
+    if (!paperName) {
+      skipped.push({ row: rowNum, reason: 'missing_name' });
+      continue;
+    }
+    if (side !== 'K' && side !== 'S') {
+      skipped.push({ row: rowNum, reason: 'invalid_side', paperName });
+      continue;
+    }
+    if (quantity <= 0) {
+      skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName });
+      continue;
+    }
+    if (price <= 0) {
+      skipped.push({ row: rowNum, reason: 'invalid_price', paperName });
+      continue;
+    }
 
     const isoDate = parseDottedDate(dateStr);
     const value = roundTo2(quantity * price);
-    const total = side === 'K'
-      ? roundTo2(value + commission)
-      : roundTo2(value - commission);
+    const total = side === 'K' ? roundTo2(value + commission) : roundTo2(value - commission);
     const currency = priceCurrency || 'PLN';
 
     transactions.push({
@@ -70,8 +89,8 @@ export function parseMbankTransactions(csvContent: string, importBatch: string):
       value,
       commission,
       total,
-      currency,                   // quote — priceCurrency (waluta notowania papieru)
-      paymentCurrency: 'PLN',     // mBank eMakler IKE/IKZE: account w PLN → glyph ⇋ gdy currency != PLN
+      currency, // quote — priceCurrency (waluta notowania papieru)
+      paymentCurrency: 'PLN', // mBank eMakler IKE/IKZE: account w PLN → glyph ⇋ gdy currency != PLN
       source: 'mbank',
       importBatch,
     });
@@ -110,17 +129,17 @@ function findHeaderRow(lines: string[]): { headerIdx: number; colMap: ColumnMap 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lower = line.toLowerCase();
-    const cols = line.split(';').map(c => c.trim().toLowerCase());
+    const cols = line.split(';').map((c) => c.trim().toLowerCase());
 
     // Real format: "Czas transakcji;Papier;Giełda;K/S;Liczba;Kurs;Waluta;Prowizja;Waluta;Wartość;Waluta"
-    const dateIdx = cols.findIndex(c => c === 'czas transakcji' || c === 'czas');
-    const paperIdx = cols.findIndex(c => c === 'papier' || c === 'walor');
-    const sideIdx = cols.findIndex(c => c === 'k/s' || c === 'rodzaj');
+    const dateIdx = cols.findIndex((c) => c === 'czas transakcji' || c === 'czas');
+    const paperIdx = cols.findIndex((c) => c === 'papier' || c === 'walor');
+    const sideIdx = cols.findIndex((c) => c === 'k/s' || c === 'rodzaj');
 
     if (dateIdx >= 0 && paperIdx >= 0 && sideIdx >= 0) {
       // Find other columns by name
-      const quantityIdx = cols.findIndex(c => c === 'liczba');
-      const priceIdx = cols.findIndex(c => c === 'kurs');
+      const quantityIdx = cols.findIndex((c) => c === 'liczba');
+      const priceIdx = cols.findIndex((c) => c === 'kurs');
 
       // Find commission (Prowizja) — may appear before or after Wartość
       const prowizjaIdx = cols.indexOf('prowizja');
@@ -161,7 +180,12 @@ interface ColumnMap {
 }
 
 const DEFAULT_COL_MAP: ColumnMap = {
-  date: 0, paper: 1, side: 3, quantity: 4,
-  price: 5, priceCurrency: 6, commission: 7, commissionCurrency: 8,
+  date: 0,
+  paper: 1,
+  side: 3,
+  quantity: 4,
+  price: 5,
+  priceCurrency: 6,
+  commission: 7,
+  commissionCurrency: 8,
 };
-

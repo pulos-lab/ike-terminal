@@ -42,8 +42,8 @@ export interface Transaction {
   category?: InstrumentCategory;
   source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
   importBatch?: string;
-  swap?: number;       // CFD: swap cost (from Closed Positions sheet)
-  rollover?: number;   // CFD: rollover cost (from Closed Positions sheet)
+  swap?: number; // CFD: swap cost (from Closed Positions sheet)
+  rollover?: number; // CFD: rollover cost (from Closed Positions sheet)
   cfdPositionId?: string; // CFD: unique position ID for FIFO grouping (prevents mixing overlapping positions)
   cfdGrossProfit?: number; // CFD: gross profit from XTB (includes contract multiplier + FX, before fees)
   /**
@@ -341,9 +341,9 @@ export interface FxImpactCurrencyEntry {
 export interface DetectedSplit {
   ticker: string;
   isin: string;
-  date: string;        // YYYY-MM-DD — date when split was detected/occurred
-  ratio: number;       // e.g. 25 for 25:1 split
-  txPrice: number;     // transaction price (pre-split)
+  date: string; // YYYY-MM-DD — date when split was detected/occurred
+  ratio: number; // e.g. 25 for 25:1 split
+  txPrice: number; // transaction price (pre-split)
   providerPrice: number; // Yahoo/Stooq price (post-split adjusted)
   source: 'auto' | 'manual';
 }
@@ -414,27 +414,37 @@ export interface TransactionInput {
   quantity: number;
   price: number;
   commission: number;
-  currency?: string;  // override waluty z tickera
-  fxRate?: number;    // kurs wymiany brokera (informacyjny)
+  currency?: string; // override waluty z tickera
+  fxRate?: number; // kurs wymiany brokera (informacyjny)
   category?: InstrumentCategory;
 }
 
 // ============ Import Parse Types ============
 
 export type SkipReason =
-  | 'missing_date' | 'missing_isin' | 'missing_name'
-  | 'invalid_side' | 'invalid_quantity' | 'invalid_price'
-  | 'invalid_date' | 'corporate_action' | 'short_row'
-  | 'zero_amount' | 'settlement_record'
-  | 'summary_row' | 'unparseable_comment' | 'close_trade_entry'
-  | 'missing_description' | 'unmatched_fx_credit'
+  | 'missing_date'
+  | 'missing_isin'
+  | 'missing_name'
+  | 'invalid_side'
+  | 'invalid_quantity'
+  | 'invalid_price'
+  | 'invalid_date'
+  | 'corporate_action'
+  | 'short_row'
+  | 'zero_amount'
+  | 'settlement_record'
+  | 'summary_row'
+  | 'unparseable_comment'
+  | 'close_trade_entry'
+  | 'missing_description'
+  | 'unmatched_fx_credit'
   | 'duplicate'
   | 'redemption_reconciled' // Wykup certyfikatów / Rozliczenie oferty — obsłużone przez reconciliation jako synthetic sell
   | 'capital_return_reconciled' // Obniżenie nominału / wyrównanie — obsłużone przez reconciliation jako CashOperation(capital_return)
   | 'unknown_operation_type' // Nierozpoznany tytuł operacji — wrzucone jako 'other', ale raportowane w warnings
   | 'unparseable_fx_comment' // XTB Transfer — brak pary walutowej + kursu w Comment
-  | 'invalid_fx_rate'        // XTB Transfer — Exchange rate ≤ 0 w Comment
-  | 'fx_currency_mismatch';  // XTB Transfer — ani fromCur ani toCur nie zgadza się z walutą konta
+  | 'invalid_fx_rate' // XTB Transfer — Exchange rate ≤ 0 w Comment
+  | 'fx_currency_mismatch'; // XTB Transfer — ani fromCur ani toCur nie zgadza się z walutą konta
 
 export interface SkippedRow {
   row: number;
@@ -613,9 +623,9 @@ export interface PortfolioSettings {
   isIKE: boolean;
   isIKZE: boolean;
   ikzeIsDG: boolean; // działalność gospodarcza
-  commissionPl: number;         // prowizja GPW w % (np. 0.39)
-  commissionForeign: number;    // prowizja zagraniczne w % (np. 0.29)
-  minCommissionPl: number;      // minimalna prowizja GPW w PLN
+  commissionPl: number; // prowizja GPW w % (np. 0.39)
+  commissionForeign: number; // prowizja zagraniczne w % (np. 0.29)
+  minCommissionPl: number; // minimalna prowizja GPW w PLN
   minCommissionForeign: number; // minimalna prowizja zagraniczne
 }
 

@@ -39,55 +39,70 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     if (!isMutation && !isError && isProduction) return; // skip healthy GETs in prod
     const tag = isError ? 'ERROR' : 'OK';
     const user = req.userId ? req.userId.slice(0, 8) : '-';
-    console.log(`[${tag}] ${req.method} ${req.originalUrl} → ${res.statusCode} ${ms}ms user=${user}`);
+    console.log(
+      `[${tag}] ${req.method} ${req.originalUrl} → ${res.statusCode} ${ms}ms user=${user}`,
+    );
   });
   next();
 });
 
 // ── Security ────────────────────────────────────────────────────────────────
-app.use(helmet({
-  contentSecurityPolicy: isProduction
-    ? {
-        directives: {
-          ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-          'script-src': ["'self'", 'stats.tixterminal.app'],
-          'connect-src': ["'self'", 'stats.tixterminal.app'],
-        },
-      }
-    : false,
-}));
+app.use(
+  helmet({
+    contentSecurityPolicy: isProduction
+      ? {
+          directives: {
+            ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+            'script-src': ["'self'", 'stats.tixterminal.app'],
+            'connect-src': ["'self'", 'stats.tixterminal.app'],
+          },
+        }
+      : false,
+  }),
+);
 
-app.use(rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 500,
-  standardHeaders: true,
-  legacyHeaders: false,
-}));
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 500,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+);
 
-app.use('/api/auth', rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 60,
-  standardHeaders: true,
-  legacyHeaders: false,
-}));
+app.use(
+  '/api/auth',
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+);
 
 // Stricter limit on sign-up: max 3 registrations per IP per hour
-app.use('/api/auth/sign-up', rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 3,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many accounts created. Try again later.' },
-}));
+app.use(
+  '/api/auth/sign-up',
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 3,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many accounts created. Try again later.' },
+  }),
+);
 
 // Brute-force protection on login: max 10 attempts per 15 min
-app.use('/api/auth/sign-in', rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many login attempts. Try again later.' },
-}));
+app.use(
+  '/api/auth/sign-in',
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many login attempts. Try again later.' },
+  }),
+);
 
 // ── CORS ────────────────────────────────────────────────────────────────────
 const corsOrigins = isProduction
@@ -170,29 +185,27 @@ const server = app.listen(config.port, () => {
 
 // ── Benchmark price updater (fetch latest from Stooq every 6h) ─────────────
 setTimeout(() => {
-  updateBenchmarkPrices().catch(err =>
-    console.error('Initial benchmark update failed:', err)
-  );
+  updateBenchmarkPrices().catch((err) => console.error('Initial benchmark update failed:', err));
 }, 10_000);
 
-setInterval(() => {
-  updateBenchmarkPrices().catch(err =>
-    console.error('Benchmark update failed:', err)
-  );
-}, 6 * 60 * 60 * 1000);
+setInterval(
+  () => {
+    updateBenchmarkPrices().catch((err) => console.error('Benchmark update failed:', err));
+  },
+  6 * 60 * 60 * 1000,
+);
 
 // ── Dividend scanner (auto-detect dividends every 12h) ─────────────────────
 setTimeout(() => {
-  scanAllPortfolios().catch(err =>
-    console.error('Initial dividend scan failed:', err)
-  );
+  scanAllPortfolios().catch((err) => console.error('Initial dividend scan failed:', err));
 }, 30_000);
 
-setInterval(() => {
-  scanAllPortfolios().catch(err =>
-    console.error('Dividend scan failed:', err)
-  );
-}, 12 * 60 * 60 * 1000);
+setInterval(
+  () => {
+    scanAllPortfolios().catch((err) => console.error('Dividend scan failed:', err));
+  },
+  12 * 60 * 60 * 1000,
+);
 
 // ── Graceful shutdown ───────────────────────────────────────────────────────
 function shutdown(signal: string) {

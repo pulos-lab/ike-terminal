@@ -2,7 +2,10 @@ import { getDb } from './connection.js';
 import type { CashOperation, OperationType, SkippedRow } from 'shared';
 import type { InsertWithDedupResult } from './transactions-repo.js';
 
-export function insertOperations(operations: CashOperation[], portfolioId: string = 'default'): number {
+export function insertOperations(
+  operations: CashOperation[],
+  portfolioId: string = 'default',
+): number {
   const db = getDb(portfolioId);
   const stmt = db.prepare(`
     INSERT INTO cash_operations (date, operation_type, description, details, amount, currency, ticker, fx_rate, fx_pair, source, import_batch, subkind)
@@ -12,7 +15,20 @@ export function insertOperations(operations: CashOperation[], portfolioId: strin
   const insertMany = db.transaction((ops: CashOperation[]) => {
     let count = 0;
     for (const op of ops) {
-      stmt.run(op.date, op.operationType, op.description, op.details || null, op.amount, op.currency, op.ticker || null, op.fxRate || null, op.fxPair || null, op.source, op.importBatch, op.subkind || null);
+      stmt.run(
+        op.date,
+        op.operationType,
+        op.description,
+        op.details || null,
+        op.amount,
+        op.currency,
+        op.ticker || null,
+        op.fxRate || null,
+        op.fxPair || null,
+        op.source,
+        op.importBatch,
+        op.subkind || null,
+      );
       count++;
     }
     return count;
@@ -55,14 +71,32 @@ export function insertOperationsWithDedup(
       const sample = opGroup[0];
       const ticker = sample.ticker || null;
       const { cnt: existingCount } = countStmt.get(
-        sample.date, sample.operationType, sample.amount, sample.currency, ticker, ticker,
+        sample.date,
+        sample.operationType,
+        sample.amount,
+        sample.currency,
+        ticker,
+        ticker,
       ) as { cnt: number };
 
       const toInsert = Math.max(0, opGroup.length - existingCount);
 
       for (let i = 0; i < toInsert; i++) {
         const op = opGroup[i];
-        insertStmt.run(op.date, op.operationType, op.description, op.details || null, op.amount, op.currency, op.ticker || null, op.fxRate || null, op.fxPair || null, op.source, op.importBatch, op.subkind || null);
+        insertStmt.run(
+          op.date,
+          op.operationType,
+          op.description,
+          op.details || null,
+          op.amount,
+          op.currency,
+          op.ticker || null,
+          op.fxRate || null,
+          op.fxPair || null,
+          op.source,
+          op.importBatch,
+          op.subkind || null,
+        );
         inserted++;
       }
 
@@ -81,16 +115,28 @@ export function getAllOperations(portfolioId: string = 'default'): CashOperation
   return rows.map(mapRow);
 }
 
-export function getOperationsByType(type: OperationType, portfolioId: string = 'default'): CashOperation[] {
+export function getOperationsByType(
+  type: OperationType,
+  portfolioId: string = 'default',
+): CashOperation[] {
   const db = getDb(portfolioId);
-  const rows = db.prepare('SELECT * FROM cash_operations WHERE operation_type = ? ORDER BY date DESC').all(type) as any[];
+  const rows = db
+    .prepare('SELECT * FROM cash_operations WHERE operation_type = ? ORDER BY date DESC')
+    .all(type) as any[];
   return rows.map(mapRow);
 }
 
-export function getOperationsByTypes(types: OperationType[], portfolioId: string = 'default'): CashOperation[] {
+export function getOperationsByTypes(
+  types: OperationType[],
+  portfolioId: string = 'default',
+): CashOperation[] {
   const db = getDb(portfolioId);
   const placeholders = types.map(() => '?').join(', ');
-  const rows = db.prepare(`SELECT * FROM cash_operations WHERE operation_type IN (${placeholders}) ORDER BY date DESC`).all(...types) as any[];
+  const rows = db
+    .prepare(
+      `SELECT * FROM cash_operations WHERE operation_type IN (${placeholders}) ORDER BY date DESC`,
+    )
+    .all(...types) as any[];
   return rows.map(mapRow);
 }
 
@@ -105,7 +151,10 @@ export function clearOperations(portfolioId: string = 'default'): void {
   db.prepare('DELETE FROM cash_operations').run();
 }
 
-export function getOperationById(id: number, portfolioId: string = 'default'): CashOperation | null {
+export function getOperationById(
+  id: number,
+  portfolioId: string = 'default',
+): CashOperation | null {
   const db = getDb(portfolioId);
   const row = db.prepare('SELECT * FROM cash_operations WHERE id = ?').get(id) as any;
   return row ? mapRow(row) : null;
@@ -113,23 +162,61 @@ export function getOperationById(id: number, portfolioId: string = 'default'): C
 
 export function insertOperation(op: CashOperation, portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     INSERT INTO cash_operations (date, operation_type, description, details, amount, currency, ticker, fx_rate, fx_pair, source, import_batch, subkind)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(op.date, op.operationType, op.description, op.details || null, op.amount, op.currency, op.ticker || null, op.fxRate || null, op.fxPair || null, op.source, op.importBatch || null, op.subkind || null);
+  `,
+    )
+    .run(
+      op.date,
+      op.operationType,
+      op.description,
+      op.details || null,
+      op.amount,
+      op.currency,
+      op.ticker || null,
+      op.fxRate || null,
+      op.fxPair || null,
+      op.source,
+      op.importBatch || null,
+      op.subkind || null,
+    );
   return Number(result.lastInsertRowid);
 }
 
-export function updateOperation(id: number, op: Partial<CashOperation>, portfolioId: string = 'default'): boolean {
+export function updateOperation(
+  id: number,
+  op: Partial<CashOperation>,
+  portfolioId: string = 'default',
+): boolean {
   const db = getDb(portfolioId);
   const existing = getOperationById(id, portfolioId);
   if (!existing) return false;
 
   const merged = { ...existing, ...op };
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     UPDATE cash_operations SET date = ?, operation_type = ?, description = ?, details = ?, amount = ?, currency = ?, ticker = ?, fx_rate = ?, fx_pair = ?, source = ?, subkind = ?
     WHERE id = ?
-  `).run(merged.date, merged.operationType, merged.description, merged.details || null, merged.amount, merged.currency, merged.ticker || null, merged.fxRate || null, merged.fxPair || null, merged.source, merged.subkind || null, id);
+  `,
+    )
+    .run(
+      merged.date,
+      merged.operationType,
+      merged.description,
+      merged.details || null,
+      merged.amount,
+      merged.currency,
+      merged.ticker || null,
+      merged.fxRate || null,
+      merged.fxPair || null,
+      merged.source,
+      merged.subkind || null,
+      id,
+    );
   return result.changes > 0;
 }
 
@@ -148,18 +235,20 @@ export function deleteOperation(id: number, portfolioId: string = 'default'): bo
 export function dividendExistsForDateAndTicker(
   portfolioId: string,
   date: string,
-  ticker: string
+  ticker: string,
 ): boolean {
   const db = getDb(portfolioId);
   const datePrefix = date.split('T')[0];
   const baseTicker = ticker.replace(/\.\w+$/, ''); // "PLAYWAY.WA" → "PLAYWAY"
 
-  const row = db.prepare(
-    `SELECT COUNT(*) as cnt FROM cash_operations
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as cnt FROM cash_operations
      WHERE operation_type = 'dividend'
        AND (ticker = ? OR ticker = ?)
-       AND abs(julianday(substr(date, 1, 10)) - julianday(?)) <= 30`
-  ).get(ticker, baseTicker, datePrefix) as { cnt: number };
+       AND abs(julianday(substr(date, 1, 10)) - julianday(?)) <= 30`,
+    )
+    .get(ticker, baseTicker, datePrefix) as { cnt: number };
   return row.cnt > 0;
 }
 
@@ -169,10 +258,12 @@ export function dividendExistsForDateAndTicker(
  */
 export function getLatestDividendDate(portfolioId: string): string | null {
   const db = getDb(portfolioId);
-  const row = db.prepare(
-    `SELECT MAX(substr(date, 1, 10)) as latest FROM cash_operations
-     WHERE operation_type = 'dividend'`
-  ).get() as { latest: string | null };
+  const row = db
+    .prepare(
+      `SELECT MAX(substr(date, 1, 10)) as latest FROM cash_operations
+     WHERE operation_type = 'dividend'`,
+    )
+    .get() as { latest: string | null };
   return row.latest || null;
 }
 
@@ -182,9 +273,11 @@ export function getLatestDividendDate(portfolioId: string): string | null {
  */
 export function deleteAutoYahooDividends(portfolioId: string): number {
   const db = getDb(portfolioId);
-  const result = db.prepare(
-    `DELETE FROM cash_operations WHERE operation_type = 'dividend' AND source = 'auto-yahoo'`
-  ).run();
+  const result = db
+    .prepare(
+      `DELETE FROM cash_operations WHERE operation_type = 'dividend' AND source = 'auto-yahoo'`,
+    )
+    .run();
   return result.changes;
 }
 
@@ -192,13 +285,18 @@ export function deleteAutoYahooDividends(portfolioId: string): number {
 
 export function getMetadata(portfolioId: string, key: string): string | null {
   const db = getDb(portfolioId);
-  const row = db.prepare('SELECT value FROM portfolio_metadata WHERE key = ?').get(key) as { value: string } | undefined;
+  const row = db.prepare('SELECT value FROM portfolio_metadata WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined;
   return row?.value ?? null;
 }
 
 export function setMetadata(portfolioId: string, key: string, value: string): void {
   const db = getDb(portfolioId);
-  db.prepare('INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)').run(key, value);
+  db.prepare('INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)').run(
+    key,
+    value,
+  );
 }
 
 function mapRow(row: any): CashOperation {

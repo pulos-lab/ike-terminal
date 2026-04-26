@@ -3,7 +3,11 @@ import type { TransactionTax } from './degiro-operations.js';
 import { parseBossaTransactions, isBossaFormat } from './bossa-transactions.js';
 import { parseMbankTransactions, isMbankFormat } from './mbank-transactions.js';
 import { parseDegiroTransactions, isDegiroFormat } from './degiro-transactions.js';
-import { parseDegiroOperations, isDegiroAccountFormat, parseDegiroTransactionTaxes } from './degiro-operations.js';
+import {
+  parseDegiroOperations,
+  isDegiroAccountFormat,
+  parseDegiroTransactionTaxes,
+} from './degiro-operations.js';
 import { parseXtbFile, isXtbFormat } from './xtb-transactions.js';
 
 /**
@@ -80,7 +84,7 @@ export function detectBroker(content: string): BrokerParser | null {
  * Get parser by broker ID. Returns undefined for 'auto'.
  */
 export function getParserById(id: BrokerType): BrokerParser | undefined {
-  return PARSER_REGISTRY.find(p => p.id === id);
+  return PARSER_REGISTRY.find((p) => p.id === id);
 }
 
 // ── Binary (XLSX) parser registry ──────────────────────────────────────────
@@ -89,7 +93,11 @@ export interface BinaryBrokerParser {
   id: BrokerType;
   label: string;
   detect: (buffer: Buffer) => boolean | Promise<boolean>;
-  parse: (buffer: Buffer, importBatch: string, fileName?: string) => Promise<{
+  parse: (
+    buffer: Buffer,
+    importBatch: string,
+    fileName?: string,
+  ) => Promise<{
     transactions: ParseResult<Transaction>;
     operations: ParseResult<CashOperation>;
     warnings?: string[];
@@ -115,5 +123,5 @@ export async function detectBinaryBroker(buffer: Buffer): Promise<BinaryBrokerPa
 }
 
 export function getBinaryParserById(id: BrokerType): BinaryBrokerParser | undefined {
-  return BINARY_PARSER_REGISTRY.find(p => p.id === id);
+  return BINARY_PARSER_REGISTRY.find((p) => p.id === id);
 }

@@ -33,18 +33,21 @@ import { parseNumber, roundTo2 } from './utils.js';
 
 interface AccountRow {
   rowNum: number;
-  date: string;      // DD-MM-YYYY
-  time: string;      // HH:MM
+  date: string; // DD-MM-YYYY
+  time: string; // HH:MM
   product: string;
   isin: string;
   description: string;
-  rate: number;       // Kurs
-  amount: number;     // Zmiana
+  rate: number; // Kurs
+  amount: number; // Zmiana
   currency: string;
   orderId: string;
 }
 
-export function parseDegiroOperations(csvContent: string, importBatch: string): ParseResult<CashOperation> {
+export function parseDegiroOperations(
+  csvContent: string,
+  importBatch: string,
+): ParseResult<CashOperation> {
   const result = Papa.parse(csvContent.trim(), {
     delimiter: ',',
     header: false,
@@ -65,7 +68,10 @@ export function parseDegiroOperations(csvContent: string, importBatch: string): 
     const row = rows[i];
     const rowNum = i + 1;
 
-    if (!row || row.length < 8) { skipped.push({ row: rowNum, reason: 'short_row' }); continue; }
+    if (!row || row.length < 8) {
+      skipped.push({ row: rowNum, reason: 'short_row' });
+      continue;
+    }
 
     const dateStr = row[0]?.trim();
     const time = row[1]?.trim() || '00:00';
@@ -77,21 +83,40 @@ export function parseDegiroOperations(csvContent: string, importBatch: string): 
     const amount = parseNumber(row[8]);
     const orderId = row[11]?.trim() || '';
 
-    if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date' }); continue; }
-    if (!description) { skipped.push({ row: rowNum, reason: 'missing_description' }); continue; }
+    if (!dateStr) {
+      skipped.push({ row: rowNum, reason: 'missing_date' });
+      continue;
+    }
+    if (!description) {
+      skipped.push({ row: rowNum, reason: 'missing_description' });
+      continue;
+    }
 
     const normalizedCurrency = currency === 'NO' ? 'NOK' : currency;
-    parsed.push({ rowNum, date: dateStr, time, product, isin, description, rate, amount, currency: normalizedCurrency, orderId });
+    parsed.push({
+      rowNum,
+      date: dateStr,
+      time,
+      product,
+      isin,
+      description,
+      rate,
+      amount,
+      currency: normalizedCurrency,
+      orderId,
+    });
   }
 
   const operations: CashOperation[] = [];
 
   // ── Dividends: pair gross + tax by ISIN + date + time ──
-  const dividendRows = parsed.filter(r => r.description === 'Dywidenda');
-  const taxRows = parsed.filter(r => r.description === 'Podatek Dywidendowy');
+  const dividendRows = parsed.filter((r) => r.description === 'Dywidenda');
+  const taxRows = parsed.filter((r) => r.description === 'Podatek Dywidendowy');
 
   for (const div of dividendRows) {
-    const tax = taxRows.find(t => t.isin === div.isin && t.date === div.date && t.time === div.time);
+    const tax = taxRows.find(
+      (t) => t.isin === div.isin && t.date === div.date && t.time === div.time,
+    );
     const grossAmount = Math.abs(div.amount);
     const taxAmount = tax ? Math.abs(tax.amount) : 0;
     const netAmount = roundTo2(grossAmount - taxAmount);
@@ -113,9 +138,12 @@ export function parseDegiroOperations(csvContent: string, importBatch: string): 
   }
 
   // ── Deposits ──
-  const depositRows = parsed.filter(r => r.description.startsWith('Depozyt'));
+  const depositRows = parsed.filter((r) => r.description.startsWith('Depozyt'));
   for (const dep of depositRows) {
-    if (dep.amount === 0) { skipped.push({ row: dep.rowNum, reason: 'zero_amount', paperName: dep.description }); continue; }
+    if (dep.amount === 0) {
+      skipped.push({ row: dep.rowNum, reason: 'zero_amount', paperName: dep.description });
+      continue;
+    }
 
     operations.push({
       date: parseDegiroDate(dep.date, dep.time),
@@ -129,11 +157,14 @@ export function parseDegiroOperations(csvContent: string, importBatch: string): 
   }
 
   // ── Withdrawals ──
-  const withdrawalRows = parsed.filter(r =>
-    r.description === 'Wypłata' || r.description === 'flatex Withdrawal'
+  const withdrawalRows = parsed.filter(
+    (r) => r.description === 'Wypłata' || r.description === 'flatex Withdrawal',
   );
   for (const wd of withdrawalRows) {
-    if (wd.amount === 0) { skipped.push({ row: wd.rowNum, reason: 'zero_amount', paperName: wd.description }); continue; }
+    if (wd.amount === 0) {
+      skipped.push({ row: wd.rowNum, reason: 'zero_amount', paperName: wd.description });
+      continue;
+    }
 
     operations.push({
       date: parseDegiroDate(wd.date, wd.time),
@@ -149,8 +180,8 @@ export function parseDegiroOperations(csvContent: string, importBatch: string): 
   // ── FX exchanges: ALL rows (with and without orderId) ──
   // Trade-related FX (with orderId) represent auto-conversions when buying/selling
   // foreign stocks — they are real cash movements and must be imported.
-  const allFxCredits = parsed.filter(r => r.description === 'FX Credit');
-  const allFxWithdrawals = parsed.filter(r => r.description === 'FX Withdrawal');
+  const allFxCredits = parsed.filter((r) => r.description === 'FX Credit');
+  const allFxWithdrawals = parsed.filter((r) => r.description === 'FX Withdrawal');
   const matchedWithdrawals = new Set<number>();
 
   for (const credit of allFxCredits) {
@@ -158,13 +189,14 @@ export function parseDegiroOperations(csvContent: string, importBatch: string): 
     let withdrawal: AccountRow | undefined;
 
     if (credit.orderId) {
-      withdrawal = allFxWithdrawals.find(w =>
-        w.orderId === credit.orderId && !matchedWithdrawals.has(w.rowNum)
+      withdrawal = allFxWithdrawals.find(
+        (w) => w.orderId === credit.orderId && !matchedWithdrawals.has(w.rowNum),
       );
     }
     if (!withdrawal) {
-      withdrawal = allFxWithdrawals.find(w =>
-        w.date === credit.date && w.time === credit.time && !matchedWithdrawals.has(w.rowNum)
+      withdrawal = allFxWithdrawals.find(
+        (w) =>
+          w.date === credit.date && w.time === credit.time && !matchedWithdrawals.has(w.rowNum),
       );
     }
 
@@ -238,12 +270,16 @@ export function parseDegiroOperations(csvContent: string, importBatch: string): 
     'DEGIRO Opłata Transakcyjna i/lub opłata stron trzecich',
     'ADR/GDR Pass-Through Fee',
   ];
-  const feeRows = parsed.filter(r =>
-    feeDescriptions.includes(r.description) ||
-    r.description.startsWith('DEGIRO Exchange Connection Fee')
+  const feeRows = parsed.filter(
+    (r) =>
+      feeDescriptions.includes(r.description) ||
+      r.description.startsWith('DEGIRO Exchange Connection Fee'),
   );
   for (const fee of feeRows) {
-    if (fee.amount === 0) { skipped.push({ row: fee.rowNum, reason: 'zero_amount', paperName: fee.description }); continue; }
+    if (fee.amount === 0) {
+      skipped.push({ row: fee.rowNum, reason: 'zero_amount', paperName: fee.description });
+      continue;
+    }
 
     operations.push({
       date: parseDegiroDate(fee.date, fee.time),
@@ -266,8 +302,8 @@ export function parseDegiroOperations(csvContent: string, importBatch: string): 
  */
 export interface TransactionTax {
   isin: string;
-  date: string;   // ISO 8601
-  amount: number;  // absolute value (always positive)
+  date: string; // ISO 8601
+  amount: number; // absolute value (always positive)
   description: string;
 }
 
@@ -324,10 +360,12 @@ export function parseDegiroTransactionTaxes(csvContent: string): TransactionTax[
 export function isDegiroAccountFormat(csvContent: string): boolean {
   const firstLine = csvContent.split('\n')[0] || '';
   const lower = firstLine.toLowerCase();
-  return lower.includes('produkt') &&
+  return (
+    lower.includes('produkt') &&
     lower.includes('isin') &&
     lower.includes('opis') &&
-    !lower.includes('kurs wymian');  // Transactions CSV has "Kurs wymian", Account does not
+    !lower.includes('kurs wymian')
+  ); // Transactions CSV has "Kurs wymian", Account does not
 }
 
 function isDegiroAccountHeader(header: string[]): boolean {

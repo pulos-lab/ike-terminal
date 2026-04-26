@@ -104,45 +104,45 @@ export function initSchema(db: Database.Database): void {
   `);
 
   // Migrations for existing databases
-  const tmColumns = db.prepare("PRAGMA table_info(ticker_map)").all() as any[];
+  const tmColumns = db.prepare('PRAGMA table_info(ticker_map)').all() as any[];
   if (!tmColumns.some((c: any) => c.name === 'sector')) {
-    db.exec("ALTER TABLE ticker_map ADD COLUMN sector TEXT");
+    db.exec('ALTER TABLE ticker_map ADD COLUMN sector TEXT');
   }
   if (!tmColumns.some((c: any) => c.name === 'supersector')) {
-    db.exec("ALTER TABLE ticker_map ADD COLUMN supersector TEXT");
+    db.exec('ALTER TABLE ticker_map ADD COLUMN supersector TEXT');
   }
 
-  const txColumns = db.prepare("PRAGMA table_info(transactions)").all() as any[];
+  const txColumns = db.prepare('PRAGMA table_info(transactions)').all() as any[];
   if (!txColumns.some((c: any) => c.name === 'category')) {
     db.exec("ALTER TABLE transactions ADD COLUMN category TEXT DEFAULT 'stock'");
   }
   if (!txColumns.some((c: any) => c.name === 'swap')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN swap REAL");
-    db.exec("ALTER TABLE transactions ADD COLUMN rollover REAL");
+    db.exec('ALTER TABLE transactions ADD COLUMN swap REAL');
+    db.exec('ALTER TABLE transactions ADD COLUMN rollover REAL');
   }
   if (!txColumns.some((c: any) => c.name === 'cfd_position_id')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN cfd_position_id TEXT");
+    db.exec('ALTER TABLE transactions ADD COLUMN cfd_position_id TEXT');
   }
   if (!txColumns.some((c: any) => c.name === 'cfd_gross_profit')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN cfd_gross_profit REAL");
+    db.exec('ALTER TABLE transactions ADD COLUMN cfd_gross_profit REAL');
   }
   // PR14 — payment currency (waluta rozliczenia, może być != quote currency)
   if (!txColumns.some((c: any) => c.name === 'payment_currency')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN payment_currency TEXT");
+    db.exec('ALTER TABLE transactions ADD COLUMN payment_currency TEXT');
   }
   // PR14 — fx rate (kurs wymiany pamiętany przy rozliczeniu foreign → payment)
   if (!txColumns.some((c: any) => c.name === 'fx_rate')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN fx_rate REAL");
+    db.exec('ALTER TABLE transactions ADD COLUMN fx_rate REAL');
   }
   // PR16 (bulk-import) — syntetyczne sprzedaże z reconciliation (wezwania skupu, wykupy certyfikatów).
   // Human-readable opis źródła; NULL dla zwykłych transakcji z pliku brokera.
   if (!txColumns.some((c: any) => c.name === 'synthetic_origin')) {
-    db.exec("ALTER TABLE transactions ADD COLUMN synthetic_origin TEXT");
+    db.exec('ALTER TABLE transactions ADD COLUMN synthetic_origin TEXT');
   }
 
   // Migration: tighten stock_splits UNIQUE from (isin, split_date) to (isin)
   // SQLite doesn't support ALTER CONSTRAINT, so recreate the table
-  const splitsIndexes = db.prepare("PRAGMA index_list(stock_splits)").all() as any[];
+  const splitsIndexes = db.prepare('PRAGMA index_list(stock_splits)').all() as any[];
   const hasOldConstraint = splitsIndexes.some((idx: any) => {
     const cols = db.prepare(`PRAGMA index_info('${idx.name}')`).all() as any[];
     return cols.length === 2; // old constraint had 2 columns (isin, split_date)
@@ -190,7 +190,9 @@ export function initSchema(db: Database.Database): void {
   // PR15 — one-time backfill paymentCurrency per source (runs once, gated przez flag w metadata).
   // Pokrywa rekordy zbackfillowane w PR14 jako paymentCurrency=currency oraz świeże NULL.
   // Po wykonaniu nie nadpisuje ponownie (user manual edits są bezpieczne).
-  const migrationFlag = db.prepare("SELECT value FROM portfolio_metadata WHERE key = ?").get('pr15_backfill_done') as any;
+  const migrationFlag = db
+    .prepare('SELECT value FROM portfolio_metadata WHERE key = ?')
+    .get('pr15_backfill_done') as any;
   if (!migrationFlag) {
     db.exec(`
       UPDATE transactions SET payment_currency = CASE
@@ -200,7 +202,10 @@ export function initSchema(db: Database.Database): void {
       END
       WHERE payment_currency IS NULL OR payment_currency = currency;
     `);
-    db.prepare("INSERT INTO portfolio_metadata (key, value) VALUES (?, ?)").run('pr15_backfill_done', new Date().toISOString());
+    db.prepare('INSERT INTO portfolio_metadata (key, value) VALUES (?, ?)').run(
+      'pr15_backfill_done',
+      new Date().toISOString(),
+    );
   }
 
   // P17 — subkind column na cash_operations + reklasyfikacja istniejących rekordów
@@ -216,14 +221,16 @@ export function initSchema(db: Database.Database): void {
   //
   // Migracja idempotentna — WHERE blokują re-apply, a flag w portfolio_metadata gwarantuje
   // że UPDATE'y nie ruszą user's manual edits po pierwszym uruchomieniu.
-  const opsColumns = db.prepare("PRAGMA table_info(cash_operations)").all() as any[];
+  const opsColumns = db.prepare('PRAGMA table_info(cash_operations)').all() as any[];
   if (!opsColumns.some((c: any) => c.name === 'subkind')) {
-    db.exec("ALTER TABLE cash_operations ADD COLUMN subkind TEXT");
+    db.exec('ALTER TABLE cash_operations ADD COLUMN subkind TEXT');
   }
   // Flag v2: wersja v1 błędnie klasyfikowała "Wykup PW - wyrównanie" jako unknown_warrant.
   // Fix reclassyfikuje to na capital_return/redemption_adjustment. Bumpowanie flagi zapewnia
   // że istniejące bazy z v1 dostaną poprawkę na następnym starcie.
-  const p17Flag = db.prepare("SELECT value FROM portfolio_metadata WHERE key = ?").get('p17_corp_actions_done_v2') as any;
+  const p17Flag = db
+    .prepare('SELECT value FROM portfolio_metadata WHERE key = ?')
+    .get('p17_corp_actions_done_v2') as any;
   if (!p17Flag) {
     // 1. Obniżenie nominału (np. GETIN 8250 PLN 2022-12-30) — był zapisany jako deposit.
     //    Humanized description zaczynał się od "Umorzenie akcji % (obniżenie nominału)".
@@ -281,7 +288,10 @@ export function initSchema(db: Database.Database): void {
         );
     `);
 
-    db.prepare("INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)").run('p17_corp_actions_done_v2', new Date().toISOString());
+    db.prepare('INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)').run(
+      'p17_corp_actions_done_v2',
+      new Date().toISOString(),
+    );
   }
 
   // P17 follow-up: deposit z ujemnym amount → withdrawal. Parser Bossy sklasyfikowało
@@ -290,7 +300,9 @@ export function initSchema(db: Database.Database): void {
   // nie liczyły się do totalWithdrawn ani totalDeposited (znikały z MWR). Fix w parserze
   // naprawia to na nowych importach; migracja uspójnia stare dane. Idempotent — WHERE
   // wymaga amount<0, po UPDATE rekord jest 'withdrawal' → warunek nie matchuje.
-  const p17SignFlag = db.prepare("SELECT value FROM portfolio_metadata WHERE key = ?").get('p17_deposit_sign_fix') as any;
+  const p17SignFlag = db
+    .prepare('SELECT value FROM portfolio_metadata WHERE key = ?')
+    .get('p17_deposit_sign_fix') as any;
   if (!p17SignFlag) {
     db.exec(`
       UPDATE cash_operations
@@ -298,7 +310,10 @@ export function initSchema(db: Database.Database): void {
       WHERE operation_type = 'deposit'
         AND amount < 0;
     `);
-    db.prepare("INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)").run('p17_deposit_sign_fix', new Date().toISOString());
+    db.prepare('INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)').run(
+      'p17_deposit_sign_fix',
+      new Date().toISOString(),
+    );
   }
 
   // P17 follow-up: GreenX Metals (AU0000198939) — dual-listed na ASX Sydney (GRX.AX, AUD)
@@ -307,7 +322,9 @@ export function initSchema(db: Database.Database): void {
   // zamiast GPW. Fix w isin-resolver.ts naprawia to dla NOWYCH importów (preferuje .WA przy
   // txCurrency='PLN'), ale istniejące ticker_map entries zostały z GRX.AX. Ta migracja
   // przestawia je na GRX.WA. Idempotent — WHERE ticker='GRX.AX' po UPDATE nie matchuje.
-  const p17GreenxFlag = db.prepare("SELECT value FROM portfolio_metadata WHERE key = ?").get('p17_greenx_fix') as any;
+  const p17GreenxFlag = db
+    .prepare('SELECT value FROM portfolio_metadata WHERE key = ?')
+    .get('p17_greenx_fix') as any;
   if (!p17GreenxFlag) {
     db.exec(`
       UPDATE ticker_map
@@ -318,6 +335,9 @@ export function initSchema(db: Database.Database): void {
       WHERE isin = 'AU0000198939'
         AND ticker = 'GRX.AX';
     `);
-    db.prepare("INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)").run('p17_greenx_fix', new Date().toISOString());
+    db.prepare('INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)').run(
+      'p17_greenx_fix',
+      new Date().toISOString(),
+    );
   }
 }

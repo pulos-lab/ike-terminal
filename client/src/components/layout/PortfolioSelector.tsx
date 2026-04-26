@@ -4,8 +4,22 @@ import { useQuery } from '@tanstack/react-query';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectSeparator } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  SelectSeparator,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
@@ -15,7 +29,18 @@ import type { PortfolioSettings } from 'shared';
 const NEW_PORTFOLIO_VALUE = '__new__';
 
 export function PortfolioSelector() {
-  const { portfolios, activeId, activeSettings, activeName, switchPortfolio, createPortfolio, deletePortfolio, purgeData, updateSettings, updateName } = usePortfolio();
+  const {
+    portfolios,
+    activeId,
+    activeSettings,
+    activeName,
+    switchPortfolio,
+    createPortfolio,
+    deletePortfolio,
+    purgeData,
+    updateSettings,
+    updateName,
+  } = usePortfolio();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -27,7 +52,15 @@ export function PortfolioSelector() {
 
   // Local settings state for the dialog
   const [editName, setEditName] = useState('');
-  const [editSettings, setEditSettings] = useState<PortfolioSettings>({ isIKE: false, isIKZE: false, ikzeIsDG: false, commissionPl: 0, commissionForeign: 0, minCommissionPl: 0, minCommissionForeign: 0 });
+  const [editSettings, setEditSettings] = useState<PortfolioSettings>({
+    isIKE: false,
+    isIKZE: false,
+    ikzeIsDG: false,
+    commissionPl: 0,
+    commissionForeign: 0,
+    minCommissionPl: 0,
+    minCommissionForeign: 0,
+  });
 
   // Detect dominant currency of the active portfolio from its deposits.
   // IKE/IKZE are PLN-only products; for non-PLN portfolios (e.g. XTB USD sub-account)
@@ -42,7 +75,9 @@ export function PortfolioSelector() {
   const portfolioBaseCurrency = useMemo(() => {
     const deposits = depositsData?.deposits || [];
     if (!deposits.length) return 'PLN'; // domyślnie — pusty portfel nie blokuje IKE/IKZE
-    const currencies = new Set<string>(deposits.map((d: any) => (d.currency || 'PLN').toUpperCase()));
+    const currencies = new Set<string>(
+      deposits.map((d: any) => (d.currency || 'PLN').toUpperCase()),
+    );
     if (currencies.size === 1) return [...currencies][0];
     return 'PLN'; // mixed — nie blokujemy (PLN przeważa w typowym use case)
   }, [depositsData]);
@@ -161,9 +196,7 @@ export function PortfolioSelector() {
               autoFocus
             />
           </div>
-          {createError && (
-            <p className="text-sm text-destructive">{createError}</p>
-          )}
+          {createError && <p className="text-sm text-destructive">{createError}</p>}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
               Anuluj
@@ -185,10 +218,7 @@ export function PortfolioSelector() {
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">Nazwa portfela</label>
-              <Input
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-              />
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
             </div>
 
             <Separator />
@@ -225,11 +255,13 @@ export function PortfolioSelector() {
                   type="checkbox"
                   checked={editSettings.isIKZE}
                   disabled={!isPlnPortfolio}
-                  onChange={(e) => setEditSettings({
-                    ...editSettings,
-                    isIKZE: e.target.checked,
-                    ikzeIsDG: e.target.checked ? editSettings.ikzeIsDG : false,
-                  })}
+                  onChange={(e) =>
+                    setEditSettings({
+                      ...editSettings,
+                      isIKZE: e.target.checked,
+                      ikzeIsDG: e.target.checked ? editSettings.ikzeIsDG : false,
+                    })
+                  }
                   className="h-4 w-4 rounded border-input accent-primary disabled:cursor-not-allowed"
                 />
                 <span className="text-sm">Portfel IKZE</span>
@@ -241,7 +273,9 @@ export function PortfolioSelector() {
                   <input
                     type="checkbox"
                     checked={editSettings.ikzeIsDG}
-                    onChange={(e) => setEditSettings({ ...editSettings, ikzeIsDG: e.target.checked })}
+                    onChange={(e) =>
+                      setEditSettings({ ...editSettings, ikzeIsDG: e.target.checked })
+                    }
                     className="h-4 w-4 rounded border-input accent-primary"
                   />
                   <span className="text-sm">Działalność gospodarcza</span>
@@ -264,7 +298,12 @@ export function PortfolioSelector() {
                     min="0"
                     placeholder="0.39"
                     value={editSettings.commissionPl || ''}
-                    onChange={(e) => setEditSettings({ ...editSettings, commissionPl: parseFloat(e.target.value) || 0 })}
+                    onChange={(e) =>
+                      setEditSettings({
+                        ...editSettings,
+                        commissionPl: parseFloat(e.target.value) || 0,
+                      })
+                    }
                     className="w-20 text-right"
                   />
                   <span className="text-xs text-muted-foreground">%</span>
@@ -275,7 +314,12 @@ export function PortfolioSelector() {
                     min="0"
                     placeholder="5.00"
                     value={editSettings.minCommissionPl || ''}
-                    onChange={(e) => setEditSettings({ ...editSettings, minCommissionPl: parseFloat(e.target.value) || 0 })}
+                    onChange={(e) =>
+                      setEditSettings({
+                        ...editSettings,
+                        minCommissionPl: parseFloat(e.target.value) || 0,
+                      })
+                    }
                     className="w-20 text-right"
                   />
                   <span className="text-xs text-muted-foreground">PLN</span>
@@ -291,7 +335,12 @@ export function PortfolioSelector() {
                     min="0"
                     placeholder="0.29"
                     value={editSettings.commissionForeign || ''}
-                    onChange={(e) => setEditSettings({ ...editSettings, commissionForeign: parseFloat(e.target.value) || 0 })}
+                    onChange={(e) =>
+                      setEditSettings({
+                        ...editSettings,
+                        commissionForeign: parseFloat(e.target.value) || 0,
+                      })
+                    }
                     className="w-20 text-right"
                   />
                   <span className="text-xs text-muted-foreground">%</span>
@@ -302,7 +351,12 @@ export function PortfolioSelector() {
                     min="0"
                     placeholder="1.00"
                     value={editSettings.minCommissionForeign || ''}
-                    onChange={(e) => setEditSettings({ ...editSettings, minCommissionForeign: parseFloat(e.target.value) || 0 })}
+                    onChange={(e) =>
+                      setEditSettings({
+                        ...editSettings,
+                        minCommissionForeign: parseFloat(e.target.value) || 0,
+                      })
+                    }
                     className="w-20 text-right"
                   />
                   <span className="text-xs text-muted-foreground">w wal. giełdy</span>
@@ -323,11 +377,7 @@ export function PortfolioSelector() {
                 Wyczyść dane
               </Button>
               {activeId !== 'default' && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => setDeleteConfirmOpen(true)}
-                >
+                <Button variant="destructive" size="sm" onClick={() => setDeleteConfirmOpen(true)}>
                   <Trash2 className="h-4 w-4 mr-1" />
                   Usuń portfel
                 </Button>
@@ -337,9 +387,7 @@ export function PortfolioSelector() {
               <Button variant="outline" onClick={() => setSettingsDialogOpen(false)}>
                 Anuluj
               </Button>
-              <Button onClick={saveSettings}>
-                Zapisz
-              </Button>
+              <Button onClick={saveSettings}>Zapisz</Button>
             </div>
           </DialogFooter>
         </DialogContent>
@@ -351,7 +399,8 @@ export function PortfolioSelector() {
           <DialogHeader>
             <DialogTitle>Usuń portfel</DialogTitle>
             <DialogDescription>
-              Czy na pewno chcesz usunąć portfel &quot;{activeName}&quot;? Wszystkie dane (transakcje, operacje, wpłaty) zostaną trwale usunięte.
+              Czy na pewno chcesz usunąć portfel &quot;{activeName}&quot;? Wszystkie dane
+              (transakcje, operacje, wpłaty) zostaną trwale usunięte.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -371,7 +420,9 @@ export function PortfolioSelector() {
           <DialogHeader>
             <DialogTitle>Wyczyść dane portfela</DialogTitle>
             <DialogDescription>
-              Czy na pewno chcesz usunąć wszystkie dane z portfela &quot;{activeName}&quot;? Usunięte zostaną wszystkie transakcje, dywidendy, wpłaty, wymiany walut i historia — zarówno zaimportowane jak i dodane ręcznie. Ustawienia portfela zostaną zachowane.
+              Czy na pewno chcesz usunąć wszystkie dane z portfela &quot;{activeName}&quot;?
+              Usunięte zostaną wszystkie transakcje, dywidendy, wpłaty, wymiany walut i historia —
+              zarówno zaimportowane jak i dodane ręcznie. Ustawienia portfela zostaną zachowane.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

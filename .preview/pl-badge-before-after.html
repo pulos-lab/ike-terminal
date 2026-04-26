@@ -1,163 +1,238 @@
 <!doctype html>
 <html lang="pl">
-<head>
-<meta charset="utf-8" />
-<title>PLBadge — przed vs po (dark mode)</title>
-<style>
-  /* Wartości skopiowane 1:1 z client/src/index.css (.dark) */
-  :root {
-    --background: oklch(0.145 0.005 60);
-    --card:       oklch(0.20 0.006 60);
-    --foreground: oklch(0.985 0.002 60);
-    --muted-fg:   oklch(0.69 0.005 60);
-    --loss:       oklch(0.65 0.15 20);
-    --destructive:oklch(0.65 0.20 25);
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--background);
-    color: var(--foreground);
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    padding: 32px;
-  }
-  h1 { font-size: 18px; margin: 0 0 24px; font-weight: 600; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 980px; }
-  .panel {
-    background: var(--card);
-    border: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
-    border-radius: 12px;
-    padding: 24px;
-  }
-  .label { font-size: 12px; color: var(--muted-fg); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 14px; }
-  .badge-row { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
-  .name { width: 130px; color: var(--muted-fg); font-size: 13px; }
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 9999px;
-    padding: 2px 10px;
-    font-size: 12px;
-    font-weight: 500;
-    border: 1px solid transparent;
-    white-space: nowrap;
-  }
-  /* PRZED: variant=destructive → tło z `dark:bg-destructive/60`,
+  <head>
+    <meta charset="utf-8" />
+    <title>PLBadge — przed vs po (dark mode)</title>
+    <style>
+      /* Wartości skopiowane 1:1 z client/src/index.css (.dark) */
+      :root {
+        --background: oklch(0.145 0.005 60);
+        --card: oklch(0.2 0.006 60);
+        --foreground: oklch(0.985 0.002 60);
+        --muted-fg: oklch(0.69 0.005 60);
+        --loss: oklch(0.65 0.15 20);
+        --destructive: oklch(0.65 0.2 25);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--background);
+        color: var(--foreground);
+        font-family:
+          'Inter',
+          system-ui,
+          -apple-system,
+          sans-serif;
+        padding: 32px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 24px;
+        font-weight: 600;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        max-width: 980px;
+      }
+      .panel {
+        background: var(--card);
+        border: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
+        border-radius: 12px;
+        padding: 24px;
+      }
+      .label {
+        font-size: 12px;
+        color: var(--muted-fg);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 14px;
+      }
+      .badge-row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin: 12px 0;
+      }
+      .name {
+        width: 130px;
+        color: var(--muted-fg);
+        font-size: 13px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 9999px;
+        padding: 2px 10px;
+        font-size: 12px;
+        font-weight: 500;
+        border: 1px solid transparent;
+        white-space: nowrap;
+      }
+      /* PRZED: variant=destructive → tło z `dark:bg-destructive/60`,
      tekst `text-loss` z PLBadge (var. dark mode loss) */
-  .badge--before {
-    background: color-mix(in oklch, var(--destructive) 60%, transparent);
-    color: var(--loss);
-  }
-  .badge--before-muted {
-    background: color-mix(in oklch, var(--destructive) 60%, transparent);
-    color: color-mix(in oklch, var(--loss) 70%, transparent);
-  }
-  /* PO: variant=secondary → bazowe tło nadpisane przez `bg-loss/15`,
+      .badge--before {
+        background: color-mix(in oklch, var(--destructive) 60%, transparent);
+        color: var(--loss);
+      }
+      .badge--before-muted {
+        background: color-mix(in oklch, var(--destructive) 60%, transparent);
+        color: color-mix(in oklch, var(--loss) 70%, transparent);
+      }
+      /* PO: variant=secondary → bazowe tło nadpisane przez `bg-loss/15`,
      tekst `text-loss` */
-  .badge--after {
-    background: color-mix(in oklch, var(--loss) 15%, transparent);
-    color: var(--loss);
-  }
-  .badge--after-muted {
-    background: color-mix(in oklch, var(--loss) 15%, transparent);
-    color: color-mix(in oklch, var(--loss) 70%, transparent);
-  }
-  .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 6px; vertical-align: middle; border: 1px solid color-mix(in oklch, var(--foreground) 12%, transparent); }
-  .meta { font-size: 11px; color: var(--muted-fg); margin-top: 18px; line-height: 1.6; }
-  .meta code { background: color-mix(in oklch, var(--foreground) 6%, transparent); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 12px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent); }
-  th { color: var(--muted-fg); font-weight: 500; }
-</style>
-</head>
-<body>
-  <h1>PLBadge — kontrast pozycji spadkowych w dark mode</h1>
+      .badge--after {
+        background: color-mix(in oklch, var(--loss) 15%, transparent);
+        color: var(--loss);
+      }
+      .badge--after-muted {
+        background: color-mix(in oklch, var(--loss) 15%, transparent);
+        color: color-mix(in oklch, var(--loss) 70%, transparent);
+      }
+      .swatch {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border-radius: 3px;
+        margin-right: 6px;
+        vertical-align: middle;
+        border: 1px solid color-mix(in oklch, var(--foreground) 12%, transparent);
+      }
+      .meta {
+        font-size: 11px;
+        color: var(--muted-fg);
+        margin-top: 18px;
+        line-height: 1.6;
+      }
+      .meta code {
+        background: color-mix(in oklch, var(--foreground) 6%, transparent);
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-size: 11px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 14px;
+        font-size: 12px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 6px 8px;
+        border-bottom: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
+      }
+      th {
+        color: var(--muted-fg);
+        font-weight: 500;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>PLBadge — kontrast pozycji spadkowych w dark mode</h1>
 
-  <div class="row">
-    <div class="panel">
-      <div class="label">Przed (variant="destructive")</div>
+    <div class="row">
+      <div class="panel">
+        <div class="label">Przed (variant="destructive")</div>
 
-      <div class="badge-row">
-        <span class="name">P/L %</span>
-        <span class="badge badge--before">-3.42%</span>
-      </div>
-      <div class="badge-row">
-        <span class="name">Dzienna zmiana</span>
-        <span class="badge badge--before">-1.18%</span>
-      </div>
-      <div class="badge-row">
-        <span class="name">Wiersz dziecka</span>
-        <span class="badge badge--before-muted">-0.47%</span>
+        <div class="badge-row">
+          <span class="name">P/L %</span>
+          <span class="badge badge--before">-3.42%</span>
+        </div>
+        <div class="badge-row">
+          <span class="name">Dzienna zmiana</span>
+          <span class="badge badge--before">-1.18%</span>
+        </div>
+        <div class="badge-row">
+          <span class="name">Wiersz dziecka</span>
+          <span class="badge badge--before-muted">-0.47%</span>
+        </div>
+
+        <div class="meta">
+          Tło: <code>dark:bg-destructive/60</code> (oklch 0.65 0.20 25 @ 60%)<br />
+          Tekst: <code>text-loss</code> (oklch 0.65 0.15 20)<br />
+          <strong>Problem:</strong> tailwind-merge nie usuwa <code>dark:bg-*</code> razem z
+          <code>bg-loss/15</code>, więc nasycone czerwone tło wraca w dark mode.
+        </div>
       </div>
 
-      <div class="meta">
-        Tło: <code>dark:bg-destructive/60</code> (oklch 0.65 0.20 25 @ 60%)<br/>
-        Tekst: <code>text-loss</code> (oklch 0.65 0.15 20)<br/>
-        <strong>Problem:</strong> tailwind-merge nie usuwa <code>dark:bg-*</code>
-        razem z <code>bg-loss/15</code>, więc nasycone czerwone tło wraca w dark mode.
+      <div class="panel">
+        <div class="label">Po (variant="secondary")</div>
+
+        <div class="badge-row">
+          <span class="name">P/L %</span>
+          <span class="badge badge--after">-3.42%</span>
+        </div>
+        <div class="badge-row">
+          <span class="name">Dzienna zmiana</span>
+          <span class="badge badge--after">-1.18%</span>
+        </div>
+        <div class="badge-row">
+          <span class="name">Wiersz dziecka</span>
+          <span class="badge badge--after-muted">-0.47%</span>
+        </div>
+
+        <div class="meta">
+          Tło: <code>bg-loss/15</code> (oklch 0.65 0.15 20 @ 15%)<br />
+          Tekst: <code>text-loss</code> (oklch 0.65 0.15 20)<br />
+          Wariant <code>secondary</code> nie wstrzykuje żadnego <code>dark:bg-*</code>, więc klasy z
+          PLBadge faktycznie wygrywają kaskadę.
+        </div>
       </div>
     </div>
 
-    <div class="panel">
-      <div class="label">Po (variant="secondary")</div>
-
-      <div class="badge-row">
-        <span class="name">P/L %</span>
-        <span class="badge badge--after">-3.42%</span>
-      </div>
-      <div class="badge-row">
-        <span class="name">Dzienna zmiana</span>
-        <span class="badge badge--after">-1.18%</span>
-      </div>
-      <div class="badge-row">
-        <span class="name">Wiersz dziecka</span>
-        <span class="badge badge--after-muted">-0.47%</span>
-      </div>
-
-      <div class="meta">
-        Tło: <code>bg-loss/15</code> (oklch 0.65 0.15 20 @ 15%)<br/>
-        Tekst: <code>text-loss</code> (oklch 0.65 0.15 20)<br/>
-        Wariant <code>secondary</code> nie wstrzykuje żadnego <code>dark:bg-*</code>,
-        więc klasy z PLBadge faktycznie wygrywają kaskadę.
-      </div>
+    <div class="panel" style="margin-top: 24px; max-width: 980px">
+      <div class="label">Porównanie surowych kolorów</div>
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>OKLCH</th>
+            <th>Hex (≈)</th>
+            <th>Próbka</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Tło karty (dark)</td>
+            <td>oklch(0.20 0.006 60)</td>
+            <td>#1a1715</td>
+            <td><span class="swatch" style="background: var(--card)"></span></td>
+          </tr>
+          <tr>
+            <td>text-loss</td>
+            <td>oklch(0.65 0.15 20)</td>
+            <td>≈ #c66e57</td>
+            <td><span class="swatch" style="background: var(--loss)"></span></td>
+          </tr>
+          <tr>
+            <td>bg-loss/15 (na karcie)</td>
+            <td>oklch 0.65 0.15 20 @ 15%</td>
+            <td>≈ #2e231d</td>
+            <td>
+              <span
+                class="swatch"
+                style="background: color-mix(in oklch, var(--loss) 15%, var(--card))"
+              ></span>
+            </td>
+          </tr>
+          <tr>
+            <td>dark:bg-destructive/60 (na karcie)</td>
+            <td>oklch 0.65 0.20 25 @ 60%</td>
+            <td>≈ #8a3f30</td>
+            <td>
+              <span
+                class="swatch"
+                style="background: color-mix(in oklch, var(--destructive) 60%, var(--card))"
+              ></span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
-  </div>
-
-  <div class="panel" style="margin-top: 24px; max-width: 980px;">
-    <div class="label">Porównanie surowych kolorów</div>
-    <table>
-      <thead>
-        <tr><th></th><th>OKLCH</th><th>Hex (≈)</th><th>Próbka</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Tło karty (dark)</td>
-          <td>oklch(0.20 0.006 60)</td>
-          <td>#1a1715</td>
-          <td><span class="swatch" style="background: var(--card)"></span></td>
-        </tr>
-        <tr>
-          <td>text-loss</td>
-          <td>oklch(0.65 0.15 20)</td>
-          <td>≈ #c66e57</td>
-          <td><span class="swatch" style="background: var(--loss)"></span></td>
-        </tr>
-        <tr>
-          <td>bg-loss/15 (na karcie)</td>
-          <td>oklch 0.65 0.15 20 @ 15%</td>
-          <td>≈ #2e231d</td>
-          <td><span class="swatch" style="background: color-mix(in oklch, var(--loss) 15%, var(--card))"></span></td>
-        </tr>
-        <tr>
-          <td>dark:bg-destructive/60 (na karcie)</td>
-          <td>oklch 0.65 0.20 25 @ 60%</td>
-          <td>≈ #8a3f30</td>
-          <td><span class="swatch" style="background: color-mix(in oklch, var(--destructive) 60%, var(--card))"></span></td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-</body>
+  </body>
 </html>

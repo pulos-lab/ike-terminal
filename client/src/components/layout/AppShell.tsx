@@ -4,9 +4,22 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { useSession, signOut } from '@/lib/auth-client';
 import {
-  LayoutDashboard, Briefcase, ArrowLeftRight, Coins,
-  DollarSign, Wallet, Upload, Moon, Sun, LogOut, MoreHorizontal,
-  KeyRound, Bug, ChevronUp, PanelLeftClose, Landmark,
+  LayoutDashboard,
+  Briefcase,
+  ArrowLeftRight,
+  Coins,
+  DollarSign,
+  Wallet,
+  Upload,
+  Moon,
+  Sun,
+  LogOut,
+  MoreHorizontal,
+  KeyRound,
+  Bug,
+  ChevronUp,
+  PanelLeftClose,
+  Landmark,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -84,7 +97,13 @@ function NavItem({
   );
 }
 
-function NavContent({ onNavigate, collapsed = false }: { onNavigate?: () => void; collapsed?: boolean }) {
+function NavContent({
+  onNavigate,
+  collapsed = false,
+}: {
+  onNavigate?: () => void;
+  collapsed?: boolean;
+}) {
   // Korekty i koszty ma stały wpis w baseNavItems (panel łączy zdarzenia korporacyjne
   // + dodatkowe koszty; wcześniejsze osobne "Inne koszty" i "Zdarzenia korp." zostały
   // zunifikowane). Link zawsze widoczny — panel pokazuje empty state gdy brak danych.
@@ -190,63 +209,61 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         <NavContent collapsed={collapsed} />
         {!collapsed && (
-        <div className="mt-auto p-3 space-y-2">
-          <div className="grid grid-cols-2 gap-1.5">
-            <button
-              onClick={toggleTheme}
-              className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border hover:border-border-hover hover:bg-accent text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-              {dark ? 'Light' : 'Dark'}
-            </button>
-            <button
-              onClick={() => setImportOpen(true)}
-              className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border hover:border-border-hover hover:bg-accent text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Upload className="h-3.5 w-3.5" />
-              Import
-            </button>
-          </div>
-          {lastImport && (
-            <p className="text-[10px] text-muted-foreground px-1">
-              Ostatni import: {lastImport}
-            </p>
-          )}
-          {session?.user && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="w-full flex items-center justify-between pt-2 border-t border-border text-xs text-muted-foreground hover:text-foreground transition-colors group">
-                  <span className="flex items-center gap-1.5 min-w-0">
-                    <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-semibold text-foreground flex-shrink-0">
-                      {session.user.email?.[0]?.toUpperCase() ?? '?'}
+          <div className="mt-auto p-3 space-y-2">
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                onClick={toggleTheme}
+                className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border hover:border-border-hover hover:bg-accent text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+                {dark ? 'Light' : 'Dark'}
+              </button>
+              <button
+                onClick={() => setImportOpen(true)}
+                className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border hover:border-border-hover hover:bg-accent text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                Import
+              </button>
+            </div>
+            {lastImport && (
+              <p className="text-[10px] text-muted-foreground px-1">Ostatni import: {lastImport}</p>
+            )}
+            {session?.user && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="w-full flex items-center justify-between pt-2 border-t border-border text-xs text-muted-foreground hover:text-foreground transition-colors group">
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-semibold text-foreground flex-shrink-0">
+                        {session.user.email?.[0]?.toUpperCase() ?? '?'}
+                      </span>
+                      <span className="truncate">{session.user.email}</span>
                     </span>
-                    <span className="truncate">{session.user.email}</span>
-                  </span>
-                  <ChevronUp className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" side="top" className="w-52">
-                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal truncate">
-                  {session.user.email}
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setChangePasswordOpen(true)}>
-                  <KeyRound className="h-4 w-4" />
-                  Zmień hasło
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setBugReportOpen(true)}>
-                  <Bug className="h-4 w-4" />
-                  Zgłoś błąd
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={handleLogout} variant="destructive">
-                  <LogOut className="h-4 w-4" />
-                  Wyloguj
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
+                    <ChevronUp className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" side="top" className="w-52">
+                  <DropdownMenuLabel className="text-xs text-muted-foreground font-normal truncate">
+                    {session.user.email}
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setChangePasswordOpen(true)}>
+                    <KeyRound className="h-4 w-4" />
+                    Zmień hasło
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setBugReportOpen(true)}>
+                    <Bug className="h-4 w-4" />
+                    Zgłoś błąd
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={handleLogout} variant="destructive">
+                    <LogOut className="h-4 w-4" />
+                    Wyloguj
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
         )}
       </aside>
 
@@ -298,15 +315,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <MetricsBar />
 
-        <main className="flex-1 overflow-auto p-4 md:p-6 pb-20 md:pb-6">
-          {children}
-        </main>
+        <main className="flex-1 overflow-auto p-4 md:p-6 pb-20 md:pb-6">{children}</main>
       </div>
 
       <BottomTabBar />
 
       <ImportDialog open={importOpen} onOpenChange={setImportOpen} />
-      <ChangePasswordDialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen} hideTrigger />
+      <ChangePasswordDialog
+        open={changePasswordOpen}
+        onOpenChange={setChangePasswordOpen}
+        hideTrigger
+      />
       <BugReportDialog open={bugReportOpen} onOpenChange={setBugReportOpen} hideTrigger />
     </div>
   );

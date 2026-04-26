@@ -29,13 +29,13 @@ const EXCLUDED = new Set(['auth.db', 'price_history.db']);
 function listPortfolios(): string[] {
   const entries = readdirSync(config.dataDir, { withFileTypes: true });
   return entries
-    .filter(e => e.isFile() && e.name.endsWith('.db') && !EXCLUDED.has(e.name))
-    .map(e => basename(e.name, '.db'))
+    .filter((e) => e.isFile() && e.name.endsWith('.db') && !EXCLUDED.has(e.name))
+    .map((e) => basename(e.name, '.db'))
     .sort();
 }
 
 function parseArgs(): { only: string | null } {
-  const only = process.argv.find(a => a.startsWith('--only='))?.slice('--only='.length) ?? null;
+  const only = process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length) ?? null;
   return { only };
 }
 
@@ -48,16 +48,21 @@ async function main() {
     process.exit(0);
   }
 
-  console.log(`Reconciling paymentCurrency across ${portfolios.length} portfolio(s) in ${config.dataDir}\n`);
+  console.log(
+    `Reconciling paymentCurrency across ${portfolios.length} portfolio(s) in ${config.dataDir}\n`,
+  );
 
   let totalUpdated = 0;
   let totalWarnings = 0;
-  const changed: Array<{ pid: string; updated: number; warnings: number; bossaDegiroTxs: number }> = [];
+  const changed: Array<{ pid: string; updated: number; warnings: number; bossaDegiroTxs: number }> =
+    [];
 
   for (const pid of portfolios) {
     try {
       const txs = getAllTransactions(pid);
-      const bossaDegiroTxs = txs.filter(t => t.source === 'bossa' || t.source === 'degiro').length;
+      const bossaDegiroTxs = txs.filter(
+        (t) => t.source === 'bossa' || t.source === 'degiro',
+      ).length;
 
       const { updatedCount, warnings } = reconcilePaymentCurrencies(pid, ['bossa', 'degiro']);
       totalUpdated += updatedCount;
@@ -65,9 +70,12 @@ async function main() {
 
       if (updatedCount > 0 || warnings.length > 0) {
         changed.push({ pid, updated: updatedCount, warnings: warnings.length, bossaDegiroTxs });
-        console.log(`  ${pid}: ${updatedCount} updated, ${warnings.length} warnings (${bossaDegiroTxs} bossa/degiro txs)`);
+        console.log(
+          `  ${pid}: ${updatedCount} updated, ${warnings.length} warnings (${bossaDegiroTxs} bossa/degiro txs)`,
+        );
         for (const w of warnings.slice(0, 3)) console.log(`      ! ${w}`);
-        if (warnings.length > 3) console.log(`      ... and ${warnings.length - 3} more warning(s)`);
+        if (warnings.length > 3)
+          console.log(`      ... and ${warnings.length - 3} more warning(s)`);
       } else {
         console.log(`  ${pid}: clean (${bossaDegiroTxs} bossa/degiro txs)`);
       }
@@ -83,7 +91,7 @@ async function main() {
   console.log(`Portfolios with changes:    ${changed.length}`);
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error(err);
   process.exit(1);
 });

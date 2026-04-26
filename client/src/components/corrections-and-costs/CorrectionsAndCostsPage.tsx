@@ -3,11 +3,24 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidateCorporateActions } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import {
@@ -78,7 +91,10 @@ interface AdditionalCost {
 
 // ─── SUBKIND META (corporate actions) ────────────────────────────────────────
 
-const SUBKIND_META: Record<Subkind, { label: string; variant: 'success' | 'info' | 'warning'; tooltip: string }> = {
+const SUBKIND_META: Record<
+  Subkind,
+  { label: string; variant: 'success' | 'info' | 'warning'; tooltip: string }
+> = {
   nominal_reduction: {
     label: 'Zwrot kapitału',
     variant: 'success',
@@ -141,16 +157,23 @@ function SubkindBadge({ subkind }: { subkind?: Subkind }) {
  */
 type CostVirtualCategory = 'fee' | 'commission_refund' | 'trade_fee' | 'interest' | 'other';
 
-function virtualCategory(c: { category: AdditionalCost['category']; subkind?: string }): CostVirtualCategory {
+function virtualCategory(c: {
+  category: AdditionalCost['category'];
+  subkind?: string;
+}): CostVirtualCategory {
   if (c.category === 'other' && c.subkind === 'interest') return 'interest';
   return c.category;
 }
 
-const COST_CATEGORY_META: Record<CostVirtualCategory, { label: string; color: string; tooltip: string }> = {
+const COST_CATEGORY_META: Record<
+  CostVirtualCategory,
+  { label: string; color: string; tooltip: string }
+> = {
   fee: {
     label: 'Opłata',
     color: 'bg-loss/15 text-loss border-loss/30',
-    tooltip: 'Opłaty brokerskie i giełdowe (prowizje za wnioski, blokady na oferty skupu, exchange fees).',
+    tooltip:
+      'Opłaty brokerskie i giełdowe (prowizje za wnioski, blokady na oferty skupu, exchange fees).',
   },
   commission_refund: {
     label: 'Zwrot prowizji',
@@ -264,14 +287,22 @@ function ResolveDialog({
 
           <div>
             <label className="text-xs text-muted-foreground">Ticker</label>
-            <Input value={ticker} onChange={(e) => setTicker(e.target.value)} placeholder="np. MOSTALZAB" />
+            <Input
+              value={ticker}
+              onChange={(e) => setTicker(e.target.value)}
+              placeholder="np. MOSTALZAB"
+            />
           </div>
 
           <div>
             <label className="text-xs text-muted-foreground">
               ISIN (opcjonalny — pobrany z historii jeśli pusty)
             </label>
-            <Input value={isin} onChange={(e) => setIsin(e.target.value)} placeholder="np. PLMSTLZ00019" />
+            <Input
+              value={isin}
+              onChange={(e) => setIsin(e.target.value)}
+              placeholder="np. PLMSTLZ00019"
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -387,7 +418,7 @@ function AddCostDialog({
   const [currency, setCurrency] = useState(defaultCurrency);
   const [description, setDescription] = useState('');
 
-  const selected = ADD_CATEGORIES.find(c => c.value === categoryValue) ?? ADD_CATEGORIES[0];
+  const selected = ADD_CATEGORIES.find((c) => c.value === categoryValue) ?? ADD_CATEGORIES[0];
 
   const createMut = useMutation({
     mutationFn: () => {
@@ -395,9 +426,7 @@ function AddCostDialog({
       // Jeśli user wpisał jawnie znak, szanujemy go (nadpisuje default).
       const raw = Number(amount);
       const abs = Math.abs(raw);
-      const signedAmount = raw < 0
-        ? raw
-        : selected.defaultSign === 'negative' ? -abs : abs;
+      const signedAmount = raw < 0 ? raw : selected.defaultSign === 'negative' ? -abs : abs;
       return api.createAdditionalCost({
         date,
         category: selected.category,
@@ -419,13 +448,14 @@ function AddCostDialog({
     onError: (e: Error) => toast.error(`Nie udało się dodać: ${e.message}`),
   });
 
-  const previewAmount = amount && !isNaN(Number(amount))
-    ? (() => {
-        const raw = Number(amount);
-        const abs = Math.abs(raw);
-        return raw < 0 ? raw : selected.defaultSign === 'negative' ? -abs : abs;
-      })()
-    : null;
+  const previewAmount =
+    amount && !isNaN(Number(amount))
+      ? (() => {
+          const raw = Number(amount);
+          const abs = Math.abs(raw);
+          return raw < 0 ? raw : selected.defaultSign === 'negative' ? -abs : abs;
+        })()
+      : null;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -433,8 +463,8 @@ function AddCostDialog({
         <DialogHeader>
           <DialogTitle>Dodaj operację — Pozostałe przepływy</DialogTitle>
           <DialogDescription>
-            Operacja zostanie dodana jako ręczna (source='manual'). Wpływa na saldo gotówki portfela.
-            Nie jest liczona jako wpłata w MWR/XIRR.
+            Operacja zostanie dodana jako ręczna (source='manual'). Wpływa na saldo gotówki
+            portfela. Nie jest liczona jako wpłata w MWR/XIRR.
           </DialogDescription>
         </DialogHeader>
 
@@ -446,7 +476,7 @@ function AddCostDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ADD_CATEGORIES.map(c => (
+                {ADD_CATEGORIES.map((c) => (
                   <SelectItem key={c.value} value={c.value}>
                     {c.label}
                   </SelectItem>
@@ -474,7 +504,8 @@ function AddCostDialog({
 
           <div>
             <label className="text-xs text-muted-foreground">
-              Kwota * (znak dobrany automatycznie: {selected.defaultSign === 'negative' ? 'ujemna = koszt' : 'dodatnia = wpływ'})
+              Kwota * (znak dobrany automatycznie:{' '}
+              {selected.defaultSign === 'negative' ? 'ujemna = koszt' : 'dodatnia = wpływ'})
             </label>
             <Input
               type="number"
@@ -484,7 +515,9 @@ function AddCostDialog({
               placeholder="np. 15.76"
             />
             {previewAmount !== null && (
-              <p className={`text-[11px] mt-1 tabular-nums ${previewAmount < 0 ? 'text-loss' : 'text-gain'}`}>
+              <p
+                className={`text-[11px] mt-1 tabular-nums ${previewAmount < 0 ? 'text-loss' : 'text-gain'}`}
+              >
                 Zostanie zapisane jako: {formatCurrency(previewAmount, currency || 'PLN')}
               </p>
             )}
@@ -503,7 +536,9 @@ function AddCostDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Anuluj</Button>
+          <Button variant="outline" onClick={onClose}>
+            Anuluj
+          </Button>
           <Button
             onClick={() => createMut.mutate()}
             disabled={!amount || !date || !currency || createMut.isPending}
@@ -545,9 +580,7 @@ function SummaryCard({
           : '';
   // Empty currency = count/raw number (np. "Niedomknięte" pokazuje ilość). Intl.NumberFormat
   // wymaga validnego ISO kodu, więc fallback na toLocaleString dla raw liczb.
-  const formatted = currency
-    ? formatCurrency(value, currency)
-    : value.toLocaleString('pl-PL');
+  const formatted = currency ? formatCurrency(value, currency) : value.toLocaleString('pl-PL');
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -573,12 +606,20 @@ export function CorrectionsAndCostsPage() {
   const [deletingCA, setDeletingCA] = useState<CorporateAction | null>(null);
   const [deletingCost, setDeletingCost] = useState<AdditionalCost | null>(null);
 
-  const { data: corpData, isLoading: corpLoading, error: corpError } = useQuery({
+  const {
+    data: corpData,
+    isLoading: corpLoading,
+    error: corpError,
+  } = useQuery({
     queryKey: QUERY_KEYS.corporateActions,
     queryFn: () => api.getCorporateActions(),
   });
 
-  const { data: costsData, isLoading: costsLoading, error: costsError } = useQuery({
+  const {
+    data: costsData,
+    isLoading: costsLoading,
+    error: costsError,
+  } = useQuery({
     queryKey: QUERY_KEYS.additionalCosts,
     queryFn: () => api.getAdditionalCosts(),
   });
@@ -705,9 +746,9 @@ export function CorrectionsAndCostsPage() {
                 <Info className="h-3 w-3 text-muted-foreground cursor-help" />
               </UITooltipTrigger>
               <UITooltipContent className="max-w-sm">
-                Zwroty kapitału (np. obniżenie nominału), korekty wykupu, wezwania skupu.
-                Cash wpływa na konto, pozycja akcyjna bez zmian. MWR/TWR liczy te wartości
-                jako zrealizowany zwrot z trzymania pozycji.
+                Zwroty kapitału (np. obniżenie nominału), korekty wykupu, wezwania skupu. Cash
+                wpływa na konto, pozycja akcyjna bez zmian. MWR/TWR liczy te wartości jako
+                zrealizowany zwrot z trzymania pozycji.
               </UITooltipContent>
             </UITooltip>
           </CardTitle>
@@ -850,10 +891,11 @@ export function CorrectionsAndCostsPage() {
                   Opłaty brokerskie i giełdowe, zwroty prowizji, podatek transakcyjny (Tax IFTT),
                   odsetki od wolnych środków, niestandardowe operacje (rights issue). Wchodzą do
                   salda gotówki ale NIE są liczone jako wpłaty w MWR/XIRR.
-                  <br /><br />
-                  <strong>Uwaga:</strong> swap i rollover dla pozycji CFD są zapisane
-                  bezpośrednio na transakcji (pola Transaction.swap/rollover) i widoczne w
-                  zakładce Transakcje oraz w szczegółach Closed trades, nie tutaj.
+                  <br />
+                  <br />
+                  <strong>Uwaga:</strong> swap i rollover dla pozycji CFD są zapisane bezpośrednio
+                  na transakcji (pola Transaction.swap/rollover) i widoczne w zakładce Transakcje
+                  oraz w szczegółach Closed trades, nie tutaj.
                 </UITooltipContent>
               </UITooltip>
             </span>
@@ -870,16 +912,45 @@ export function CorrectionsAndCostsPage() {
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
             {(() => {
               // Podziel `other` na 'interest' vs reszta.
-              const interestOps = costs.filter((c) => c.category === 'other' && c.subkind === 'interest');
-              const otherRestOps = costs.filter((c) => c.category === 'other' && c.subkind !== 'interest');
+              const interestOps = costs.filter(
+                (c) => c.category === 'other' && c.subkind === 'interest',
+              );
+              const otherRestOps = costs.filter(
+                (c) => c.category === 'other' && c.subkind !== 'interest',
+              );
               const interestTotal = interestOps.reduce((s, o) => s + o.amount, 0);
               const otherRestTotal = otherRestOps.reduce((s, o) => s + o.amount, 0);
               return [
-                { virtualCat: 'fee' as const, label: 'Opłaty', total: costTotals.fees, count: costs.filter((c) => c.category === 'fee').length },
-                { virtualCat: 'commission_refund' as const, label: 'Zwroty prowizji', total: costTotals.commissionRefunds, count: costs.filter((c) => c.category === 'commission_refund').length },
-                { virtualCat: 'trade_fee' as const, label: 'Podatek tx / swap', total: costTotals.tradeFees, count: costs.filter((c) => c.category === 'trade_fee').length },
-                { virtualCat: 'interest' as const, label: 'Odsetki', total: interestTotal, count: interestOps.length },
-                { virtualCat: 'other' as const, label: 'Inne', total: otherRestTotal, count: otherRestOps.length },
+                {
+                  virtualCat: 'fee' as const,
+                  label: 'Opłaty',
+                  total: costTotals.fees,
+                  count: costs.filter((c) => c.category === 'fee').length,
+                },
+                {
+                  virtualCat: 'commission_refund' as const,
+                  label: 'Zwroty prowizji',
+                  total: costTotals.commissionRefunds,
+                  count: costs.filter((c) => c.category === 'commission_refund').length,
+                },
+                {
+                  virtualCat: 'trade_fee' as const,
+                  label: 'Podatek tx / swap',
+                  total: costTotals.tradeFees,
+                  count: costs.filter((c) => c.category === 'trade_fee').length,
+                },
+                {
+                  virtualCat: 'interest' as const,
+                  label: 'Odsetki',
+                  total: interestTotal,
+                  count: interestOps.length,
+                },
+                {
+                  virtualCat: 'other' as const,
+                  label: 'Inne',
+                  total: otherRestTotal,
+                  count: otherRestOps.length,
+                },
               ];
             })().map((tile) => {
               if (tile.count === 0) return null;
@@ -932,7 +1003,9 @@ export function CorrectionsAndCostsPage() {
                       <TableCell>
                         <CostCategoryBadge category={virtualCategory(c)} />
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{c.description}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {c.description}
+                      </TableCell>
                       <TableCell
                         className={`text-right font-mono tabular-nums ${
                           c.amount < 0 ? 'text-loss' : c.amount > 0 ? 'text-gain' : ''

@@ -58,9 +58,7 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
     const prevValue = data[i - 1].portfolioValue;
     if (prevValue > 0) {
       const cashFlow = data[i].investedCumulative - data[i - 1].investedCumulative;
-      dailyReturns.push(
-        (data[i].portfolioValue - prevValue - cashFlow) / prevValue
-      );
+      dailyReturns.push((data[i].portfolioValue - prevValue - cashFlow) / prevValue);
     }
   }
 
@@ -82,30 +80,32 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   // PLN-znormalizowany w engine). Dla rzeczywistej stopy zwrotu inwestora
   // (money-weighted) porównaj z XIRR pokazywanym osobno.
   const twrTotalGrowth = 1 + (last.twrPct - first.twrPct) / 100;
-  const cagr = years > 0 && twrTotalGrowth > 0
-    ? (Math.pow(twrTotalGrowth, 1 / years) - 1) * 100
-    : 0;
+  const cagr =
+    years > 0 && twrTotalGrowth > 0 ? (Math.pow(twrTotalGrowth, 1 / years) - 1) * 100 : 0;
 
   // Volatility (annualized std dev of daily returns)
   const tradingDaysPerYear = 252;
   const meanReturn = dailyReturns.reduce((s, r) => s + r, 0) / dailyReturns.length;
-  const variance = dailyReturns.reduce((s, r) => s + (r - meanReturn) ** 2, 0) / dailyReturns.length;
+  const variance =
+    dailyReturns.reduce((s, r) => s + (r - meanReturn) ** 2, 0) / dailyReturns.length;
   const dailyVol = Math.sqrt(variance);
   const volatility = dailyVol * Math.sqrt(tradingDaysPerYear) * 100;
 
   // Sharpe Ratio
   const dailyRiskFree = RISK_FREE_RATE / tradingDaysPerYear;
-  const excessReturns = dailyReturns.map(r => r - dailyRiskFree);
+  const excessReturns = dailyReturns.map((r) => r - dailyRiskFree);
   const meanExcess = excessReturns.reduce((s, r) => s + r, 0) / excessReturns.length;
   const sharpeRatio = dailyVol > 0 ? (meanExcess / dailyVol) * Math.sqrt(tradingDaysPerYear) : 0;
 
   // Sortino Ratio (uses only downside deviation)
-  const downsideReturns = excessReturns.filter(r => r < 0);
-  const downsideVariance = downsideReturns.length > 0
-    ? downsideReturns.reduce((s, r) => s + r ** 2, 0) / dailyReturns.length
-    : 0;
+  const downsideReturns = excessReturns.filter((r) => r < 0);
+  const downsideVariance =
+    downsideReturns.length > 0
+      ? downsideReturns.reduce((s, r) => s + r ** 2, 0) / dailyReturns.length
+      : 0;
   const downsideDev = Math.sqrt(downsideVariance);
-  const sortinoRatio = downsideDev > 0 ? (meanExcess / downsideDev) * Math.sqrt(tradingDaysPerYear) : 0;
+  const sortinoRatio =
+    downsideDev > 0 ? (meanExcess / downsideDev) * Math.sqrt(tradingDaysPerYear) : 0;
 
   // Max Drawdown & Max Drawdown Duration — oparte o indeks TWR, nie o
   // portfolioValue. Czysty portfolioValue rośnie z wpłat i sztucznie
@@ -136,14 +136,14 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   }
 
   // Calmar Ratio (CAGR / Max Drawdown)
-  const calmarRatio = maxDrawdown > 0 ? (cagr / 100) / maxDrawdown : 0;
+  const calmarRatio = maxDrawdown > 0 ? cagr / 100 / maxDrawdown : 0;
 
   // Best / Worst Day
   const bestDay = Math.max(...dailyReturns) * 100;
   const worstDay = Math.min(...dailyReturns) * 100;
 
   // Win Rate
-  const winDays = dailyReturns.filter(r => r > 0).length;
+  const winDays = dailyReturns.filter((r) => r > 0).length;
   const winRate = (winDays / dailyReturns.length) * 100;
 
   return {
@@ -162,7 +162,6 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   };
 }
 
-
 export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }: Props) {
   const metrics = useMemo(() => computeMetrics(data), [data]);
 
@@ -170,7 +169,8 @@ export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }:
     return null;
   }
 
-  const returnColor = (v: number) => v > 0 ? 'green' as const : v < 0 ? 'red' as const : 'default' as const;
+  const returnColor = (v: number) =>
+    v > 0 ? ('green' as const) : v < 0 ? ('red' as const) : ('default' as const);
   const hasBenchmark = showBenchmark && metrics.benchmarkReturn !== 0;
 
   return (
@@ -209,34 +209,16 @@ export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }:
           value={formatNumber(metrics.sortinoRatio)}
           tooltip="Miara efektywności inwestycji oparta na stopie zwrotu skorygowanej o ryzyko spadkowe (downside deviation). W odróżnieniu od wskaźnika Sharpe, uwzględnia wyłącznie zmienność ujemnych odchyleń od docelowej stopy zwrotu, dokładniej odzwierciedlając realne ryzyko straty. Wartości > 1 uznaje się za dobre, > 2 — za bardzo dobre."
         />
-        <StatTile
-          label="Max Drawdown"
-          value={formatPercent(-metrics.maxDrawdown)}
-          color="red"
-        />
-        <StatTile
-          label="Max DD Duration"
-          value={`${metrics.maxDrawdownDuration} dni`}
-        />
+        <StatTile label="Max Drawdown" value={formatPercent(-metrics.maxDrawdown)} color="red" />
+        <StatTile label="Max DD Duration" value={`${metrics.maxDrawdownDuration} dni`} />
         <StatTile
           label="Calmar Ratio"
           value={formatNumber(metrics.calmarRatio)}
           tooltip="Roczny zwrot podzielony przez maksymalne obsunięcie (Max Drawdown). Mierzy, ile zysku portfel generuje w stosunku do najgorszego możliwego scenariusza straty."
         />
-        <StatTile
-          label="Najlepszy dzień"
-          value={formatPercent(metrics.bestDay)}
-          color="green"
-        />
-        <StatTile
-          label="Najgorszy dzień"
-          value={formatPercent(metrics.worstDay)}
-          color="red"
-        />
-        <StatTile
-          label="Win Rate"
-          value={`${formatNumber(metrics.winRate, 1)}%`}
-        />
+        <StatTile label="Najlepszy dzień" value={formatPercent(metrics.bestDay)} color="green" />
+        <StatTile label="Najgorszy dzień" value={formatPercent(metrics.worstDay)} color="red" />
+        <StatTile label="Win Rate" value={`${formatNumber(metrics.winRate, 1)}%`} />
       </div>
     </TooltipProvider>
   );
@@ -266,9 +248,7 @@ function StatTile({ label, value, color = 'default', tooltip, subtext, disabled 
         {label}
         {tooltip && <Info className="h-3 w-3 text-muted-foreground/60" />}
       </p>
-      <p className={cn('text-base font-bold tabular-nums tracking-tight', colorClass)}>
-        {value}
-      </p>
+      <p className={cn('text-base font-bold tabular-nums tracking-tight', colorClass)}>{value}</p>
       {subtext && (
         <p className="text-[10px] text-muted-foreground mt-0.5 tabular-nums">{subtext}</p>
       )}

@@ -5,7 +5,7 @@ import type { Request, Response, NextFunction, RequestHandler } from 'express';
  * Eliminates repetitive try/catch blocks in route files.
  */
 export function asyncHandler(
-  fn: (req: Request<any, any, any, any>, res: Response, next: NextFunction) => Promise<any> | any
+  fn: (req: Request<any, any, any, any>, res: Response, next: NextFunction) => Promise<any> | any,
 ): RequestHandler {
   return (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch((error) => {

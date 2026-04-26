@@ -35,21 +35,24 @@ export const TENDER_OFFER_MAP: TenderOfferEntry[] = [
     ticker: 'GAMIVO',
     date: '2024-06-14',
     pricePerShare: 100,
-    source: 'https://www.stockwatch.pl/wiadomosci/gamivo-rozpoczelo-skup-akcji-wlasnych-po-100-zl-za-sztuke,akcje,307306',
+    source:
+      'https://www.stockwatch.pl/wiadomosci/gamivo-rozpoczelo-skup-akcji-wlasnych-po-100-zl-za-sztuke,akcje,307306',
     note: 'Skup akcji własnych — pierwsza fala po 100 zł',
   },
   {
     ticker: 'GAMIVO',
     date: '2025-04-11',
     pricePerShare: 35,
-    source: 'https://biznes.pap.pl/wiadomosci/firmy/gamivo-zaprasza-do-skladania-ofert-sprzedazy-do-99142-akcji-w-cenie-35-zlszt',
+    source:
+      'https://biznes.pap.pl/wiadomosci/firmy/gamivo-zaprasza-do-skladania-ofert-sprzedazy-do-99142-akcji-w-cenie-35-zlszt',
     note: 'Skup akcji własnych po 35 zł',
   },
   {
     ticker: 'GAMIVO',
     date: '2025-06-26',
     pricePerShare: 35,
-    source: 'https://biznes.pap.pl/wiadomosci/firmy/gamivo-sa-102025-zaproszenie-do-skladania-ofert-sprzedazy-akcji',
+    source:
+      'https://biznes.pap.pl/wiadomosci/firmy/gamivo-sa-102025-zaproszenie-do-skladania-ofert-sprzedazy-akcji',
     note: 'Skup akcji własnych — kolejna fala po 35 zł',
   },
 
@@ -58,7 +61,8 @@ export const TENDER_OFFER_MAP: TenderOfferEntry[] = [
     ticker: 'TSGAMES',
     date: '2024-02-27',
     pricePerShare: 120,
-    source: 'https://www.bankier.pl/wiadomosc/TEN-SQUARE-GAMES-S-A-Zaproszenie-do-skladania-ofert-sprzedazy-akcji-8693049.html',
+    source:
+      'https://www.bankier.pl/wiadomosc/TEN-SQUARE-GAMES-S-A-Zaproszenie-do-skladania-ofert-sprzedazy-akcji-8693049.html',
     note: 'Buy-back po 120 zł/szt',
   },
 
@@ -66,8 +70,9 @@ export const TENDER_OFFER_MAP: TenderOfferEntry[] = [
   {
     ticker: 'MOSTALZAB',
     date: '2026-04-13',
-    pricePerShare: 11.50,
-    source: 'https://www.stockwatch.pl/wiadomosci/mostostal-zabrze-buy-back-skup-akcji-2026,akcje,368301',
+    pricePerShare: 11.5,
+    source:
+      'https://www.stockwatch.pl/wiadomosci/mostostal-zabrze-buy-back-skup-akcji-2026,akcje,368301',
     note: 'Buy-back 691k akcji po 11,50 zł',
   },
 ];
@@ -79,5 +84,5 @@ export const TENDER_OFFER_MAP: TenderOfferEntry[] = [
  */
 export function lookupTenderPrice(ticker: string, date: string): TenderOfferEntry | null {
   const isoDate = date.slice(0, 10); // tolerant na "YYYY-MM-DDTHH:MM:SS"
-  return TENDER_OFFER_MAP.find(e => e.ticker === ticker && e.date === isoDate) ?? null;
+  return TENDER_OFFER_MAP.find((e) => e.ticker === ticker && e.date === isoDate) ?? null;
 }
