@@ -15,7 +15,7 @@ export function decodeLatin1(buffer: Buffer): string {
  */
 export function decodeCSVBuffer(buffer: Buffer): string {
   // UTF-8 BOM
-  if (buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+  if (buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
     return buffer.toString('utf-8');
   }
   // Check if buffer is valid UTF-8 with multi-byte sequences (Polish chars like ł, ą, ź).
@@ -36,20 +36,31 @@ function isValidUtf8WithMultibyte(buffer: Buffer): boolean {
   let hasMultibyte = false;
   for (let i = 0; i < buffer.length; i++) {
     const b = buffer[i];
-    if (b <= 0x7F) continue; // ASCII
+    if (b <= 0x7f) continue; // ASCII
     // 2-byte UTF-8: 110xxxxx 10xxxxxx
-    if ((b & 0xE0) === 0xC0) {
-      if (i + 1 >= buffer.length || (buffer[i + 1] & 0xC0) !== 0x80) return false;
+    if ((b & 0xe0) === 0xc0) {
+      if (i + 1 >= buffer.length || (buffer[i + 1] & 0xc0) !== 0x80) return false;
       hasMultibyte = true;
       i += 1;
-    // 3-byte UTF-8: 1110xxxx 10xxxxxx 10xxxxxx
-    } else if ((b & 0xF0) === 0xE0) {
-      if (i + 2 >= buffer.length || (buffer[i + 1] & 0xC0) !== 0x80 || (buffer[i + 2] & 0xC0) !== 0x80) return false;
+      // 3-byte UTF-8: 1110xxxx 10xxxxxx 10xxxxxx
+    } else if ((b & 0xf0) === 0xe0) {
+      if (
+        i + 2 >= buffer.length ||
+        (buffer[i + 1] & 0xc0) !== 0x80 ||
+        (buffer[i + 2] & 0xc0) !== 0x80
+      )
+        return false;
       hasMultibyte = true;
       i += 2;
-    // 4-byte UTF-8: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
-    } else if ((b & 0xF8) === 0xF0) {
-      if (i + 3 >= buffer.length || (buffer[i + 1] & 0xC0) !== 0x80 || (buffer[i + 2] & 0xC0) !== 0x80 || (buffer[i + 3] & 0xC0) !== 0x80) return false;
+      // 4-byte UTF-8: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+    } else if ((b & 0xf8) === 0xf0) {
+      if (
+        i + 3 >= buffer.length ||
+        (buffer[i + 1] & 0xc0) !== 0x80 ||
+        (buffer[i + 2] & 0xc0) !== 0x80 ||
+        (buffer[i + 3] & 0xc0) !== 0x80
+      )
+        return false;
       hasMultibyte = true;
       i += 3;
     } else {

@@ -32,47 +32,59 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <ErrorBoundary>
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster richColors position="bottom-center" closeButton theme="system" />
-        <BrowserRouter>
-          <Routes>
-            {/* Public routes */}
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/verify-email" element={<VerifyOTPPage />} />
-            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Toaster richColors position="bottom-center" closeButton theme="system" />
+          <BrowserRouter>
+            <Routes>
+              {/* Public routes */}
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/verify-email" element={<VerifyOTPPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
-            {/* Protected routes */}
-            <Route path="/app/*" element={
-              <AuthGuard>
-                <PortfolioProvider>
-                  <AppShell>
-                    <Routes>
-                      <Route path="/" element={<DashboardPage />} />
-                      <Route path="/portfolio" element={<PortfolioPage />} />
-                      <Route path="/trades" element={<TradesPage />} />
-                      <Route path="/dividends" element={<DividendsPage />} />
-                      <Route path="/currency" element={<CurrencyExchangePage />} />
-                      <Route path="/cash" element={<CashFlowPage />} />
-                      <Route path="/corrections-and-costs" element={<CorrectionsAndCostsPage />} />
-                      {/* Stare ścieżki — redirect do nowego panelu dla backward compat (bookmarks) */}
-                      <Route path="/corporate-actions" element={<Navigate to="/app/corrections-and-costs" replace />} />
-                      <Route path="/costs" element={<Navigate to="/app/corrections-and-costs" replace />} />
-                      <Route path="/admin/bugs" element={<BugReportsPage />} />
-                      <Route path="*" element={<Navigate to="/app" replace />} />
-                    </Routes>
-                  </AppShell>
-                </PortfolioProvider>
-              </AuthGuard>
-            } />
+              {/* Protected routes */}
+              <Route
+                path="/app/*"
+                element={
+                  <AuthGuard>
+                    <PortfolioProvider>
+                      <AppShell>
+                        <Routes>
+                          <Route path="/" element={<DashboardPage />} />
+                          <Route path="/portfolio" element={<PortfolioPage />} />
+                          <Route path="/trades" element={<TradesPage />} />
+                          <Route path="/dividends" element={<DividendsPage />} />
+                          <Route path="/currency" element={<CurrencyExchangePage />} />
+                          <Route path="/cash" element={<CashFlowPage />} />
+                          <Route
+                            path="/corrections-and-costs"
+                            element={<CorrectionsAndCostsPage />}
+                          />
+                          {/* Stare ścieżki — redirect do nowego panelu dla backward compat (bookmarks) */}
+                          <Route
+                            path="/corporate-actions"
+                            element={<Navigate to="/app/corrections-and-costs" replace />}
+                          />
+                          <Route
+                            path="/costs"
+                            element={<Navigate to="/app/corrections-and-costs" replace />}
+                          />
+                          <Route path="/admin/bugs" element={<BugReportsPage />} />
+                          <Route path="*" element={<Navigate to="/app" replace />} />
+                        </Routes>
+                      </AppShell>
+                    </PortfolioProvider>
+                  </AuthGuard>
+                }
+              />
 
-            {/* Catch-all */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
-      </TooltipProvider>
-    </QueryClientProvider>
+              {/* Catch-all */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </BrowserRouter>
+        </TooltipProvider>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 }

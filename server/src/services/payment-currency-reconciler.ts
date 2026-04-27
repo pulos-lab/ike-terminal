@@ -108,7 +108,7 @@ export function simulateLedger(
           const date = tx.date.slice(0, 10);
           warnings.push(
             `Transakcja ${tx.paperName} ${date}: saldo ${baseCurrency} spadło poniżej zera ` +
-            `(${newBase.toFixed(2)}) — brak pokrycia w CSV (możliwa brakująca wpłata/FX).`,
+              `(${newBase.toFixed(2)}) — brak pokrycia w CSV (możliwa brakująca wpłata/FX).`,
           );
         }
       }
@@ -138,8 +138,8 @@ export function reconcilePaymentCurrencies(
 
   for (const source of sources) {
     const baseCurrency = BASE_CURRENCY[source];
-    const sourceTxs = allTx.filter(t => t.source === source);
-    const sourceOps = allOps.filter(o => o.source === source);
+    const sourceTxs = allTx.filter((t) => t.source === source);
+    const sourceOps = allOps.filter((o) => o.source === source);
 
     if (sourceTxs.length === 0) continue;
 
@@ -176,11 +176,11 @@ const TOP_EXAMPLES = 5;
 
 function aggregateWarnings(source: ReconcileSource, sourceWarnings: string[]): string[] {
   if (sourceWarnings.length <= AGGREGATE_THRESHOLD) {
-    return sourceWarnings.map(w => `[${source}] ${w}`);
+    return sourceWarnings.map((w) => `[${source}] ${w}`);
   }
   const examples = sourceWarnings
     .slice(0, TOP_EXAMPLES)
-    .map(w => `  • ${w}`)
+    .map((w) => `  • ${w}`)
     .join('\n');
   const summary =
     `[${source}] Wykryto ${sourceWarnings.length} transakcji z niepełnym pokryciem gotówki ` +

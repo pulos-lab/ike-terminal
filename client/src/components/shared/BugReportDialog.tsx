@@ -1,8 +1,20 @@
 import { useState } from 'react';
 import { Bug, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { api } from '@/lib/api-client';
 
 const CATEGORIES = [
@@ -21,7 +33,11 @@ interface BugReportDialogProps {
   hideTrigger?: boolean;
 }
 
-export function BugReportDialog({ open: controlledOpen, onOpenChange, hideTrigger }: BugReportDialogProps = {}) {
+export function BugReportDialog({
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger,
+}: BugReportDialogProps = {}) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : internalOpen;
@@ -59,7 +75,16 @@ export function BugReportDialog({ open: controlledOpen, onOpenChange, hideTrigge
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setSuccess(false); setError(''); } }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) {
+          setSuccess(false);
+          setError('');
+        }
+      }}
+    >
       {!hideTrigger && (
         <DialogTrigger asChild>
           <Button variant="ghost" size="sm" title="Zgłoś błąd">
@@ -86,8 +111,10 @@ export function BugReportDialog({ open: controlledOpen, onOpenChange, hideTrigge
                   <SelectValue placeholder="Wybierz kategorię..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {CATEGORIES.map(c => (
-                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                  {CATEGORIES.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>
+                      {c.label}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -104,12 +131,12 @@ export function BugReportDialog({ open: controlledOpen, onOpenChange, hideTrigge
                 required
                 minLength={5}
               />
-              <p className="text-[10px] text-muted-foreground text-right">{description.length}/2000</p>
+              <p className="text-[10px] text-muted-foreground text-right">
+                {description.length}/2000
+              </p>
             </div>
 
-            {error && (
-              <p className="text-sm text-destructive">{error}</p>
-            )}
+            {error && <p className="text-sm text-destructive">{error}</p>}
 
             <Button
               type="submit"

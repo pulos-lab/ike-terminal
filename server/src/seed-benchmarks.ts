@@ -31,7 +31,7 @@ function parseBenchmarkCsv(content: string): Array<{ date: string; close: number
     const cols = lines[i].split(',');
     if (cols.length < 5) continue;
 
-    const date = cols[0].trim();   // YYYY-MM-DD
+    const date = cols[0].trim(); // YYYY-MM-DD
     const close = parseFloat(cols[4].trim()); // Zamkniecie
 
     if (date && !isNaN(close)) {
@@ -75,7 +75,7 @@ async function seedBenchmarks() {
   console.log('Benchmark seed complete.');
 }
 
-seedBenchmarks().catch(err => {
+seedBenchmarks().catch((err) => {
   console.error('Seed failed:', err);
   process.exit(1);
 });

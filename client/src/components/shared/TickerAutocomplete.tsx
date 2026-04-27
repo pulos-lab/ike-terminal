@@ -16,7 +16,12 @@ interface TickerAutocompleteProps {
   className?: string;
 }
 
-export function TickerAutocomplete({ value, onChange, placeholder = 'Wpisz ticker...', className }: TickerAutocompleteProps) {
+export function TickerAutocomplete({
+  value,
+  onChange,
+  placeholder = 'Wpisz ticker...',
+  className,
+}: TickerAutocompleteProps) {
   const [query, setQuery] = useState(value);
   const [results, setResults] = useState<TickerResult[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -82,10 +87,10 @@ export function TickerAutocomplete({ value, onChange, placeholder = 'Wpisz ticke
 
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setHighlightIndex(prev => (prev + 1) % results.length);
+      setHighlightIndex((prev) => (prev + 1) % results.length);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setHighlightIndex(prev => (prev - 1 + results.length) % results.length);
+      setHighlightIndex((prev) => (prev - 1 + results.length) % results.length);
     } else if (e.key === 'Enter' && highlightIndex >= 0) {
       e.preventDefault();
       handleSelect(results[highlightIndex]);
@@ -100,7 +105,9 @@ export function TickerAutocomplete({ value, onChange, placeholder = 'Wpisz ticke
         value={query}
         onChange={handleInputChange}
         onKeyDown={handleKeyDown}
-        onFocus={() => { if (results.length > 0) setIsOpen(true); }}
+        onFocus={() => {
+          if (results.length > 0) setIsOpen(true);
+        }}
         placeholder={placeholder}
         autoComplete="off"
       />
@@ -118,7 +125,10 @@ export function TickerAutocomplete({ value, onChange, placeholder = 'Wpisz ticke
               className={`w-full text-left px-3 py-2 text-sm hover:bg-accent cursor-pointer flex items-center justify-between gap-2 ${
                 i === highlightIndex ? 'bg-accent' : ''
               }`}
-              onMouseDown={(e) => { e.preventDefault(); handleSelect(r); }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handleSelect(r);
+              }}
               onMouseEnter={() => setHighlightIndex(i)}
             >
               <div className="flex flex-col min-w-0">

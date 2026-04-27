@@ -10,7 +10,13 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { TickerAutocomplete } from '@/components/shared/TickerAutocomplete';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
@@ -82,10 +88,14 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     if (!q || !p || q <= 0 || p <= 0) return '0';
     const value = q * p;
     const isPolish = tk.endsWith('.WA') || tk.endsWith('.NC');
-    const rate = isPolish ? (activeSettings?.commissionPl || 0) : (activeSettings?.commissionForeign || 0);
-    const min = isPolish ? (activeSettings?.minCommissionPl || 0) : (activeSettings?.minCommissionForeign || 0);
+    const rate = isPolish
+      ? activeSettings?.commissionPl || 0
+      : activeSettings?.commissionForeign || 0;
+    const min = isPolish
+      ? activeSettings?.minCommissionPl || 0
+      : activeSettings?.minCommissionForeign || 0;
     if (rate <= 0 && min <= 0) return '0';
-    const comm = Math.max(value * rate / 100, min);
+    const comm = Math.max((value * rate) / 100, min);
     return (Math.round(comm * 100) / 100).toString();
   };
 
@@ -115,7 +125,8 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currency, pricesData]);
 
-  const effectiveCurrency = currency !== 'auto' ? currency : (ticker.endsWith('.WA') || ticker.endsWith('.NC') ? 'PLN' : '');
+  const effectiveCurrency =
+    currency !== 'auto' ? currency : ticker.endsWith('.WA') || ticker.endsWith('.NC') ? 'PLN' : '';
   const showFxRate = effectiveCurrency && effectiveCurrency !== 'PLN';
 
   const createMut = useMutation({
@@ -142,12 +153,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
   });
 
   const valid =
-    date &&
-    ticker.trim() &&
-    quantity &&
-    parseFloat(quantity) > 0 &&
-    price &&
-    parseFloat(price) > 0;
+    date && ticker.trim() && quantity && parseFloat(quantity) > 0 && price && parseFloat(price) > 0;
 
   const plnPreview =
     showFxRate && fxRate && quantity && price
@@ -160,8 +166,8 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
         <DialogHeader>
           <DialogTitle>Dodaj transakcję</DialogTitle>
           <DialogDescription>
-            Ręczne dodanie transakcji (kupno lub sprzedaż). Wlicza się do MWR/XIRR.
-            Dla sprzedaży z otwartej pozycji użyj przycisku "Sprzedaj" w rzędzie pozycji.
+            Ręczne dodanie transakcji (kupno lub sprzedaż). Wlicza się do MWR/XIRR. Dla sprzedaży z
+            otwartej pozycji użyj przycisku "Sprzedaj" w rzędzie pozycji.
           </DialogDescription>
         </DialogHeader>
 
@@ -172,13 +178,19 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
           </div>
           <div>
             <label className="text-xs text-muted-foreground">Ticker *</label>
-            <TickerAutocomplete value={ticker} onChange={setTicker} placeholder="np. AAPL, CDR.WA" />
+            <TickerAutocomplete
+              value={ticker}
+              onChange={setTicker}
+              placeholder="np. AAPL, CDR.WA"
+            />
           </div>
 
           <div>
             <label className="text-xs text-muted-foreground">Typ *</label>
             <Select value={side} onValueChange={(v) => setSide(v as 'K' | 'S')}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="K">Kupno (K)</SelectItem>
                 <SelectItem value="S">Sprzedaż (S)</SelectItem>
@@ -187,8 +199,13 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
           </div>
           <div>
             <label className="text-xs text-muted-foreground">Kategoria</label>
-            <Select value={category} onValueChange={(v) => setCategory(v as 'stock' | 'etf' | 'cfd')}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+            <Select
+              value={category}
+              onValueChange={(v) => setCategory(v as 'stock' | 'etf' | 'cfd')}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="stock">Stock</SelectItem>
                 <SelectItem value="etf">ETF</SelectItem>
@@ -222,7 +239,8 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
 
           <div>
             <label className="text-xs text-muted-foreground">
-              Prowizja {!commissionTouched && <span className="text-[10px] opacity-60">(auto)</span>}
+              Prowizja{' '}
+              {!commissionTouched && <span className="text-[10px] opacity-60">(auto)</span>}
             </label>
             <Input
               type="number"
@@ -239,10 +257,14 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
           <div>
             <label className="text-xs text-muted-foreground">Waluta rozliczenia</label>
             <Select value={currency} onValueChange={setCurrency}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
-                {CURRENCIES.map(c => (
-                  <SelectItem key={c} value={c}>{c === 'auto' ? 'Auto (z tickera)' : c}</SelectItem>
+                {CURRENCIES.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c === 'auto' ? 'Auto (z tickera)' : c}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -251,7 +273,12 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
           {showFxRate && (
             <div className="md:col-span-2">
               <label className="text-xs text-muted-foreground">
-                Kurs {effectiveCurrency}/PLN *{fxRate && <span className="text-[10px] ml-1 opacity-60">(live: {getLiveFxRate(effectiveCurrency) || '—'})</span>}
+                Kurs {effectiveCurrency}/PLN *
+                {fxRate && (
+                  <span className="text-[10px] ml-1 opacity-60">
+                    (live: {getLiveFxRate(effectiveCurrency) || '—'})
+                  </span>
+                )}
               </label>
               <Input
                 type="number"
@@ -271,7 +298,9 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={createMut.isPending}>Anuluj</Button>
+          <Button variant="outline" onClick={onClose} disabled={createMut.isPending}>
+            Anuluj
+          </Button>
           <Button onClick={() => createMut.mutate()} disabled={!valid || createMut.isPending}>
             {createMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Dodaj

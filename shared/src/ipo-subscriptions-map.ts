@@ -36,9 +36,10 @@ export const IPO_SUBSCRIPTIONS_MAP: IpoSubscriptionEntry[] = [
     ticker: 'BIOCELTIX',
     series: 'G',
     subscriptionDate: '2021-03-15',
-    ipoPrice: 20.50,
+    ipoPrice: 20.5,
     isin: 'PLBCLTX00019',
-    source: 'https://biocel.pl/wp-content/uploads/2021/03/Biuletyn-Oferty-Publicznej-BIOCELTIX-S.A..pdf',
+    source:
+      'https://biocel.pl/wp-content/uploads/2021/03/Biuletyn-Oferty-Publicznej-BIOCELTIX-S.A..pdf',
     note: 'Subskrypcja Serii G, debiut NewConnect 2021-04-13',
   },
 ];
@@ -48,7 +49,12 @@ export const IPO_SUBSCRIPTIONS_MAP: IpoSubscriptionEntry[] = [
  * Zwraca `null` jeśli brak wpisu — caller powinien zostawić obie operacje
  * (Zapisy + Zwrot nadpłaty) jako zwykły withdrawal/deposit + warning.
  */
-export function lookupIpoSubscription(ticker: string, subscriptionDate: string): IpoSubscriptionEntry | null {
+export function lookupIpoSubscription(
+  ticker: string,
+  subscriptionDate: string,
+): IpoSubscriptionEntry | null {
   const isoDate = subscriptionDate.slice(0, 10);
-  return IPO_SUBSCRIPTIONS_MAP.find(e => e.ticker === ticker && e.subscriptionDate === isoDate) ?? null;
+  return (
+    IPO_SUBSCRIPTIONS_MAP.find((e) => e.ticker === ticker && e.subscriptionDate === isoDate) ?? null
+  );
 }

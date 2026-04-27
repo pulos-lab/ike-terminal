@@ -10,7 +10,13 @@
 import { getAllPortfolios, getPortfolio } from '../db/portfolio-registry.js';
 import { getAllTransactions } from '../db/transactions-repo.js';
 import { getTickerMap } from '../db/ticker-map-repo.js';
-import { dividendExistsForDateAndTicker, insertOperationsWithDedup, getLatestDividendDate, getMetadata, setMetadata } from '../db/operations-repo.js';
+import {
+  dividendExistsForDateAndTicker,
+  insertOperationsWithDedup,
+  getLatestDividendDate,
+  getMetadata,
+  setMetadata,
+} from '../db/operations-repo.js';
 import { getSharesAtDate } from './portfolio-engine.js';
 import { fetchYahooDividendEvents, fetchDividendCalendar } from './yahoo-finance.js';
 import { DIVIDEND_TAX_REGULAR, DIVIDEND_TAX_IKE_IKZE } from 'shared';
@@ -50,9 +56,7 @@ function getCountryFromExchange(exchange: string, ticker: string): string {
 }
 
 function getDividendTaxRate(country: string, settings: PortfolioSettings): number {
-  const table = (settings.isIKE || settings.isIKZE)
-    ? DIVIDEND_TAX_IKE_IKZE
-    : DIVIDEND_TAX_REGULAR;
+  const table = settings.isIKE || settings.isIKZE ? DIVIDEND_TAX_IKE_IKZE : DIVIDEND_TAX_REGULAR;
   return table[country] ?? DIVIDEND_TAX_REGULAR['PL'];
 }
 
@@ -96,8 +100,8 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
     lookbackDate.setDate(lookbackDate.getDate() - DEFAULT_LOOKBACK_DAYS);
     const lookbackStr = lookbackDate.toISOString().split('T')[0];
     const earliestTx = transactions.reduce(
-      (min, t) => t.date < min ? t.date : min,
-      transactions[0].date
+      (min, t) => (t.date < min ? t.date : min),
+      transactions[0].date,
     );
     startDate = earliestTx > lookbackStr ? lookbackStr : earliestTx;
   }
@@ -129,7 +133,7 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
         }
 
         const daysSinceEvent = Math.floor(
-          (Date.now() - new Date(event.date).getTime()) / 86_400_000
+          (Date.now() - new Date(event.date).getTime()) / 86_400_000,
         );
 
         // For recent dividends (< 30 days), check if payment has actually occurred
@@ -137,7 +141,11 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
           const calendar = await fetchDividendCalendar(entry.ticker).catch(() => null);
 
           // Payment date known and in the future → not yet paid, skip
-          if (calendar?.paymentDate && calendar.exDividendDate === event.date && calendar.paymentDate > today) {
+          if (
+            calendar?.paymentDate &&
+            calendar.exDividendDate === event.date &&
+            calendar.paymentDate > today
+          ) {
             continue;
           }
           // No payment date available for this recent ex-date → skip, wait for next scan
@@ -157,7 +165,7 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
         const netAmount = roundTo2(grossAmount - taxAmount);
 
         const taxPct = Math.round(taxRate * 100);
-        const accountType = (settings.isIKE || settings.isIKZE) ? 'IKE/IKZE' : 'zwykłe';
+        const accountType = settings.isIKE || settings.isIKZE ? 'IKE/IKZE' : 'zwykłe';
         const description = `Dywidenda ${entry.ticker} (${shares} szt. × ${event.amount} ${entry.currency}, podatek ${taxPct}% [${accountType}])`;
 
         newOperations.push({
@@ -180,9 +188,13 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
   if (newOperations.length > 0) {
     const result = insertOperationsWithDedup(newOperations, portfolioId);
     inserted = result.inserted;
-    console.log(`[dividend-scanner] ${portfolioId}: scanned ${scanned} tickers (open positions), inserted ${inserted} new dividends`);
+    console.log(
+      `[dividend-scanner] ${portfolioId}: scanned ${scanned} tickers (open positions), inserted ${inserted} new dividends`,
+    );
   } else if (scanned > 0) {
-    console.log(`[dividend-scanner] ${portfolioId}: scanned ${scanned} tickers (open positions), no new dividends`);
+    console.log(
+      `[dividend-scanner] ${portfolioId}: scanned ${scanned} tickers (open positions), no new dividends`,
+    );
   }
 
   // Mark scan as done for today

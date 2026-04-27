@@ -1,5 +1,11 @@
 import ExcelJS from 'exceljs';
-import type { Transaction, CashOperation, ParseResult, SkippedRow, InstrumentCategory } from 'shared';
+import type {
+  Transaction,
+  CashOperation,
+  ParseResult,
+  SkippedRow,
+  InstrumentCategory,
+} from 'shared';
 import { findCfdTicker } from 'shared';
 import { roundTo2 } from './utils.js';
 
@@ -50,9 +56,19 @@ const SEC_FEE_RE = /Sec Fee adj (\S+) (\d{8})/;
 // ── Currency mapping ────────────────────────────────────────────────────────
 
 const SUFFIX_CURRENCY: Record<string, string> = {
-  PL: 'PLN', US: 'USD', NL: 'EUR', DE: 'EUR', FR: 'EUR',
-  ES: 'EUR', IT: 'EUR', UK: 'GBP', NO: 'NOK', SE: 'SEK',
-  DK: 'DKK', CH: 'CHF', HK: 'HKD',
+  PL: 'PLN',
+  US: 'USD',
+  NL: 'EUR',
+  DE: 'EUR',
+  FR: 'EUR',
+  ES: 'EUR',
+  IT: 'EUR',
+  UK: 'GBP',
+  NO: 'NOK',
+  SE: 'SEK',
+  DK: 'DKK',
+  CH: 'CHF',
+  HK: 'HKD',
 };
 
 function instrumentCurrency(symbol: string): string {
@@ -80,9 +96,19 @@ function normalizeXtbSymbol(symbol: string): string {
 // ── XTB → Yahoo ticker mapping ──────────────────────────────────────────────
 
 const XTB_TO_YAHOO: Record<string, string> = {
-  PL: '.WA', US: '', NL: '.AS', DE: '.DE', UK: '.L',
-  FR: '.PA', ES: '.MC', IT: '.MI', SE: '.ST', NO: '.OL',
-  DK: '.CO', CH: '.SW', HK: '.HK',
+  PL: '.WA',
+  US: '',
+  NL: '.AS',
+  DE: '.DE',
+  UK: '.L',
+  FR: '.PA',
+  ES: '.MC',
+  IT: '.MI',
+  SE: '.ST',
+  NO: '.OL',
+  DK: '.CO',
+  CH: '.SW',
+  HK: '.HK',
 };
 
 /** Map XTB symbol to Yahoo Finance ticker format for ISIN resolution.
@@ -108,9 +134,9 @@ function normalizeType(type: string): string {
     'stock sale': 'Stock sale',
     'stock purchase': 'Stock purchase',
     'close trade': 'close trade',
-    'deposit': 'deposit',
-    'withdrawal': 'withdrawal',
-    'commission': 'commission',
+    deposit: 'deposit',
+    withdrawal: 'withdrawal',
+    commission: 'commission',
     'sec fee': 'Sec Fee',
     // Accept both space- and hyphen-spelled variants — the PL template uses
     // "Free-funds Interest" / "Free-funds Interest Tax", EN uses space.
@@ -118,18 +144,18 @@ function normalizeType(type: string): string {
     'free-funds interest': 'Free funds interest',
     'free funds interest tax': 'Free funds interest tax',
     'free-funds interest tax': 'Free funds interest tax',
-    'dividend': 'dividend',
+    dividend: 'dividend',
     // PL template has "DIVIDENT" typo
-    'divident': 'dividend',
+    divident: 'dividend',
     'withholding tax': 'withholding tax',
-    'swap': 'swap',
+    swap: 'swap',
     'tax iftt': 'tax iftt',
     'rights issue': 'rights issue',
-    'rollover': 'rollover',
+    rollover: 'rollover',
     'ikze deposit': 'deposit',
     'ike deposit': 'deposit',
     // Currency conversion between XTB sub-accounts
-    'transfer': 'fx_conversion',
+    transfer: 'fx_conversion',
     'currency conversion': 'fx_conversion',
   };
   return ALIASES[lower] || type;
@@ -241,9 +267,7 @@ export async function isXtbFormat(buffer: Buffer): Promise<boolean> {
   try {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(buffer as unknown as ArrayBuffer);
-    return wb.worksheets.some(ws =>
-      ws.name.toUpperCase().includes('CASH OPERATION')
-    );
+    return wb.worksheets.some((ws) => ws.name.toUpperCase().includes('CASH OPERATION'));
   } catch {
     return false;
   }
@@ -319,10 +343,20 @@ function detectHeaderLayout(rows: any[][]): HeaderLayout | null {
     // Symbol source — prefer Ticker > Instrument > Symbol if multiple present.
     let symbol: number | null = null;
     for (const n of HEADER_SYNONYMS.symbol) {
-      if (n in labels) { symbol = labels[n]; break; }
+      if (n in labels) {
+        symbol = labels[n];
+        break;
+      }
     }
 
-    if (id !== null && type !== null && time !== null && comment !== null && amount !== null && symbol !== null) {
+    if (
+      id !== null &&
+      type !== null &&
+      time !== null &&
+      comment !== null &&
+      amount !== null &&
+      symbol !== null
+    ) {
       return { headerIdx: i, col: { id, type, time, comment, symbol, amount } };
     }
   }
@@ -337,7 +371,8 @@ function currencyFromFileName(fileName: string | undefined): string | null {
   if (!m) return null;
   const cur = m[1];
   // Known XTB base currencies — filter to avoid false positives
-  if (['PLN', 'USD', 'EUR', 'GBP', 'CHF', 'SEK', 'NOK', 'DKK', 'HUF', 'CZK'].includes(cur)) return cur;
+  if (['PLN', 'USD', 'EUR', 'GBP', 'CHF', 'SEK', 'NOK', 'DKK', 'HUF', 'CZK'].includes(cur))
+    return cur;
   return null;
 }
 
@@ -347,7 +382,11 @@ export async function parseXtbFile(
   buffer: Buffer,
   importBatch: string,
   fileName?: string,
-): Promise<{ transactions: ParseResult<Transaction>; operations: ParseResult<CashOperation>; warnings?: string[] }> {
+): Promise<{
+  transactions: ParseResult<Transaction>;
+  operations: ParseResult<CashOperation>;
+  warnings?: string[];
+}> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer as unknown as ArrayBuffer);
 
@@ -356,15 +395,15 @@ export async function parseXtbFile(
   const tickerLookup = extractTickerLookup(wb);
   const warnings: string[] = [];
   if (categoryMap.size === 0) {
-    const hasClosedSheet = wb.worksheets.some(s => s.name.toUpperCase().includes('CLOSED'));
+    const hasClosedSheet = wb.worksheets.some((s) => s.name.toUpperCase().includes('CLOSED'));
     if (!hasClosedSheet) {
-      warnings.push('Brak arkusza "Closed Positions" — kategorie instrumentów (CFD/ETF) wykryte heurystycznie z mapy CFD');
+      warnings.push(
+        'Brak arkusza "Closed Positions" — kategorie instrumentów (CFD/ETF) wykryte heurystycznie z mapy CFD',
+      );
     }
   }
 
-  const worksheet = wb.worksheets.find(ws =>
-    ws.name.toUpperCase().includes('CASH OPERATION')
-  );
+  const worksheet = wb.worksheets.find((ws) => ws.name.toUpperCase().includes('CASH OPERATION'));
   if (!worksheet) {
     return {
       transactions: { data: [], skipped: [] },
@@ -389,7 +428,7 @@ export async function parseXtbFile(
   if (!accountCurrencyDetected) {
     warnings.push(
       'Nie wykryto waluty konta w metadanych pliku XTB ani w nazwie pliku — przyjęto PLN. ' +
-      'Jeśli konto jest prowadzone w innej walucie, zweryfikuj import.',
+        'Jeśli konto jest prowadzone w innej walucie, zweryfikuj import.',
     );
   }
 
@@ -420,13 +459,13 @@ export async function parseXtbFile(
     if (typeLower === 'total' || typeLower === 'profit/loss') continue;
 
     const timeVal = row[col.time];
-    const time = timeVal instanceof Date || typeof timeVal === 'number'
-      ? timeVal
-      : timeVal?.toString().trim() || '';
+    const time =
+      timeVal instanceof Date || typeof timeVal === 'number'
+        ? timeVal
+        : timeVal?.toString().trim() || '';
     const amountRaw = row[col.amount];
-    const amount = typeof amountRaw === 'number'
-      ? amountRaw
-      : parseFloat(amountRaw?.toString() || '0') || 0;
+    const amount =
+      typeof amountRaw === 'number' ? amountRaw : parseFloat(amountRaw?.toString() || '0') || 0;
 
     rawRows.push({
       rowNum: i + 1,
@@ -511,12 +550,19 @@ export async function parseXtbFile(
         }
       }
 
-      if (qty <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_quantity', paperName: raw.symbol }); continue; }
-      if (price <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol }); continue; }
+      if (qty <= 0) {
+        txSkipped.push({ row: raw.rowNum, reason: 'invalid_quantity', paperName: raw.symbol });
+        continue;
+      }
+      if (price <= 0) {
+        txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol });
+        continue;
+      }
 
       const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames);
       const value = roundTo2(qty * price);
-      const category = categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol) ?? 'stock';
+      const category =
+        categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol) ?? 'stock';
 
       const idx = transactions.length;
       transactions.push({
@@ -543,7 +589,6 @@ export async function parseXtbFile(
       });
       txBySymbolTime.set(`${raw.symbol}|${isoTime}`, idx);
       lastBuyQty.set(raw.symbol, qty);
-
     } else if (raw.type === 'Stock sale') {
       const isoTime = parseXtbTime(raw.time);
       if (!isoTime) {
@@ -577,12 +622,19 @@ export async function parseXtbFile(
         }
       }
 
-      if (qty <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_quantity', paperName: raw.symbol }); continue; }
-      if (price <= 0) { txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol }); continue; }
+      if (qty <= 0) {
+        txSkipped.push({ row: raw.rowNum, reason: 'invalid_quantity', paperName: raw.symbol });
+        continue;
+      }
+      if (price <= 0) {
+        txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol });
+        continue;
+      }
 
       const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames);
       const value = roundTo2(qty * price);
-      const category = categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol) ?? 'stock';
+      const category =
+        categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol) ?? 'stock';
 
       const idx = transactions.length;
       transactions.push({
@@ -613,7 +665,10 @@ export async function parseXtbFile(
   for (const raw of rawRows) {
     if (raw.type === 'commission') {
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime || !raw.symbol) { unmatchedFees.push(raw); continue; }
+      if (!isoTime || !raw.symbol) {
+        unmatchedFees.push(raw);
+        continue;
+      }
 
       const key = `${raw.symbol}|${isoTime}`;
       const idx = txBySymbolTime.get(key);
@@ -628,14 +683,19 @@ export async function parseXtbFile(
       } else {
         unmatchedFees.push(raw);
       }
-
     } else if (raw.type === 'Sec Fee') {
       const sfMatch = SEC_FEE_RE.exec(raw.comment);
-      if (!sfMatch) { unmatchedFees.push(raw); continue; }
+      if (!sfMatch) {
+        unmatchedFees.push(raw);
+        continue;
+      }
 
       const [, symbol, dateStr] = sfMatch;
       const feeDate = parseSecFeeDate(dateStr);
-      if (!feeDate) { unmatchedFees.push(raw); continue; }
+      if (!feeDate) {
+        unmatchedFees.push(raw);
+        continue;
+      }
 
       const key = `${symbol}|${feeDate}`;
       const idx = sellBySymbolDate.get(key);
@@ -667,7 +727,10 @@ export async function parseXtbFile(
   for (const raw of rawRows) {
     if (raw.type === 'dividend') {
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.symbol }); continue; }
+      if (!isoTime) {
+        opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.symbol });
+        continue;
+      }
 
       const grossAmount = Math.abs(raw.amount);
       let netAmount = grossAmount;
@@ -691,7 +754,10 @@ export async function parseXtbFile(
         description,
         amount: netAmount,
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames).paperName : undefined,
+        ticker: raw.symbol
+          ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames)
+              .paperName
+          : undefined,
         source: 'xtb',
         importBatch,
       });
@@ -704,7 +770,10 @@ export async function parseXtbFile(
 
     if (raw.type === 'deposit') {
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.comment }); continue; }
+      if (!isoTime) {
+        opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.comment });
+        continue;
+      }
 
       operations.push({
         date: isoTime,
@@ -715,10 +784,12 @@ export async function parseXtbFile(
         source: 'xtb',
         importBatch,
       });
-
     } else if (raw.type === 'withdrawal') {
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.comment }); continue; }
+      if (!isoTime) {
+        opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.comment });
+        continue;
+      }
 
       operations.push({
         date: isoTime,
@@ -729,7 +800,6 @@ export async function parseXtbFile(
         source: 'xtb',
         importBatch,
       });
-
     } else if (raw.type === 'Free funds interest' || raw.type === 'Free funds interest tax') {
       const isoTime = parseXtbTime(raw.time);
       if (!isoTime) continue;
@@ -743,10 +813,12 @@ export async function parseXtbFile(
         source: 'xtb',
         importBatch,
       });
-
     } else if (raw.type === 'withholding tax') {
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.symbol }); continue; }
+      if (!isoTime) {
+        opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.symbol });
+        continue;
+      }
 
       // Only create fee if not already paired with a dividend
       const whtKey = `${raw.symbol}|${isoTime}`;
@@ -758,11 +830,13 @@ export async function parseXtbFile(
         description: raw.comment || `Withholding tax: ${raw.symbol}`,
         amount: raw.amount, // negative
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames).paperName : undefined,
+        ticker: raw.symbol
+          ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames)
+              .paperName
+          : undefined,
         source: 'xtb',
         importBatch,
       });
-
     } else if (raw.type === 'swap' || raw.type === 'tax iftt' || raw.type === 'rollover') {
       // Skip for CFD instruments — handled by extractCfdTransactions with authoritative values
       const swapCategory = categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol);
@@ -777,11 +851,13 @@ export async function parseXtbFile(
         description: `${raw.type}: ${raw.comment || raw.symbol || ''}`.trim(),
         amount: raw.amount,
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames).paperName : undefined,
+        ticker: raw.symbol
+          ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames)
+              .paperName
+          : undefined,
         source: 'xtb',
         importBatch,
       });
-
     } else if (raw.type === 'rights issue') {
       const isoTime = parseXtbTime(raw.time);
       if (!isoTime) continue;
@@ -792,11 +868,13 @@ export async function parseXtbFile(
         description: raw.comment || `Rights issue: ${raw.symbol}`,
         amount: raw.amount,
         currency: accountCurrency,
-        ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames).paperName : undefined,
+        ticker: raw.symbol
+          ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames)
+              .paperName
+          : undefined,
         source: 'xtb',
         importBatch,
       });
-
     } else if (raw.type === 'fx_conversion') {
       // Currency conversion between XTB sub-accounts (e.g. PLN→USD subaccount).
       // Raw amount is in the account currency — positive means the sub-account
@@ -814,12 +892,17 @@ export async function parseXtbFile(
       // The stable `[z wymiany walut PAIR @ RATE]` prefix is detected by the
       // client (CashFlowPage) to render an info-tooltip explaining the origin.
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) { opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date' }); continue; }
+      if (!isoTime) {
+        opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date' });
+        continue;
+      }
 
       // Parse the exchange rate + pair from Comment for marker metadata.
       // Unparseable Comment is non-fatal — we still emit the operation with
       // a generic "[z wymiany walut]" marker so no records are silently lost.
-      const m = raw.comment.match(/\b([A-Z]{3})\s+to\s+([A-Z]{3})\b[^]*?Exchange\s+rate\s*:\s*([\d.]+)/i);
+      const m = raw.comment.match(
+        /\b([A-Z]{3})\s+to\s+([A-Z]{3})\b[^]*?Exchange\s+rate\s*:\s*([\d.]+)/i,
+      );
       let marker = '[z wymiany walut]';
       let rate: number | undefined;
       let pair: string | undefined;
@@ -845,7 +928,6 @@ export async function parseXtbFile(
         source: 'xtb',
         importBatch,
       });
-
     } else if (raw.type === 'close trade') {
       txSkipped.push({ row: raw.rowNum, reason: 'close_trade_entry', paperName: raw.symbol });
     }
@@ -862,7 +944,10 @@ export async function parseXtbFile(
       description: `${raw.type}: ${raw.comment}`,
       amount: raw.amount,
       currency: accountCurrency,
-      ticker: raw.symbol ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames).paperName : undefined,
+      ticker: raw.symbol
+        ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames)
+            .paperName
+        : undefined,
       source: 'xtb',
       importBatch,
     });
@@ -874,7 +959,10 @@ export async function parseXtbFile(
   const existingTxKeys = new Set(txBySymbolTime.keys());
 
   const { transactions: cfdTransactions, unmappedCfd } = extractCfdTransactions(
-    wb, accountCurrency, importBatch, existingTxKeys,
+    wb,
+    accountCurrency,
+    importBatch,
+    existingTxKeys,
   );
   transactions.push(...cfdTransactions);
 
@@ -882,7 +970,7 @@ export async function parseXtbFile(
   if (unknownSuffixes.size > 0) {
     warnings.push(
       `Nieznane suffixy kraju w symbolach: ${[...unknownSuffixes].sort().join(', ')} — ` +
-      `walutę przyjęto domyślnie jako USD. Zweryfikuj transakcje tych instrumentów.`,
+        `walutę przyjęto domyślnie jako USD. Zweryfikuj transakcje tych instrumentów.`,
     );
   }
   if (unknownNames.size > 0) {
@@ -890,14 +978,14 @@ export async function parseXtbFile(
     const more = unknownNames.size > 5 ? ` (i ${unknownNames.size - 5} innych)` : '';
     warnings.push(
       `Brak mapy tickerów dla ${unknownNames.size} instrumentów (nowy format XTB bez arkusza ` +
-      `"Closed Positions"): ${sample}${more}. Walutę ustawiono domyślnie na PLN — zweryfikuj, ` +
-      `czy to poprawne dla każdego z tych walorów.`,
+        `"Closed Positions"): ${sample}${more}. Walutę ustawiono domyślnie na PLN — zweryfikuj, ` +
+        `czy to poprawne dla każdego z tych walorów.`,
     );
   }
   if (unmappedCfd.size > 0) {
     warnings.push(
       `Instrumenty CFD bez mapowania Yahoo (${unmappedCfd.size}): ${[...unmappedCfd].sort().join(', ')}. ` +
-      `Wycena historyczna będzie oparta tylko na cenie transakcji (txPrice).`,
+        `Wycena historyczna będzie oparta tylko na cenie transakcji (txPrice).`,
     );
   }
 
@@ -916,7 +1004,7 @@ export async function parseXtbFile(
       .join(', ');
     warnings.push(
       `Nierozpoznane typy operacji XTB — pominięte cicho: ${list}. ` +
-      `Sprawdź czy któryś nie powinien być zaimportowany.`,
+        `Sprawdź czy któryś nie powinien być zaimportowany.`,
     );
   }
 
@@ -931,11 +1019,21 @@ export async function parseXtbFile(
  * Any `raw.type` not in this set (after normalizeType aliasing) is silently
  * dropped today — we surface it as an aggregated warning instead. */
 const KNOWN_XTB_TYPES = new Set<string>([
-  'Stock purchase', 'Stock sale', 'close trade',
-  'deposit', 'withdrawal', 'commission', 'Sec Fee',
-  'Free funds interest', 'Free funds interest tax',
-  'dividend', 'withholding tax',
-  'swap', 'tax iftt', 'rights issue', 'rollover',
+  'Stock purchase',
+  'Stock sale',
+  'close trade',
+  'deposit',
+  'withdrawal',
+  'commission',
+  'Sec Fee',
+  'Free funds interest',
+  'Free funds interest tax',
+  'dividend',
+  'withholding tax',
+  'swap',
+  'tax iftt',
+  'rights issue',
+  'rollover',
   'fx_conversion',
 ]);
 
@@ -1001,12 +1099,22 @@ function resolveClosedPositionLayout(ws: ExcelJS.Worksheet): ClosedPosLayout | n
     const cols: ClosedPosLayout['cols'] = {};
     for (const canonical of Object.keys(CP_SYNONYMS) as Array<keyof typeof CP_SYNONYMS>) {
       for (const syn of CP_SYNONYMS[canonical]) {
-        if (syn in labels) { cols[canonical] = labels[syn]; break; }
+        if (syn in labels) {
+          cols[canonical] = labels[syn];
+          break;
+        }
       }
     }
-    const required: Array<keyof typeof CP_SYNONYMS> =
-      ['instrument', 'type', 'volume', 'openPrice', 'openTime', 'closePrice', 'closeTime'];
-    if (required.every(k => cols[k] !== undefined)) {
+    const required: Array<keyof typeof CP_SYNONYMS> = [
+      'instrument',
+      'type',
+      'volume',
+      'openPrice',
+      'openTime',
+      'closePrice',
+      'closeTime',
+    ];
+    if (required.every((k) => cols[k] !== undefined)) {
       best = { headerIdx: rowNum, cols };
     }
   });
@@ -1035,7 +1143,7 @@ function extractCfdTransactions(
   existingTxKeys: Set<string>,
 ): { transactions: Transaction[]; unmappedCfd: Set<string> } {
   const unmappedCfd = new Set<string>();
-  const ws = wb.worksheets.find(s => s.name.toUpperCase().includes('CLOSED'));
+  const ws = wb.worksheets.find((s) => s.name.toUpperCase().includes('CLOSED'));
   if (!ws) return { transactions: [], unmappedCfd };
 
   const layout = resolveClosedPositionLayout(ws);
@@ -1082,14 +1190,16 @@ function extractCfdTransactions(
     if (!openTime || !closeTime) return;
 
     const commission = cols.commission !== undefined ? Math.abs(readNum(vals[cols.commission])) : 0;
-    const swap       = cols.swap       !== undefined ? Math.abs(readNum(vals[cols.swap]))       : 0;
-    const rollover   = cols.rollover   !== undefined ? Math.abs(readNum(vals[cols.rollover]))   : 0;
+    const swap = cols.swap !== undefined ? Math.abs(readNum(vals[cols.swap])) : 0;
+    const rollover = cols.rollover !== undefined ? Math.abs(readNum(vals[cols.rollover])) : 0;
 
-    const positionId = cols.positionId !== undefined
-      ? vals[cols.positionId]?.toString?.().trim() || undefined
-      : undefined;
+    const positionId =
+      cols.positionId !== undefined
+        ? vals[cols.positionId]?.toString?.().trim() || undefined
+        : undefined;
 
-    const grossProfit = cols.grossProfit !== undefined ? readNum(vals[cols.grossProfit]) : undefined;
+    const grossProfit =
+      cols.grossProfit !== undefined ? readNum(vals[cols.grossProfit]) : undefined;
 
     // Deduplicate: skip if Cash Operations already has a transaction for this instrument+time
     const openKey = `${instrument}|${openTime}`;
@@ -1133,9 +1243,8 @@ function extractCfdTransactions(
       price: closePrice,
       value: closeValue,
       commission,
-      total: closeSide === 'S'
-        ? roundTo2(closeValue - commission)
-        : roundTo2(closeValue + commission),
+      total:
+        closeSide === 'S' ? roundTo2(closeValue - commission) : roundTo2(closeValue + commission),
       currency: accountCurrency,
       paymentCurrency: accountCurrency,
       category: 'cfd',
@@ -1156,7 +1265,7 @@ function extractCfdTransactions(
  * no Category column (PL template) — callers fall back to inferCategoryFromSymbol. */
 function extractCategoryMap(wb: ExcelJS.Workbook): Map<string, InstrumentCategory> {
   const map = new Map<string, InstrumentCategory>();
-  const ws = wb.worksheets.find(s => s.name.toUpperCase().includes('CLOSED'));
+  const ws = wb.worksheets.find((s) => s.name.toUpperCase().includes('CLOSED'));
   if (!ws) return map;
 
   const layout = resolveClosedPositionLayout(ws);
@@ -1184,7 +1293,7 @@ function extractCategoryMap(wb: ExcelJS.Workbook): Map<string, InstrumentCategor
  * Returns empty map when the sheet has no Ticker column (PL template). */
 function extractTickerLookup(wb: ExcelJS.Workbook): Map<string, string> {
   const map = new Map<string, string>();
-  const ws = wb.worksheets.find(s => s.name.toUpperCase().includes('CLOSED'));
+  const ws = wb.worksheets.find((s) => s.name.toUpperCase().includes('CLOSED'));
   if (!ws) return map;
 
   const layout = resolveClosedPositionLayout(ws);
@@ -1204,4 +1313,3 @@ function extractTickerLookup(wb: ExcelJS.Workbook): Map<string, string> {
 
   return map;
 }
-

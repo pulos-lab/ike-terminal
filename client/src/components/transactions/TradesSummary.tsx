@@ -25,15 +25,22 @@ interface Props {
   closedCustomTo?: string;
 }
 
-export function TradesSummary({ tab, positions, closedDateRange, closedCustomFrom, closedCustomTo }: Props) {
+export function TradesSummary({
+  tab,
+  positions,
+  closedDateRange,
+  closedCustomFrom,
+  closedCustomTo,
+}: Props) {
   if (tab === 'all') return <AllTilesView />;
-  if (tab === 'closed') return (
-    <ClosedTilesView
-      dateRange={closedDateRange ?? 'ALL'}
-      customFrom={closedCustomFrom ?? ''}
-      customTo={closedCustomTo ?? ''}
-    />
-  );
+  if (tab === 'closed')
+    return (
+      <ClosedTilesView
+        dateRange={closedDateRange ?? 'ALL'}
+        customFrom={closedCustomFrom ?? ''}
+        customTo={closedCustomTo ?? ''}
+      />
+    );
   return <OpenTilesView positions={positions} />;
 }
 
@@ -55,7 +62,17 @@ function AllTilesView() {
     const tickers = new Set(txs.map((t: any) => t.ticker)).size;
     const currencies = new Set(txs.map((t: any) => t.currency)).size;
     const categories = new Set(txs.map((t: any) => t.category || 'stock')).size;
-    return { count: txs.length, buys, sells, turnover, commissionPln, commissionPct, tickers, currencies, categories };
+    return {
+      count: txs.length,
+      buys,
+      sells,
+      turnover,
+      commissionPln,
+      commissionPct,
+      tickers,
+      currencies,
+      categories,
+    };
   }, [data]);
 
   return (
@@ -65,11 +82,7 @@ function AllTilesView() {
         value={String(stats.count)}
         sub={`${stats.buys} kupno · ${stats.sells} sprzedaż`}
       />
-      <Tile
-        label="Obrót"
-        value={formatPLN(stats.turnover)}
-        sub="łącznie"
-      />
+      <Tile label="Obrót" value={formatPLN(stats.turnover)} sub="łącznie" />
       <Tile
         label="Prowizje"
         value={formatPLN(stats.commissionPln)}
@@ -122,7 +135,11 @@ function OpenTilesView({ positions }: { positions: Position[] }) {
         label="P/L niezrealizowany"
         value={formatPLN(stats.totalPL)}
         valueClass={plColor(stats.totalPL)}
-        sub={stats.invested > 0 ? `${stats.plPct >= 0 ? '+' : ''}${stats.plPct.toFixed(2)}%` : undefined}
+        sub={
+          stats.invested > 0
+            ? `${stats.plPct >= 0 ? '+' : ''}${stats.plPct.toFixed(2)}%`
+            : undefined
+        }
         subClass={plColor(stats.plPct)}
       />
       <BestWorstTile best={stats.best} worst={stats.worst} />
@@ -136,7 +153,11 @@ function BestWorstTile({ best, worst }: { best: Position | null; worst: Position
       <Tile
         label="Najlepsza · Najgorsza"
         value={best ? best.ticker : '—'}
-        sub={best ? `${best.profitLossPct >= 0 ? '+' : ''}${best.profitLossPct.toFixed(2)}%` : undefined}
+        sub={
+          best
+            ? `${best.profitLossPct >= 0 ? '+' : ''}${best.profitLossPct.toFixed(2)}%`
+            : undefined
+        }
         subClass={best ? plColor(best.profitLossPct) : ''}
       />
     );
@@ -202,8 +223,7 @@ function ClosedTilesView({
     // would require historic fx per trade, which the backend doesn't return. This matches
     // how profitLoss is aggregated — accurate for PLN-dominated portfolios.
     const totalCost = trades.reduce(
-      (s: number, t: any) =>
-        s + (t.buyPrice ?? 0) * (t.quantity ?? 0) + (t.buyCommission ?? 0),
+      (s: number, t: any) => s + (t.buyPrice ?? 0) * (t.quantity ?? 0) + (t.buyCommission ?? 0),
       0,
     );
     const pnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;
@@ -211,31 +231,47 @@ function ClosedTilesView({
     const losers = trades.filter((t: any) => t.profitLoss < 0).length;
     const winRate = trades.length > 0 ? (profitable / trades.length) * 100 : 0;
     const holdDays = trades.map((t: any) => t.holdingDays).filter((d: number) => d >= 0);
-    const avgHold = holdDays.length > 0 ? holdDays.reduce((s: number, d: number) => s + d, 0) / holdDays.length : 0;
+    const avgHold =
+      holdDays.length > 0
+        ? holdDays.reduce((s: number, d: number) => s + d, 0) / holdDays.length
+        : 0;
     const minHold = holdDays.length > 0 ? Math.min(...holdDays) : 0;
     const maxHold = holdDays.length > 0 ? Math.max(...holdDays) : 0;
     const uniqueTickers = new Set(trades.map((t: any) => t.ticker)).size;
-    return { count: trades.length, uniqueTickers, totalPnl, pnlPct, profitable, losers, winRate, avgHold, minHold, maxHold };
+    return {
+      count: trades.length,
+      uniqueTickers,
+      totalPnl,
+      pnlPct,
+      profitable,
+      losers,
+      winRate,
+      avgHold,
+      minHold,
+      maxHold,
+    };
   }, [data, dateRange, customFrom, customTo]);
 
   return (
     <Grid>
-      <Tile
-        label="Zamknięć"
-        value={String(stats.count)}
-        sub={`${stats.uniqueTickers} tickerów`}
-      />
+      <Tile label="Zamknięć" value={String(stats.count)} sub={`${stats.uniqueTickers} tickerów`} />
       <Tile
         label="P/L zrealizowany"
         value={formatPLN(stats.totalPnl)}
         valueClass={plColor(stats.totalPnl)}
-        sub={stats.pnlPct !== 0 ? `${stats.pnlPct >= 0 ? '+' : ''}${stats.pnlPct.toFixed(2)}%` : undefined}
+        sub={
+          stats.pnlPct !== 0
+            ? `${stats.pnlPct >= 0 ? '+' : ''}${stats.pnlPct.toFixed(2)}%`
+            : undefined
+        }
         subClass={plColor(stats.pnlPct)}
       />
       <Tile
         label="Win rate"
         value={`${stats.winRate.toFixed(0)}%`}
-        valueClass={stats.winRate >= 50 ? 'text-gain' : stats.winRate >= 40 ? 'text-foreground' : 'text-loss'}
+        valueClass={
+          stats.winRate >= 50 ? 'text-gain' : stats.winRate >= 40 ? 'text-foreground' : 'text-loss'
+        }
         sub={`${stats.profitable} zyskownych · ${stats.losers} stratnych`}
       />
       <Tile
@@ -271,9 +307,7 @@ function Tile({ label, value, valueClass, sub, subClass }: TileProps) {
         {value}
       </p>
       {sub && (
-        <p className={cn('text-[10px] md:text-xs text-muted-foreground mt-0.5', subClass)}>
-          {sub}
-        </p>
+        <p className={cn('text-[10px] md:text-xs text-muted-foreground mt-0.5', subClass)}>{sub}</p>
       )}
     </div>
   );

@@ -37,8 +37,7 @@ export function HeroKPI({ history }: HeroKPIProps) {
       <div
         className="absolute -top-1/2 -right-[20%] w-[280px] h-[280px] pointer-events-none"
         style={{
-          background:
-            'radial-gradient(circle, rgba(245,158,11,0.18) 0%, transparent 65%)',
+          background: 'radial-gradient(circle, rgba(245,158,11,0.18) 0%, transparent 65%)',
         }}
       />
 
@@ -59,7 +58,9 @@ export function HeroKPI({ history }: HeroKPIProps) {
           )}
         >
           <DeltaIcon className="h-4 w-4" />
-          <span className="tabular-nums">{formatCurrency(data.totalReturn, data.baseCurrency || 'PLN')}</span>
+          <span className="tabular-nums">
+            {formatCurrency(data.totalReturn, data.baseCurrency || 'PLN')}
+          </span>
           <span className="text-muted-foreground">·</span>
           <span className="tabular-nums">{formatPercent(data.totalReturnPct)}</span>
         </div>
@@ -92,9 +93,7 @@ export function HeroKPI({ history }: HeroKPIProps) {
   );
 }
 
-function buildSparkPath(
-  history: Array<{ date: string; returnPct: number }>,
-): string | null {
+function buildSparkPath(history: Array<{ date: string; returnPct: number }>): string | null {
   if (history.length < 2) return null;
   // Take last ~30 points for the sparkline
   const slice = history.slice(-30);

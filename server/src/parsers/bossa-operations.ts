@@ -1,5 +1,12 @@
 import Papa from 'papaparse';
-import type { CashOperation, OperationType, RedemptionMarker, IpoSubscriptionMarker, CapitalReturnMarker, SkippedRow } from 'shared';
+import type {
+  CashOperation,
+  OperationType,
+  RedemptionMarker,
+  IpoSubscriptionMarker,
+  CapitalReturnMarker,
+  SkippedRow,
+} from 'shared';
 import { lookupTenderPrice, lookupIpoSubscription } from 'shared';
 import { parseNumber } from './utils.js';
 
@@ -41,7 +48,10 @@ export interface BossaOperationsParseResult {
   capitalReturns: CapitalReturnMarker[];
 }
 
-export function parseBossaOperations(csvContent: string, importBatch: string): BossaOperationsParseResult {
+export function parseBossaOperations(
+  csvContent: string,
+  importBatch: string,
+): BossaOperationsParseResult {
   const result = Papa.parse(csvContent.trim(), {
     delimiter: ';',
     header: true,
@@ -50,8 +60,8 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
 
   // Validate that the CSV has expected headers — return empty array (not throw)
   const headers = result.meta?.fields || [];
-  const hasDataCol = headers.some(h => h.toLowerCase() === 'data');
-  const hasKwotaCol = headers.some(h => h.toLowerCase() === 'kwota');
+  const hasDataCol = headers.some((h) => h.toLowerCase() === 'data');
+  const hasKwotaCol = headers.some((h) => h.toLowerCase() === 'kwota');
   if (!hasDataCol || !hasKwotaCol) {
     return { data: [], skipped: [], redemptions: [], ipoSubscriptions: [], capitalReturns: [] };
   }
@@ -81,9 +91,18 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
     const amount = parseNumber(row['kwota']);
     const currency = row['waluta']?.trim() || 'PLN';
 
-    if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date', paperName: title }); continue; }
-    if (!DATE_RE.test(dateStr)) { skipped.push({ row: rowNum, reason: 'invalid_date', paperName: title }); continue; }
-    if (amount === 0) { skipped.push({ row: rowNum, reason: 'zero_amount', paperName: title }); continue; }
+    if (!dateStr) {
+      skipped.push({ row: rowNum, reason: 'missing_date', paperName: title });
+      continue;
+    }
+    if (!DATE_RE.test(dateStr)) {
+      skipped.push({ row: rowNum, reason: 'invalid_date', paperName: title });
+      continue;
+    }
+    if (amount === 0) {
+      skipped.push({ row: rowNum, reason: 'zero_amount', paperName: title });
+      continue;
+    }
 
     parsedRows.push({ rowNum, dateStr, title, details, amount, currency });
   }
@@ -108,14 +127,26 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
   // Normalizacja: "BIOCELTIX S.A." → "BIOCELTIX", "BIOCELTIX" → "BIOCELTIX".
   // Dwa wiersze powinny mieć podobną datę (± kilka dni); rekord finalny używa daty Zwrotu
   // jako `allocationDate` (wtedy akcje fizycznie trafiają na rachunek).
-  type IpoRowInfo = { rowNum: number; dateStr: string; amount: number; series?: string; rawTitle: string };
+  type IpoRowInfo = {
+    rowNum: number;
+    dateStr: string;
+    amount: number;
+    series?: string;
+    rawTitle: string;
+  };
   const ipoSubRows = new Map<string, IpoRowInfo>();
   const ipoRefundRows = new Map<string, IpoRowInfo>();
   for (const pr of parsedRows) {
     const subMatch = pr.title.match(/^Zapisy na akcje\s+(.+?)(?:\s+SERIA\s+(\S+))?$/i);
     if (subMatch) {
       const normTicker = normalizeCompanyName(subMatch[1]);
-      ipoSubRows.set(normTicker, { rowNum: pr.rowNum, dateStr: pr.dateStr, amount: pr.amount, series: subMatch[2], rawTitle: pr.title });
+      ipoSubRows.set(normTicker, {
+        rowNum: pr.rowNum,
+        dateStr: pr.dateStr,
+        amount: pr.amount,
+        series: subMatch[2],
+        rawTitle: pr.title,
+      });
       continue;
     }
     // Zwrot nadpłaty — odróżniamy od "Zwrot nadpłaty - przekroczony limit IKE/IKZE" (nie IPO)
@@ -124,7 +155,12 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
       const refMatch = pr.title.match(/Zwrot nadp(?:łaty|\u0142aty)\s+(.+?)(?:\s+S\.A\.)?$/);
       if (refMatch) {
         const normTicker = normalizeCompanyName(refMatch[1]);
-        ipoRefundRows.set(normTicker, { rowNum: pr.rowNum, dateStr: pr.dateStr, amount: pr.amount, rawTitle: pr.title });
+        ipoRefundRows.set(normTicker, {
+          rowNum: pr.rowNum,
+          dateStr: pr.dateStr,
+          amount: pr.amount,
+          rawTitle: pr.title,
+        });
       }
     }
   }
@@ -225,7 +261,9 @@ export function parseBossaOperations(csvContent: string, importBatch: string): B
     // z istniejącej pozycji bez zmiany qty. Emit CapitalReturnMarker zamiast deposit/other.
     // Engine traktuje to jak "dywidendę w kapitale" — wchodzi do totalValue ale NIE do
     // totalDeposited. MWR/TWR odzwierciedlą to jako zrealizowany zwrot z trzymania.
-    const nominalReductionMatch = title.match(/Obni(?:żenie|\u017cenie) warto(?:ści|\u015bci) nominalnej\s+(\S+)/);
+    const nominalReductionMatch = title.match(
+      /Obni(?:żenie|\u017cenie) warto(?:ści|\u015bci) nominalnej\s+(\S+)/,
+    );
     if (nominalReductionMatch) {
       capitalReturns.push({
         kind: 'nominal_reduction',
@@ -341,10 +379,12 @@ function normalizeCompanyName(raw: string): string {
 function humanizeDescription(title: string): string {
   if (title === 'Zwrot prowizji') return 'Zwrot prowizji';
   if (title.startsWith('Przelew do DM')) return 'Zasilenie konta';
-  if (title.startsWith('Przelew wewnętrzny') || title.startsWith('Przelew wewn\u0119trzny')) return title;
+  if (title.startsWith('Przelew wewnętrzny') || title.startsWith('Przelew wewn\u0119trzny'))
+    return title;
 
   // Dywidendy: "Wypłata dywidendy brutto ASBIS" → "Dywidenda brutto ASBIS"
-  const divMatch = title.match(/Wypłata dywidendy\s+(.*)/i) || title.match(/Wyp\u0142ata dywidendy\s+(.*)/i);
+  const divMatch =
+    title.match(/Wypłata dywidendy\s+(.*)/i) || title.match(/Wyp\u0142ata dywidendy\s+(.*)/i);
   if (divMatch) return `Dywidenda ${divMatch[1]}`;
 
   // Rozliczenie oferty — humanize dla ewentualnych edge-case'ów (głównie idzie jako RedemptionMarker)
@@ -361,14 +401,19 @@ function humanizeDescription(title: string): string {
   const subMatch = title.match(/Zapisy na akcje\s+(.+?)(?:\s+SERIA\s+(\S+))?$/i);
   if (subMatch) {
     const name = subMatch[1].replace(/\s+S\.A\.$/, '');
-    return subMatch[2] ? `Subskrypcja akcji ${name} (seria ${subMatch[2]})` : `Subskrypcja akcji ${name}`;
+    return subMatch[2]
+      ? `Subskrypcja akcji ${name} (seria ${subMatch[2]})`
+      : `Subskrypcja akcji ${name}`;
   }
 
   if (title.includes('przekroczony limit')) return 'Zwrot nadpłaty — przekroczony limit IKE/IKZE';
   const refundMatch = title.match(/Zwrot nadp(?:łaty|\u0142aty)\s+(.+?)(?:\s+S\.A\.)?$/);
-  if (refundMatch) return `Zwrot nadpłaty z subskrypcji ${refundMatch[1].replace(/\s+S\.A\.$/, '')}`;
+  if (refundMatch)
+    return `Zwrot nadpłaty z subskrypcji ${refundMatch[1].replace(/\s+S\.A\.$/, '')}`;
 
-  const nominalMatch = title.match(/Obni(?:żenie|[\u017c]enie) warto(?:ści|[\u015b]ci) nominalnej\s+(\S+)/);
+  const nominalMatch = title.match(
+    /Obni(?:żenie|[\u017c]enie) warto(?:ści|[\u015b]ci) nominalnej\s+(\S+)/,
+  );
   if (nominalMatch) return `Zwrot kapitału ${nominalMatch[1]} (obniżenie nominału)`;
 
   // Wykup PW - wyrównanie TICKER → "Wyrównanie wykupu TICKER"

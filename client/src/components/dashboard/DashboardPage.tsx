@@ -5,7 +5,13 @@ import { api } from '@/lib/api-client';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioChart } from './PortfolioChart';
 import { PerformanceStats } from './PerformanceStats';
@@ -78,8 +84,8 @@ export function DashboardPage() {
 
   const isCustom = timeRange === 'CUSTOM';
 
-  const startDate = isCustom ? (customFrom || undefined) : getPresetStartDate(timeRange);
-  const endDate = isCustom ? (customTo || undefined) : undefined;
+  const startDate = isCustom ? customFrom || undefined : getPresetStartDate(timeRange);
+  const endDate = isCustom ? customTo || undefined : undefined;
 
   // Always fetch full history (server ignores startDate), cache per benchmark only
   const { data, isLoading } = useQuery({
@@ -134,7 +140,7 @@ export function DashboardPage() {
     }
   }
 
-  const benchmarkLabel = BENCHMARKS.find(b => b.value === benchmark)?.label || '';
+  const benchmarkLabel = BENCHMARKS.find((b) => b.value === benchmark)?.label || '';
   const showBenchmark = benchmark !== 'none';
 
   return (
@@ -147,125 +153,135 @@ export function DashboardPage() {
       <Card>
         <CardHeader className="pb-2">
           <TooltipProvider>
-          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
-              <CardTitle className="text-sm font-semibold">
-                {activeName}{showBenchmark ? ` vs ${benchmarkLabel}` : ''}
-              </CardTitle>
-              {filteredHistory.length > 1 && (
-                <ChartLegend
-                  portfolioPct={
-                    chartMode === 'twr'
-                      ? filteredHistory[filteredHistory.length - 1].twrPct
-                      : filteredHistory[filteredHistory.length - 1].returnPct
-                  }
-                  benchmarkPct={
-                    showBenchmark
-                      ? chartMode === 'twr'
-                        ? filteredHistory[filteredHistory.length - 1].benchmarkTwrPct
-                        : filteredHistory[filteredHistory.length - 1].benchmarkReturnPct
-                      : null
-                  }
-                  benchmarkLabel={benchmarkLabel}
-                />
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              {PRESET_RANGES.map((r) => (
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
+                <CardTitle className="text-sm font-semibold">
+                  {activeName}
+                  {showBenchmark ? ` vs ${benchmarkLabel}` : ''}
+                </CardTitle>
+                {filteredHistory.length > 1 && (
+                  <ChartLegend
+                    portfolioPct={
+                      chartMode === 'twr'
+                        ? filteredHistory[filteredHistory.length - 1].twrPct
+                        : filteredHistory[filteredHistory.length - 1].returnPct
+                    }
+                    benchmarkPct={
+                      showBenchmark
+                        ? chartMode === 'twr'
+                          ? filteredHistory[filteredHistory.length - 1].benchmarkTwrPct
+                          : filteredHistory[filteredHistory.length - 1].benchmarkReturnPct
+                        : null
+                    }
+                    benchmarkLabel={benchmarkLabel}
+                  />
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                {PRESET_RANGES.map((r) => (
+                  <button
+                    key={r}
+                    className={`px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+                      timeRange === r
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                    onClick={() => selectPreset(r)}
+                  >
+                    {r}
+                  </button>
+                ))}
                 <button
-                  key={r}
                   className={`px-2 py-1 rounded-md text-xs font-medium transition-colors ${
-                    timeRange === r
+                    isCustom
                       ? 'bg-primary/10 text-primary'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
-                  onClick={() => selectPreset(r)}
+                  onClick={selectCustom}
                 >
-                  {r}
+                  Custom
                 </button>
-              ))}
-              <button
-                className={`px-2 py-1 rounded-md text-xs font-medium transition-colors ${
-                  isCustom
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-                onClick={selectCustom}
-              >
-                Custom
-              </button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 mt-2">
-            <div className="flex items-center bg-muted rounded-md p-0.5">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
-                      chartMode === 'mwr' ? 'bg-background text-foreground' : 'text-muted-foreground'
-                    }`}
-                    onClick={() => setChartMode('mwr')}
-                  >
-                    MWR
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-[260px] text-xs">
-                  Money-Weighted Return — uwzględnia wpłaty/wypłaty, pokazuje realną stopę zwrotu inwestora
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
-                      chartMode === 'twr' ? 'bg-background text-foreground' : 'text-muted-foreground'
-                    }`}
-                    onClick={() => setChartMode('twr')}
-                  >
-                    TWR
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-[260px] text-xs">
-                  Time-Weighted Return — eliminuje wpływ wpłat/wypłat, pokazuje czystą efektywność strategii
-                </TooltipContent>
-              </Tooltip>
-            </div>
-            <Select value={benchmark} onValueChange={setBenchmark}>
-              <SelectTrigger className="h-7 text-xs w-32 bg-muted border-transparent">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {BENCHMARKS.map((b) => (
-                  <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/60 hover:text-muted-foreground transition-colors" />
-              </TooltipTrigger>
-              <TooltipContent className="max-w-[280px] text-xs">
-                Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy przy tych samych wpłatach/wypłatach (strategia DCA)
-              </TooltipContent>
-            </Tooltip>
-            {isCustom && (
-              <div className="flex items-center gap-1.5 ml-auto">
-                <Input
-                  type="date"
-                  value={customFrom}
-                  onChange={e => setCustomFrom(e.target.value)}
-                  className="h-7 w-[130px] text-xs"
-                />
-                <span className="text-xs text-muted-foreground">—</span>
-                <Input
-                  type="date"
-                  value={customTo}
-                  onChange={e => setCustomTo(e.target.value)}
-                  className="h-7 w-[130px] text-xs"
-                />
               </div>
-            )}
-          </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <div className="flex items-center bg-muted rounded-md p-0.5">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+                        chartMode === 'mwr'
+                          ? 'bg-background text-foreground'
+                          : 'text-muted-foreground'
+                      }`}
+                      onClick={() => setChartMode('mwr')}
+                    >
+                      MWR
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[260px] text-xs">
+                    Money-Weighted Return — uwzględnia wpłaty/wypłaty, pokazuje realną stopę zwrotu
+                    inwestora
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+                        chartMode === 'twr'
+                          ? 'bg-background text-foreground'
+                          : 'text-muted-foreground'
+                      }`}
+                      onClick={() => setChartMode('twr')}
+                    >
+                      TWR
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[260px] text-xs">
+                    Time-Weighted Return — eliminuje wpływ wpłat/wypłat, pokazuje czystą efektywność
+                    strategii
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <Select value={benchmark} onValueChange={setBenchmark}>
+                <SelectTrigger className="h-7 text-xs w-32 bg-muted border-transparent">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BENCHMARKS.map((b) => (
+                    <SelectItem key={b.value} value={b.value}>
+                      {b.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/60 hover:text-muted-foreground transition-colors" />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-[280px] text-xs">
+                  Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy przy tych
+                  samych wpłatach/wypłatach (strategia DCA)
+                </TooltipContent>
+              </Tooltip>
+              {isCustom && (
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <Input
+                    type="date"
+                    value={customFrom}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className="h-7 w-[130px] text-xs"
+                  />
+                  <span className="text-xs text-muted-foreground">—</span>
+                  <Input
+                    type="date"
+                    value={customTo}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className="h-7 w-[130px] text-xs"
+                  />
+                </div>
+              )}
+            </div>
           </TooltipProvider>
         </CardHeader>
         <CardContent>
@@ -287,7 +303,11 @@ export function DashboardPage() {
       </Card>
 
       {!isLoading && filteredHistory.length > 1 && (
-        <PerformanceStats data={filteredHistory} benchmarkLabel={benchmarkLabel} showBenchmark={showBenchmark} />
+        <PerformanceStats
+          data={filteredHistory}
+          benchmarkLabel={benchmarkLabel}
+          showBenchmark={showBenchmark}
+        />
       )}
     </div>
   );

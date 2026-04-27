@@ -3,7 +3,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidateFx } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { CcyChip } from '@/components/ui/ccy-chip';
@@ -41,7 +48,9 @@ export function CurrencyExchangePage() {
       invalidateFx(queryClient);
       const ex = deleting;
       if (ex) {
-        toast.success(`Usunięto wymianę ${ex.currencyFrom} → ${ex.currencyTo} (${formatNumber(ex.amountFrom)} ${ex.currencyFrom})`);
+        toast.success(
+          `Usunięto wymianę ${ex.currencyFrom} → ${ex.currencyTo} (${formatNumber(ex.amountFrom)} ${ex.currencyFrom})`,
+        );
       } else {
         toast.success('Usunięto wymianę.');
       }
@@ -76,7 +85,9 @@ export function CurrencyExchangePage() {
           <Card>
             <CardContent className="pt-4 pb-3">
               <div className="text-sm text-muted-foreground">USD/EUR</div>
-              <div className="text-2xl font-bold font-mono">{usdEur ? formatNumber(usdEur, 4) : '—'}</div>
+              <div className="text-2xl font-bold font-mono">
+                {usdEur ? formatNumber(usdEur, 4) : '—'}
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -114,7 +125,9 @@ export function CurrencyExchangePage() {
                             <CcyChip ccy={ex.currencyTo} />
                           </span>
                         </TableCell>
-                        <TableCell className="text-right font-medium tabular-nums">{formatNumber(ex.rate, 4)}</TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">
+                          {formatNumber(ex.rate, 4)}
+                        </TableCell>
                         <TableCell className="text-right text-loss tabular-nums">
                           −{formatNumber(ex.amountFrom)} {ex.currencyFrom}
                         </TableCell>
@@ -156,7 +169,10 @@ export function CurrencyExchangePage() {
         onClose={() => setDeleting(null)}
         onConfirm={() => {
           if (deleting?.fromOperationId && deleting?.toOperationId) {
-            deleteMutation.mutate({ fromId: deleting.fromOperationId, toId: deleting.toOperationId });
+            deleteMutation.mutate({
+              fromId: deleting.fromOperationId,
+              toId: deleting.toOperationId,
+            });
           }
         }}
         description={

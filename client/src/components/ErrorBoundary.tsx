@@ -39,9 +39,7 @@ export class ErrorBoundary extends Component<Props, State> {
             {this.state.error?.message || 'Coś poszło nie tak.'}
           </p>
           <div className="flex gap-2">
-            <Button onClick={this.handleReset}>
-              Spróbuj ponownie
-            </Button>
+            <Button onClick={this.handleReset}>Spróbuj ponownie</Button>
             <Button variant="outline" onClick={() => window.location.reload()}>
               Odśwież stronę
             </Button>

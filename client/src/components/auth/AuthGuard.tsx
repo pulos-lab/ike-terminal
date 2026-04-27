@@ -23,7 +23,9 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   // Redirect to email verification if not verified
   if (!session.user.emailVerified) {
-    return <Navigate to={`/verify-email?email=${encodeURIComponent(session.user.email)}`} replace />;
+    return (
+      <Navigate to={`/verify-email?email=${encodeURIComponent(session.user.email)}`} replace />
+    );
   }
 
   return <>{children}</>;

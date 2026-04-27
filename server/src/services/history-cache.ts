@@ -39,12 +39,12 @@ function getHistoryDb(): Database.Database {
 export function storeHistoricalPrices(
   ticker: string,
   data: Array<{ date: string; close: number }>,
-  source: string
+  source: string,
 ): void {
   if (data.length === 0) return;
   const db = getHistoryDb();
   const insert = db.prepare(
-    'INSERT OR REPLACE INTO price_history (ticker, date, close, source) VALUES (?, ?, ?, ?)'
+    'INSERT OR REPLACE INTO price_history (ticker, date, close, source) VALUES (?, ?, ?, ?)',
   );
   const batch = db.transaction((items: Array<{ date: string; close: number }>) => {
     for (const item of items) {
@@ -59,7 +59,7 @@ export function storeHistoricalPrices(
  */
 export function loadHistoricalPrices(
   ticker: string,
-  startDate?: string
+  startDate?: string,
 ): Array<{ date: string; close: number }> {
   const db = getHistoryDb();
   if (startDate) {

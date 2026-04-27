@@ -3,13 +3,20 @@ import type { Portfolio, PortfolioSettings } from 'shared';
 const API_BASE = '/api';
 
 let activePortfolioId = (() => {
-  try { return localStorage.getItem('activePortfolioId') || 'default'; }
-  catch { return 'default'; }
+  try {
+    return localStorage.getItem('activePortfolioId') || 'default';
+  } catch {
+    return 'default';
+  }
 })();
 
 export function setActivePortfolioId(id: string) {
   activePortfolioId = id;
-  try { localStorage.setItem('activePortfolioId', id); } catch { /* Safari Private */ }
+  try {
+    localStorage.setItem('activePortfolioId', id);
+  } catch {
+    /* Safari Private */
+  }
 }
 
 export function getActivePortfolioId(): string {
@@ -90,15 +97,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  updateDividend: (id: number, body: { date: string; ticker: string; amount: number; currency: string }) =>
+  updateDividend: (
+    id: number,
+    body: { date: string; ticker: string; amount: number; currency: string },
+  ) =>
     request<{ success: boolean }>(`/portfolio/dividends/${id}`, {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
   scanDividends: () =>
-    request<{ scanned: number; newDividends: number; errors: string[] }>('/portfolio/dividends/scan', {
-      method: 'POST',
-    }),
+    request<{ scanned: number; newDividends: number; errors: string[] }>(
+      '/portfolio/dividends/scan',
+      {
+        method: 'POST',
+      },
+    ),
   getUpcomingDividends: () =>
     request<{ upcoming: import('shared').UpcomingDividend[] }>('/portfolio/dividends/upcoming'),
   deleteDividend: (id: number) =>
@@ -107,12 +120,32 @@ export const api = {
     }),
   // Transactions CRUD
   getTransactions: () => request<any>('/portfolio/transactions'),
-  createTransaction: (body: { date: string; ticker: string; side: 'K' | 'S'; quantity: number; price: number; commission: number; currency?: string; fxRate?: number; category?: string }) =>
+  createTransaction: (body: {
+    date: string;
+    ticker: string;
+    side: 'K' | 'S';
+    quantity: number;
+    price: number;
+    commission: number;
+    currency?: string;
+    fxRate?: number;
+    category?: string;
+  }) =>
     request<{ id: number }>('/portfolio/transactions', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  updateTransaction: (id: number, body: Partial<{ date: string; ticker: string; side: 'K' | 'S'; quantity: number; price: number; commission: number }>) =>
+  updateTransaction: (
+    id: number,
+    body: Partial<{
+      date: string;
+      ticker: string;
+      side: 'K' | 'S';
+      quantity: number;
+      price: number;
+      commission: number;
+    }>,
+  ) =>
     request<{ success: boolean }>(`/portfolio/transactions/${id}`, {
       method: 'PUT',
       body: JSON.stringify(body),
@@ -174,18 +207,27 @@ export const api = {
 
   // Ticker search
   searchTickers: (query: string) =>
-    request<Array<{ symbol: string; name: string; exchange: string; currency?: string }>>(`/portfolio/ticker-search?q=${encodeURIComponent(query)}`),
+    request<Array<{ symbol: string; name: string; exchange: string; currency?: string }>>(
+      `/portfolio/ticker-search?q=${encodeURIComponent(query)}`,
+    ),
 
   // Ticker map — sector backfill (dla istniejących entries bez sectora)
   refreshSectors: () =>
-    request<{ total: number; needingUpdate: number; updated: number; fromCfdMap: number; fromYahoo: number; failed: string[] }>(
-      '/portfolio/ticker-map/refresh-sectors',
-      { method: 'POST' },
-    ),
+    request<{
+      total: number;
+      needingUpdate: number;
+      updated: number;
+      fromCfdMap: number;
+      fromYahoo: number;
+      failed: string[];
+    }>('/portfolio/ticker-map/refresh-sectors', { method: 'POST' }),
 
   // Deposits CRUD
   getDeposits: () => request<any>('/portfolio/deposits'),
-  createDeposit: (body: { date: string; amount: number }, type: 'deposit' | 'withdrawal' = 'deposit') =>
+  createDeposit: (
+    body: { date: string; amount: number },
+    type: 'deposit' | 'withdrawal' = 'deposit',
+  ) =>
     request<{ id: number }>('/portfolio/deposits', {
       method: 'POST',
       body: JSON.stringify({ ...body, type }),
@@ -256,7 +298,11 @@ export const api = {
         id: number;
         date: string;
         operationType: 'capital_return' | 'corporate_action_pending';
-        subkind?: 'nominal_reduction' | 'redemption_adjustment' | 'unknown_tender' | 'unknown_warrant';
+        subkind?:
+          | 'nominal_reduction'
+          | 'redemption_adjustment'
+          | 'unknown_tender'
+          | 'unknown_warrant';
         ticker?: string;
         amount: number;
         currency: string;
@@ -282,7 +328,13 @@ export const api = {
     }),
 
   getFxHistory: () => request<any>('/portfolio/fx-history'),
-  createFxExchange: (body: { date: string; currencyFrom: string; currencyTo: string; amountFrom: number; rate: number }) =>
+  createFxExchange: (body: {
+    date: string;
+    currencyFrom: string;
+    currencyTo: string;
+    amountFrom: number;
+    rate: number;
+  }) =>
     request<{ success: boolean }>('/portfolio/fx-exchanges', {
       method: 'POST',
       body: JSON.stringify(body),
@@ -350,14 +402,16 @@ export const api = {
     }),
 
   getBugReports: () =>
-    request<Array<{
-      id: string;
-      userId: string;
-      userEmail: string;
-      category: string;
-      description: string;
-      userAgent: string;
-      url: string;
-      createdAt: string;
-    }>>('/bug-reports'),
+    request<
+      Array<{
+        id: string;
+        userId: string;
+        userEmail: string;
+        category: string;
+        description: string;
+        userAgent: string;
+        url: string;
+        createdAt: string;
+      }>
+    >('/bug-reports'),
 };

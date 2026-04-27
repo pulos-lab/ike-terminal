@@ -1,10 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, isPlausibleSplitRatio, snapToKnownRatio, detectSplitFromQuantityMismatch } from '../split-detector.js';
+import {
+  detectSplits,
+  rescaleHistoricalPrices,
+  adjustTransactionsForSplits,
+  isPlausibleSplitRatio,
+  snapToKnownRatio,
+  detectSplitFromQuantityMismatch,
+} from '../split-detector.js';
 import type { Transaction, TickerMapEntry } from 'shared';
 
 // ─── Helpers ───
 
-function makeTx(overrides: Partial<Transaction> & { side: 'K' | 'S'; quantity: number; price: number }): Transaction {
+function makeTx(
+  overrides: Partial<Transaction> & { side: 'K' | 'S'; quantity: number; price: number },
+): Transaction {
   const value = overrides.quantity * overrides.price;
   return {
     date: '2024-01-15',
@@ -19,7 +28,9 @@ function makeTx(overrides: Partial<Transaction> & { side: 'K' | 'S'; quantity: n
   };
 }
 
-function makeTickerMap(entries: Array<{ isin: string; ticker: string; currency?: string }>): Map<string, TickerMapEntry> {
+function makeTickerMap(
+  entries: Array<{ isin: string; ticker: string; currency?: string }>,
+): Map<string, TickerMapEntry> {
   const map = new Map<string, TickerMapEntry>();
   for (const e of entries) {
     map.set(e.isin, {
@@ -34,7 +45,10 @@ function makeTickerMap(entries: Array<{ isin: string; ticker: string; currency?:
   return map;
 }
 
-function makePriceMap(ticker: string, prices: Record<string, number>): Map<string, Map<string, number>> {
+function makePriceMap(
+  ticker: string,
+  prices: Record<string, number>,
+): Map<string, Map<string, number>> {
   const inner = new Map<string, number>(Object.entries(prices));
   return new Map([[ticker, inner]]);
 }
@@ -44,7 +58,9 @@ function makePriceMap(ticker: string, prices: Record<string, number>): Map<strin
 describe('detectSplits', () => {
   it('detects a 10:1 split (AVGO case)', () => {
     // User bought at 1070, but Yahoo shows 107 after 10:1 split
-    const txs = [makeTx({ side: 'K', quantity: 10, price: 1070, date: '2023-06-15', isin: 'US11135F1012' })];
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 1070, date: '2023-06-15', isin: 'US11135F1012' }),
+    ];
     const tickerMap = makeTickerMap([{ isin: 'US11135F1012', ticker: 'AVGO', currency: 'PLN' }]);
     const prices = makePriceMap('AVGO', { '2023-06-15': 107 });
 
@@ -88,7 +104,9 @@ describe('detectSplits', () => {
 
   it('ignores currency mismatch (FX is not a split)', () => {
     // Bossa records PLN price for USD stock — should NOT detect a split
-    const txs = [makeTx({ side: 'K', quantity: 10, price: 500, date: '2024-01-10', currency: 'PLN' })];
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 500, date: '2024-01-10', currency: 'PLN' }),
+    ];
     const tickerMap = makeTickerMap([{ isin: 'TEST0001', ticker: 'TEST', currency: 'USD' }]);
     const prices = makePriceMap('TEST', { '2024-01-10': 120 });
 
@@ -111,8 +129,8 @@ describe('detectSplits', () => {
     ];
     const tickerMap = makeTickerMap([{ isin: 'TEST0001', ticker: 'TEST' }]);
     const prices = makePriceMap('TEST', {
-      '2022-01-10': 100,  // provider shows fully adjusted (4*2=8x)... no,
-      '2023-06-15': 25,   // provider shows fully adjusted
+      '2022-01-10': 100, // provider shows fully adjusted (4*2=8x)... no,
+      '2023-06-15': 25, // provider shows fully adjusted
     });
     // tx1: price=400, providerPrice=100, cumulativeRatio=1 → scaledProvider=100
     //   discrepancy=|400/100-1|=3 > 0.15 → ratio=4, cumulativeRatio→4
@@ -145,10 +163,17 @@ describe('rescaleHistoricalPrices', () => {
       '2024-01-03': 48,
     });
 
-    rescaleHistoricalPrices(prices, [{
-      ticker: 'TEST', isin: 'TEST0001', date: '2024-01-02',
-      ratio: 2, txPrice: 104, providerPrice: 52, source: 'auto',
-    }]);
+    rescaleHistoricalPrices(prices, [
+      {
+        ticker: 'TEST',
+        isin: 'TEST0001',
+        date: '2024-01-02',
+        ratio: 2,
+        txPrice: 104,
+        providerPrice: 52,
+        source: 'auto',
+      },
+    ]);
 
     const priceMap = prices.get('TEST')!;
     expect(priceMap.get('2024-01-01')).toBe(100);
@@ -162,8 +187,24 @@ describe('rescaleHistoricalPrices', () => {
     });
 
     rescaleHistoricalPrices(prices, [
-      { ticker: 'TEST', isin: 'TEST0001', date: '2024-02-01', ratio: 4, txPrice: 0, providerPrice: 0, source: 'auto' },
-      { ticker: 'TEST', isin: 'TEST0001', date: '2024-06-01', ratio: 2, txPrice: 0, providerPrice: 0, source: 'auto' },
+      {
+        ticker: 'TEST',
+        isin: 'TEST0001',
+        date: '2024-02-01',
+        ratio: 4,
+        txPrice: 0,
+        providerPrice: 0,
+        source: 'auto',
+      },
+      {
+        ticker: 'TEST',
+        isin: 'TEST0001',
+        date: '2024-06-01',
+        ratio: 2,
+        txPrice: 0,
+        providerPrice: 0,
+        source: 'auto',
+      },
     ]);
 
     // Total ratio: 4 * 2 = 8
@@ -181,30 +222,40 @@ describe('rescaleHistoricalPrices', () => {
 
 describe('adjustTransactionsForSplits', () => {
   it('adjusts pre-split transaction quantities and prices', () => {
-    const txs = [
-      makeTx({ side: 'K', quantity: 10, price: 1000, date: '2023-01-15' }),
+    const txs = [makeTx({ side: 'K', quantity: 10, price: 1000, date: '2023-01-15' })];
+    const splits = [
+      {
+        ticker: 'TEST',
+        isin: 'TEST0001',
+        date: '2024-07-15',
+        ratio: 10,
+        txPrice: 100,
+        providerPrice: 10,
+        source: 'auto' as const,
+      },
     ];
-    const splits = [{
-      ticker: 'TEST', isin: 'TEST0001', date: '2024-07-15',
-      ratio: 10, txPrice: 100, providerPrice: 10, source: 'auto' as const,
-    }];
 
     const adjusted = adjustTransactionsForSplits(txs, splits);
     expect(adjusted).toHaveLength(1);
-    expect(adjusted[0].quantity).toBe(100);   // 10 * 10
-    expect(adjusted[0].price).toBe(100);      // 1000 / 10
+    expect(adjusted[0].quantity).toBe(100); // 10 * 10
+    expect(adjusted[0].price).toBe(100); // 1000 / 10
     // value should be unchanged
     expect(adjusted[0].quantity * adjusted[0].price).toBeCloseTo(10 * 1000);
   });
 
   it('does NOT adjust post-split transactions', () => {
-    const txs = [
-      makeTx({ side: 'K', quantity: 100, price: 100, date: '2024-08-01' }),
+    const txs = [makeTx({ side: 'K', quantity: 100, price: 100, date: '2024-08-01' })];
+    const splits = [
+      {
+        ticker: 'TEST',
+        isin: 'TEST0001',
+        date: '2024-07-15',
+        ratio: 10,
+        txPrice: 100,
+        providerPrice: 10,
+        source: 'auto' as const,
+      },
     ];
-    const splits = [{
-      ticker: 'TEST', isin: 'TEST0001', date: '2024-07-15',
-      ratio: 10, txPrice: 100, providerPrice: 10, source: 'auto' as const,
-    }];
 
     const adjusted = adjustTransactionsForSplits(txs, splits);
     expect(adjusted[0].quantity).toBe(100);
@@ -212,13 +263,18 @@ describe('adjustTransactionsForSplits', () => {
   });
 
   it('does NOT adjust transaction on the split date itself', () => {
-    const txs = [
-      makeTx({ side: 'K', quantity: 100, price: 100, date: '2024-07-15' }),
+    const txs = [makeTx({ side: 'K', quantity: 100, price: 100, date: '2024-07-15' })];
+    const splits = [
+      {
+        ticker: 'TEST',
+        isin: 'TEST0001',
+        date: '2024-07-15',
+        ratio: 10,
+        txPrice: 100,
+        providerPrice: 10,
+        source: 'auto' as const,
+      },
     ];
-    const splits = [{
-      ticker: 'TEST', isin: 'TEST0001', date: '2024-07-15',
-      ratio: 10, txPrice: 100, providerPrice: 10, source: 'auto' as const,
-    }];
 
     const adjusted = adjustTransactionsForSplits(txs, splits);
     expect(adjusted[0].quantity).toBe(100);
@@ -226,12 +282,26 @@ describe('adjustTransactionsForSplits', () => {
   });
 
   it('applies cumulative ratio for multiple splits', () => {
-    const txs = [
-      makeTx({ side: 'K', quantity: 10, price: 800, date: '2022-01-01' }),
-    ];
+    const txs = [makeTx({ side: 'K', quantity: 10, price: 800, date: '2022-01-01' })];
     const splits = [
-      { ticker: 'TEST', isin: 'TEST0001', date: '2023-01-01', ratio: 4, txPrice: 0, providerPrice: 0, source: 'auto' as const },
-      { ticker: 'TEST', isin: 'TEST0001', date: '2024-01-01', ratio: 2, txPrice: 0, providerPrice: 0, source: 'auto' as const },
+      {
+        ticker: 'TEST',
+        isin: 'TEST0001',
+        date: '2023-01-01',
+        ratio: 4,
+        txPrice: 0,
+        providerPrice: 0,
+        source: 'auto' as const,
+      },
+      {
+        ticker: 'TEST',
+        isin: 'TEST0001',
+        date: '2024-01-01',
+        ratio: 2,
+        txPrice: 0,
+        providerPrice: 0,
+        source: 'auto' as const,
+      },
     ];
 
     const adjusted = adjustTransactionsForSplits(txs, splits);
@@ -241,12 +311,26 @@ describe('adjustTransactionsForSplits', () => {
   });
 
   it('only applies splits that happened after the transaction', () => {
-    const txs = [
-      makeTx({ side: 'K', quantity: 40, price: 200, date: '2023-06-01' }),
-    ];
+    const txs = [makeTx({ side: 'K', quantity: 40, price: 200, date: '2023-06-01' })];
     const splits = [
-      { ticker: 'TEST', isin: 'TEST0001', date: '2023-01-01', ratio: 4, txPrice: 0, providerPrice: 0, source: 'auto' as const },
-      { ticker: 'TEST', isin: 'TEST0001', date: '2024-01-01', ratio: 2, txPrice: 0, providerPrice: 0, source: 'auto' as const },
+      {
+        ticker: 'TEST',
+        isin: 'TEST0001',
+        date: '2023-01-01',
+        ratio: 4,
+        txPrice: 0,
+        providerPrice: 0,
+        source: 'auto' as const,
+      },
+      {
+        ticker: 'TEST',
+        isin: 'TEST0001',
+        date: '2024-01-01',
+        ratio: 2,
+        txPrice: 0,
+        providerPrice: 0,
+        source: 'auto' as const,
+      },
     ];
 
     const adjusted = adjustTransactionsForSplits(txs, splits);
@@ -262,13 +346,18 @@ describe('adjustTransactionsForSplits', () => {
   });
 
   it('ignores splits for different ISINs', () => {
-    const txs = [
-      makeTx({ side: 'K', quantity: 10, price: 100, date: '2024-01-01', isin: 'AAAA' }),
+    const txs = [makeTx({ side: 'K', quantity: 10, price: 100, date: '2024-01-01', isin: 'AAAA' })];
+    const splits = [
+      {
+        ticker: 'TEST',
+        isin: 'BBBB',
+        date: '2024-06-01',
+        ratio: 10,
+        txPrice: 0,
+        providerPrice: 0,
+        source: 'auto' as const,
+      },
     ];
-    const splits = [{
-      ticker: 'TEST', isin: 'BBBB', date: '2024-06-01',
-      ratio: 10, txPrice: 0, providerPrice: 0, source: 'auto' as const,
-    }];
 
     const adjusted = adjustTransactionsForSplits(txs, splits);
     expect(adjusted[0].quantity).toBe(10);
@@ -283,16 +372,16 @@ describe('isPlausibleSplitRatio', () => {
     expect(isPlausibleSplitRatio(2)).toBe(true);
     expect(isPlausibleSplitRatio(4)).toBe(true);
     expect(isPlausibleSplitRatio(10)).toBe(true);
-    expect(isPlausibleSplitRatio(0.5)).toBe(true);   // 1:2 reverse
-    expect(isPlausibleSplitRatio(0.2)).toBe(true);   // 1:5 reverse
-    expect(isPlausibleSplitRatio(0.1)).toBe(true);   // 1:10 reverse
+    expect(isPlausibleSplitRatio(0.5)).toBe(true); // 1:2 reverse
+    expect(isPlausibleSplitRatio(0.2)).toBe(true); // 1:5 reverse
+    expect(isPlausibleSplitRatio(0.1)).toBe(true); // 1:10 reverse
   });
 
   it('accepts ratios within 5% tolerance', () => {
-    expect(isPlausibleSplitRatio(9.85)).toBe(true);  // close to 10
-    expect(isPlausibleSplitRatio(10.3)).toBe(true);  // close to 10
-    expect(isPlausibleSplitRatio(1.98)).toBe(true);  // close to 2
-    expect(isPlausibleSplitRatio(0.198)).toBe(true);  // close to 0.2
+    expect(isPlausibleSplitRatio(9.85)).toBe(true); // close to 10
+    expect(isPlausibleSplitRatio(10.3)).toBe(true); // close to 10
+    expect(isPlausibleSplitRatio(1.98)).toBe(true); // close to 2
+    expect(isPlausibleSplitRatio(0.198)).toBe(true); // close to 0.2
   });
 
   it('rejects -40% crash (ratio ~1.67)', () => {

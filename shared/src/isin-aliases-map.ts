@@ -39,7 +39,8 @@ export const ISIN_ALIASES_MAP: IsinAliasEntry[] = [
     legacyTicker: 'HUUUGE_IPO',
     canonicalIsin: 'US44853H1086',
     canonicalTicker: 'HUUUGE-C',
-    reason: 'Reorganizacja — Huuuge Games S.A. (PL) przeniosła domicile do Huuuge Inc. (USA); akcjonariusze otrzymali akcje nowej jednostki 1:1.',
+    reason:
+      'Reorganizacja — Huuuge Games S.A. (PL) przeniosła domicile do Huuuge Inc. (USA); akcjonariusze otrzymali akcje nowej jednostki 1:1.',
     source: 'https://huuugegames.com/investors',
   },
 ];
@@ -52,7 +53,7 @@ export function applyIsinAlias(
   isin: string,
   paperName: string,
 ): { isin: string; paperName: string; aliasApplied: boolean } {
-  const entry = ISIN_ALIASES_MAP.find(e => e.legacyIsin === isin && e.legacyTicker === paperName);
+  const entry = ISIN_ALIASES_MAP.find((e) => e.legacyIsin === isin && e.legacyTicker === paperName);
   if (!entry) return { isin, paperName, aliasApplied: false };
   return { isin: entry.canonicalIsin, paperName: entry.canonicalTicker, aliasApplied: true };
 }

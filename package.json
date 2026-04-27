@@ -1,7 +1,11 @@
 {
   "name": "ike-portfolio",
   "private": true,
-  "workspaces": ["shared", "server", "client"],
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
   "engines": {
     "node": ">=24"
   },

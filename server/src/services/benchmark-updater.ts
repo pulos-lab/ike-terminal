@@ -22,14 +22,21 @@ const YAHOO_FALLBACK: Record<string, string> = {
 
 /** Detect Stooq block/rate-limit responses (including new API key requirement) */
 function isStooqBlocked(text: string): boolean {
-  return text.includes('Przekroczony') || text.includes('limit') || text.includes('www@stooq.pl') || text.includes('apikey');
+  return (
+    text.includes('Przekroczony') ||
+    text.includes('limit') ||
+    text.includes('www@stooq.pl') ||
+    text.includes('apikey')
+  );
 }
 
 /**
  * Fetch today's close from Stooq live quote API.
  * Returns { date, close } or null if unavailable.
  */
-async function fetchStooqLiveClose(ticker: string): Promise<{ date: string; close: number } | null> {
+async function fetchStooqLiveClose(
+  ticker: string,
+): Promise<{ date: string; close: number } | null> {
   const url = `https://stooq.pl/q/l/?s=${ticker}&f=sd2t2ohlcv&h&e=csv`;
   const response = await fetch(url, {
     headers: { 'User-Agent': USER_AGENT },
@@ -44,8 +51,12 @@ async function fetchStooqLiveClose(ticker: string): Promise<{ date: string; clos
   const headers = lines[0].split(',');
   const values = lines[1].split(',');
 
-  const dateIdx = headers.findIndex(h => h.toLowerCase() === 'data' || h.toLowerCase() === 'date');
-  const closeIdx = headers.findIndex(h => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close');
+  const dateIdx = headers.findIndex(
+    (h) => h.toLowerCase() === 'data' || h.toLowerCase() === 'date',
+  );
+  const closeIdx = headers.findIndex(
+    (h) => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close',
+  );
 
   if (dateIdx === -1 || closeIdx === -1) return null;
 
@@ -60,13 +71,15 @@ async function fetchStooqLiveClose(ticker: string): Promise<{ date: string; clos
  * Fetch today's close from Yahoo Finance (range=1d).
  * Fallback when Stooq is blocked.
  */
-async function fetchYahooLiveClose(yahooTicker: string): Promise<{ date: string; close: number } | null> {
+async function fetchYahooLiveClose(
+  yahooTicker: string,
+): Promise<{ date: string; close: number } | null> {
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1d&range=1d`;
     const response = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT },
     });
-    const json = await response.json() as any;
+    const json = (await response.json()) as any;
 
     const result = json.chart?.result?.[0];
     if (!result?.timestamp?.length) return null;
@@ -116,14 +129,18 @@ export async function updateBenchmarkPrices(): Promise<void> {
       }
 
       if (!liveData) {
-        console.warn(`[benchmark-updater] ${ticker}: could not fetch live price (Stooq + Yahoo failed)`);
+        console.warn(
+          `[benchmark-updater] ${ticker}: could not fetch live price (Stooq + Yahoo failed)`,
+        );
         continue;
       }
 
       // Only store if newer than what we have
       if (liveData.date > lastDate) {
         storeHistoricalPrices(ticker, [liveData], source);
-        console.log(`[benchmark-updater] ${ticker}: +1 new data point (${liveData.date}, close=${liveData.close}) via ${source}`);
+        console.log(
+          `[benchmark-updater] ${ticker}: +1 new data point (${liveData.date}, close=${liveData.close}) via ${source}`,
+        );
       }
     } catch (error) {
       console.error(`[benchmark-updater] Failed to update ${ticker}:`, error);

@@ -1,7 +1,10 @@
 import { getDb } from './connection.js';
 import type { Transaction, SkippedRow, OrphanedSell } from 'shared';
 
-export function insertTransactions(transactions: Transaction[], portfolioId: string = 'default'): number {
+export function insertTransactions(
+  transactions: Transaction[],
+  portfolioId: string = 'default',
+): number {
   const db = getDb(portfolioId);
   const stmt = db.prepare(`
     INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, payment_currency, fx_rate, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit, synthetic_origin)
@@ -11,7 +14,28 @@ export function insertTransactions(transactions: Transaction[], portfolioId: str
   const insertMany = db.transaction((txs: Transaction[]) => {
     let count = 0;
     for (const tx of txs) {
-      stmt.run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.paymentCurrency ?? tx.currency, tx.fxRate ?? null, tx.category || 'stock', tx.source, tx.importBatch, tx.swap ?? null, tx.rollover ?? null, tx.cfdPositionId ?? null, tx.cfdGrossProfit ?? null, tx.syntheticOrigin ?? null);
+      stmt.run(
+        tx.date,
+        tx.paperName,
+        tx.isin,
+        tx.quantity,
+        tx.side,
+        tx.price,
+        tx.value,
+        tx.commission,
+        tx.total,
+        tx.currency,
+        tx.paymentCurrency ?? tx.currency,
+        tx.fxRate ?? null,
+        tx.category || 'stock',
+        tx.source,
+        tx.importBatch,
+        tx.swap ?? null,
+        tx.rollover ?? null,
+        tx.cfdPositionId ?? null,
+        tx.cfdGrossProfit ?? null,
+        tx.syntheticOrigin ?? null,
+      );
       count++;
     }
     return count;
@@ -75,14 +99,37 @@ export function insertTransactionsWithDedup(
     for (const [, { txs: txGroup, isCfd }] of groups) {
       const sample = txGroup[0];
       const { cnt: existingCount } = isCfd
-        ? countCfdStmt.get(sample.cfdPositionId, sample.side, sample.date) as { cnt: number }
-        : countStmt.get(sample.date, sample.isin, sample.side, sample.quantity, sample.price) as { cnt: number };
+        ? (countCfdStmt.get(sample.cfdPositionId, sample.side, sample.date) as { cnt: number })
+        : (countStmt.get(sample.date, sample.isin, sample.side, sample.quantity, sample.price) as {
+            cnt: number;
+          });
 
       const toInsert = Math.max(0, txGroup.length - existingCount);
 
       for (let i = 0; i < toInsert; i++) {
         const tx = txGroup[i];
-        insertStmt.run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.paymentCurrency ?? tx.currency, tx.fxRate ?? null, tx.category || 'stock', tx.source, tx.importBatch, tx.swap ?? null, tx.rollover ?? null, tx.cfdPositionId ?? null, tx.cfdGrossProfit ?? null, tx.syntheticOrigin ?? null);
+        insertStmt.run(
+          tx.date,
+          tx.paperName,
+          tx.isin,
+          tx.quantity,
+          tx.side,
+          tx.price,
+          tx.value,
+          tx.commission,
+          tx.total,
+          tx.currency,
+          tx.paymentCurrency ?? tx.currency,
+          tx.fxRate ?? null,
+          tx.category || 'stock',
+          tx.source,
+          tx.importBatch,
+          tx.swap ?? null,
+          tx.rollover ?? null,
+          tx.cfdPositionId ?? null,
+          tx.cfdGrossProfit ?? null,
+          tx.syntheticOrigin ?? null,
+        );
         inserted++;
       }
 
@@ -101,9 +148,14 @@ export function getAllTransactions(portfolioId: string = 'default'): Transaction
   return rows.map(mapRow);
 }
 
-export function getTransactionsByIsin(isin: string, portfolioId: string = 'default'): Transaction[] {
+export function getTransactionsByIsin(
+  isin: string,
+  portfolioId: string = 'default',
+): Transaction[] {
   const db = getDb(portfolioId);
-  const rows = db.prepare('SELECT * FROM transactions WHERE isin = ? ORDER BY date ASC').all(isin) as any[];
+  const rows = db
+    .prepare('SELECT * FROM transactions WHERE isin = ? ORDER BY date ASC')
+    .all(isin) as any[];
   return rows.map(mapRow);
 }
 
@@ -131,7 +183,10 @@ export function purgeAllData(portfolioId: string = 'default'): void {
   })();
 }
 
-export function getTransactionById(id: number, portfolioId: string = 'default'): Transaction | null {
+export function getTransactionById(
+  id: number,
+  portfolioId: string = 'default',
+): Transaction | null {
   const db = getDb(portfolioId);
   const row = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id) as any;
   return row ? mapRow(row) : null;
@@ -139,23 +194,72 @@ export function getTransactionById(id: number, portfolioId: string = 'default'):
 
 export function insertTransaction(tx: Transaction, portfolioId: string = 'default'): number {
   const db = getDb(portfolioId);
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, payment_currency, fx_rate, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit, synthetic_origin)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(tx.date, tx.paperName, tx.isin, tx.quantity, tx.side, tx.price, tx.value, tx.commission, tx.total, tx.currency, tx.paymentCurrency ?? tx.currency, tx.fxRate ?? null, tx.category || 'stock', tx.source, tx.importBatch || null, tx.swap ?? null, tx.rollover ?? null, tx.cfdPositionId ?? null, tx.cfdGrossProfit ?? null, tx.syntheticOrigin ?? null);
+  `,
+    )
+    .run(
+      tx.date,
+      tx.paperName,
+      tx.isin,
+      tx.quantity,
+      tx.side,
+      tx.price,
+      tx.value,
+      tx.commission,
+      tx.total,
+      tx.currency,
+      tx.paymentCurrency ?? tx.currency,
+      tx.fxRate ?? null,
+      tx.category || 'stock',
+      tx.source,
+      tx.importBatch || null,
+      tx.swap ?? null,
+      tx.rollover ?? null,
+      tx.cfdPositionId ?? null,
+      tx.cfdGrossProfit ?? null,
+      tx.syntheticOrigin ?? null,
+    );
   return Number(result.lastInsertRowid);
 }
 
-export function updateTransaction(id: number, updates: Partial<Transaction>, portfolioId: string = 'default'): boolean {
+export function updateTransaction(
+  id: number,
+  updates: Partial<Transaction>,
+  portfolioId: string = 'default',
+): boolean {
   const db = getDb(portfolioId);
   const existing = getTransactionById(id, portfolioId);
   if (!existing) return false;
 
   const merged = { ...existing, ...updates };
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     UPDATE transactions SET date = ?, paper_name = ?, isin = ?, quantity = ?, side = ?, price = ?, value = ?, commission = ?, total = ?, currency = ?, payment_currency = ?, fx_rate = ?, category = ?, source = ?
     WHERE id = ?
-  `).run(merged.date, merged.paperName, merged.isin, merged.quantity, merged.side, merged.price, merged.value, merged.commission, merged.total, merged.currency, merged.paymentCurrency ?? merged.currency, merged.fxRate ?? null, merged.category || 'stock', merged.source, id);
+  `,
+    )
+    .run(
+      merged.date,
+      merged.paperName,
+      merged.isin,
+      merged.quantity,
+      merged.side,
+      merged.price,
+      merged.value,
+      merged.commission,
+      merged.total,
+      merged.currency,
+      merged.paymentCurrency ?? merged.currency,
+      merged.fxRate ?? null,
+      merged.category || 'stock',
+      merged.source,
+      id,
+    );
   return result.changes > 0;
 }
 
@@ -183,25 +287,35 @@ export function deleteTransactions(ids: number[], portfolioId: string = 'default
 }
 
 /** Zwraca transakcje po liście ID (używane w smart-delete preview). */
-export function getTransactionsByIds(ids: number[], portfolioId: string = 'default'): Transaction[] {
+export function getTransactionsByIds(
+  ids: number[],
+  portfolioId: string = 'default',
+): Transaction[] {
   if (ids.length === 0) return [];
   const db = getDb(portfolioId);
   const placeholders = ids.map(() => '?').join(',');
-  const rows = db.prepare(`SELECT * FROM transactions WHERE id IN (${placeholders})`).all(...ids) as any[];
+  const rows = db
+    .prepare(`SELECT * FROM transactions WHERE id IN (${placeholders})`)
+    .all(...ids) as any[];
   return rows.map(mapRow);
 }
 
-
 export function getLastImportDate(portfolioId: string = 'default'): string | null {
   const db = getDb(portfolioId);
-  const row = db.prepare('SELECT MAX(created_at) as last_import FROM transactions WHERE import_batch IS NOT NULL').get() as any;
+  const row = db
+    .prepare(
+      'SELECT MAX(created_at) as last_import FROM transactions WHERE import_batch IS NOT NULL',
+    )
+    .get() as any;
   return row?.last_import || null;
 }
 
 /** Detect ISINs where total sold > total bought (excluding CFD positions). */
 export function detectOrphanedSells(portfolioId: string = 'default'): OrphanedSell[] {
   const db = getDb(portfolioId);
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT t.paper_name, t.isin, t.currency,
       SUM(CASE WHEN t.side = 'K' THEN t.quantity ELSE 0 END) as bought,
       SUM(CASE WHEN t.side = 'S' THEN t.quantity ELSE 0 END) as sold,
@@ -212,8 +326,10 @@ export function detectOrphanedSells(portfolioId: string = 'default'): OrphanedSe
     WHERE t.category != 'cfd'
     GROUP BY t.isin
     HAVING sold > bought + 0.001
-  `).all() as any[];
-  return rows.map(r => ({
+  `,
+    )
+    .all() as any[];
+  return rows.map((r) => ({
     paperName: r.paper_name,
     isin: r.isin,
     ticker: r.ticker || r.isin,

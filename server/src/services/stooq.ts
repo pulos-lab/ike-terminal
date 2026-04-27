@@ -12,7 +12,12 @@ const BENCHMARK_YAHOO_FALLBACK: Record<string, string> = {
 
 /** Detect Stooq block/rate-limit responses (including new API key requirement) */
 function isStooqBlocked(text: string): boolean {
-  return text.includes('Przekroczony') || text.includes('limit') || text.includes('www@stooq.pl') || text.includes('apikey');
+  return (
+    text.includes('Przekroczony') ||
+    text.includes('limit') ||
+    text.includes('www@stooq.pl') ||
+    text.includes('apikey')
+  );
 }
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
@@ -24,7 +29,7 @@ const stooqQueue: Array<() => void> = [];
 
 async function withStooqLimit<T>(fn: () => Promise<T>): Promise<T> {
   if (stooqActiveCount >= STOOQ_MAX_CONCURRENT) {
-    await new Promise<void>(resolve => stooqQueue.push(resolve));
+    await new Promise<void>((resolve) => stooqQueue.push(resolve));
   }
   stooqActiveCount++;
   try {
@@ -38,13 +43,13 @@ async function withStooqLimit<T>(fn: () => Promise<T>): Promise<T> {
 
 // Tickers that have a different symbol on Stooq than on Bossa/GPW
 const STOOQ_TICKER_ALIASES: Record<string, string> = {
-  'big': 'bcs',   // BigCheese Studio → BCS on Stooq
-  'cyb': 'cbf',   // CyberFolks → CBF on Stooq
+  big: 'bcs', // BigCheese Studio → BCS on Stooq
+  cyb: 'cbf', // CyberFolks → CBF on Stooq
 };
 
 // Tickers that should NOT be fetched from Stooq (wrong company or no data)
 const STOOQ_TICKER_BLACKLIST = new Set([
-  'wod',   // WOD on Stooq is a different company than Woodpecker (WOD.WA)
+  'wod', // WOD on Stooq is a different company than Woodpecker (WOD.WA)
 ]);
 
 function resolveStooqTicker(ticker: string): string | null {
@@ -76,7 +81,9 @@ export async function fetchStooqPrice(ticker: string): Promise<number | null> {
 
       const headers = lines[0].split(',');
       const values = lines[1].split(',');
-      const closeIdx = headers.findIndex(h => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close');
+      const closeIdx = headers.findIndex(
+        (h) => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close',
+      );
 
       if (closeIdx === -1) return null;
       const price = parseFloat(values[closeIdx]);
@@ -115,7 +122,10 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
         // Fallback to SQLite cache
         const tenDaysAgo = new Date();
         tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
-        const cachedRows = loadHistoricalPrices(stooqTicker, tenDaysAgo.toISOString().split('T')[0]);
+        const cachedRows = loadHistoricalPrices(
+          stooqTicker,
+          tenDaysAgo.toISOString().split('T')[0],
+        );
         if (cachedRows.length >= 2) {
           cachedRows.sort((a, b) => a.date.localeCompare(b.date));
           const prevCloseVal = cachedRows[cachedRows.length - 2].close;
@@ -129,7 +139,10 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
         // Not enough data from API — fallback to SQLite cache
         const tenDaysAgo = new Date();
         tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
-        const cachedRows = loadHistoricalPrices(stooqTicker, tenDaysAgo.toISOString().split('T')[0]);
+        const cachedRows = loadHistoricalPrices(
+          stooqTicker,
+          tenDaysAgo.toISOString().split('T')[0],
+        );
         if (cachedRows.length >= 2) {
           cachedRows.sort((a, b) => a.date.localeCompare(b.date));
           const prevCloseVal = cachedRows[cachedRows.length - 2].close;
@@ -140,12 +153,16 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
       }
 
       const headers = lines[0].split(',');
-      const closeIdx = headers.findIndex(h => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close');
+      const closeIdx = headers.findIndex(
+        (h) => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close',
+      );
       if (closeIdx === -1) return null;
 
       // Parse all rows, sort by date, take second-to-last
       const rows: { date: string; close: number }[] = [];
-      const dateIdx = headers.findIndex(h => h.toLowerCase() === 'data' || h.toLowerCase() === 'date');
+      const dateIdx = headers.findIndex(
+        (h) => h.toLowerCase() === 'data' || h.toLowerCase() === 'date',
+      );
       for (let i = 1; i < lines.length; i++) {
         const vals = lines[i].split(',');
         const date = dateIdx >= 0 ? vals[dateIdx] : '';
@@ -169,7 +186,9 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
  * Try to fetch today's close via Stooq live API, falling back to Yahoo.
  * Used when Stooq historical API is blocked but we need the latest data point.
  */
-async function fetchLiveClose(stooqTicker: string): Promise<{ date: string; close: number } | null> {
+async function fetchLiveClose(
+  stooqTicker: string,
+): Promise<{ date: string; close: number } | null> {
   try {
     // Try Stooq live quote API first
     const url = `https://stooq.pl/q/l/?s=${stooqTicker}&f=sd2t2ohlcv&h&e=csv`;
@@ -181,8 +200,12 @@ async function fetchLiveClose(stooqTicker: string): Promise<{ date: string; clos
       if (lines.length >= 2) {
         const headers = lines[0].split(',');
         const values = lines[1].split(',');
-        const dateIdx = headers.findIndex(h => h.toLowerCase() === 'data' || h.toLowerCase() === 'date');
-        const closeIdx = headers.findIndex(h => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close');
+        const dateIdx = headers.findIndex(
+          (h) => h.toLowerCase() === 'data' || h.toLowerCase() === 'date',
+        );
+        const closeIdx = headers.findIndex(
+          (h) => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close',
+        );
         if (dateIdx !== -1 && closeIdx !== -1) {
           const date = values[dateIdx]?.trim();
           const close = parseFloat(values[closeIdx]?.trim());
@@ -190,7 +213,9 @@ async function fetchLiveClose(stooqTicker: string): Promise<{ date: string; clos
         }
       }
     }
-  } catch { /* fall through to Yahoo */ }
+  } catch {
+    /* fall through to Yahoo */
+  }
 
   // Fallback: Yahoo Finance live
   const yahooTicker = BENCHMARK_YAHOO_FALLBACK[stooqTicker];
@@ -199,7 +224,7 @@ async function fetchLiveClose(stooqTicker: string): Promise<{ date: string; clos
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1d&range=1d`;
     const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
-    const json = await response.json() as any;
+    const json = (await response.json()) as any;
     const result = json.chart?.result?.[0];
     if (!result?.timestamp?.length) return null;
     const lastIdx = result.timestamp.length - 1;
@@ -216,7 +241,10 @@ async function fetchLiveClose(stooqTicker: string): Promise<{ date: string; clos
 /**
  * Fetch historical daily data from Stooq
  */
-export async function fetchStooqHistory(ticker: string, startDate?: string): Promise<Array<{ date: string; close: number }>> {
+export async function fetchStooqHistory(
+  ticker: string,
+  startDate?: string,
+): Promise<Array<{ date: string; close: number }>> {
   const stooqTicker = resolveStooqTicker(ticker);
   if (!stooqTicker) return [];
   const cacheKey = `stooq_history_${stooqTicker}_${startDate || 'all'}`;
@@ -238,9 +266,10 @@ export async function fetchStooqHistory(ticker: string, startDate?: string): Pro
   }
 
   // Fetch only missing data (from last cached date or startDate)
-  const fetchFrom = lastCached && lastCached > (startDate || '2000-01-01')
-    ? lastCached  // fetch from last cached date onwards
-    : startDate;
+  const fetchFrom =
+    lastCached && lastCached > (startDate || '2000-01-01')
+      ? lastCached // fetch from last cached date onwards
+      : startDate;
 
   return withStooqLimit(async () => {
     try {
@@ -261,7 +290,9 @@ export async function fetchStooqHistory(ticker: string, startDate?: string): Pro
         const liveData = await fetchLiveClose(stooqTicker);
         if (liveData && (!lastCached || liveData.date > lastCached)) {
           storeHistoricalPrices(stooqTicker, [liveData], 'stooq-live');
-          console.log(`[stooq] ${stooqTicker}: added live data point (${liveData.date}, close=${liveData.close})`);
+          console.log(
+            `[stooq] ${stooqTicker}: added live data point (${liveData.date}, close=${liveData.close})`,
+          );
           // Reload merged data from cache
           const mergedData = loadHistoricalPrices(stooqTicker, startDate);
           mergedData.sort((a, b) => a.date.localeCompare(b.date));
@@ -283,8 +314,12 @@ export async function fetchStooqHistory(ticker: string, startDate?: string): Pro
       }
 
       const headers = lines[0].split(',');
-      const dateIdx = headers.findIndex(h => h.toLowerCase() === 'data' || h.toLowerCase() === 'date');
-      const closeIdx = headers.findIndex(h => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close');
+      const dateIdx = headers.findIndex(
+        (h) => h.toLowerCase() === 'data' || h.toLowerCase() === 'date',
+      );
+      const closeIdx = headers.findIndex(
+        (h) => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close',
+      );
 
       if (dateIdx === -1 || closeIdx === -1) {
         if (cachedData.length > 0) return cachedData;

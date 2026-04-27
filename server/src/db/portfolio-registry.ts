@@ -35,11 +35,11 @@ function savePortfolios(list: Portfolio[]): void {
 export function getAllPortfolios(userId?: string): Portfolio[] {
   const all = loadPortfolios();
   if (!userId) return all;
-  return all.filter(p => p.userId === userId);
+  return all.filter((p) => p.userId === userId);
 }
 
 export function getPortfolio(id: string): Portfolio | null {
-  return loadPortfolios().find(p => p.id === id) || null;
+  return loadPortfolios().find((p) => p.id === id) || null;
 }
 
 /** Check if a portfolio belongs to a user */
@@ -63,9 +63,12 @@ export function createPortfolio(name: string, userId?: string): Portfolio {
   return portfolio;
 }
 
-export function updatePortfolio(id: string, updates: { name?: string; settings?: PortfolioSettings }): Portfolio | null {
+export function updatePortfolio(
+  id: string,
+  updates: { name?: string; settings?: PortfolioSettings },
+): Portfolio | null {
   const list = loadPortfolios();
-  const idx = list.findIndex(p => p.id === id);
+  const idx = list.findIndex((p) => p.id === id);
   if (idx === -1) return null;
   if (updates.name) list[idx].name = updates.name;
   if (updates.settings) list[idx].settings = updates.settings;
@@ -74,7 +77,7 @@ export function updatePortfolio(id: string, updates: { name?: string; settings?:
 }
 
 export function deletePortfolio(id: string): void {
-  const list = loadPortfolios().filter(p => p.id !== id);
+  const list = loadPortfolios().filter((p) => p.id !== id);
   savePortfolios(list);
   const dbPath = getDbPathForPortfolio(id);
   for (const suffix of ['', '-wal', '-shm']) {

@@ -41,11 +41,14 @@ import { parseNumber, roundTo2 } from './utils.js';
  */
 
 interface ColumnMap {
-  fee: number;       // index of fee column
-  fxRate: number;    // index of "Kurs wymiany" (NEW format), -1 if not present
+  fee: number; // index of fee column
+  fxRate: number; // index of "Kurs wymiany" (NEW format), -1 if not present
 }
 
-export function parseDegiroTransactions(csvContent: string, importBatch: string): ParseResult<Transaction> {
+export function parseDegiroTransactions(
+  csvContent: string,
+  importBatch: string,
+): ParseResult<Transaction> {
   const result = Papa.parse(csvContent.trim(), {
     delimiter: ',',
     header: false,
@@ -69,7 +72,10 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
     const rowNum = i + 1; // 1-based
     const product = row ? row[2]?.trim() : undefined;
 
-    if (!row || row.length < 14) { skipped.push({ row: rowNum, reason: 'short_row', paperName: product }); continue; }
+    if (!row || row.length < 14) {
+      skipped.push({ row: rowNum, reason: 'short_row', paperName: product });
+      continue;
+    }
 
     const dateStr = row[0]?.trim();
     const timeStr = row[1]?.trim();
@@ -81,10 +87,22 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
     const fee = parseNumber(row[colMap.fee]);
     const fxRateRaw = colMap.fxRate >= 0 ? parseNumber(row[colMap.fxRate]) : 0;
 
-    if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date', paperName: product }); continue; }
-    if (!product) { skipped.push({ row: rowNum, reason: 'missing_name' }); continue; }
-    if (!isin) { skipped.push({ row: rowNum, reason: 'missing_isin', paperName: product }); continue; }
-    if (liczba === 0) { skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName: product }); continue; }
+    if (!dateStr) {
+      skipped.push({ row: rowNum, reason: 'missing_date', paperName: product });
+      continue;
+    }
+    if (!product) {
+      skipped.push({ row: rowNum, reason: 'missing_name' });
+      continue;
+    }
+    if (!isin) {
+      skipped.push({ row: rowNum, reason: 'missing_isin', paperName: product });
+      continue;
+    }
+    if (liczba === 0) {
+      skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName: product });
+      continue;
+    }
 
     // Skip corporate actions (e.g. SPAC mergers) where price is 0
     if (price === 0 && localValue !== 0) {
@@ -97,8 +115,14 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
     const quantity = Math.abs(liczba); // keep fractional shares
     const absPrice = Math.abs(price);
 
-    if (quantity <= 0) { skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName: product }); continue; }
-    if (absPrice <= 0) { skipped.push({ row: rowNum, reason: 'invalid_price', paperName: product }); continue; }
+    if (quantity <= 0) {
+      skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName: product });
+      continue;
+    }
+    if (absPrice <= 0) {
+      skipped.push({ row: rowNum, reason: 'invalid_price', paperName: product });
+      continue;
+    }
 
     // Use the trade currency (from the price column), not the account EUR
     const currency = normalizeCurrency(priceCurrency || 'EUR');
@@ -128,12 +152,12 @@ export function parseDegiroTransactions(csvContent: string, importBatch: string)
       value,
       commission,
       total,
-      currency,                                      // quote — z kolumny 8 (priceCurrency)
-      paymentCurrency: 'EUR',                        // default — DEGIRO base account EUR; faktyczna waluta
-                                                     // rozliczenia wyliczana post-insert przez
-                                                     // reconcilePaymentCurrencies() (symulacja salda walut).
-                                                     // Z wyłączonym auto-FX user może trzymać PLN/USD i płacić
-                                                     // bezpośrednio z salda danej waluty.
+      currency, // quote — z kolumny 8 (priceCurrency)
+      paymentCurrency: 'EUR', // default — DEGIRO base account EUR; faktyczna waluta
+      // rozliczenia wyliczana post-insert przez
+      // reconcilePaymentCurrencies() (symulacja salda walut).
+      // Z wyłączonym auto-FX user może trzymać PLN/USD i płacić
+      // bezpośrednio z salda danej waluty.
       fxRate: fxRateRaw > 0 ? fxRateRaw : undefined, // z NEW format "Kurs wymiany"; undefined dla OLD format
       source: 'degiro',
       importBatch,
@@ -177,7 +201,10 @@ function mapColumns(header: string[]): ColumnMap {
 
   for (let i = 0; i < header.length; i++) {
     const name = header[i]?.trim().toLowerCase() || '';
-    if ((name.includes('opłata transakcyjna') || name.includes('oplata transakcyjna')) && feeIdx === 14) {
+    if (
+      (name.includes('opłata transakcyjna') || name.includes('oplata transakcyjna')) &&
+      feeIdx === 14
+    ) {
       feeIdx = i;
     }
     // NEW format: "Kurs wymiany" / "Exchange Rate"
@@ -200,7 +227,6 @@ function parseDegiroDate(dateStr: string, timeStr?: string): string {
   }
   return dateStr;
 }
-
 
 /**
  * Normalize currency codes.

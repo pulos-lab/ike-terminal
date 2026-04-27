@@ -19,10 +19,7 @@ export interface ResolveResult {
 // Concurrency limiter — avoid hammering Yahoo/Stooq APIs
 const MAX_CONCURRENT = 3;
 
-async function withConcurrencyLimit<T>(
-  items: T[],
-  fn: (item: T) => Promise<void>,
-): Promise<void> {
+async function withConcurrencyLimit<T>(items: T[], fn: (item: T) => Promise<void>): Promise<void> {
   const queue = [...items];
   const workers = Array.from({ length: Math.min(MAX_CONCURRENT, queue.length) }, async () => {
     while (queue.length > 0) {
@@ -36,10 +33,7 @@ async function withConcurrencyLimit<T>(
 /**
  * Infer exchange type from ticker symbol and Yahoo exchange string.
  */
-function inferExchange(
-  ticker: string,
-  yahooExchange?: string,
-): TickerMapEntry['exchange'] {
+function inferExchange(ticker: string, yahooExchange?: string): TickerMapEntry['exchange'] {
   if (ticker.endsWith('.WA')) return 'GPW';
   if (ticker.endsWith('.DE')) return 'XETRA';
   if (ticker.endsWith('.TO')) return 'TSX';
@@ -100,39 +94,39 @@ function splitEtfName(name: string): string {
 
 // Stooq ticker aliases for renamed/rebranded Polish companies (old ticker → current Stooq ticker)
 const STOOQ_ALIASES: Record<string, string> = {
-  'DINO': 'DNP',      // Dino Polska
-  'R22': 'CBF',       // R22 → CyberFolks
-  'BRU': 'MBR',       // old ticker → Mo-BRUK
-  'CCC': 'MOD',       // CCC → Modivo (2026)
-  'RAEN': 'GVT',      // Raen → Grupa Virtus (2026)
-  'NEPTS': 'YAN',     // Neptis → Yanosik (2026)
-  'VGN': 'TEC',       // Vinci Gen → Tecnovatica (2026)
-  'EON': 'EUV',       // EO Networks → Euvic (2026)
-  'DTL': 'VAI',       // Detalion Games → Volaria AI (2025)
-  'PKN': 'ORL',       // PKN Orlen → Orlen (2023)
-  'LVC': 'TXT',       // LiveChat → Text (2023)
-  'FMF': 'GNE',       // Famur → Grenevia (2023)
-  'GBK': 'CPT',       // GetBack → Capitea (2023)
-  'OAT': 'MOC',       // OncoArendi → Molecure (2022)
-  '4FM': 'DIG',       // 4FUN Media → Digital Network (2022)
-  'WSC': 'GGP',       // Work Service → Gi Group Poland (2021)
-  'LCC': 'DVL',       // LC Corp → Develia (2019)
-  'VST': 'VRG',       // Vistula Group → VRG (2018)
-  'PIL': 'DAT',       // PiLab → DataWalk (2018)
+  DINO: 'DNP', // Dino Polska
+  R22: 'CBF', // R22 → CyberFolks
+  BRU: 'MBR', // old ticker → Mo-BRUK
+  CCC: 'MOD', // CCC → Modivo (2026)
+  RAEN: 'GVT', // Raen → Grupa Virtus (2026)
+  NEPTS: 'YAN', // Neptis → Yanosik (2026)
+  VGN: 'TEC', // Vinci Gen → Tecnovatica (2026)
+  EON: 'EUV', // EO Networks → Euvic (2026)
+  DTL: 'VAI', // Detalion Games → Volaria AI (2025)
+  PKN: 'ORL', // PKN Orlen → Orlen (2023)
+  LVC: 'TXT', // LiveChat → Text (2023)
+  FMF: 'GNE', // Famur → Grenevia (2023)
+  GBK: 'CPT', // GetBack → Capitea (2023)
+  OAT: 'MOC', // OncoArendi → Molecure (2022)
+  '4FM': 'DIG', // 4FUN Media → Digital Network (2022)
+  WSC: 'GGP', // Work Service → Gi Group Poland (2021)
+  LCC: 'DVL', // LC Corp → Develia (2019)
+  VST: 'VRG', // Vistula Group → VRG (2018)
+  PIL: 'DAT', // PiLab → DataWalk (2018)
   // NewConnect renamed tickers
-  'RAE': 'GVT',       // Raen → Grupa Virtus (2026)
-  'VAK': 'BTF',       // Vakomtek → BTCS (2025)
-  'SUN': 'MIG',       // Sundragon → Military Group (2025)
-  'PGM': 'GNS',       // Polska Grupa Motoryzacyjna → Grupa Niewiadów (2025)
-  'PUN': 'RAE',       // PunkPirates → Raen (2023)
-  'BRZ': 'HUB',       // Boruta-Zachem → Hub.Tech (2022)
-  'MCP': 'BEL',       // Medcamp → BeLeaf (2022)
-  'IQP': 'PUN',       // IQ Partners → PunkPirates (2020)
-  '7FT': 'OML',       // 7Fit → One More Level (2020)
-  'BSP': 'IVO',       // Baltic Storage → Incuvo (2020)
-  'ZAK': 'PDG',       // Zaks → Pyramid Games (2019)
-  'SKN': 'SIM',       // Skin-System → SimFabric (2019)
-  'BLU': 'CLC',       // Blumerang Pre-IPO → Columbus Energy (2018)
+  RAE: 'GVT', // Raen → Grupa Virtus (2026)
+  VAK: 'BTF', // Vakomtek → BTCS (2025)
+  SUN: 'MIG', // Sundragon → Military Group (2025)
+  PGM: 'GNS', // Polska Grupa Motoryzacyjna → Grupa Niewiadów (2025)
+  PUN: 'RAE', // PunkPirates → Raen (2023)
+  BRZ: 'HUB', // Boruta-Zachem → Hub.Tech (2022)
+  MCP: 'BEL', // Medcamp → BeLeaf (2022)
+  IQP: 'PUN', // IQ Partners → PunkPirates (2020)
+  '7FT': 'OML', // 7Fit → One More Level (2020)
+  BSP: 'IVO', // Baltic Storage → Incuvo (2020)
+  ZAK: 'PDG', // Zaks → Pyramid Games (2019)
+  SKN: 'SIM', // Skin-System → SimFabric (2019)
+  BLU: 'CLC', // Blumerang Pre-IPO → Columbus Energy (2018)
 };
 
 async function resolveIsin(
@@ -144,7 +138,8 @@ async function resolveIsin(
 
   // Should we prefer Warsaw Stock Exchange results?
   const isRealPolishIsin = isin.startsWith('PL') && isRealIsin(isin);
-  const isPolishTicker = isRealPolishIsin || isin.endsWith('.WA') || (isPseudoIsin && txCurrency === 'PLN');
+  const isPolishTicker =
+    isRealPolishIsin || isin.endsWith('.WA') || (isPseudoIsin && txCurrency === 'PLN');
 
   // Detect NewConnect from paper name suffix (Bossa uses "-NC", "-NC-FIX")
   const isNewConnect = /-NC(?:-FIX)?$/i.test(paperName);
@@ -165,7 +160,10 @@ async function resolveIsin(
 
     // 1. Stooq ticker validation (works for short tickers: PGE, CDR, JSW, DNP)
     const candidates = [aliasedName];
-    if (!aliasedName.toUpperCase().startsWith('ETF') && !aliasedName.toUpperCase().startsWith('BETA')) {
+    if (
+      !aliasedName.toUpperCase().startsWith('ETF') &&
+      !aliasedName.toUpperCase().startsWith('BETA')
+    ) {
       if (aliasedName.length > 4) candidates.push(aliasedName.substring(0, 4));
       if (aliasedName.length > 3) candidates.push(aliasedName.substring(0, 3));
     }
@@ -189,7 +187,9 @@ async function resolveIsin(
     if (cleanName.length >= 3) {
       const stooqSearch = await searchStooqByName(cleanName);
       if (stooqSearch) {
-        const exchange = (stooqSearch.exchange === 'NC' ? 'NC' : 'GPW') as TickerMapEntry['exchange'];
+        const exchange = (
+          stooqSearch.exchange === 'NC' ? 'NC' : 'GPW'
+        ) as TickerMapEntry['exchange'];
         return {
           isin,
           ticker: stooqSearch.symbol,
@@ -219,14 +219,14 @@ async function resolveIsin(
     // 4. Yahoo fallback with .WA preference
     const byIsin = await searchYahoo(isin);
     if (byIsin.length > 0) {
-      const hit = byIsin.find(r => r.symbol.endsWith('.WA')) || byIsin[0];
+      const hit = byIsin.find((r) => r.symbol.endsWith('.WA')) || byIsin[0];
       return await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
     }
 
     if (cleanName !== isin) {
       const byName = await searchYahoo(cleanName);
       if (byName.length > 0) {
-        const hit = byName.find(r => r.symbol.endsWith('.WA')) || byName[0];
+        const hit = byName.find((r) => r.symbol.endsWith('.WA')) || byName[0];
         return await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
       }
     }
@@ -245,15 +245,29 @@ async function resolveIsin(
     // przez Bossę w PLN, więc GRX.WA jest właściwe dla live prices i historii.
     const preferWa = isPolishTicker || txCurrency === 'PLN';
     if (preferWa) {
-      const waHit = byIsin.find(r => r.symbol.endsWith('.WA'));
+      const waHit = byIsin.find((r) => r.symbol.endsWith('.WA'));
       if (waHit) {
-        return await buildEntry(isin, waHit.symbol, waHit.name, waHit.exchange, paperName, txCurrency);
+        return await buildEntry(
+          isin,
+          waHit.symbol,
+          waHit.name,
+          waHit.exchange,
+          paperName,
+          txCurrency,
+        );
       }
     }
     // Polish ticker z pseudoISIN/realPL bez .WA hita → NIE akceptujemy zagranicznego listingu,
     // niżej Strategy 2 (Stooq) spróbuje znaleźć .WA po nazwie.
     if (!isPolishTicker) {
-      return await buildEntry(isin, byIsin[0].symbol, byIsin[0].name, byIsin[0].exchange, paperName, txCurrency);
+      return await buildEntry(
+        isin,
+        byIsin[0].symbol,
+        byIsin[0].name,
+        byIsin[0].exchange,
+        paperName,
+        txCurrency,
+      );
     }
   }
 
@@ -288,7 +302,9 @@ async function resolveIsin(
     if (cleanName.length >= 3) {
       const stooqSearch = await searchStooqByName(cleanName);
       if (stooqSearch) {
-        const exchange = (stooqSearch.exchange === 'NC' ? 'NC' : 'GPW') as TickerMapEntry['exchange'];
+        const exchange = (
+          stooqSearch.exchange === 'NC' ? 'NC' : 'GPW'
+        ) as TickerMapEntry['exchange'];
         return {
           isin,
           ticker: stooqSearch.symbol,
@@ -329,12 +345,26 @@ async function resolveIsin(
       const byName = await searchYahoo(variant);
       if (byName.length > 0) {
         if (isPolishTicker) {
-          const waHit = byName.find(r => r.symbol.endsWith('.WA'));
+          const waHit = byName.find((r) => r.symbol.endsWith('.WA'));
           if (waHit) {
-            return await buildEntry(isin, waHit.symbol, waHit.name, waHit.exchange, paperName, txCurrency);
+            return await buildEntry(
+              isin,
+              waHit.symbol,
+              waHit.name,
+              waHit.exchange,
+              paperName,
+              txCurrency,
+            );
           }
         } else {
-          return await buildEntry(isin, byName[0].symbol, byName[0].name, byName[0].exchange, paperName, txCurrency);
+          return await buildEntry(
+            isin,
+            byName[0].symbol,
+            byName[0].name,
+            byName[0].exchange,
+            paperName,
+            txCurrency,
+          );
         }
       }
     }
@@ -347,7 +377,14 @@ async function resolveIsin(
   if (isPolishTicker) {
     const byIsinRetry = await searchYahoo(isin);
     if (byIsinRetry.length > 0) {
-      return await buildEntry(isin, byIsinRetry[0].symbol, byIsinRetry[0].name, byIsinRetry[0].exchange, paperName, txCurrency);
+      return await buildEntry(
+        isin,
+        byIsinRetry[0].symbol,
+        byIsinRetry[0].name,
+        byIsinRetry[0].exchange,
+        paperName,
+        txCurrency,
+      );
     }
   }
 
@@ -391,7 +428,12 @@ async function buildEntry(
   // ale sektor/supersektor próbujemy pobrać (stockwatch map + Yahoo fallback).
   if (ticker.endsWith('.WA')) {
     const { supersector, subsector } = await resolveSector({
-      isin, ticker, name: resolvedName, exchange, currency: 'PLN', priceSource,
+      isin,
+      ticker,
+      name: resolvedName,
+      exchange,
+      currency: 'PLN',
+      priceSource,
     }).catch(() => ({ supersector: null, subsector: null }));
     return {
       isin,
@@ -412,8 +454,14 @@ async function buildEntry(
   try {
     const [priceData, sectors] = await Promise.all([
       fetchYahooPrice(ticker).catch(() => null),
-      resolveSector({ isin, ticker, name: resolvedName, exchange, currency: txCurrency, priceSource })
-        .catch(() => ({ supersector: null, subsector: null })),
+      resolveSector({
+        isin,
+        ticker,
+        name: resolvedName,
+        exchange,
+        currency: txCurrency,
+        priceSource,
+      }).catch(() => ({ supersector: null, subsector: null })),
     ]);
     if (priceData?.currency) currency = priceData.currency;
     subsector = sectors.subsector;
@@ -451,7 +499,11 @@ export async function resolveUnknownIsins(
   const unknowns = new Map<string, { paperName: string; currency: string; category?: string }>();
   for (const tx of transactions) {
     if (!existingMap.has(tx.isin) && !unknowns.has(tx.isin)) {
-      unknowns.set(tx.isin, { paperName: tx.paperName, currency: tx.currency, category: tx.category });
+      unknowns.set(tx.isin, {
+        paperName: tx.paperName,
+        currency: tx.currency,
+        category: tx.category,
+      });
     }
   }
 
