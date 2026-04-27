@@ -1,0 +1,7 @@
+# Revisions to ignore in `git blame` (formatting / mass renames only).
+# Configure locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub honors this file automatically in the blame UI.
+
+# chore: format entire codebase with prettier
+c016658dbf3d851c2cc53ffb2bacef910a057a0b
