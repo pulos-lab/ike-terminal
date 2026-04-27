@@ -202,6 +202,7 @@ export async function computeOpenPositions(
   transactions: Transaction[],
   tickerMap: Map<string, TickerMapEntry>,
   splits: DetectedSplit[] = [],
+  fxRatesOverride?: Record<string, number>,
 ): Promise<{ positions: Position[]; totalValuePln: number; detectedSplits: DetectedSplit[] }> {
   // Lightweight split detection: for each ISIN, fetch the provider price on the
   // earliest transaction date and compare. This catches splits even if the user
@@ -256,12 +257,21 @@ export async function computeOpenPositions(
     USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
     CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
   };
-  await Promise.all([...liveCurrencies].map(async (cur) => {
-    const rate = await fetchFxRate(`${cur}PLN`);
-    fxRates[cur] = rate || defaultFx[cur] || 1;
-    // Also store GBp → GBP alias so ticker map entries with 'GBp' currency work
-    if (cur === 'GBP') fxRates['GBp'] = fxRates[cur];
-  }));
+  if (fxRatesOverride) {
+    // Caller (np. /metrics endpoint) pre-fetchuje FX raz dla wszystkich obliczeń
+    // (positions + cash + fxImpact), żeby zapewnić spójność wartości na ekranie.
+    for (const cur of liveCurrencies) {
+      fxRates[cur] = fxRatesOverride[cur] ?? defaultFx[cur] ?? 1;
+    }
+    if ('GBP' in fxRates) fxRates['GBp'] = fxRates['GBP'];
+  } else {
+    await Promise.all([...liveCurrencies].map(async (cur) => {
+      const rate = await fetchFxRate(`${cur}PLN`);
+      fxRates[cur] = rate || defaultFx[cur] || 1;
+      // Also store GBp → GBP alias so ticker map entries with 'GBp' currency work
+      if (cur === 'GBP') fxRates['GBp'] = fxRates[cur];
+    }));
+  }
 
   const positions: Position[] = [];
   let totalValuePln = 0;
@@ -940,6 +950,10 @@ export function computeFxImpact(
    *  kosztowałoby kupno tej waluty na rynku tego dnia" — dla ops gdzie
    *  op.fxRate to cross-rate (np. USD per EUR), nie vs PLN. */
   historicalCrossRates: Map<string, Map<string, number>> = new Map(),
+  /** Pre-computed exposurePln per waluta (z tej samej mapy FX co totalPortfolioValuePln).
+   *  Gdy podane, nadpisuje liczone wewnętrznie `exposureNative × todayFx` — gwarantuje że
+   *  Σ exposurePln + część PLN = totalPortfolioValuePln (matematycznie). */
+  exposurePlnByCurrency?: Map<string, number>,
 ): FxImpact | null {
   const breakdown: FxImpactCurrencyEntry[] = [];
 
@@ -980,7 +994,8 @@ export function computeFxImpact(
     const impactPct = avgPlnPerCurrency > 0
       ? (todayPlnPerCurrency / avgPlnPerCurrency - 1) * 100
       : 0;
-    const exposurePln = exposureNative * todayPlnPerCurrency;
+    const exposurePln = exposurePlnByCurrency?.get(currency)
+      ?? exposureNative * todayPlnPerCurrency;
     const exposurePctOfPortfolio = totalPortfolioValuePln > 0
       ? (exposurePln / totalPortfolioValuePln) * 100
       : 0;
