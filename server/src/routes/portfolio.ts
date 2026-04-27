@@ -812,56 +812,83 @@ router.get('/metrics', asyncHandler(async (req, res) => {
 
   const baseCurrency = detectBaseCurrency(operations);
 
-  // Engine liczy wszystko w baseCurrency (nowy refactor — commit e9db541+).
-  // Wszystkie metrics zwracane są już w walucie bazowej portfela, bez FX drift
-  // jaki wcześniej powodował podwójną konwersję (Σ raw × fx_dnia → PLN → /fx_today).
-  //
-  // PERF: history + positions są NIEZALEŻNE (positions nie używa metrics, metrics
-  // nie używa live-positions), lecą równolegle. Oszczędza ~1.5s na dużym portfelu
-  // (6000+ tx), bo najdłuższy sam computeOpenPositions + computePortfolioHistory
-  // wynosi max zamiast sum.
+  // KROK 1: Zbierz wszystkie obce waluty z portfela (ticker_map + transactions + cash)
+  // i pre-fetchuj kursy FX RAZ. Mapa jest źródłem prawdy dla wszystkich obliczeń
+  // poniżej (positions, cash conversion, fxImpact) — eliminuje dryf między
+  // niezależnymi fetchami z których wcześniej wynikała niespójność na ekranie
+  // (np. "Część zagraniczna" > "Wartość portfela" przez różne snapshoty cache).
+  const cashBalances = computeCashBalances(transactions, operations);
+  const allForeignCurrencies = new Set<string>();
+  for (const entry of tickerMap.values()) {
+    if (entry.currency) {
+      const u = entry.currency.toUpperCase();
+      if (u !== 'PLN') allForeignCurrencies.add(u === 'GBX' ? 'GBP' : u);
+    }
+  }
+  for (const tx of transactions) {
+    const u = tx.currency.toUpperCase();
+    if (u !== 'PLN') allForeignCurrencies.add(u === 'GBX' ? 'GBP' : u);
+  }
+  for (const cur of Object.keys(cashBalances)) {
+    const u = cur.toUpperCase();
+    if (u !== 'PLN') allForeignCurrencies.add(u === 'GBX' ? 'GBP' : u);
+  }
+  const fxRatesObj: Record<string, number> = { PLN: 1 };
+  const todayFxRatesToPln = new Map<string, number>();
+  todayFxRatesToPln.set('PLN', 1);
+  await Promise.all([...allForeignCurrencies].map(async (cur) => {
+    const rate = await fetchFxRate(`${cur}PLN`) || 0;
+    if (rate > 0) {
+      fxRatesObj[cur] = rate;
+      todayFxRatesToPln.set(cur, rate);
+    }
+  }));
+
+  // KROK 2: history (close-of-day, dla wykresu/XIRR) + positions (LIVE, dla wartości
+  // pokazywanej na ekranie) lecą równolegle. Positions dostaje pre-fetched FX.
   const [{ metrics }, { positions, totalValuePln: stocksValuePln }] = await Promise.all([
     computePortfolioHistory(
       transactions, operations, tickerMap,
       '^GSPC', 'yahoo', // benchmark ticker nie wpływa na metrics
       undefined, undefined, savedSplits, baseCurrency,
     ),
-    computeOpenPositions(transactions, tickerMap, savedSplits),
+    computeOpenPositions(transactions, tickerMap, savedSplits, fxRatesObj),
   ]);
 
-  // FX impact — liczymy per-currency exposure dla każdej obcej waluty w portfelu
-  // (vs PLN jako referencja). fxImpactPct pokazywany jako % CAŁEGO portfela
-  // (intuicyjne — "o ile portfel ruszył dzięki FX"), breakdown per waluta z
-  // ekspozycją jako % portfela (user widzi skalę).
-  const cashBalances = computeCashBalances(transactions, operations);
-
+  // KROK 3: foreignExposures (NATIVE) i exposurePlnByCurrency (z tych samych
+  // pozycji co stocksValuePln, plus cash × ten sam FX). Gwarantuje:
+  //   Σ exposurePlnByCurrency + część PLN = totalPortfolioValuePln
+  // (tj. tooltip "Część zagraniczna" matematycznie pasuje do "Wartość portfela").
   const foreignExposures = new Map<string, number>();
+  const exposurePlnByCurrency = new Map<string, number>();
   for (const pos of positions) {
     const cur = (pos.currency || 'PLN').toUpperCase();
     if (cur === 'PLN') continue;
+    const curKey = cur === 'GBX' ? 'GBP' : cur;
     const native = pos.currentValue ?? 0;
-    foreignExposures.set(cur, (foreignExposures.get(cur) ?? 0) + native);
+    foreignExposures.set(curKey, (foreignExposures.get(curKey) ?? 0) + native);
+    exposurePlnByCurrency.set(curKey, (exposurePlnByCurrency.get(curKey) ?? 0) + (pos.currentValuePln ?? 0));
   }
   for (const [cur, balance] of Object.entries(cashBalances)) {
     const upperCur = cur.toUpperCase();
     if (upperCur === 'PLN') continue;
-    if (balance > 0) foreignExposures.set(upperCur, (foreignExposures.get(upperCur) ?? 0) + balance);
+    if (balance > 0) {
+      const curKey = upperCur === 'GBX' ? 'GBP' : upperCur;
+      foreignExposures.set(curKey, (foreignExposures.get(curKey) ?? 0) + balance);
+      const cashPln = balance * (todayFxRatesToPln.get(curKey) || 0);
+      exposurePlnByCurrency.set(curKey, (exposurePlnByCurrency.get(curKey) ?? 0) + cashPln);
+    }
   }
 
-  // Dzisiejsze kursy PLN-per-X dla każdej obcej waluty w portfelu
-  const todayFxRatesToPln = new Map<string, number>();
-  for (const cur of foreignExposures.keys()) {
-    const rate = await fetchFxRate(`${cur}PLN`) || 0;
-    if (rate > 0) todayFxRatesToPln.set(cur, rate);
-  }
-
-  // totalPortfolioValuePln = stocks + cash, cash konwertowany przez dzisiejszy FX.
-  // Dla PLN portfeli: stocksValuePln już w PLN, cash PLN + obce waluty konwertowane.
+  // totalPortfolioValuePln = stocks (LIVE intraday × wspólny FX) + cash (PLN + obce × wspólny FX).
   let cashValuePln = 0;
   for (const [cur, balance] of Object.entries(cashBalances)) {
     const upperCur = cur.toUpperCase();
     if (upperCur === 'PLN') cashValuePln += balance;
-    else cashValuePln += balance * (todayFxRatesToPln.get(upperCur) || 0);
+    else {
+      const curKey = upperCur === 'GBX' ? 'GBP' : upperCur;
+      cashValuePln += balance * (todayFxRatesToPln.get(curKey) || 0);
+    }
   }
   const totalPortfolioValuePln = stocksValuePln + cashValuePln;
 
@@ -917,14 +944,31 @@ router.get('/metrics', asyncHandler(async (req, res) => {
     todayFxRatesToPln,
     totalPortfolioValuePln,
     historicalCrossRates,
+    exposurePlnByCurrency,
   );
 
+  // KROK 4: ujednolicenie wartości na ekranie. currentValue = LIVE wycena (ta sama
+  // co w panelu Portfel i tooltipie "Wpływ walut"), nie close-of-day z engine.
+  // totalReturn / totalReturnPct przeliczone z tej samej liczby, żeby topbar był
+  // matematycznie spójny (Wartość − Wpłaty = Zysk).
+  // XIRR pozostaje z engine — bazuje na historii close (stabilna linia).
+  // Dla portfeli nie-PLN engine liczy w baseCurrency; pomijamy override i zostawiamy
+  // metrics.currentValue (totalPortfolioValuePln zawsze w PLN).
+  const useLiveValue = baseCurrency === 'PLN';
+  const currentValue = useLiveValue ? totalPortfolioValuePln : metrics.currentValue;
+  const totalReturn = useLiveValue
+    ? totalPortfolioValuePln - (metrics.totalInvested || 0)
+    : metrics.totalReturn;
+  const totalReturnPct = useLiveValue && metrics.totalInvested > 0
+    ? (totalReturn / metrics.totalInvested) * 100
+    : metrics.totalReturnPct;
+
   res.json({
-    currentValue: metrics.currentValue,
+    currentValue,
     totalInvested: metrics.totalInvested,
     xirr: metrics.xirr,
-    totalReturn: metrics.totalReturn,
-    totalReturnPct: metrics.totalReturnPct,
+    totalReturn,
+    totalReturnPct,
     totalDividends: metrics.totalDividends,
     baseCurrency,
     fxImpact,
