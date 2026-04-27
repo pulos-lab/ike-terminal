@@ -806,7 +806,11 @@ export function CorrectionsAndCostsPage() {
                       </TableCell>
                       <TableCell className="font-mono text-xs">{a.ticker ?? '—'}</TableCell>
                       <TableCell className="text-sm">{a.description}</TableCell>
-                      <TableCell className="text-right font-mono text-gain tabular-nums">
+                      <TableCell
+                        className={`text-right font-mono tabular-nums ${
+                          a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : ''
+                        }`}
+                      >
                         {formatCurrency(a.amount, a.currency)}
                       </TableCell>
                       <TableCell>
