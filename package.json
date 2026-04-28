@@ -15,7 +15,7 @@
     "seed": "npm run seed -w server",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,html}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,html}\"",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
