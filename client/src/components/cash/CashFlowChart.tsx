@@ -77,7 +77,7 @@ export function CashFlowChart({ data, currency, showPortfolio, showCashFlow }: C
     portfolioSeriesRef.current = portfolioSeries;
 
     portfolioSeries.setData(
-      data.map(d => ({ time: d.date as string, value: d.portfolioValue })) as any,
+      data.map((d) => ({ time: d.date as string, value: d.portfolioValue })) as any,
     );
 
     const cashFlowSeries = chart.addSeries(AreaSeries, {
@@ -95,7 +95,7 @@ export function CashFlowChart({ data, currency, showPortfolio, showCashFlow }: C
     cashFlowSeriesRef.current = cashFlowSeries;
 
     cashFlowSeries.setData(
-      data.map(d => ({ time: d.date as string, value: d.netCashFlow })) as any,
+      data.map((d) => ({ time: d.date as string, value: d.netCashFlow })) as any,
     );
 
     chart.timeScale().fitContent();

@@ -10,7 +10,13 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidateFx } from '@/lib/query-keys';
 import { formatNumber } from '@/lib/formatters';
@@ -55,12 +61,18 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
     if (from === 'USD' && to === 'PLN' && fx.USDPLN) return (1 / fx.USDPLN).toFixed(4);
     if (from === 'EUR' && to === 'PLN' && fx.EURPLN) return (1 / fx.EURPLN).toFixed(4);
     if (from === 'GBP' && to === 'PLN' && fx.GBPPLN) return (1 / fx.GBPPLN).toFixed(4);
-    if (from === 'USD' && to === 'EUR' && fx.USDPLN && fx.EURPLN) return (fx.USDPLN / fx.EURPLN).toFixed(4);
-    if (from === 'EUR' && to === 'USD' && fx.USDPLN && fx.EURPLN) return (fx.EURPLN / fx.USDPLN).toFixed(4);
-    if (from === 'USD' && to === 'GBP' && fx.USDPLN && fx.GBPPLN) return (fx.USDPLN / fx.GBPPLN).toFixed(4);
-    if (from === 'GBP' && to === 'USD' && fx.USDPLN && fx.GBPPLN) return (fx.GBPPLN / fx.USDPLN).toFixed(4);
-    if (from === 'EUR' && to === 'GBP' && fx.EURPLN && fx.GBPPLN) return (fx.EURPLN / fx.GBPPLN).toFixed(4);
-    if (from === 'GBP' && to === 'EUR' && fx.EURPLN && fx.GBPPLN) return (fx.GBPPLN / fx.EURPLN).toFixed(4);
+    if (from === 'USD' && to === 'EUR' && fx.USDPLN && fx.EURPLN)
+      return (fx.USDPLN / fx.EURPLN).toFixed(4);
+    if (from === 'EUR' && to === 'USD' && fx.USDPLN && fx.EURPLN)
+      return (fx.EURPLN / fx.USDPLN).toFixed(4);
+    if (from === 'USD' && to === 'GBP' && fx.USDPLN && fx.GBPPLN)
+      return (fx.USDPLN / fx.GBPPLN).toFixed(4);
+    if (from === 'GBP' && to === 'USD' && fx.USDPLN && fx.GBPPLN)
+      return (fx.GBPPLN / fx.USDPLN).toFixed(4);
+    if (from === 'EUR' && to === 'GBP' && fx.EURPLN && fx.GBPPLN)
+      return (fx.EURPLN / fx.GBPPLN).toFixed(4);
+    if (from === 'GBP' && to === 'EUR' && fx.EURPLN && fx.GBPPLN)
+      return (fx.GBPPLN / fx.EURPLN).toFixed(4);
     return '';
   };
 
@@ -116,10 +128,7 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
   });
 
   const valid =
-    date &&
-    currencyFrom !== currencyTo &&
-    parseFloat(amountFrom) > 0 &&
-    parseFloat(rate) > 0;
+    date && currencyFrom !== currencyTo && parseFloat(amountFrom) > 0 && parseFloat(rate) > 0;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !createMut.isPending && onClose()}>
@@ -127,8 +136,8 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
         <DialogHeader>
           <DialogTitle>Dodaj wymianę walut</DialogTitle>
           <DialogDescription>
-            Tworzymy parę operacji: ujemną na walucie źródłowej + dodatnią na walucie docelowej.
-            FX exchange nie wchodzi do MWR/XIRR (to konwersja, nie wpłata).
+            Tworzymy parę operacji: ujemną na walucie źródłowej + dodatnią na walucie docelowej. FX
+            exchange nie wchodzi do MWR/XIRR (to konwersja, nie wpłata).
           </DialogDescription>
         </DialogHeader>
 
@@ -142,16 +151,28 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
             <label className="text-xs text-muted-foreground">Para walut *</label>
             <div className="flex items-center gap-2">
               <Select value={currencyFrom} onValueChange={(v) => handleCurrencyChange('from', v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
-                  {CURRENCIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {CURRENCIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <span className="text-muted-foreground">→</span>
               <Select value={currencyTo} onValueChange={(v) => handleCurrencyChange('to', v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
-                  {CURRENCIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {CURRENCIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -171,7 +192,12 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
             </div>
             <div>
               <label className="text-xs text-muted-foreground">
-                Kurs *{fx && <span className="text-[10px] ml-1 opacity-60">(live: {getLiveRate(currencyFrom, currencyTo) || '—'})</span>}
+                Kurs *
+                {fx && (
+                  <span className="text-[10px] ml-1 opacity-60">
+                    (live: {getLiveRate(currencyFrom, currencyTo) || '—'})
+                  </span>
+                )}
               </label>
               <Input
                 type="number"
@@ -186,13 +212,18 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
 
           {amountTo && (
             <div className="text-xs text-gain tabular-nums p-2 rounded-md bg-gain/5 border border-gain/20">
-              Otrzymasz: <strong>+{formatNumber(parseFloat(amountTo))} {currencyTo}</strong>
+              Otrzymasz:{' '}
+              <strong>
+                +{formatNumber(parseFloat(amountTo))} {currencyTo}
+              </strong>
             </div>
           )}
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={createMut.isPending}>Anuluj</Button>
+          <Button variant="outline" onClick={onClose} disabled={createMut.isPending}>
+            Anuluj
+          </Button>
           <Button onClick={() => createMut.mutate()} disabled={!valid || createMut.isPending}>
             {createMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Dodaj

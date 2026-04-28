@@ -3,10 +3,23 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
@@ -133,7 +146,8 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
   const availableYears = useMemo(() => {
     if (!data?.trades?.length) return [];
     const set = new Set<number>();
-    for (const trade of data.trades as ClosedTrade[]) set.add(new Date(trade.sellDate).getFullYear());
+    for (const trade of data.trades as ClosedTrade[])
+      set.add(new Date(trade.sellDate).getFullYear());
     return Array.from(set).sort((a, b) => b - a);
   }, [data]);
 
@@ -141,10 +155,10 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
     if (!data?.trades?.length) return [];
     let trades = data.trades as ClosedTrade[];
 
-    if (plFilter === 'profit') trades = trades.filter(t => t.profitLoss > 0);
-    else if (plFilter === 'loss') trades = trades.filter(t => t.profitLoss < 0);
+    if (plFilter === 'profit') trades = trades.filter((t) => t.profitLoss > 0);
+    else if (plFilter === 'loss') trades = trades.filter((t) => t.profitLoss < 0);
 
-    if (currencyFilter !== 'ALL') trades = trades.filter(t => t.currency === currencyFilter);
+    if (currencyFilter !== 'ALL') trades = trades.filter((t) => t.currency === currencyFilter);
 
     if (dateRange !== 'ALL') {
       let fromDate: string | undefined;
@@ -156,8 +170,8 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
         fromDate = `${dateRange}-01-01`;
         toDate = `${dateRange}-12-31`;
       }
-      if (fromDate) trades = trades.filter(t => t.sellDate.slice(0, 10) >= fromDate!);
-      if (toDate) trades = trades.filter(t => t.sellDate.slice(0, 10) <= toDate!);
+      if (fromDate) trades = trades.filter((t) => t.sellDate.slice(0, 10) >= fromDate!);
+      if (toDate) trades = trades.filter((t) => t.sellDate.slice(0, 10) <= toDate!);
     }
 
     return trades;
@@ -181,15 +195,19 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
       const totalQuantity = trades.reduce((s, t) => s + t.quantity, 0);
       const totalProfitLoss = trades.reduce((s, t) => s + t.profitLoss, 0);
       // Use quantity-weighted average of individual P/L% (correct for both stocks and CFD)
-      const weightedProfitLossPct = totalQuantity > 0
-        ? trades.reduce((s, t) => s + t.profitLossPct * t.quantity, 0) / totalQuantity
-        : 0;
+      const weightedProfitLossPct =
+        totalQuantity > 0
+          ? trades.reduce((s, t) => s + t.profitLossPct * t.quantity, 0) / totalQuantity
+          : 0;
 
-      const buyDates = trades.map(t => t.buyDate).sort();
-      const buyPrices = trades.map(t => t.buyPrice);
+      const buyDates = trades.map((t) => t.buyDate).sort();
+      const buyPrices = trades.map((t) => t.buyPrice);
       const totalHoldingDaysWeighted = trades.reduce((s, t) => s + t.holdingDays * t.quantity, 0);
 
-      const totalCost = trades.reduce((s, t) => s + (t.totalCost || t.buyCommission + t.sellCommission), 0);
+      const totalCost = trades.reduce(
+        (s, t) => s + (t.totalCost || t.buyCommission + t.sellCommission),
+        0,
+      );
 
       result.push({
         key,
@@ -218,9 +236,18 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
   }, [filteredTrades]);
 
   const plSummary = useMemo(() => {
-    const map = new Map<string, { currency: string; totalPL: number; count: number; wins: number; losses: number }>();
+    const map = new Map<
+      string,
+      { currency: string; totalPL: number; count: number; wins: number; losses: number }
+    >();
     for (const group of groups) {
-      const s = map.get(group.currency) || { currency: group.currency, totalPL: 0, count: 0, wins: 0, losses: 0 };
+      const s = map.get(group.currency) || {
+        currency: group.currency,
+        totalPL: 0,
+        count: 0,
+        wins: 0,
+        losses: 0,
+      };
       s.totalPL += group.totalProfitLoss;
       s.count += 1;
       if (group.totalProfitLoss > 0) s.wins += 1;
@@ -241,7 +268,8 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
             Historia zamkniętych pozycji (FIFO)
             {groups.length > 0 && (
               <span className="ml-2 text-muted-foreground font-normal">
-                ({groups.length} pozycji, {filteredTrades.length} transakcji{isFiltered && ` z ${totalTrades}`})
+                ({groups.length} pozycji, {filteredTrades.length} transakcji
+                {isFiltered && ` z ${totalTrades}`})
               </span>
             )}
           </CardTitle>
@@ -250,9 +278,30 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
           {!isLoading && data?.trades?.length ? (
             <div className="flex flex-wrap items-center gap-3 mb-4">
               <div className="flex items-center rounded-md border">
-                <Button size="sm" variant={plFilter === 'all' ? 'secondary' : 'ghost'} className="h-7 px-2.5 text-xs rounded-r-none" onClick={() => setPlFilter('all')}>Wszystkie</Button>
-                <Button size="sm" variant={plFilter === 'profit' ? 'secondary' : 'ghost'} className="h-7 px-2.5 text-xs rounded-none border-x" onClick={() => setPlFilter('profit')}>Zyski</Button>
-                <Button size="sm" variant={plFilter === 'loss' ? 'secondary' : 'ghost'} className="h-7 px-2.5 text-xs rounded-l-none" onClick={() => setPlFilter('loss')}>Straty</Button>
+                <Button
+                  size="sm"
+                  variant={plFilter === 'all' ? 'secondary' : 'ghost'}
+                  className="h-7 px-2.5 text-xs rounded-r-none"
+                  onClick={() => setPlFilter('all')}
+                >
+                  Wszystkie
+                </Button>
+                <Button
+                  size="sm"
+                  variant={plFilter === 'profit' ? 'secondary' : 'ghost'}
+                  className="h-7 px-2.5 text-xs rounded-none border-x"
+                  onClick={() => setPlFilter('profit')}
+                >
+                  Zyski
+                </Button>
+                <Button
+                  size="sm"
+                  variant={plFilter === 'loss' ? 'secondary' : 'ghost'}
+                  className="h-7 px-2.5 text-xs rounded-l-none"
+                  onClick={() => setPlFilter('loss')}
+                >
+                  Straty
+                </Button>
               </div>
 
               {availableCurrencies.length > 1 && (
@@ -262,8 +311,10 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="ALL">Wszystkie waluty</SelectItem>
-                    {availableCurrencies.map(c => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    {availableCurrencies.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {c}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -271,18 +322,50 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
 
               <div className="ml-auto flex flex-wrap items-center gap-3">
                 <div className="flex items-center rounded-md border">
-                  <Button size="sm" variant={dateRange === 'ALL' ? 'secondary' : 'ghost'} className="h-7 px-2.5 text-xs rounded-r-none" onClick={() => setDateRange('ALL')}>Wszystko</Button>
+                  <Button
+                    size="sm"
+                    variant={dateRange === 'ALL' ? 'secondary' : 'ghost'}
+                    className="h-7 px-2.5 text-xs rounded-r-none"
+                    onClick={() => setDateRange('ALL')}
+                  >
+                    Wszystko
+                  </Button>
                   {availableYears.slice(0, 4).map((year, i) => (
-                    <Button key={year} size="sm" variant={dateRange === String(year) ? 'secondary' : 'ghost'} className={`h-7 px-2.5 text-xs rounded-none border-l ${i === availableYears.slice(0, 4).length - 1 && dateRange !== 'CUSTOM' ? 'rounded-r-md' : ''}`} onClick={() => setDateRange(String(year))}>{year}</Button>
+                    <Button
+                      key={year}
+                      size="sm"
+                      variant={dateRange === String(year) ? 'secondary' : 'ghost'}
+                      className={`h-7 px-2.5 text-xs rounded-none border-l ${i === availableYears.slice(0, 4).length - 1 && dateRange !== 'CUSTOM' ? 'rounded-r-md' : ''}`}
+                      onClick={() => setDateRange(String(year))}
+                    >
+                      {year}
+                    </Button>
                   ))}
-                  <Button size="sm" variant={dateRange === 'CUSTOM' ? 'secondary' : 'ghost'} className="h-7 px-2.5 text-xs rounded-l-none border-l" onClick={() => setDateRange('CUSTOM')}>Zakres</Button>
+                  <Button
+                    size="sm"
+                    variant={dateRange === 'CUSTOM' ? 'secondary' : 'ghost'}
+                    className="h-7 px-2.5 text-xs rounded-l-none border-l"
+                    onClick={() => setDateRange('CUSTOM')}
+                  >
+                    Zakres
+                  </Button>
                 </div>
 
                 {dateRange === 'CUSTOM' && (
                   <div className="flex items-center gap-1.5">
-                    <Input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className="h-7 text-xs w-[130px]" />
+                    <Input
+                      type="date"
+                      value={customFrom}
+                      onChange={(e) => setCustomFrom(e.target.value)}
+                      className="h-7 text-xs w-[130px]"
+                    />
                     <span className="text-muted-foreground text-xs">—</span>
-                    <Input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="h-7 text-xs w-[130px]" />
+                    <Input
+                      type="date"
+                      value={customTo}
+                      onChange={(e) => setCustomTo(e.target.value)}
+                      className="h-7 text-xs w-[130px]"
+                    />
                   </div>
                 )}
               </div>
@@ -320,14 +403,30 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                           <TableCell className="font-mono font-medium">
                             {trade.ticker}
                             <CategoryBadge category={trade.category} />
-                            {trade.isShort && <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">SHORT</span>}
+                            {trade.isShort && (
+                              <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
+                                SHORT
+                              </span>
+                            )}
                           </TableCell>
-                          <TableCell className="text-right">{formatQuantity(trade.quantity)}</TableCell>
-                          <TableCell className="text-muted-foreground">{formatDate(trade.buyDate)}</TableCell>
-                          <TableCell className="text-right">{formatNumber(trade.buyPrice)}</TableCell>
-                          <TableCell className="text-muted-foreground">{formatDate(trade.sellDate)}</TableCell>
-                          <TableCell className="text-right">{formatNumber(trade.sellPrice)}</TableCell>
-                          <TableCell className={`text-right font-medium ${plColor(trade.profitLossPct)}`}>
+                          <TableCell className="text-right">
+                            {formatQuantity(trade.quantity)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {formatDate(trade.buyDate)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatNumber(trade.buyPrice)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {formatDate(trade.sellDate)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatNumber(trade.sellPrice)}
+                          </TableCell>
+                          <TableCell
+                            className={`text-right font-medium ${plColor(trade.profitLossPct)}`}
+                          >
                             {formatCurrency(trade.profitLoss, trade.currency)}
                           </TableCell>
                           <TableCell className="text-right">
@@ -336,7 +435,9 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                           <TableCell className="text-right text-muted-foreground text-xs">
                             <CostCell trade={trade} />
                           </TableCell>
-                          <TableCell className="text-right text-muted-foreground">{trade.holdingDays}d</TableCell>
+                          <TableCell className="text-right text-muted-foreground">
+                            {trade.holdingDays}d
+                          </TableCell>
                           <TableCell>
                             {trade.sellSource === 'manual' && (
                               <Button
@@ -357,7 +458,8 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
 
                     // Multi-trade group
                     const isExpanded = expandedGroups.has(group.key);
-                    const sameBuyDate = group.minBuyDate.slice(0, 10) === group.maxBuyDate.slice(0, 10);
+                    const sameBuyDate =
+                      group.minBuyDate.slice(0, 10) === group.maxBuyDate.slice(0, 10);
                     const sameBuyPrice = group.minBuyPrice === group.maxBuyPrice;
 
                     return (
@@ -367,36 +469,56 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                           onClick={() => toggleGroup(group.key)}
                           role="button"
                           tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleGroup(group.key); } }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              toggleGroup(group.key);
+                            }
+                          }}
                         >
                           <TableCell className="font-mono font-medium">
                             <div className="flex items-center gap-1">
-                              {isExpanded
-                                ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                                : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                              }
+                              {isExpanded ? (
+                                <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                              )}
                               {group.ticker}
                               <CategoryBadge category={group.trades[0]?.category} />
-                              {group.trades.some(t => t.isShort) && <span className="text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">{group.trades.every(t => t.isShort) ? 'SHORT' : `${group.trades.filter(t => t.isShort).length}S`}</span>}
-                              <span className="text-xs text-muted-foreground ml-1">({group.trades.length})</span>
+                              {group.trades.some((t) => t.isShort) && (
+                                <span className="text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
+                                  {group.trades.every((t) => t.isShort)
+                                    ? 'SHORT'
+                                    : `${group.trades.filter((t) => t.isShort).length}S`}
+                                </span>
+                              )}
+                              <span className="text-xs text-muted-foreground ml-1">
+                                ({group.trades.length})
+                              </span>
                             </div>
                           </TableCell>
-                          <TableCell className="text-right">{formatQuantity(group.totalQuantity)}</TableCell>
+                          <TableCell className="text-right">
+                            {formatQuantity(group.totalQuantity)}
+                          </TableCell>
                           <TableCell className="text-muted-foreground text-sm">
                             {sameBuyDate
                               ? formatDate(group.minBuyDate)
-                              : `${formatDate(group.minBuyDate)} – ${formatDate(group.maxBuyDate)}`
-                            }
+                              : `${formatDate(group.minBuyDate)} – ${formatDate(group.maxBuyDate)}`}
                           </TableCell>
                           <TableCell className="text-right text-sm">
                             {sameBuyPrice
                               ? formatNumber(group.minBuyPrice)
-                              : `${formatNumber(group.minBuyPrice)} – ${formatNumber(group.maxBuyPrice)}`
-                            }
+                              : `${formatNumber(group.minBuyPrice)} – ${formatNumber(group.maxBuyPrice)}`}
                           </TableCell>
-                          <TableCell className="text-muted-foreground">{formatDate(group.sellDate)}</TableCell>
-                          <TableCell className="text-right">{formatNumber(group.sellPrice)}</TableCell>
-                          <TableCell className={`text-right font-medium ${plColor(group.weightedProfitLossPct)}`}>
+                          <TableCell className="text-muted-foreground">
+                            {formatDate(group.sellDate)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatNumber(group.sellPrice)}
+                          </TableCell>
+                          <TableCell
+                            className={`text-right font-medium ${plColor(group.weightedProfitLossPct)}`}
+                          >
                             {formatCurrency(group.totalProfitLoss, group.currency)}
                           </TableCell>
                           <TableCell className="text-right">
@@ -405,13 +527,18 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                           <TableCell className="text-right text-muted-foreground text-xs">
                             {group.totalCost > 0 ? formatNumber(group.totalCost) : '—'}
                           </TableCell>
-                          <TableCell className="text-right text-muted-foreground">{group.avgHoldingDays}d</TableCell>
+                          <TableCell className="text-right text-muted-foreground">
+                            {group.avgHoldingDays}d
+                          </TableCell>
                           <TableCell>
                             {group.sellSource === 'manual' && (
                               <Button
                                 size="icon-xs"
                                 variant="ghost"
-                                onClick={(e) => { e.stopPropagation(); deleteMutation.mutate(group.sellTransactionId); }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteMutation.mutate(group.sellTransactionId);
+                                }}
                                 disabled={deleteMutation.isPending}
                                 className="text-muted-foreground hover:text-destructive"
                                 title="Usuń transakcję sprzedaży"
@@ -422,18 +549,35 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                           </TableCell>
                         </TableRow>
 
-                        {isExpanded && group.trades.map((trade, j) => (
+                        {isExpanded &&
+                          group.trades.map((trade, j) => (
                             <TableRow key={`${group.key}-${j}`} className="bg-muted/30">
                               <TableCell className="font-mono text-muted-foreground pl-9 text-sm">
                                 └ lot {j + 1}
-                                {trade.isShort && <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">S</span>}
+                                {trade.isShort && (
+                                  <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
+                                    S
+                                  </span>
+                                )}
                               </TableCell>
-                              <TableCell className="text-right text-muted-foreground">{formatQuantity(trade.quantity)}</TableCell>
-                              <TableCell className="text-muted-foreground">{formatDate(trade.buyDate)}</TableCell>
-                              <TableCell className="text-right text-muted-foreground">{formatNumber(trade.buyPrice)}</TableCell>
-                              <TableCell className="text-muted-foreground">{formatDate(trade.sellDate)}</TableCell>
-                              <TableCell className="text-right text-muted-foreground">{formatNumber(trade.sellPrice)}</TableCell>
-                              <TableCell className={`text-right text-sm ${trade.profitLossPct >= 0 ? 'text-gain/70' : 'text-loss/70'}`}>
+                              <TableCell className="text-right text-muted-foreground">
+                                {formatQuantity(trade.quantity)}
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {formatDate(trade.buyDate)}
+                              </TableCell>
+                              <TableCell className="text-right text-muted-foreground">
+                                {formatNumber(trade.buyPrice)}
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {formatDate(trade.sellDate)}
+                              </TableCell>
+                              <TableCell className="text-right text-muted-foreground">
+                                {formatNumber(trade.sellPrice)}
+                              </TableCell>
+                              <TableCell
+                                className={`text-right text-sm ${trade.profitLossPct >= 0 ? 'text-gain/70' : 'text-loss/70'}`}
+                              >
                                 {formatCurrency(trade.profitLoss, trade.currency)}
                               </TableCell>
                               <TableCell className="text-right">
@@ -442,10 +586,12 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                               <TableCell className="text-right text-muted-foreground text-xs">
                                 <CostCell trade={trade} muted />
                               </TableCell>
-                              <TableCell className="text-right text-muted-foreground">{trade.holdingDays}d</TableCell>
+                              <TableCell className="text-right text-muted-foreground">
+                                {trade.holdingDays}d
+                              </TableCell>
                               <TableCell />
                             </TableRow>
-                        ))}
+                          ))}
                       </Fragment>
                     );
                   })}
@@ -453,10 +599,14 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
               </Table>
               {plSummary.length > 0 && (
                 <div className="mt-4 flex flex-wrap items-center gap-4 border-t pt-4">
-                  <span className="text-sm font-medium text-muted-foreground">Podsumowanie P/L:</span>
-                  {plSummary.map(s => (
+                  <span className="text-sm font-medium text-muted-foreground">
+                    Podsumowanie P/L:
+                  </span>
+                  {plSummary.map((s) => (
                     <div key={s.currency} className="flex items-center gap-2">
-                      <span className={`text-sm font-semibold ${s.totalPL >= 0 ? 'text-gain' : 'text-loss'}`}>
+                      <span
+                        className={`text-sm font-semibold ${s.totalPL >= 0 ? 'text-gain' : 'text-loss'}`}
+                      >
                         {formatCurrency(s.totalPL, s.currency)}
                       </span>
                       <span className="text-xs text-muted-foreground">

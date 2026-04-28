@@ -10,9 +10,31 @@ const RATIO_TOLERANCE = 0.05;
  */
 const KNOWN_SPLIT_RATIOS = [
   // Forward splits (ratio >= 2)
-  2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 50, 100,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  10,
+  15,
+  20,
+  25,
+  50,
+  100,
   // Reverse splits (ratio <= 0.5)
-  1/2, 1/3, 1/4, 1/5, 1/6, 1/8, 1/10, 1/15, 1/20, 1/25, 1/50,
+  1 / 2,
+  1 / 3,
+  1 / 4,
+  1 / 5,
+  1 / 6,
+  1 / 8,
+  1 / 10,
+  1 / 15,
+  1 / 20,
+  1 / 25,
+  1 / 50,
 ];
 
 /**
@@ -28,7 +50,7 @@ export function isPlausibleSplitRatio(ratio: number): boolean {
   if (ratio > 0.5 * (1 + RATIO_TOLERANCE) && ratio < 2 * (1 - RATIO_TOLERANCE)) {
     return false;
   }
-  return KNOWN_SPLIT_RATIOS.some(known => Math.abs(ratio / known - 1) < RATIO_TOLERANCE);
+  return KNOWN_SPLIT_RATIOS.some((known) => Math.abs(ratio / known - 1) < RATIO_TOLERANCE);
 }
 
 /**
@@ -75,7 +97,8 @@ export function detectSplits(
     // Skip if currencies don't match (FX difference, not split)
     // Normalize: GBX/GBp/GBP are all equivalent for comparison
     const txCurNorm = tx.currency.toUpperCase() === 'GBX' ? 'GBP' : tx.currency.toUpperCase();
-    const entryCurNorm = entry.currency.toUpperCase() === 'GBX' ? 'GBP' : entry.currency.toUpperCase();
+    const entryCurNorm =
+      entry.currency.toUpperCase() === 'GBX' ? 'GBP' : entry.currency.toUpperCase();
     if (txCurNorm !== entryCurNorm) continue;
 
     const dateKey = tx.date.split('T')[0];
@@ -178,7 +201,7 @@ export function adjustTransactionsForSplits(
     splitsByIsin.set(split.isin, arr);
   }
 
-  return transactions.map(tx => {
+  return transactions.map((tx) => {
     const isinSplits = splitsByIsin.get(tx.isin);
     if (!isinSplits) return tx;
 

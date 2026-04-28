@@ -10,7 +10,13 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { api } from '@/lib/api-client';
 import { invalidateCashFlow } from '@/lib/query-keys';
 import { formatCurrency } from '@/lib/formatters';
@@ -44,7 +50,9 @@ export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDia
 
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(defaultValues?.date?.split('T')[0] ?? today);
-  const [amount, setAmount] = useState(defaultValues?.amount ? String(Math.abs(defaultValues.amount)) : '');
+  const [amount, setAmount] = useState(
+    defaultValues?.amount ? String(Math.abs(defaultValues.amount)) : '',
+  );
   const [type, setType] = useState<'deposit' | 'withdrawal'>(defaultValues?.type ?? 'deposit');
 
   // Re-sync state gdy user wybierze inny wiersz do edycji
@@ -57,8 +65,7 @@ export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDia
   }, [open, defaultValues?.id]);
 
   const createMut = useMutation({
-    mutationFn: () =>
-      api.createDeposit({ date, amount: parseFloat(amount) }, type),
+    mutationFn: () => api.createDeposit({ date, amount: parseFloat(amount) }, type),
     onSuccess: () => {
       invalidateCashFlow(qc);
       toast.success(
@@ -89,9 +96,7 @@ export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDia
     <Dialog open={open} onOpenChange={(o) => !o && !submitMut.isPending && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>
-            {isEdit ? 'Edytuj operację' : 'Dodaj wpłatę / wypłatę'}
-          </DialogTitle>
+          <DialogTitle>{isEdit ? 'Edytuj operację' : 'Dodaj wpłatę / wypłatę'}</DialogTitle>
           <DialogDescription>
             {isEdit
               ? 'Zmień datę lub kwotę. Typ (wpłata/wypłata) jest niezmienny — żeby go zmienić usuń i dodaj nowy rekord.'
@@ -102,7 +107,11 @@ export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDia
         <div className="space-y-3">
           <div>
             <label className="text-xs text-muted-foreground">Typ *</label>
-            <Select value={type} onValueChange={(v) => setType(v as 'deposit' | 'withdrawal')} disabled={isEdit}>
+            <Select
+              value={type}
+              onValueChange={(v) => setType(v as 'deposit' | 'withdrawal')}
+              disabled={isEdit}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>

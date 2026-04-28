@@ -17,11 +17,7 @@ declare global {
  * Returns 401 for unauthenticated requests.
  * Public routes (health, auth) should be mounted BEFORE this middleware.
  */
-export async function requireAuth(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
+export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const session = await auth.api.getSession({
       headers: fromNodeHeaders(req.headers),

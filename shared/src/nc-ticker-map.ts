@@ -389,8 +389,8 @@ export const NC_TICKER_MAP = [
 
 // Pre-built lookup maps for O(1) access
 type NcEntry = { ticker: string; name: string };
-const byTicker = new Map<string, NcEntry>(NC_TICKER_MAP.map(e => [e.ticker, e]));
-const byName = new Map<string, NcEntry>(NC_TICKER_MAP.map(e => [e.name, e]));
+const byTicker = new Map<string, NcEntry>(NC_TICKER_MAP.map((e) => [e.ticker, e]));
+const byName = new Map<string, NcEntry>(NC_TICKER_MAP.map((e) => [e.name, e]));
 
 /**
  * Find NC ticker by Bossa paper name (e.g., "MINERAL" from "MINERAL-NC").
@@ -400,9 +400,7 @@ const byName = new Map<string, NcEntry>(NC_TICKER_MAP.map(e => [e.name, e]));
  * 2. Exact match on Bossa-style name (e.g., "MINERAL" → MND)
  * 3. Prefix match on name (e.g., "MINERAL" matches "MINERALM..." if it existed)
  */
-export function findNcTicker(
-  bossaName: string,
-): { ticker: string; name: string } | null {
+export function findNcTicker(bossaName: string): { ticker: string; name: string } | null {
   const upper = bossaName.toUpperCase();
 
   // 1. Exact ticker match (Bossa sometimes uses the ticker directly)

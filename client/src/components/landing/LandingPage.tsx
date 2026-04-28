@@ -1,13 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import {
-  LayoutDashboard,
-  Upload,
-  Zap,
-  Coins,
-  Globe,
-  Shield,
-  ArrowRight,
-} from 'lucide-react';
+import { LayoutDashboard, Upload, Zap, Coins, Globe, Shield, ArrowRight } from 'lucide-react';
 import { AppDemo } from './AppDemo';
 import { Logo } from '@/components/ui/Logo';
 
@@ -45,8 +37,7 @@ const FEATURES = [
   {
     icon: Shield,
     title: 'IKE / IKZE ready',
-    description:
-      'Dedykowane konta emerytalne z ustawieniami prowizji i limitów wpłat rocznych.',
+    description: 'Dedykowane konta emerytalne z ustawieniami prowizji i limitów wpłat rocznych.',
   },
 ];
 
@@ -98,8 +89,8 @@ export function LandingPage() {
             <span className="text-amber-500">w jednym miejscu</span>
           </h1>
           <p className="text-base sm:text-lg text-stone-400 max-w-xl mx-auto mb-8">
-            Importuj transakcje z wielu brokerów, śledź wyniki na żywo i analizuj
-            zwroty vs benchmarki — wszystko w jednym narzędziu.
+            Importuj transakcje z wielu brokerów, śledź wyniki na żywo i analizuj zwroty vs
+            benchmarki — wszystko w jednym narzędziu.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             <button
@@ -122,7 +113,9 @@ export function LandingPage() {
       {/* ── Interactive Demo ──────────────────────────────────────────── */}
       <section id="demo" className="max-w-6xl mx-auto px-4 sm:px-6 pb-20">
         <div className="text-center mb-8">
-          <h2 className="text-xl sm:text-2xl font-bold mb-2 tracking-tight">Zobacz jak to działa</h2>
+          <h2 className="text-xl sm:text-2xl font-bold mb-2 tracking-tight">
+            Zobacz jak to działa
+          </h2>
           <p className="text-stone-500 text-sm">
             Kliknij w nawigację, żeby zobaczyć główne widoki aplikacji
           </p>

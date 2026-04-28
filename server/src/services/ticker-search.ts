@@ -15,7 +15,13 @@ export async function searchYahoo(query: string): Promise<TickerSearchResult[]> 
     const json = await resp.json();
     const quotes: any[] = json?.quotes || [];
     return quotes
-      .filter((q: any) => q.typeDisp === 'Equity' || q.quoteType === 'EQUITY' || q.typeDisp === 'ETF' || q.quoteType === 'ETF')
+      .filter(
+        (q: any) =>
+          q.typeDisp === 'Equity' ||
+          q.quoteType === 'EQUITY' ||
+          q.typeDisp === 'ETF' ||
+          q.quoteType === 'ETF',
+      )
       .map((q: any) => ({
         symbol: q.symbol,
         name: q.longname || q.shortname || q.symbol,
@@ -32,7 +38,10 @@ export async function searchYahoo(query: string): Promise<TickerSearchResult[]> 
  * Validate a ticker on Stooq (Polish GPW + NewConnect)
  * Returns a result if the ticker exists on Stooq
  */
-export async function validateStooq(query: string, expectedName?: string): Promise<TickerSearchResult | null> {
+export async function validateStooq(
+  query: string,
+  expectedName?: string,
+): Promise<TickerSearchResult | null> {
   // Only try for short, simple tickers (likely Polish)
   const raw = query.replace('.WA', '').toLowerCase();
   if (raw.length > 20 || raw.includes('.') || raw.includes(' ')) return null;
@@ -48,7 +57,7 @@ export async function validateStooq(query: string, expectedName?: string): Promi
     const values = lines[1].split(',');
     // Stooq returns "N/D" or "B/D" for non-existent/suspended tickers
     const ticker = values[0];
-    if (!ticker || ticker === 'N/D' || values.some(v => v === 'N/D' || v === 'B/D')) return null;
+    if (!ticker || ticker === 'N/D' || values.some((v) => v === 'N/D' || v === 'B/D')) return null;
 
     // The name field is the last value (index 8 with format sd2t2ohlcvn)
     const stooqName = (values[8] || '').trim().toUpperCase();
@@ -127,12 +136,13 @@ function searchLocal(query: string): TickerSearchResult[] {
   const lower = query.toLowerCase();
   const all = getAllTickers();
   return all
-    .filter(t =>
-      t.ticker.toLowerCase().includes(lower) ||
-      t.name.toLowerCase().includes(lower) ||
-      t.isin.toLowerCase().includes(lower)
+    .filter(
+      (t) =>
+        t.ticker.toLowerCase().includes(lower) ||
+        t.name.toLowerCase().includes(lower) ||
+        t.isin.toLowerCase().includes(lower),
     )
-    .map(t => ({
+    .map((t) => ({
       symbol: t.ticker,
       name: t.name,
       exchange: t.exchange,

@@ -39,7 +39,10 @@ export function isBossaFormat(csvContent: string): boolean {
   return lower.includes('data') && lower.includes('papier') && lower.includes('isin');
 }
 
-export function parseBossaTransactions(csvContent: string, importBatch: string): ParseResult<Transaction> {
+export function parseBossaTransactions(
+  csvContent: string,
+  importBatch: string,
+): ParseResult<Transaction> {
   const result = Papa.parse(csvContent.trim(), {
     delimiter: ';',
     header: true,
@@ -48,8 +51,8 @@ export function parseBossaTransactions(csvContent: string, importBatch: string):
 
   // Validate that the CSV has expected headers — return empty array (not throw)
   const headers = result.meta?.fields || [];
-  const hasDataCol = headers.some(h => h.toLowerCase() === 'data');
-  const hasIsinCol = headers.some(h => h.toLowerCase() === 'isin');
+  const hasDataCol = headers.some((h) => h.toLowerCase() === 'data');
+  const hasIsinCol = headers.some((h) => h.toLowerCase() === 'isin');
   if (!hasDataCol || !hasIsinCol) {
     return { data: [], skipped: [] };
   }
@@ -72,17 +75,32 @@ export function parseBossaTransactions(csvContent: string, importBatch: string):
     const total = parseNumber(row['po prowizji']);
     const currency = row['waluta']?.trim();
 
-    if (!dateStr) { skipped.push({ row: rowNum, reason: 'missing_date', paperName }); continue; }
-    if (!isin) { skipped.push({ row: rowNum, reason: 'missing_isin', paperName }); continue; }
-    if (side !== 'K' && side !== 'S') { skipped.push({ row: rowNum, reason: 'invalid_side', paperName }); continue; }
-    if (quantity <= 0) { skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName }); continue; }
+    if (!dateStr) {
+      skipped.push({ row: rowNum, reason: 'missing_date', paperName });
+      continue;
+    }
+    if (!isin) {
+      skipped.push({ row: rowNum, reason: 'missing_isin', paperName });
+      continue;
+    }
+    if (side !== 'K' && side !== 'S') {
+      skipped.push({ row: rowNum, reason: 'invalid_side', paperName });
+      continue;
+    }
+    if (quantity <= 0) {
+      skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName });
+      continue;
+    }
 
     const isoDate = parseDottedDate(dateStr);
 
     // Zastosuj mapę aliasów ISIN jeśli (isin, paperName) to stary identyfikator papieru,
     // który zmienił ISIN/ticker w wyniku zdarzenia korporacyjnego (np. HUUUGE PL→US
     // redomiciliacja). Dzięki temu FIFO i ticker_map operują na jednym ISIN-ie.
-    const { isin: canonicalIsin, paperName: canonicalPaperName } = applyIsinAlias(isin, paperName || '');
+    const { isin: canonicalIsin, paperName: canonicalPaperName } = applyIsinAlias(
+      isin,
+      paperName || '',
+    );
 
     transactions.push({
       date: isoDate,
@@ -94,11 +112,11 @@ export function parseBossaTransactions(csvContent: string, importBatch: string):
       value,
       commission,
       total,
-      currency: currency || 'PLN',   // quote — co CSV `waluta` mówi o tym trade'ie
-      paymentCurrency: 'PLN',         // default — faktyczna waluta rozliczenia wyliczana post-insert przez
-                                      // reconcilePaymentCurrencies() (symulacja salda walut). Bossa IKE/IKZE
-                                      // pozwala trzymać subkonta walutowe (USD/EUR), więc zakup US może iść
-                                      // bezpośrednio z salda USD zamiast auto-FX z PLN.
+      currency: currency || 'PLN', // quote — co CSV `waluta` mówi o tym trade'ie
+      paymentCurrency: 'PLN', // default — faktyczna waluta rozliczenia wyliczana post-insert przez
+      // reconcilePaymentCurrencies() (symulacja salda walut). Bossa IKE/IKZE
+      // pozwala trzymać subkonta walutowe (USD/EUR), więc zakup US może iść
+      // bezpośrednio z salda USD zamiast auto-FX z PLN.
       source: 'bossa',
       importBatch,
     });
@@ -106,4 +124,3 @@ export function parseBossaTransactions(csvContent: string, importBatch: string):
 
   return { data: transactions, skipped };
 }
-

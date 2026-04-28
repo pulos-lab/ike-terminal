@@ -17,9 +17,9 @@ export const config = {
   resendApiKey: process.env.RESEND_API_KEY || '',
   emailFrom: process.env.EMAIL_FROM || 'TIX Terminal <noreply@tixterminal.app>',
   cache: {
-    priceTtl: 60 * 60,           // 1h — live prices (was 15min)
-    stooqLiveTtl: 4 * 60 * 60,   // 4h — Stooq NewConnect (preserve daily quota)
-    historyTtl: 12 * 60 * 60,    // 12h — historical data
+    priceTtl: 60 * 60, // 1h — live prices (was 15min)
+    stooqLiveTtl: 4 * 60 * 60, // 4h — Stooq NewConnect (preserve daily quota)
+    historyTtl: 12 * 60 * 60, // 12h — historical data
   },
 };
 

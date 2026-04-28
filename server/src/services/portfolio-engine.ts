@@ -1,7 +1,34 @@
-import type { Transaction, CashOperation, Position, ClosedTrade, ClosedTradeFee, TickerMapEntry, PortfolioHistoryPoint, PortfolioMetrics, DividendRecord, FxExchangeRecord, CashFlowRecord, DetectedSplit, FxImpact, FxImpactCurrencyEntry } from 'shared';
-import { fetchYahooPrice, fetchFxRate, fetchYahooHistory, fetchYahooHistoryDirect } from './yahoo-finance.js';
+import type {
+  Transaction,
+  CashOperation,
+  Position,
+  ClosedTrade,
+  ClosedTradeFee,
+  TickerMapEntry,
+  PortfolioHistoryPoint,
+  PortfolioMetrics,
+  DividendRecord,
+  FxExchangeRecord,
+  CashFlowRecord,
+  DetectedSplit,
+  FxImpact,
+  FxImpactCurrencyEntry,
+} from 'shared';
+import {
+  fetchYahooPrice,
+  fetchFxRate,
+  fetchYahooHistory,
+  fetchYahooHistoryDirect,
+} from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
-import { detectSplits, rescaleHistoricalPrices, adjustTransactionsForSplits, detectSplitFromQuantityMismatch, isPlausibleSplitRatio, snapToKnownRatio } from './split-detector.js';
+import {
+  detectSplits,
+  rescaleHistoricalPrices,
+  adjustTransactionsForSplits,
+  detectSplitFromQuantityMismatch,
+  isPlausibleSplitRatio,
+  snapToKnownRatio,
+} from './split-detector.js';
 import { getDb } from '../db/connection.js';
 
 // ============ Split Helpers ============
@@ -28,12 +55,12 @@ function mergeDetectedSplits(saved: DetectedSplit[], detected: DetectedSplit[]):
 async function detectSplitsFromTransactions(
   transactions: Transaction[],
   tickerMap: Map<string, TickerMapEntry>,
-  existingSplits: DetectedSplit[]
+  existingSplits: DetectedSplit[],
 ): Promise<DetectedSplit[]> {
   const detected: DetectedSplit[] = [];
 
   // ISINs that already have splits don't need re-detection
-  const isinsWithSplits = new Set(existingSplits.map(s => s.isin));
+  const isinsWithSplits = new Set(existingSplits.map((s) => s.isin));
 
   // Skip closed positions (net quantity = 0) — both buy and sell used the same
   // price scale, so "correcting" them creates false positives (e.g. AVGO bought
@@ -73,7 +100,7 @@ async function detectSplitsFromTransactions(
       } else {
         // NC: Stooq doesn't cache the same way, less of an issue
         const data = await fetchStooqHistory(entry.ticker, dateKey);
-        const match = data.find(d => d.date === dateKey);
+        const match = data.find((d) => d.date === dateKey);
         freshPrice = match?.close ?? null;
       }
 
@@ -212,8 +239,8 @@ export async function computeOpenPositions(
   // Additional detection: sell quantity exceeding accumulated buys
   const qtySplits = detectSplitFromQuantityMismatch(transactions);
   const qtySplitsAsDetected: DetectedSplit[] = qtySplits
-    .filter(qs => !splits.some(s => s.isin === qs.isin)) // skip already known
-    .map(qs => {
+    .filter((qs) => !splits.some((s) => s.isin === qs.isin)) // skip already known
+    .map((qs) => {
       const entry = tickerMap.get(qs.isin);
       return {
         ticker: entry?.ticker ?? qs.isin,
@@ -254,8 +281,20 @@ export async function computeOpenPositions(
   liveCurrencies.delete('PLN');
   const fxRates: Record<string, number> = { PLN: 1 };
   const defaultFx: Record<string, number> = {
-    USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
-    CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
+    USD: 4.0,
+    CAD: 2.95,
+    EUR: 4.3,
+    GBP: 5.1,
+    NOK: 0.38,
+    HKD: 0.52,
+    JPY: 0.028,
+    CHF: 4.5,
+    SEK: 0.39,
+    DKK: 0.58,
+    AUD: 2.65,
+    SGD: 3.0,
+    CZK: 0.17,
+    MXN: 0.22,
   };
   if (fxRatesOverride) {
     // Caller (np. /metrics endpoint) pre-fetchuje FX raz dla wszystkich obliczeń
@@ -265,12 +304,14 @@ export async function computeOpenPositions(
     }
     if ('GBP' in fxRates) fxRates['GBp'] = fxRates['GBP'];
   } else {
-    await Promise.all([...liveCurrencies].map(async (cur) => {
-      const rate = await fetchFxRate(`${cur}PLN`);
-      fxRates[cur] = rate || defaultFx[cur] || 1;
-      // Also store GBp → GBP alias so ticker map entries with 'GBp' currency work
-      if (cur === 'GBP') fxRates['GBp'] = fxRates[cur];
-    }));
+    await Promise.all(
+      [...liveCurrencies].map(async (cur) => {
+        const rate = await fetchFxRate(`${cur}PLN`);
+        fxRates[cur] = rate || defaultFx[cur] || 1;
+        // Also store GBp → GBP alias so ticker map entries with 'GBp' currency work
+        if (cur === 'GBP') fxRates['GBp'] = fxRates[cur];
+      }),
+    );
   }
 
   const positions: Position[] = [];
@@ -307,7 +348,8 @@ export async function computeOpenPositions(
       }
       const profitLossPln = currentValuePln - costBasisPln;
       const profitLossPct = costBasisPln > 0 ? (profitLossPln / costBasisPln) * 100 : 0;
-      const avgBuyPriceNative = metrics.shares > 0 ? costBasisPln / fxNativeToPln / metrics.shares : 0;
+      const avgBuyPriceNative =
+        metrics.shares > 0 ? costBasisPln / fxNativeToPln / metrics.shares : 0;
       const costBasisNative = metrics.shares * avgBuyPriceNative;
       const profitLossNative = currentValueNative - costBasisNative;
       totalValuePln += currentValuePln;
@@ -331,7 +373,7 @@ export async function computeOpenPositions(
         dailyChangePct: null,
         category,
         priceManual: true,
-        buyLots: metrics.buyLots.map(lot => ({
+        buyLots: metrics.buyLots.map((lot) => ({
           date: lot.date,
           quantity: lot.quantity,
           price: lot.price,
@@ -365,9 +407,10 @@ export async function computeOpenPositions(
     }
 
     // Daily change %
-    const dailyChangePct = (currentPrice != null && previousClose != null && previousClose > 0)
-      ? ((currentPrice - previousClose) / previousClose) * 100
-      : null;
+    const dailyChangePct =
+      currentPrice != null && previousClose != null && previousClose > 0
+        ? ((currentPrice - previousClose) / previousClose) * 100
+        : null;
 
     let priceInNative = currentPrice || 0;
     // Yahoo returns London-listed prices in GBX (pence) — convert to GBP
@@ -394,9 +437,8 @@ export async function computeOpenPositions(
 
     // For display: avgBuyPrice in the paper's native currency
     // Derived from PLN cost basis to correctly handle mixed-currency lots
-    const avgBuyPriceNative = metrics.shares > 0
-      ? costBasisPln / fxNativeToPln / metrics.shares
-      : 0;
+    const avgBuyPriceNative =
+      metrics.shares > 0 ? costBasisPln / fxNativeToPln / metrics.shares : 0;
 
     // P/L in native currency (for display alongside position's currency)
     const costBasisNative = metrics.shares * avgBuyPriceNative;
@@ -428,12 +470,11 @@ export async function computeOpenPositions(
       dailyChangePct,
       category,
       priceManual: priceManual || undefined,
-      buyLots: metrics.buyLots.map(lot => {
+      buyLots: metrics.buyLots.map((lot) => {
         // Convert lot price to the paper's native currency for consistent display
         const lotFx = fxRates[lot.currency] || 1;
-        const priceInNativeCurrency = lot.currency === entry.currency
-          ? lot.price
-          : lot.price * lotFx / fxNativeToPln;
+        const priceInNativeCurrency =
+          lot.currency === entry.currency ? lot.price : (lot.price * lotFx) / fxNativeToPln;
         return {
           quantity: lot.quantity,
           price: priceInNativeCurrency,
@@ -461,7 +502,9 @@ export async function computeOpenPositions(
 /** Epsilon for floating-point comparison in FIFO matching (prevents ghost lots from fractional shares) */
 const EPSILON = 1e-9;
 
-function roundTo2(n: number): number { return Math.round(n * 100) / 100; }
+function roundTo2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
 
 export function computeClosedTrades(
   transactions: Transaction[],
@@ -486,8 +529,15 @@ export function computeClosedTrades(
   for (const [groupKey, txs] of byGroup) {
     const isin = txs[0].isin; // clean ISIN for display/lookup
     const sorted = [...txs].sort((a, b) => a.date.localeCompare(b.date));
-    const buyQueue: Array<{ quantity: number; price: number; commission: number; date: string }> = [];
-    const shortQueue: Array<{ quantity: number; price: number; commission: number; date: string; sellTx: Transaction }> = [];
+    const buyQueue: Array<{ quantity: number; price: number; commission: number; date: string }> =
+      [];
+    const shortQueue: Array<{
+      quantity: number;
+      price: number;
+      commission: number;
+      date: string;
+      sellTx: Transaction;
+    }> = [];
     const entry = tickerMap.get(isin);
 
     for (const tx of sorted) {
@@ -500,11 +550,16 @@ export function computeClosedTrades(
           while (remaining > EPSILON && shortQueue.length > 0) {
             const shortLot = shortQueue[0];
             const matched = Math.min(remaining, shortLot.quantity);
-            if (matched < EPSILON) { shortQueue.shift(); continue; }
+            if (matched < EPSILON) {
+              shortQueue.shift();
+              continue;
+            }
 
             const shortDate = new Date(shortLot.date);
             const coverDate = new Date(tx.date);
-            const holdingDays = Math.floor((coverDate.getTime() - shortDate.getTime()) / (1000 * 60 * 60 * 24));
+            const holdingDays = Math.floor(
+              (coverDate.getTime() - shortDate.getTime()) / (1000 * 60 * 60 * 24),
+            );
 
             const sellComm = shortLot.commission * (matched / shortLot.quantity);
             const coverComm = matched * commissionPerShare;
@@ -513,20 +568,33 @@ export function computeClosedTrades(
             const lotSwap = tx.swap ? roundTo2(tx.swap * (matched / tx.quantity)) : 0;
             const lotRollover = tx.rollover ? roundTo2(tx.rollover * (matched / tx.quantity)) : 0;
             const tradeFees: ClosedTradeFee[] = [];
-            if (lotSwap > 0) tradeFees.push({ type: 'swap', amount: lotSwap, description: `swap: ${tx.paperName}` });
-            if (lotRollover > 0) tradeFees.push({ type: 'rollover', amount: lotRollover, description: `rollover: ${tx.paperName}` });
+            if (lotSwap > 0)
+              tradeFees.push({
+                type: 'swap',
+                amount: lotSwap,
+                description: `swap: ${tx.paperName}`,
+              });
+            if (lotRollover > 0)
+              tradeFees.push({
+                type: 'rollover',
+                amount: lotRollover,
+                description: `rollover: ${tx.paperName}`,
+              });
             const feesTotal = lotSwap + lotRollover;
 
             // Short P/L: use XTB gross profit when available (includes contract multiplier + FX)
-            const grossProfitPortion = tx.cfdGrossProfit !== undefined
-              ? roundTo2(tx.cfdGrossProfit * (matched / tx.quantity))
-              : (matched * shortLot.price) - (matched * tx.price);
+            const grossProfitPortion =
+              tx.cfdGrossProfit !== undefined
+                ? roundTo2(tx.cfdGrossProfit * (matched / tx.quantity))
+                : matched * shortLot.price - matched * tx.price;
             const pl = grossProfitPortion - sellComm - coverComm - feesTotal;
             // Percentage: derive notional value from gross profit + price change for CFD
             let plPct: number;
             if (tx.cfdGrossProfit !== undefined) {
-              const priceChange = shortLot.price > 0 ? (shortLot.price - tx.price) / shortLot.price : 0;
-              const notional = Math.abs(priceChange) > 1e-6 ? Math.abs(grossProfitPortion / priceChange) : 0;
+              const priceChange =
+                shortLot.price > 0 ? (shortLot.price - tx.price) / shortLot.price : 0;
+              const notional =
+                Math.abs(priceChange) > 1e-6 ? Math.abs(grossProfitPortion / priceChange) : 0;
               plPct = notional > 0 ? (pl / notional) * 100 : 0;
             } else {
               const coverValue = matched * tx.price;
@@ -538,11 +606,11 @@ export function computeClosedTrades(
               isin,
               ticker: entry?.ticker || isin,
               quantity: matched,
-              buyDate: shortLot.date,    // short sell date
-              buyPrice: shortLot.price,  // short sell price
+              buyDate: shortLot.date, // short sell date
+              buyPrice: shortLot.price, // short sell price
               buyCommission: sellComm,
-              sellDate: tx.date,         // cover date
-              sellPrice: tx.price,       // cover price
+              sellDate: tx.date, // cover date
+              sellPrice: tx.price, // cover price
               sellCommission: coverComm,
               profitLoss: pl,
               profitLossPct: plPct,
@@ -590,11 +658,16 @@ export function computeClosedTrades(
         while (remaining > EPSILON && buyQueue.length > 0) {
           const lot = buyQueue[0];
           const matched = Math.min(remaining, lot.quantity);
-          if (matched < EPSILON) { buyQueue.shift(); continue; }
+          if (matched < EPSILON) {
+            buyQueue.shift();
+            continue;
+          }
 
           const buyDate = new Date(lot.date);
           const sellDate = new Date(tx.date);
-          const holdingDays = Math.floor((sellDate.getTime() - buyDate.getTime()) / (1000 * 60 * 60 * 24));
+          const holdingDays = Math.floor(
+            (sellDate.getTime() - buyDate.getTime()) / (1000 * 60 * 60 * 24),
+          );
 
           const buyComm = lot.commission * (matched / lot.quantity);
           const sellComm = matched * commissionPerShare;
@@ -603,20 +676,28 @@ export function computeClosedTrades(
           const lotSwap = tx.swap ? roundTo2(tx.swap * (matched / tx.quantity)) : 0;
           const lotRollover = tx.rollover ? roundTo2(tx.rollover * (matched / tx.quantity)) : 0;
           const tradeFees: ClosedTradeFee[] = [];
-          if (lotSwap > 0) tradeFees.push({ type: 'swap', amount: lotSwap, description: `swap: ${tx.paperName}` });
-          if (lotRollover > 0) tradeFees.push({ type: 'rollover', amount: lotRollover, description: `rollover: ${tx.paperName}` });
+          if (lotSwap > 0)
+            tradeFees.push({ type: 'swap', amount: lotSwap, description: `swap: ${tx.paperName}` });
+          if (lotRollover > 0)
+            tradeFees.push({
+              type: 'rollover',
+              amount: lotRollover,
+              description: `rollover: ${tx.paperName}`,
+            });
           const feesTotal = lotSwap + lotRollover;
 
           // P/L: use XTB gross profit when available (CFD: includes contract multiplier + FX)
-          const grossProfitPortion = tx.cfdGrossProfit !== undefined
-            ? roundTo2(tx.cfdGrossProfit * (matched / tx.quantity))
-            : (matched * tx.price) - (matched * lot.price);
+          const grossProfitPortion =
+            tx.cfdGrossProfit !== undefined
+              ? roundTo2(tx.cfdGrossProfit * (matched / tx.quantity))
+              : matched * tx.price - matched * lot.price;
           const pl = grossProfitPortion - buyComm - sellComm - feesTotal;
           // Percentage: derive notional value from gross profit + price change for CFD
           let plPct: number;
           if (tx.cfdGrossProfit !== undefined) {
             const priceChange = lot.price > 0 ? (tx.price - lot.price) / lot.price : 0;
-            const notional = Math.abs(priceChange) > 1e-6 ? Math.abs(grossProfitPortion / priceChange) : 0;
+            const notional =
+              Math.abs(priceChange) > 1e-6 ? Math.abs(grossProfitPortion / priceChange) : 0;
             plPct = notional > 0 ? (pl / notional) * 100 : 0;
           } else {
             const buyValue = matched * lot.price;
@@ -672,7 +753,7 @@ export function computeClosedTrades(
   // Only operationType='fee' is matched here (e.g. DEGIRO exchange fees, Sec Fee).
   // CFD swap/rollover is embedded directly on the sell transaction (via Position ID).
   if (operations?.length) {
-    const feeOps = operations.filter(op => op.operationType === 'fee' && op.ticker);
+    const feeOps = operations.filter((op) => op.operationType === 'fee' && op.ticker);
 
     // Pass 1: sum total matching quantity per fee (for proportional split by quantity)
     const feeMatchQty = new Map<number, number>();
@@ -682,7 +763,11 @@ export function computeClosedTrades(
       let totalQty = 0;
       for (const trade of closedTrades) {
         const tickerMatch = fee.ticker === trade.ticker || fee.ticker === trade.isin;
-        if (tickerMatch && feeDate >= trade.buyDate.slice(0, 10) && feeDate <= trade.sellDate.slice(0, 10)) {
+        if (
+          tickerMatch &&
+          feeDate >= trade.buyDate.slice(0, 10) &&
+          feeDate <= trade.sellDate.slice(0, 10)
+        ) {
           totalQty += trade.quantity;
         }
       }
@@ -744,8 +829,8 @@ export function computeClosedTrades(
 
 export function extractDividends(operations: CashOperation[]): DividendRecord[] {
   return operations
-    .filter(op => op.operationType === 'dividend')
-    .map(op => ({
+    .filter((op) => op.operationType === 'dividend')
+    .map((op) => ({
       id: op.id!,
       date: op.date,
       ticker: op.ticker || extractTickerFromDescription(op.description),
@@ -766,13 +851,9 @@ function extractTickerFromDescription(desc: string): string {
  * Calculate the number of shares held for a given ISIN at a specific date.
  * Processes K (buy) and S (sell) transactions chronologically up to and including the date.
  */
-export function getSharesAtDate(
-  transactions: Transaction[],
-  isin: string,
-  date: string
-): number {
+export function getSharesAtDate(transactions: Transaction[], isin: string, date: string): number {
   return transactions
-    .filter(t => t.isin === isin && t.date <= date)
+    .filter((t) => t.isin === isin && t.date <= date)
     .sort((a, b) => a.date.localeCompare(b.date))
     .reduce((shares, t) => {
       return t.side === 'K' ? shares + t.quantity : shares - t.quantity;
@@ -782,7 +863,7 @@ export function getSharesAtDate(
 // ============ FX Exchange History ============
 
 export function extractFxExchanges(operations: CashOperation[]): FxExchangeRecord[] {
-  const fxOps = operations.filter(op => op.operationType === 'fx_exchange');
+  const fxOps = operations.filter((op) => op.operationType === 'fx_exchange');
   const records: FxExchangeRecord[] = [];
 
   // FX operations come in pairs: negative PLN + positive USD on same date
@@ -805,7 +886,7 @@ export function extractFxExchanges(operations: CashOperation[]): FxExchangeRecor
         records.push({
           date,
           pair: fromOp.fxPair || `${fromOp.currency}/${toOp.currency}`,
-          rate: fromOp.fxRate || (Math.abs(fromOp.amount) / toOp.amount),
+          rate: fromOp.fxRate || Math.abs(fromOp.amount) / toOp.amount,
           amountFrom: Math.abs(fromOp.amount),
           currencyFrom: fromOp.currency,
           amountTo: toOp.amount,
@@ -823,8 +904,11 @@ export function extractFxExchanges(operations: CashOperation[]): FxExchangeRecor
 
 // ============ XIRR Calculation ============
 
-export function computeXirr(deposits: Array<{ date: string; amount: number }>, currentValue: number): number {
-  const cashflows: Array<{ date: Date; amount: number }> = deposits.map(d => ({
+export function computeXirr(
+  deposits: Array<{ date: string; amount: number }>,
+  currentValue: number,
+): number {
+  const cashflows: Array<{ date: Date; amount: number }> = deposits.map((d) => ({
     date: new Date(d.date),
     amount: -d.amount, // deposits (positive) become outflows (negative), withdrawals (negative) become inflows (positive)
   }));
@@ -851,7 +935,7 @@ function newtonXirr(cashflows: Array<{ date: Date; amount: number }>, guess = 0.
     return cashflows.reduce((sum, cf) => {
       const days = (cf.date.getTime() - d0) / (1000 * 60 * 60 * 24);
       const t = days / daysFactor;
-      return sum - t * cf.amount / Math.pow(1 + rate, t + 1);
+      return sum - (t * cf.amount) / Math.pow(1 + rate, t + 1);
     }, 0);
   }
 
@@ -942,7 +1026,7 @@ export function computeFxImpact(
   operations: CashOperation[],
   foreignExposures: Map<string, number>, // currency → native exposure (cash + stocks)
   todayFxRatesToPln: Map<string, number>, // currency → PLN per X
-  totalPortfolioValuePln: number,         // wartość CAŁEGO portfela w PLN
+  totalPortfolioValuePln: number, // wartość CAŁEGO portfela w PLN
   /** Historical PLN rates dla cross-rate ops (fxPair bez PLN, np. USD/EUR).
    *  Mapa: date (YYYY-MM-DD) → currency → PLN per X na ten dzień.
    *  Caller (route) pre-fetchuje Yahoo history dla cross-rate fx_exchange ops,
@@ -991,14 +1075,12 @@ export function computeFxImpact(
     if (todayPlnPerCurrency <= 0) continue;
 
     const impactPln = exposureNative * (todayPlnPerCurrency - avgPlnPerCurrency);
-    const impactPct = avgPlnPerCurrency > 0
-      ? (todayPlnPerCurrency / avgPlnPerCurrency - 1) * 100
-      : 0;
-    const exposurePln = exposurePlnByCurrency?.get(currency)
-      ?? exposureNative * todayPlnPerCurrency;
-    const exposurePctOfPortfolio = totalPortfolioValuePln > 0
-      ? (exposurePln / totalPortfolioValuePln) * 100
-      : 0;
+    const impactPct =
+      avgPlnPerCurrency > 0 ? (todayPlnPerCurrency / avgPlnPerCurrency - 1) * 100 : 0;
+    const exposurePln =
+      exposurePlnByCurrency?.get(currency) ?? exposureNative * todayPlnPerCurrency;
+    const exposurePctOfPortfolio =
+      totalPortfolioValuePln > 0 ? (exposurePln / totalPortfolioValuePln) * 100 : 0;
 
     breakdown.push({
       currency,
@@ -1018,16 +1100,12 @@ export function computeFxImpact(
   const foreignExposurePln = breakdown.reduce((s, e) => s + e.exposurePln, 0);
   const fxImpactPln = breakdown.reduce((s, e) => s + e.impactPln, 0);
   // Main: wpływ na cały portfel (intuicyjne, małe dla portfeli z małą walutową częścią)
-  const fxImpactPct = totalPortfolioValuePln > 0
-    ? (fxImpactPln / totalPortfolioValuePln) * 100
-    : 0;
+  const fxImpactPct = totalPortfolioValuePln > 0 ? (fxImpactPln / totalPortfolioValuePln) * 100 : 0;
   // Secondary: wpływ na część zagraniczną (większe, pokazuje "ile ruszył walutowy kawałek")
-  const fxImpactPctOfForeign = foreignExposurePln > 0
-    ? (fxImpactPln / foreignExposurePln) * 100
-    : 0;
-  const foreignExposurePctOfPortfolio = totalPortfolioValuePln > 0
-    ? (foreignExposurePln / totalPortfolioValuePln) * 100
-    : 0;
+  const fxImpactPctOfForeign =
+    foreignExposurePln > 0 ? (fxImpactPln / foreignExposurePln) * 100 : 0;
+  const foreignExposurePctOfPortfolio =
+    totalPortfolioValuePln > 0 ? (foreignExposurePln / totalPortfolioValuePln) * 100 : 0;
 
   return {
     fxImpactPct,
@@ -1045,7 +1123,8 @@ export function computeFxImpact(
 function benchmarkCurrencyFromTicker(ticker: string): string {
   if (!ticker) return 'PLN';
   const t = ticker.toUpperCase();
-  if (t.endsWith('.WA') || t === 'WIG' || t === 'WIG20' || t === 'MWIG40' || t === 'SWIG80') return 'PLN';
+  if (t.endsWith('.WA') || t === 'WIG' || t === 'WIG20' || t === 'MWIG40' || t === 'SWIG80')
+    return 'PLN';
   // ^GSPC, ^IXIC, ^DJI etc. — domyślnie USD (nasze obecne benchmark'i zagraniczne)
   return 'USD';
 }
@@ -1079,8 +1158,8 @@ export async function computePortfolioHistory(
   const baseCur = baseCurrency.toUpperCase();
   // Determine date range
   const allDates = [
-    ...operations.map(o => o.date.split('T')[0]),
-    ...transactions.map(t => t.date.split('T')[0]),
+    ...operations.map((o) => o.date.split('T')[0]),
+    ...transactions.map((t) => t.date.split('T')[0]),
   ].sort();
 
   const start = startDate || allDates[0] || '2021-12-01';
@@ -1104,14 +1183,18 @@ export async function computePortfolioHistory(
   for (const op of operations) {
     const date = op.date.split('T')[0];
     const cur = (op.currency || 'PLN').toUpperCase();
-    const target = op.operationType === 'deposit' && op.amount > 0
-      ? dailyDepositByCur
-      : op.operationType === 'withdrawal'
-        ? dailyWithdrawalByCur
-        : null;
+    const target =
+      op.operationType === 'deposit' && op.amount > 0
+        ? dailyDepositByCur
+        : op.operationType === 'withdrawal'
+          ? dailyWithdrawalByCur
+          : null;
     if (!target) continue;
     let map = target.get(date);
-    if (!map) { map = new Map(); target.set(date, map); }
+    if (!map) {
+      map = new Map();
+      target.set(date, map);
+    }
     map.set(cur, (map.get(cur) || 0) + Math.abs(op.amount));
   }
 
@@ -1119,11 +1202,13 @@ export async function computePortfolioHistory(
   const dailyDeposit = new Map<string, number>();
   const dailyWithdrawal = new Map<string, number>();
   for (const [date, curMap] of dailyDepositByCur) {
-    let s = 0; for (const v of curMap.values()) s += v;
+    let s = 0;
+    for (const v of curMap.values()) s += v;
     dailyDeposit.set(date, s);
   }
   for (const [date, curMap] of dailyWithdrawalByCur) {
-    let s = 0; for (const v of curMap.values()) s += v;
+    let s = 0;
+    for (const v of curMap.values()) s += v;
     dailyWithdrawal.set(date, s);
   }
 
@@ -1167,11 +1252,17 @@ export async function computePortfolioHistory(
   for (const tx of transactions) allIsins.add(tx.isin);
 
   // Fetch historical prices for all tickers + FX
-  const tickersToFetch: Array<{ isin: string; ticker: string; source: string; currency: string }> = [];
+  const tickersToFetch: Array<{ isin: string; ticker: string; source: string; currency: string }> =
+    [];
   for (const isin of allIsins) {
     const entry = tickerMap.get(isin);
     if (entry) {
-      tickersToFetch.push({ isin, ticker: entry.ticker, source: entry.priceSource, currency: entry.currency });
+      tickersToFetch.push({
+        isin,
+        ticker: entry.ticker,
+        source: entry.priceSource,
+        currency: entry.currency,
+      });
     }
   }
 
@@ -1220,27 +1311,31 @@ export async function computePortfolioHistory(
   // Fetch FX rates for all currencies
   for (const cur of allCurrencies) {
     const fxTicker = `${cur}PLN=X`;
-    fetchPromises.push((async () => {
-      const data = await fetchYahooHistory(fxTicker, start, end);
-      const priceMap = new Map<string, number>();
-      for (const d of data) priceMap.set(d.date, d.close);
-      historicalPrices.set(fxTicker, priceMap);
-    })());
+    fetchPromises.push(
+      (async () => {
+        const data = await fetchYahooHistory(fxTicker, start, end);
+        const priceMap = new Map<string, number>();
+        for (const d of data) priceMap.set(d.date, d.close);
+        historicalPrices.set(fxTicker, priceMap);
+      })(),
+    );
   }
 
   // Fetch benchmark (skip when disabled)
   if (benchmarkSource !== 'none') {
-    fetchPromises.push((async () => {
-      let data: Array<{ date: string; close: number }>;
-      if (benchmarkSource === 'stooq') {
-        data = await fetchStooqHistory(benchmarkTicker, start);
-      } else {
-        data = await fetchYahooHistory(benchmarkTicker, start, end);
-      }
-      const priceMap = new Map<string, number>();
-      for (const d of data) priceMap.set(d.date, d.close);
-      historicalPrices.set(`benchmark_${benchmarkTicker}`, priceMap);
-    })());
+    fetchPromises.push(
+      (async () => {
+        let data: Array<{ date: string; close: number }>;
+        if (benchmarkSource === 'stooq') {
+          data = await fetchStooqHistory(benchmarkTicker, start);
+        } else {
+          data = await fetchYahooHistory(benchmarkTicker, start, end);
+        }
+        const priceMap = new Map<string, number>();
+        for (const d of data) priceMap.set(d.date, d.close);
+        historicalPrices.set(`benchmark_${benchmarkTicker}`, priceMap);
+      })(),
+    );
   }
 
   await Promise.all(fetchPromises);
@@ -1263,15 +1358,15 @@ export async function computePortfolioHistory(
     if (!entry) continue;
     // Normalize currencies for comparison (GBX/GBp/GBP are all equivalent)
     const txCurNorm = tx.currency.toUpperCase() === 'GBX' ? 'GBP' : tx.currency.toUpperCase();
-    const entryCurNorm = entry.currency.toUpperCase() === 'GBX' ? 'GBP' : entry.currency.toUpperCase();
+    const entryCurNorm =
+      entry.currency.toUpperCase() === 'GBX' ? 'GBP' : entry.currency.toUpperCase();
     if (txCurNorm !== entryCurNorm) continue;
     const dateKey = tx.date.split('T')[0];
     const priceMap = historicalPrices.get(entry.ticker);
     if (priceMap) {
       // Yahoo stores .L prices in GBX (pence) — convert adjusted GBP price back to GBX
-      const priceForMap = (txCurNorm === 'GBP' && entry.ticker.endsWith('.L'))
-        ? tx.price * 100
-        : tx.price;
+      const priceForMap =
+        txCurNorm === 'GBP' && entry.ticker.endsWith('.L') ? tx.price * 100 : tx.price;
       priceMap.set(dateKey, priceForMap);
     }
   }
@@ -1300,7 +1395,7 @@ export async function computePortfolioHistory(
     const lastDate = sortedTx[sortedTx.length - 1].date;
     let providerPointsInRange = 0;
     for (const [d] of priceMap) {
-      if (d > firstDate && d < lastDate && !sortedTx.some(t => t.date === d)) {
+      if (d > firstDate && d < lastDate && !sortedTx.some((t) => t.date === d)) {
         providerPointsInRange++;
       }
     }
@@ -1314,7 +1409,7 @@ export async function computePortfolioHistory(
       const to = sortedTx[i + 1];
       const d1 = new Date(from.date + 'T12:00:00Z');
       const d2 = new Date(to.date + 'T12:00:00Z');
-      const totalDays = (d2.getTime() - d1.getTime()) / (86400000);
+      const totalDays = (d2.getTime() - d1.getTime()) / 86400000;
       if (totalDays <= 1) continue;
 
       const cur = new Date(d1);
@@ -1361,11 +1456,9 @@ export async function computePortfolioHistory(
   const allActivityDates = [
     ...Array.from(dailyDeposit.keys()),
     ...Array.from(dailyWithdrawal.keys()),
-    ...transactions.map(tx => tx.date.split('T')[0]),
+    ...transactions.map((tx) => tx.date.split('T')[0]),
   ];
-  const lastActivityDate = allActivityDates.length > 0
-    ? allActivityDates.sort().pop()!
-    : end;
+  const lastActivityDate = allActivityDates.length > 0 ? allActivityDates.sort().pop()! : end;
 
   // Waluta benchmarku — potrzebna dla konwersji do baseCurrency portfela.
   // Pochodzi z BENCHMARKS config (po stronie route) albo inferujemy z tickera.
@@ -1376,8 +1469,8 @@ export async function computePortfolioHistory(
   let firstDepositSeen = false;
   const cashByCurrency = new Map<string, number>(); // currency -> balance
   let investedCumulative = 0;
-  let totalDeposited = 0;   // sum of all deposits (always positive, for MWR base)
-  let totalWithdrawn = 0;   // sum of all withdrawals (always positive, for MWR)
+  let totalDeposited = 0; // sum of all deposits (always positive, for MWR base)
+  let totalWithdrawn = 0; // sum of all withdrawals (always positive, for MWR)
   const holdings = new Map<string, number>(); // isin -> shares
   let benchShares = 0;
   let benchPriceAvailable = false; // true once we have real benchmark data
@@ -1429,8 +1522,20 @@ export async function computePortfolioHistory(
     // Dla baseCurrency='PLN': fxBaseToPln=1, fxRates jest standard cur→PLN.
     // Dla baseCurrency='USD': fxRates to cur→USD; np. PLN→USD = 1/USDPLN.
     const defaultFxRates: Record<string, number> = {
-      USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
-      CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
+      USD: 4.0,
+      CAD: 2.95,
+      EUR: 4.3,
+      GBP: 5.1,
+      NOK: 0.38,
+      HKD: 0.52,
+      JPY: 0.028,
+      CHF: 4.5,
+      SEK: 0.39,
+      DKK: 0.58,
+      AUD: 2.65,
+      SGD: 3.0,
+      CZK: 0.17,
+      MXN: 0.22,
     };
 
     const fxToPln = new Map<string, number>();
@@ -1484,7 +1589,11 @@ export async function computePortfolioHistory(
       const entry = tickerMap.get(isin);
       if (!entry) continue;
 
-      let price = getPrice(entry.ticker, date, prevPrices.get(entry.ticker) || txPriceByTicker.get(entry.ticker) || 0);
+      let price = getPrice(
+        entry.ticker,
+        date,
+        prevPrices.get(entry.ticker) || txPriceByTicker.get(entry.ticker) || 0,
+      );
       prevPrices.set(entry.ticker, price);
 
       // Yahoo returns London-listed prices in GBX (pence) — convert to GBP
@@ -1544,13 +1653,15 @@ export async function computePortfolioHistory(
 
     // MWR: use total deposited (not net) as the base for return calculation.
     // This avoids the formula breaking when withdrawals exceed deposits.
-    const returnPct = totalDeposited > 0
-      ? ((totalValue + totalWithdrawn - totalDeposited) / totalDeposited) * 100
-      : 0;
+    const returnPct =
+      totalDeposited > 0
+        ? ((totalValue + totalWithdrawn - totalDeposited) / totalDeposited) * 100
+        : 0;
 
-    const benchReturnPct = (totalDeposited > 0 && benchPriceAvailable)
-      ? ((benchValue + benchTotalWithdrawn - totalDeposited) / totalDeposited) * 100
-      : 0;
+    const benchReturnPct =
+      totalDeposited > 0 && benchPriceAvailable
+        ? ((benchValue + benchTotalWithdrawn - totalDeposited) / totalDeposited) * 100
+        : 0;
 
     // TWR: chain daily returns, adjusting denominator for cash flows
     // dailyReturn = V_today / (V_yesterday + netCashFlow_today) - 1
@@ -1594,9 +1705,8 @@ export async function computePortfolioHistory(
     // Benchmark TWR = pure price return (no cash flow influence).
     // TWR by definition eliminates the impact of cash flows, so benchmark TWR
     // is simply the percentage change in the benchmark price since inception.
-    const benchmarkTwrPct = (benchPriceAvailable && firstBenchPrice > 0)
-      ? ((benchPrice / firstBenchPrice) - 1) * 100
-      : 0;
+    const benchmarkTwrPct =
+      benchPriceAvailable && firstBenchPrice > 0 ? (benchPrice / firstBenchPrice - 1) * 100 : 0;
 
     history.push({
       date,
@@ -1613,7 +1723,7 @@ export async function computePortfolioHistory(
 
     // Stop generating history when portfolio is fully and permanently closed:
     // no holdings and on or past last activity date, or portfolio value near zero
-    const hasHoldings = Array.from(holdings.values()).some(qty => qty > 0);
+    const hasHoldings = Array.from(holdings.values()).some((qty) => qty > 0);
     if (!hasHoldings && date >= lastActivityDate && history.length > 1) {
       break;
     }
@@ -1625,8 +1735,20 @@ export async function computePortfolioHistory(
   // Helper: konwertuj kwotę operacji do baseCurrency używając FX z daty operacji.
   // Fallback: domyślne rate PLN-based, skorygowane przez fxBaseToPln (dla baseCurrency='PLN' → 1).
   const defaultFxToPln: Record<string, number> = {
-    USD: 4.0, CAD: 2.95, EUR: 4.3, GBP: 5.1, NOK: 0.38, HKD: 0.52, JPY: 0.028,
-    CHF: 4.5, SEK: 0.39, DKK: 0.58, AUD: 2.65, SGD: 3.0, CZK: 0.17, MXN: 0.22,
+    USD: 4.0,
+    CAD: 2.95,
+    EUR: 4.3,
+    GBP: 5.1,
+    NOK: 0.38,
+    HKD: 0.52,
+    JPY: 0.028,
+    CHF: 4.5,
+    SEK: 0.39,
+    DKK: 0.58,
+    AUD: 2.65,
+    SGD: 3.0,
+    CZK: 0.17,
+    MXN: 0.22,
   };
   const defaultBaseToPln = baseCur === 'PLN' ? 1 : (defaultFxToPln[baseCur] ?? 1);
   const opAmountBase = (op: CashOperation): number => {
@@ -1642,18 +1764,18 @@ export async function computePortfolioHistory(
   // Include both deposits (positive) and withdrawals (negative) for XIRR,
   // converted to baseCurrency (totalValue też jest w base, więc spójne).
   const depositsList = operations
-    .filter(op => op.operationType === 'deposit' || op.operationType === 'withdrawal')
-    .map(op => ({ date: op.date, amount: opAmountBase(op) }));
+    .filter((op) => op.operationType === 'deposit' || op.operationType === 'withdrawal')
+    .map((op) => ({ date: op.date, amount: opAmountBase(op) }));
 
   const totalDividends = operations
-    .filter(op => op.operationType === 'dividend')
+    .filter((op) => op.operationType === 'dividend')
     .reduce((sum, op) => sum + opAmountBase(op), 0);
 
   // Capital return (obniżenie nominału, korekta wykupu) — osobna metryka obok dywidend.
   // Trzymamy oddzielnie żeby UI mogło pokazać breakdown "Dywidendy X zł / Zwrot kapitału Y zł",
   // ale ekonomicznie obie pozycje są częścią realnego zwrotu z trzymania portfela.
   const totalCapitalReturn = operations
-    .filter(op => op.operationType === 'capital_return')
+    .filter((op) => op.operationType === 'capital_return')
     .reduce((sum, op) => sum + opAmountBase(op), 0);
 
   let xirr = 0;
@@ -1693,14 +1815,14 @@ export function computeCashFlowChartData(
     return valuePln / fx;
   };
 
-  const all = portfolioHistory.map(p => ({
+  const all = portfolioHistory.map((p) => ({
     date: p.date,
     portfolioValue: toBase(p.portfolioValue, p.date),
     netCashFlow: toBase(p.cumulativeDepositsPln - p.cumulativeWithdrawalsPln, p.date),
   }));
 
   // Obcinamy początkowe punkty gdzie nic się nie dzieje (0/0)
-  const firstActive = all.findIndex(p => p.portfolioValue !== 0 || p.netCashFlow !== 0);
+  const firstActive = all.findIndex((p) => p.portfolioValue !== 0 || p.netCashFlow !== 0);
   return firstActive > 0 ? all.slice(firstActive) : all;
 }
 
@@ -1854,19 +1976,16 @@ export interface FifoMatching {
  *  Uproszczona wersja: obsługuje tylko long (K-first). Pozycje z shortami lub
  *  CFD dostają flagę `hasComplexity=true` → UI fallbackuje do multi-select
  *  bez auto-edycji (bezpieczniej niż zgadywać). */
-export function computeFifoMatching(
-  isin: string,
-  allTransactions: Transaction[],
-): FifoMatching {
+export function computeFifoMatching(isin: string, allTransactions: Transaction[]): FifoMatching {
   const txs = allTransactions
-    .filter(t => t.isin === isin && t.id != null)
+    .filter((t) => t.isin === isin && t.id != null)
     .sort((a, b) => {
       const d = a.date.localeCompare(b.date);
       if (d !== 0) return d;
       return (a.id ?? 0) - (b.id ?? 0);
     });
 
-  const hasCfd = txs.some(t => t.category === 'cfd' || !!t.cfdPositionId);
+  const hasCfd = txs.some((t) => t.category === 'cfd' || !!t.cfdPositionId);
 
   interface State {
     entry: FifoMatchedTransaction;
@@ -1910,7 +2029,10 @@ export function computeFifoMatching(
     while (self.remaining > EPSILON && buyQueue.length > 0) {
       const headRef = buyQueue[0];
       const head = state.get(headRef.txId)!;
-      if (head.remaining < EPSILON) { buyQueue.shift(); continue; }
+      if (head.remaining < EPSILON) {
+        buyQueue.shift();
+        continue;
+      }
 
       const matched = Math.min(self.remaining, head.remaining);
 
@@ -2006,7 +2128,7 @@ export function computeSmartDeletePlan(
   targetId: number,
   allTransactions: Transaction[],
 ): SmartDeletePlan {
-  const target = allTransactions.find(t => t.id === targetId);
+  const target = allTransactions.find((t) => t.id === targetId);
   if (!target) {
     return { deletes: [], edits: [], warnings: [], unsupported: 'Nie znaleziono transakcji.' };
   }
@@ -2015,7 +2137,8 @@ export function computeSmartDeletePlan(
       deletes: [],
       edits: [],
       warnings: [],
-      unsupported: 'Transakcja auto-wygenerowana (wezwanie/skup) — usuń operację źródłową zamiast tej transakcji.',
+      unsupported:
+        'Transakcja auto-wygenerowana (wezwanie/skup) — usuń operację źródłową zamiast tej transakcji.',
     };
   }
 
@@ -2025,13 +2148,19 @@ export function computeSmartDeletePlan(
       deletes: [],
       edits: [],
       warnings: [],
-      unsupported: 'Pozycja zawiera CFD lub short — smart-delete niedostępny. Użyj ręcznego multi-select.',
+      unsupported:
+        'Pozycja zawiera CFD lub short — smart-delete niedostępny. Użyj ręcznego multi-select.',
     };
   }
 
-  const entry = matching.transactions.find(t => t.txId === targetId);
+  const entry = matching.transactions.find((t) => t.txId === targetId);
   if (!entry) {
-    return { deletes: [], edits: [], warnings: [], unsupported: 'Transakcja nie jest w FIFO-matching.' };
+    return {
+      deletes: [],
+      edits: [],
+      warnings: [],
+      unsupported: 'Transakcja nie jest w FIFO-matching.',
+    };
   }
 
   const deletes: number[] = [targetId];
@@ -2042,7 +2171,9 @@ export function computeSmartDeletePlan(
     // Usunięcie S nie wymaga zmian w K (K tylko "wraca" do open).
     // Jedyne co warto dodać: jeśli S był orphanem/oversold, silnik może był w split detection.
     if (entry.status === 'orphan') {
-      warnings.push('Ta sprzedaż była osierocona (oversold). Usunięcie jej jest czysto kosmetyczne.');
+      warnings.push(
+        'Ta sprzedaż była osierocona (oversold). Usunięcie jej jest czysto kosmetyczne.',
+      );
     }
     return { deletes, edits, warnings };
   }
@@ -2060,7 +2191,7 @@ export function computeSmartDeletePlan(
     // Edge case: jeśli ten K jest JEDYNĄ K-counterparty dla jakiegoś S (S.matches.length==1),
     // i jednocześnie matched == S.quantity → S idzie do delete.
     for (const m of entry.matches) {
-      const counterparty = matching.transactions.find(t => t.txId === m.counterpartyTxId);
+      const counterparty = matching.transactions.find((t) => t.txId === m.counterpartyTxId);
       if (!counterparty) continue;
 
       // Nowa qty dla S = oryginalna - matched z tym K

@@ -1,4 +1,12 @@
-import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore, useTransition } from 'react';
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from '@/lib/api-client';
@@ -7,7 +15,13 @@ import { formatNumber, formatDate, formatQuantity } from '@/lib/formatters';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DeleteTransactionDialog } from './DeleteTransactionDialog';
@@ -60,13 +74,22 @@ function SyntheticOriginTooltip({ origin }: { origin: string }) {
   // "Wykup w ofercie skupu MOSTALZAB — 333 szt @ 11.50 PLN (cena z tender-offers-map, źródło: https://stockwatch.pl/…)"
   const urlMatch = origin.match(/(https?:\/\/\S+?)(?:[.,;)\s]|$)/);
   const url = urlMatch?.[1];
-  const textWithoutUrl = url ? origin.replace(url, '').replace(/,?\s*źródło:\s*$/i, '').replace(/\s*\(\s*\)\s*$/,'').trim() : origin;
+  const textWithoutUrl = url
+    ? origin
+        .replace(url, '')
+        .replace(/,?\s*źródło:\s*$/i, '')
+        .replace(/\s*\(\s*\)\s*$/, '')
+        .trim()
+    : origin;
 
   return (
     <Tooltip delayDuration={150}>
       <TooltipTrigger asChild>
         <span className="inline-flex cursor-help">
-          <Info className="h-3 w-3 text-amber-500/80 shrink-0" aria-label="Transakcja wygenerowana automatycznie" />
+          <Info
+            className="h-3 w-3 text-amber-500/80 shrink-0"
+            aria-label="Transakcja wygenerowana automatycznie"
+          />
         </span>
       </TooltipTrigger>
       <TooltipContent className="max-w-sm text-xs">
@@ -111,7 +134,13 @@ export const TradesFeed = memo(function TradesFeed() {
 
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<EditForm>({ date: '', side: 'K', quantity: '', price: '', commission: '0' });
+  const [editForm, setEditForm] = useState<EditForm>({
+    date: '',
+    side: 'K',
+    quantity: '',
+    price: '',
+    commission: '0',
+  });
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TxItem | null>(null);
 
@@ -135,8 +164,19 @@ export const TradesFeed = memo(function TradesFeed() {
   );
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, body }: { id: number; body: Partial<{ date: string; side: 'K' | 'S'; quantity: number; price: number; commission: number }> }) =>
-      api.updateTransaction(id, body),
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: number;
+      body: Partial<{
+        date: string;
+        side: 'K' | 'S';
+        quantity: number;
+        price: number;
+        commission: number;
+      }>;
+    }) => api.updateTransaction(id, body),
     onSuccess: () => {
       invalidatePortfolio(queryClient);
       setEditingId(null);
@@ -203,7 +243,8 @@ export const TradesFeed = memo(function TradesFeed() {
   if (isLoading) return <LoadingSpinner />;
   if (!rows.length) return <EmptyState message="Brak transakcji." />;
 
-  const isEditValid = !!editForm.date && parseFloat(editForm.quantity) > 0 && parseFloat(editForm.price) > 0;
+  const isEditValid =
+    !!editForm.date && parseFloat(editForm.quantity) > 0 && parseFloat(editForm.price) > 0;
 
   return (
     <div className="space-y-3">
@@ -260,172 +301,191 @@ export const TradesFeed = memo(function TradesFeed() {
 
       {/* Mobile cards — renderujemy TYLKO gdy wąski viewport */}
       {!isDesktop && (
-      <div className="flex flex-col gap-2">
-        {sorted.map((tx, i) => {
-          const paymentCcy = tx.paymentCurrency || tx.currency;
-          const autoFx = paymentCcy !== tx.currency;
-          const isEditing = tx.id != null && editingId === tx.id;
+        <div className="flex flex-col gap-2">
+          {sorted.map((tx, i) => {
+            const paymentCcy = tx.paymentCurrency || tx.currency;
+            const autoFx = paymentCcy !== tx.currency;
+            const isEditing = tx.id != null && editingId === tx.id;
 
-          if (isEditing) {
+            if (isEditing) {
+              return (
+                <div
+                  key={tx.id ?? i}
+                  className="flex flex-col gap-2 rounded-xl bg-card border border-primary/40 p-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-semibold text-sm">{tx.ticker}</span>
+                    <span className="text-[10px] text-muted-foreground">Edycja</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-muted-foreground">Data</label>
+                      <Input
+                        type="date"
+                        value={editForm.date}
+                        onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-muted-foreground">K/S</label>
+                      <Select
+                        value={editForm.side}
+                        onValueChange={(v: 'K' | 'S') => setEditForm({ ...editForm, side: v })}
+                      >
+                        <SelectTrigger className="h-8" size="sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="K">K</SelectItem>
+                          <SelectItem value="S">S</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-muted-foreground">Ilość</label>
+                      <Input
+                        type="number"
+                        step="0.0001"
+                        min="0"
+                        value={editForm.quantity}
+                        onChange={(e) => setEditForm({ ...editForm, quantity: e.target.value })}
+                        className="h-8 text-right text-xs"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-muted-foreground">Cena</label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editForm.price}
+                        onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
+                        className="h-8 text-right text-xs"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1 col-span-2">
+                      <label className="text-[10px] text-muted-foreground">Prowizja</label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editForm.commission}
+                        onChange={(e) => setEditForm({ ...editForm, commission: e.target.value })}
+                        className="h-8 text-right text-xs"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-1">
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={saveEdit}
+                      disabled={!isEditValid || updateMutation.isPending}
+                      className="text-gain"
+                    >
+                      {updateMutation.isPending ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Check className="h-3 w-3" />
+                      )}
+                      Zapisz
+                    </Button>
+                    <Button size="xs" variant="ghost" onClick={cancelEdit}>
+                      <X className="h-3 w-3" />
+                      Anuluj
+                    </Button>
+                  </div>
+                </div>
+              );
+            }
+
             return (
-              <div key={tx.id ?? i} className="flex flex-col gap-2 rounded-xl bg-card border border-primary/40 p-3">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono font-semibold text-sm">{tx.ticker}</span>
-                  <span className="text-[10px] text-muted-foreground">Edycja</span>
+              <div
+                key={tx.id ?? i}
+                className="flex items-center gap-3 rounded-xl bg-card border border-border p-3"
+              >
+                <SideChip side={tx.side} size="lg" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="font-mono font-semibold text-sm">{tx.ticker}</span>
+                    {tx.syntheticOrigin && <SyntheticOriginTooltip origin={tx.syntheticOrigin} />}
+                    {autoFx ? (
+                      <Tooltip delayDuration={150}>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground cursor-help">
+                            <CcyChip ccy={paymentCcy} />
+                            <span className="text-amber-500/80">⇋</span>
+                            <CcyChip ccy={tx.currency} />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="text-xs">
+                          Auto-przewalutowanie: broker zamienił {paymentCcy} na {tx.currency} przy
+                          realizacji zlecenia.
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <CcyChip ccy={tx.currency} />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground tabular-nums">
+                    {formatDate(tx.date)} · {formatQuantity(tx.quantity)} ×{' '}
+                    {formatNumber(quotePrice(tx))}
+                  </p>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] text-muted-foreground">Data</label>
-                    <Input
-                      type="date"
-                      value={editForm.date}
-                      onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] text-muted-foreground">K/S</label>
-                    <Select value={editForm.side} onValueChange={(v: 'K' | 'S') => setEditForm({ ...editForm, side: v })}>
-                      <SelectTrigger className="h-8" size="sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="K">K</SelectItem>
-                        <SelectItem value="S">S</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] text-muted-foreground">Ilość</label>
-                    <Input
-                      type="number"
-                      step="0.0001"
-                      min="0"
-                      value={editForm.quantity}
-                      onChange={(e) => setEditForm({ ...editForm, quantity: e.target.value })}
-                      className="h-8 text-right text-xs"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] text-muted-foreground">Cena</label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={editForm.price}
-                      onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
-                      className="h-8 text-right text-xs"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1 col-span-2">
-                    <label className="text-[10px] text-muted-foreground">Prowizja</label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={editForm.commission}
-                      onChange={(e) => setEditForm({ ...editForm, commission: e.target.value })}
-                      className="h-8 text-right text-xs"
-                    />
-                  </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="text-sm font-semibold tabular-nums">
+                    {formatNumber(valuePln(tx))} zł
+                  </p>
+                  <p className="text-[10px] text-muted-foreground tabular-nums">
+                    {formatNumber(tx.value)} {tx.currency}
+                  </p>
                 </div>
-                <div className="flex justify-end gap-1">
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    onClick={saveEdit}
-                    disabled={!isEditValid || updateMutation.isPending}
-                    className="text-gain"
-                  >
-                    {updateMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                    Zapisz
-                  </Button>
-                  <Button size="xs" variant="ghost" onClick={cancelEdit}>
-                    <X className="h-3 w-3" />
-                    Anuluj
-                  </Button>
-                </div>
-              </div>
-            );
-          }
-
-          return (
-          <div key={tx.id ?? i} className="flex items-center gap-3 rounded-xl bg-card border border-border p-3">
-            <SideChip side={tx.side} size="lg" />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="font-mono font-semibold text-sm">{tx.ticker}</span>
-                {tx.syntheticOrigin && <SyntheticOriginTooltip origin={tx.syntheticOrigin} />}
-                {autoFx ? (
-                  <Tooltip delayDuration={150}>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex items-center gap-0.5 text-[9px] text-muted-foreground cursor-help">
-                        <CcyChip ccy={paymentCcy} />
-                        <span className="text-amber-500/80">⇋</span>
-                        <CcyChip ccy={tx.currency} />
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent className="text-xs">
-                      Auto-przewalutowanie: broker zamienił {paymentCcy} na {tx.currency} przy realizacji zlecenia.
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  <CcyChip ccy={tx.currency} />
+                {tx.id != null && (
+                  <div className="flex flex-col gap-1">
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      onClick={() => startEdit(tx)}
+                      aria-label="Edytuj"
+                      className="h-6 w-6"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      onClick={() => requestDelete(tx)}
+                      aria-label="Usuń"
+                      className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
                 )}
               </div>
-              <p className="text-[11px] text-muted-foreground tabular-nums">
-                {formatDate(tx.date)} · {formatQuantity(tx.quantity)} × {formatNumber(quotePrice(tx))}
-              </p>
-            </div>
-            <div className="text-right flex-shrink-0">
-              <p className="text-sm font-semibold tabular-nums">
-                {formatNumber(valuePln(tx))} zł
-              </p>
-              <p className="text-[10px] text-muted-foreground tabular-nums">
-                {formatNumber(tx.value)} {tx.currency}
-              </p>
-            </div>
-            {tx.id != null && (
-              <div className="flex flex-col gap-1">
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  onClick={() => startEdit(tx)}
-                  aria-label="Edytuj"
-                  className="h-6 w-6"
-                >
-                  <Pencil className="h-3 w-3" />
-                </Button>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  onClick={() => requestDelete(tx)}
-                  aria-label="Usuń"
-                  className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </div>
-            )}
-          </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
       )}
 
       <DeleteTransactionDialog
-        target={deleteTarget && deleteTarget.id != null ? {
-          id: deleteTarget.id,
-          date: deleteTarget.date,
-          ticker: deleteTarget.ticker,
-          isin: deleteTarget.isin,
-          side: deleteTarget.side,
-          quantity: deleteTarget.quantity,
-          price: deleteTarget.price,
-          commission: deleteTarget.commission,
-          currency: deleteTarget.currency,
-          syntheticOrigin: deleteTarget.syntheticOrigin,
-        } : null}
+        target={
+          deleteTarget && deleteTarget.id != null
+            ? {
+                id: deleteTarget.id,
+                date: deleteTarget.date,
+                ticker: deleteTarget.ticker,
+                isin: deleteTarget.isin,
+                side: deleteTarget.side,
+                quantity: deleteTarget.quantity,
+                price: deleteTarget.price,
+                commission: deleteTarget.commission,
+                currency: deleteTarget.currency,
+                syntheticOrigin: deleteTarget.syntheticOrigin,
+              }
+            : null
+        }
         onClose={() => setDeleteTarget(null)}
       />
     </div>
@@ -449,8 +509,16 @@ interface VirtualTableProps {
 }
 
 function VirtualTable({
-  rows, editingId, editForm, setEditForm, isEditValid,
-  updatePending, saveEdit, cancelEdit, onEdit, onDelete,
+  rows,
+  editingId,
+  editForm,
+  setEditForm,
+  isEditValid,
+  updatePending,
+  saveEdit,
+  cancelEdit,
+  onEdit,
+  onDelete,
 }: VirtualTableProps) {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -462,21 +530,21 @@ function VirtualTable({
   });
 
   return (
-    <div
-      ref={parentRef}
-      className="overflow-auto"
-      style={{ maxHeight: 'calc(100vh - 280px)' }}
-    >
+    <div ref={parentRef} className="overflow-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
       <table className="w-full text-sm">
         <thead className="sticky top-0 bg-background z-10">
           <tr className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold border-b border-border">
             <th className="text-left py-2 pr-4">Data</th>
             <th className="text-left py-2 pr-4">Ticker</th>
-            <th className="text-left py-2 pr-4" title="Waluta rozliczenia — co zapłaciłeś">Waluta zakupu</th>
+            <th className="text-left py-2 pr-4" title="Waluta rozliczenia — co zapłaciłeś">
+              Waluta zakupu
+            </th>
             <th className="text-left py-2 pr-4">Strona</th>
             <th className="text-right py-2 pr-4">Ilość</th>
             <th className="text-right py-2 pr-4">Cena</th>
-            <th className="text-left py-2 pr-4" title="Waluta kwotowania papieru na giełdzie">Kwotowanie</th>
+            <th className="text-left py-2 pr-4" title="Waluta kwotowania papieru na giełdzie">
+              Kwotowanie
+            </th>
             <th className="text-right py-2 pr-4">Prow.</th>
             <th className="text-right py-2 pr-4">Wartość PLN</th>
             <th className="text-right py-2 w-[90px]"></th>
@@ -484,7 +552,16 @@ function VirtualTable({
         </thead>
         <tbody>
           {rowVirtualizer.getVirtualItems().length > 0 && (
-            <tr><td colSpan={10} style={{ height: rowVirtualizer.getVirtualItems()[0].start, padding: 0, border: 'none' }} /></tr>
+            <tr>
+              <td
+                colSpan={10}
+                style={{
+                  height: rowVirtualizer.getVirtualItems()[0].start,
+                  padding: 0,
+                  border: 'none',
+                }}
+              />
+            </tr>
           )}
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const tx = rows[virtualRow.index];
@@ -504,20 +581,21 @@ function VirtualTable({
                 />
               );
             }
-            return (
-              <NormalRow
-                key={key}
-                tx={tx}
-                onEdit={onEdit}
-                onDelete={onDelete}
-              />
-            );
+            return <NormalRow key={key} tx={tx} onEdit={onEdit} onDelete={onDelete} />;
           })}
           {rowVirtualizer.getVirtualItems().length > 0 && (
-            <tr><td colSpan={10} style={{
-              height: rowVirtualizer.getTotalSize() - (rowVirtualizer.getVirtualItems().at(-1)?.end ?? 0),
-              padding: 0, border: 'none',
-            }} /></tr>
+            <tr>
+              <td
+                colSpan={10}
+                style={{
+                  height:
+                    rowVirtualizer.getTotalSize() -
+                    (rowVirtualizer.getVirtualItems().at(-1)?.end ?? 0),
+                  padding: 0,
+                  border: 'none',
+                }}
+              />
+            </tr>
           )}
         </tbody>
       </table>
@@ -528,8 +606,16 @@ function VirtualTable({
 // ============ Simple Table (≤500 rows — no virtualization) ============
 
 function SimpleTable({
-  rows, editingId, editForm, setEditForm, isEditValid,
-  updatePending, saveEdit, cancelEdit, onEdit, onDelete,
+  rows,
+  editingId,
+  editForm,
+  setEditForm,
+  isEditValid,
+  updatePending,
+  saveEdit,
+  cancelEdit,
+  onEdit,
+  onDelete,
 }: VirtualTableProps) {
   return (
     <div className="overflow-x-auto">
@@ -538,11 +624,15 @@ function SimpleTable({
           <tr className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold border-b border-border">
             <th className="text-left py-2 pr-4">Data</th>
             <th className="text-left py-2 pr-4">Ticker</th>
-            <th className="text-left py-2 pr-4" title="Waluta rozliczenia — co zapłaciłeś">Waluta zakupu</th>
+            <th className="text-left py-2 pr-4" title="Waluta rozliczenia — co zapłaciłeś">
+              Waluta zakupu
+            </th>
             <th className="text-left py-2 pr-4">Strona</th>
             <th className="text-right py-2 pr-4">Ilość</th>
             <th className="text-right py-2 pr-4">Cena</th>
-            <th className="text-left py-2 pr-4" title="Waluta kwotowania papieru na giełdzie">Kwotowanie</th>
+            <th className="text-left py-2 pr-4" title="Waluta kwotowania papieru na giełdzie">
+              Kwotowanie
+            </th>
             <th className="text-right py-2 pr-4">Prow.</th>
             <th className="text-right py-2 pr-4">Wartość PLN</th>
             <th className="text-right py-2 w-[90px]"></th>
@@ -566,14 +656,7 @@ function SimpleTable({
                 />
               );
             }
-            return (
-              <NormalRow
-                key={key}
-                tx={tx}
-                onEdit={onEdit}
-                onDelete={onDelete}
-              />
-            );
+            return <NormalRow key={key} tx={tx} onEdit={onEdit} onDelete={onDelete} />;
           })}
         </tbody>
       </table>
@@ -632,34 +715,45 @@ const NormalRow = memo(function NormalRow({ tx, onEdit, onDelete }: NormalRowPro
               <span className="ml-1 text-[9px] text-amber-500/80 cursor-help">⇋</span>
             </TooltipTrigger>
             <TooltipContent className="text-xs">
-              Auto-przewalutowanie: broker zamienił {paymentCcy} na {tx.currency} przy realizacji zlecenia.
+              Auto-przewalutowanie: broker zamienił {paymentCcy} na {tx.currency} przy realizacji
+              zlecenia.
             </TooltipContent>
           </Tooltip>
         )}
       </td>
-      <td className="py-2.5 pr-4"><SideChip side={tx.side} /></td>
+      <td className="py-2.5 pr-4">
+        <SideChip side={tx.side} />
+      </td>
       <td className="py-2.5 pr-4 text-right tabular-nums">{formatQuantity(tx.quantity)}</td>
       <td className="py-2.5 pr-4 text-right tabular-nums">{formatNumber(quotePrice(tx))}</td>
-      <td className="py-2.5 pr-4"><CcyChip ccy={tx.currency} /></td>
+      <td className="py-2.5 pr-4">
+        <CcyChip ccy={tx.currency} />
+      </td>
       <td className="py-2.5 pr-4 text-right text-muted-foreground tabular-nums text-xs">
         {tx.commission > 0 ? formatNumber(tx.commission) : '—'}
       </td>
-      <td className="py-2.5 pr-4 text-right tabular-nums font-medium">{formatNumber(valuePln(tx))}</td>
+      <td className="py-2.5 pr-4 text-right tabular-nums font-medium">
+        {formatNumber(valuePln(tx))}
+      </td>
       <td className="py-2.5 text-right">
         {tx.id != null && (
           <div className="inline-flex gap-0.5">
             <Button
-              size="icon-xs" variant="ghost"
+              size="icon-xs"
+              variant="ghost"
               onClick={() => onEdit(tx)}
-              aria-label="Edytuj" title="Edytuj"
+              aria-label="Edytuj"
+              title="Edytuj"
               className="h-6 w-6 text-muted-foreground/60 hover:text-foreground"
             >
               <Pencil className="h-3 w-3" />
             </Button>
             <Button
-              size="icon-xs" variant="ghost"
+              size="icon-xs"
+              variant="ghost"
               onClick={() => onDelete(tx)}
-              aria-label="Usuń" title="Usuń"
+              aria-label="Usuń"
+              title="Usuń"
               className="h-6 w-6 text-muted-foreground/60 hover:text-destructive"
             >
               <Trash2 className="h-3 w-3" />
@@ -681,7 +775,15 @@ interface EditRowProps {
   cancelEdit: () => void;
 }
 
-function EditRow({ tx, editForm, setEditForm, isEditValid, updatePending, saveEdit, cancelEdit }: EditRowProps) {
+function EditRow({
+  tx,
+  editForm,
+  setEditForm,
+  isEditValid,
+  updatePending,
+  saveEdit,
+  cancelEdit,
+}: EditRowProps) {
   const paymentCcy = tx.paymentCurrency || tx.currency;
   return (
     <tr className="border-b border-border/50 bg-muted/30">
@@ -694,10 +796,17 @@ function EditRow({ tx, editForm, setEditForm, isEditValid, updatePending, saveEd
         />
       </td>
       <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">{tx.ticker}</td>
-      <td className="py-2 pr-4"><CcyChip ccy={paymentCcy} /></td>
       <td className="py-2 pr-4">
-        <Select value={editForm.side} onValueChange={(v: 'K' | 'S') => setEditForm({ ...editForm, side: v })}>
-          <SelectTrigger className="h-8 w-[60px]" size="sm"><SelectValue /></SelectTrigger>
+        <CcyChip ccy={paymentCcy} />
+      </td>
+      <td className="py-2 pr-4">
+        <Select
+          value={editForm.side}
+          onValueChange={(v: 'K' | 'S') => setEditForm({ ...editForm, side: v })}
+        >
+          <SelectTrigger className="h-8 w-[60px]" size="sm">
+            <SelectValue />
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="K">K</SelectItem>
             <SelectItem value="S">S</SelectItem>
@@ -706,7 +815,9 @@ function EditRow({ tx, editForm, setEditForm, isEditValid, updatePending, saveEd
       </td>
       <td className="py-2 pr-4">
         <Input
-          type="number" step="0.0001" min="0"
+          type="number"
+          step="0.0001"
+          min="0"
           value={editForm.quantity}
           onChange={(e) => setEditForm({ ...editForm, quantity: e.target.value })}
           className="h-8 w-[90px] text-right text-xs"
@@ -714,16 +825,22 @@ function EditRow({ tx, editForm, setEditForm, isEditValid, updatePending, saveEd
       </td>
       <td className="py-2 pr-4">
         <Input
-          type="number" step="0.01" min="0"
+          type="number"
+          step="0.01"
+          min="0"
           value={editForm.price}
           onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
           className="h-8 w-[100px] text-right text-xs"
         />
       </td>
-      <td className="py-2 pr-4"><CcyChip ccy={tx.currency} /></td>
+      <td className="py-2 pr-4">
+        <CcyChip ccy={tx.currency} />
+      </td>
       <td className="py-2 pr-4">
         <Input
-          type="number" step="0.01" min="0"
+          type="number"
+          step="0.01"
+          min="0"
           value={editForm.commission}
           onChange={(e) => setEditForm({ ...editForm, commission: e.target.value })}
           className="h-8 w-[80px] text-right text-xs"
@@ -733,12 +850,18 @@ function EditRow({ tx, editForm, setEditForm, isEditValid, updatePending, saveEd
       <td className="py-2 text-right">
         <div className="inline-flex gap-1">
           <Button
-            size="icon-xs" variant="ghost"
+            size="icon-xs"
+            variant="ghost"
             onClick={saveEdit}
             disabled={!isEditValid || updatePending}
-            className="text-gain hover:text-gain/80" aria-label="Zapisz"
+            className="text-gain hover:text-gain/80"
+            aria-label="Zapisz"
           >
-            {updatePending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+            {updatePending ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Check className="h-3 w-3" />
+            )}
           </Button>
           <Button size="icon-xs" variant="ghost" onClick={cancelEdit} aria-label="Anuluj">
             <X className="h-3 w-3" />
@@ -751,9 +874,7 @@ function EditRow({ tx, editForm, setEditForm, isEditValid, updatePending, saveEd
 
 function SideChip({ side, size = 'sm' }: { side: 'K' | 'S'; size?: 'sm' | 'lg' }) {
   const isBuy = side === 'K';
-  const base = isBuy
-    ? 'bg-gain/15 text-gain'
-    : 'bg-loss/15 text-loss';
+  const base = isBuy ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss';
   return (
     <span
       className={cn(

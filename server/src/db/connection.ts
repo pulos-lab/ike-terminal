@@ -26,7 +26,10 @@ export function getDb(portfolioId: string = 'default'): Database.Database {
 export function closeDb(portfolioId?: string): void {
   if (portfolioId) {
     const db = connections.get(portfolioId);
-    if (db) { db.close(); connections.delete(portfolioId); }
+    if (db) {
+      db.close();
+      connections.delete(portfolioId);
+    }
   } else {
     for (const [, db] of connections) {
       db.close();

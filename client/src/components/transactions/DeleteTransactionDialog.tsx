@@ -3,7 +3,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { invalidatePortfolio } from '@/lib/query-keys';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDate, formatNumber, formatQuantity } from '@/lib/formatters';
@@ -61,19 +68,28 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
 
   const singleMutation = useMutation({
     mutationFn: (id: number) => api.deleteTransaction(id),
-    onSuccess: () => { invalidatePortfolio(queryClient); onClose(); },
+    onSuccess: () => {
+      invalidatePortfolio(queryClient);
+      onClose();
+    },
     onError: (err: Error) => setError(err.message),
   });
 
   const bulkMutation = useMutation({
     mutationFn: (ids: number[]) => api.bulkDeleteTransactions(ids),
-    onSuccess: () => { invalidatePortfolio(queryClient); onClose(); },
+    onSuccess: () => {
+      invalidatePortfolio(queryClient);
+      onClose();
+    },
     onError: (err: Error) => setError(err.message),
   });
 
   const smartMutation = useMutation({
     mutationFn: (id: number) => api.smartDeleteApply(id),
-    onSuccess: () => { invalidatePortfolio(queryClient); onClose(); },
+    onSuccess: () => {
+      invalidatePortfolio(queryClient);
+      onClose();
+    },
     onError: (err: Error) => setError(err.message),
   });
 
@@ -82,7 +98,7 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
   // Target row — derived FIFO status (from fetched matching)
   const targetFifo = useMemo(() => {
     if (!target || !fifoData) return null;
-    return fifoData.transactions.find(t => t.txId === target.id) ?? null;
+    return fifoData.transactions.find((t) => t.txId === target.id) ?? null;
   }, [target, fifoData]);
 
   // FIFO consequence analysis for "single" mode warnings
@@ -97,7 +113,9 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
       );
     }
     if (targetFifo.side === 'S' && targetFifo.status === 'orphan') {
-      warnings.push('Ta sprzedaż nie ma matchującej K (oversold). Usunięcie jest czysto kosmetyczne.');
+      warnings.push(
+        'Ta sprzedaż nie ma matchującej K (oversold). Usunięcie jest czysto kosmetyczne.',
+      );
     }
     return warnings;
   }, [target, targetFifo]);
@@ -112,20 +130,23 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
   }, [fifoData]);
 
   const toggleSelected = (id: number) => {
-    setSelectedIds(prev => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
 
   const selectAll = () => {
     if (!fifoData) return;
-    setSelectedIds(new Set(fifoData.transactions.map(t => t.txId)));
+    setSelectedIds(new Set(fifoData.transactions.map((t) => t.txId)));
   };
   const selectSide = (side: 'K' | 'S') => {
     if (!fifoData) return;
-    setSelectedIds(new Set(fifoData.transactions.filter(t => t.side === side).map(t => t.txId)));
+    setSelectedIds(
+      new Set(fifoData.transactions.filter((t) => t.side === side).map((t) => t.txId)),
+    );
   };
   const selectNone = () => setSelectedIds(new Set());
 
@@ -156,7 +177,12 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
 
   return (
     <TooltipProvider delayDuration={150}>
-      <Dialog open={target !== null} onOpenChange={(open) => { if (!open && !isPending) onClose(); }}>
+      <Dialog
+        open={target !== null}
+        onOpenChange={(open) => {
+          if (!open && !isPending) onClose();
+        }}
+      >
         <DialogContent className="sm:max-w-2xl" showCloseButton={false}>
           <DialogHeader>
             <div className="flex items-center gap-3">
@@ -171,8 +197,12 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
                   <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
                     <div className="flex items-center gap-2 mb-1">
                       <SideChip side={target.side} />
-                      <span className="font-mono font-semibold text-foreground">{target.ticker}</span>
-                      <span className="text-xs text-muted-foreground">· {formatDate(target.date)}</span>
+                      <span className="font-mono font-semibold text-foreground">
+                        {target.ticker}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        · {formatDate(target.date)}
+                      </span>
                       {target.syntheticOrigin && (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -185,7 +215,8 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
                       )}
                     </div>
                     <div className="text-xs text-muted-foreground tabular-nums">
-                      {formatQuantity(target.quantity)} × {formatNumber(target.price)} {target.currency}
+                      {formatQuantity(target.quantity)} × {formatNumber(target.price)}{' '}
+                      {target.currency}
                       {target.commission > 0 && <> · prow. {formatNumber(target.commission)}</>}
                     </div>
                   </div>
@@ -200,7 +231,11 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
                 <Trash2 className="h-3.5 w-3.5" />
                 Tylko ta
               </TabsTrigger>
-              <TabsTrigger value="smart" className="flex-1" disabled={!smartAvailable && !smartLoading}>
+              <TabsTrigger
+                value="smart"
+                className="flex-1"
+                disabled={!smartAvailable && !smartLoading}
+              >
                 <Sparkles className="h-3.5 w-3.5" />
                 Smart FIFO
                 {smartAvailable && smartTotalAffected > 1 && (
@@ -221,13 +256,22 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
 
             <TabsContent value="single" className="space-y-2 mt-2">
               <p className="text-xs text-muted-foreground">
-                Usunięta zostanie tylko ta jedna transakcja. Pozostałe transakcje tego papieru zachowane.
+                Usunięta zostanie tylko ta jedna transakcja. Pozostałe transakcje tego papieru
+                zachowane.
               </p>
-              {fifoLoading && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Analiza FIFO...</div>}
+              {fifoLoading && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Analiza FIFO...
+                </div>
+              )}
               {singleModeWarnings.length > 0 && (
                 <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 space-y-1">
                   {singleModeWarnings.map((w, i) => (
-                    <div key={i} className="flex items-start gap-2 text-[11px] text-amber-600 dark:text-amber-400">
+                    <div
+                      key={i}
+                      className="flex items-start gap-2 text-[11px] text-amber-600 dark:text-amber-400"
+                    >
                       <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
                       <span>{w}</span>
                     </div>
@@ -237,7 +281,12 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
             </TabsContent>
 
             <TabsContent value="smart" className="space-y-2 mt-2">
-              {smartLoading && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Liczenie planu FIFO...</div>}
+              {smartLoading && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Liczenie planu FIFO...
+                </div>
+              )}
               {smartPreview?.unsupported && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 p-2 flex items-start gap-2 text-[11px] text-destructive">
                   <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
@@ -247,41 +296,66 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
               {smartAvailable && (
                 <>
                   <p className="text-xs text-muted-foreground">
-                    Silnik sam wyliczy które transakcje trzeba dodatkowo usunąć albo proporcjonalnie zmniejszyć, tak żeby FIFO pozostało spójne.
+                    Silnik sam wyliczy które transakcje trzeba dodatkowo usunąć albo proporcjonalnie
+                    zmniejszyć, tak żeby FIFO pozostało spójne.
                   </p>
                   <div className="rounded-md border border-border bg-background overflow-hidden">
                     <div className="border-b border-border bg-muted/40 px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground flex items-center justify-between">
                       <span>Plan zmian</span>
-                      <span className="tabular-nums">{smartPreview.deletes.length} usunięć · {smartPreview.edits.length} edycji</span>
+                      <span className="tabular-nums">
+                        {smartPreview.deletes.length} usunięć · {smartPreview.edits.length} edycji
+                      </span>
                     </div>
                     <div className="max-h-[200px] overflow-y-auto">
-                      {smartPreview.deletes.map(id => {
-                        const tx = fifoData?.transactions.find(t => t.txId === id);
+                      {smartPreview.deletes.map((id) => {
+                        const tx = fifoData?.transactions.find((t) => t.txId === id);
                         if (!tx) return null;
                         return (
-                          <div key={`del-${id}`} className="flex items-center gap-2 px-2 py-1.5 text-xs border-b border-border/50 last:border-0">
+                          <div
+                            key={`del-${id}`}
+                            className="flex items-center gap-2 px-2 py-1.5 text-xs border-b border-border/50 last:border-0"
+                          >
                             <Trash2 className="h-3 w-3 text-destructive shrink-0" />
-                            <span className="font-mono w-5"><SideChip side={tx.side} /></span>
-                            <span className="tabular-nums w-[80px] text-right">{formatQuantity(tx.quantity)}</span>
-                            <span className="text-muted-foreground tabular-nums w-[80px] text-right">{formatNumber(tx.price)}</span>
-                            <span className="text-muted-foreground flex-1">{formatDate(tx.date)}</span>
+                            <span className="font-mono w-5">
+                              <SideChip side={tx.side} />
+                            </span>
+                            <span className="tabular-nums w-[80px] text-right">
+                              {formatQuantity(tx.quantity)}
+                            </span>
+                            <span className="text-muted-foreground tabular-nums w-[80px] text-right">
+                              {formatNumber(tx.price)}
+                            </span>
+                            <span className="text-muted-foreground flex-1">
+                              {formatDate(tx.date)}
+                            </span>
                             <span className="text-[10px] text-destructive">usuń</span>
                           </div>
                         );
                       })}
-                      {smartPreview.edits.map(edit => {
-                        const tx = fifoData?.transactions.find(t => t.txId === edit.txId);
+                      {smartPreview.edits.map((edit) => {
+                        const tx = fifoData?.transactions.find((t) => t.txId === edit.txId);
                         if (!tx) return null;
                         return (
-                          <div key={`edit-${edit.txId}`} className="flex items-center gap-2 px-2 py-1.5 text-xs border-b border-border/50 last:border-0">
+                          <div
+                            key={`edit-${edit.txId}`}
+                            className="flex items-center gap-2 px-2 py-1.5 text-xs border-b border-border/50 last:border-0"
+                          >
                             <Check className="h-3 w-3 text-amber-500 shrink-0" />
-                            <span className="font-mono w-5"><SideChip side={tx.side} /></span>
+                            <span className="font-mono w-5">
+                              <SideChip side={tx.side} />
+                            </span>
                             <span className="tabular-nums w-[80px] text-right">
-                              <span className="text-muted-foreground line-through">{formatQuantity(edit.originalQuantity)}</span>
+                              <span className="text-muted-foreground line-through">
+                                {formatQuantity(edit.originalQuantity)}
+                              </span>
                               <span className="ml-1">{formatQuantity(edit.newQuantity)}</span>
                             </span>
-                            <span className="text-muted-foreground tabular-nums w-[80px] text-right">{formatNumber(tx.price)}</span>
-                            <span className="text-muted-foreground flex-1">{formatDate(tx.date)}</span>
+                            <span className="text-muted-foreground tabular-nums w-[80px] text-right">
+                              {formatNumber(tx.price)}
+                            </span>
+                            <span className="text-muted-foreground flex-1">
+                              {formatDate(tx.date)}
+                            </span>
                             <span className="text-[10px] text-amber-500">edytuj qty</span>
                           </div>
                         );
@@ -291,7 +365,10 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
                   {smartPreview.warnings.length > 0 && (
                     <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 space-y-1">
                       {smartPreview.warnings.map((w, i) => (
-                        <div key={i} className="flex items-start gap-2 text-[11px] text-amber-600 dark:text-amber-400">
+                        <div
+                          key={i}
+                          className="flex items-start gap-2 text-[11px] text-amber-600 dark:text-amber-400"
+                        >
                           <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
                           <span>{w}</span>
                         </div>
@@ -305,21 +382,30 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
             <TabsContent value="multi" className="space-y-2 mt-2">
               <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
                 <span className="mr-1">Szybkie zaznaczenie:</span>
-                <button className="underline hover:text-foreground" onClick={selectAll}>wszystkie</button>
+                <button className="underline hover:text-foreground" onClick={selectAll}>
+                  wszystkie
+                </button>
                 <span>·</span>
-                <button className="underline hover:text-foreground" onClick={() => selectSide('K')}>K</button>
+                <button className="underline hover:text-foreground" onClick={() => selectSide('K')}>
+                  K
+                </button>
                 <span>·</span>
-                <button className="underline hover:text-foreground" onClick={() => selectSide('S')}>S</button>
+                <button className="underline hover:text-foreground" onClick={() => selectSide('S')}>
+                  S
+                </button>
                 <span>·</span>
-                <button className="underline hover:text-foreground" onClick={selectNone}>wyczyść</button>
+                <button className="underline hover:text-foreground" onClick={selectNone}>
+                  wyczyść
+                </button>
               </div>
               <div className="rounded-md border border-border max-h-[260px] overflow-y-auto">
                 {fifoLoading ? (
                   <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
-                    <Loader2 className="h-3 w-3 animate-spin" />Ładowanie...
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Ładowanie...
                   </div>
                 ) : (
-                  isinTransactions.map(tx => {
+                  isinTransactions.map((tx) => {
                     const isSelected = selectedIds.has(tx.txId);
                     const isTarget = tx.txId === target?.id;
                     return (
@@ -339,8 +425,12 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
                           disabled={!!tx.syntheticOrigin}
                         />
                         <SideChip side={tx.side} />
-                        <span className="tabular-nums w-[80px] text-right">{formatQuantity(tx.quantity)}</span>
-                        <span className="text-muted-foreground tabular-nums w-[80px] text-right">{formatNumber(tx.price)}</span>
+                        <span className="tabular-nums w-[80px] text-right">
+                          {formatQuantity(tx.quantity)}
+                        </span>
+                        <span className="text-muted-foreground tabular-nums w-[80px] text-right">
+                          {formatNumber(tx.price)}
+                        </span>
                         <span className="text-muted-foreground flex-1">{formatDate(tx.date)}</span>
                         <StatusBadge status={tx.status} />
                         {tx.syntheticOrigin && (
@@ -348,7 +438,9 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
                             <TooltipTrigger asChild>
                               <Info className="h-3 w-3 text-amber-500/80" />
                             </TooltipTrigger>
-                            <TooltipContent className="text-xs max-w-[240px]">Auto-wygenerowana, nie można usunąć bezpośrednio.</TooltipContent>
+                            <TooltipContent className="text-xs max-w-[240px]">
+                              Auto-wygenerowana, nie można usunąć bezpośrednio.
+                            </TooltipContent>
                           </Tooltip>
                         )}
                       </label>
@@ -358,8 +450,8 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
               </div>
               {fifoData && (
                 <div className="text-[10px] text-muted-foreground tabular-nums">
-                  Łącznie: {fifoData.transactions.length} transakcji ·
-                  K: {formatQuantity(fifoData.totalBuys)} · S: {formatQuantity(fifoData.totalSells)} ·
+                  Łącznie: {fifoData.transactions.length} transakcji · K:{' '}
+                  {formatQuantity(fifoData.totalBuys)} · S: {formatQuantity(fifoData.totalSells)} ·
                   netto otwarte: {formatQuantity(fifoData.netOpenQty)}
                 </div>
               )}
@@ -376,11 +468,26 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
             <Button variant="outline" size="sm" onClick={onClose} disabled={isPending}>
               Anuluj
             </Button>
-            <Button variant="destructive" size="sm" onClick={handleConfirm} disabled={isPending || (mode === 'multi' && selectedIds.size === 0) || (mode === 'smart' && !smartAvailable)}>
-              {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleConfirm}
+              disabled={
+                isPending ||
+                (mode === 'multi' && selectedIds.size === 0) ||
+                (mode === 'smart' && !smartAvailable)
+              }
+            >
+              {isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
               {mode === 'single' && 'Usuń transakcję'}
-              {mode === 'smart' && `Usuń z kaskadą FIFO${smartTotalAffected > 1 ? ` (${smartTotalAffected})` : ''}`}
-              {mode === 'multi' && `Usuń zaznaczone${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
+              {mode === 'smart' &&
+                `Usuń z kaskadą FIFO${smartTotalAffected > 1 ? ` (${smartTotalAffected})` : ''}`}
+              {mode === 'multi' &&
+                `Usuń zaznaczone${selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}`}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -392,10 +499,12 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
 function SideChip({ side }: { side: 'K' | 'S' }) {
   const isBuy = side === 'K';
   return (
-    <span className={cn(
-      'inline-flex items-center justify-center rounded-md font-bold w-6 h-5 text-[11px]',
-      isBuy ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss',
-    )}>
+    <span
+      className={cn(
+        'inline-flex items-center justify-center rounded-md font-bold w-6 h-5 text-[11px]',
+        isBuy ? 'bg-gain/15 text-gain' : 'bg-loss/15 text-loss',
+      )}
+    >
       {side}
     </span>
   );
@@ -404,10 +513,14 @@ function SideChip({ side }: { side: 'K' | 'S' }) {
 function StatusBadge({ status }: { status: 'fully-matched' | 'partial' | 'open' | 'orphan' }) {
   const labels: Record<typeof status, { label: string; cls: string }> = {
     'fully-matched': { label: 'zamknięta', cls: 'bg-muted text-muted-foreground' },
-    'partial': { label: 'częściowa', cls: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
-    'open': { label: 'otwarta', cls: 'bg-gain/15 text-gain' },
-    'orphan': { label: 'oversold', cls: 'bg-loss/15 text-loss' },
+    partial: { label: 'częściowa', cls: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
+    open: { label: 'otwarta', cls: 'bg-gain/15 text-gain' },
+    orphan: { label: 'oversold', cls: 'bg-loss/15 text-loss' },
   };
   const { label, cls } = labels[status];
-  return <span className={cn('text-[9px] uppercase px-1.5 py-0.5 rounded-sm tabular-nums', cls)}>{label}</span>;
+  return (
+    <span className={cn('text-[9px] uppercase px-1.5 py-0.5 rounded-sm tabular-nums', cls)}>
+      {label}
+    </span>
+  );
 }

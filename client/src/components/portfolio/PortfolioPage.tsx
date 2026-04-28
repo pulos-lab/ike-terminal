@@ -3,7 +3,14 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -17,7 +24,13 @@ import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { CcyChip } from '@/components/ui/ccy-chip';
-import { formatCurrency, formatNumber, formatPercent, formatPLN, formatQuantity } from '@/lib/formatters';
+import {
+  formatCurrency,
+  formatNumber,
+  formatPercent,
+  formatPLN,
+  formatQuantity,
+} from '@/lib/formatters';
 import { Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioDiversification } from './PortfolioDiversification';
@@ -42,7 +55,9 @@ function loadVisibility(): ColumnVisibility {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) return { ...DEFAULT_VISIBILITY, ...JSON.parse(stored) };
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return { ...DEFAULT_VISIBILITY };
 }
 
@@ -54,7 +69,7 @@ export function PortfolioPage() {
   const [colVis, setColVis] = useState<ColumnVisibility>(loadVisibility);
 
   const toggleCol = (key: keyof ColumnVisibility) => {
-    setColVis(prev => {
+    setColVis((prev) => {
       const next = { ...prev, [key]: !prev[key] };
       saveVisibility(next);
       return next;
@@ -80,16 +95,35 @@ export function PortfolioPage() {
     if (useNativeCcy) {
       // Sumy w walucie portfela — raw sum z pos.currentValue/profitLoss (native)
       const totalValue = data.positions.reduce((s: number, p: any) => s + (p.currentValue ?? 0), 0);
-      const totalProfitLoss = data.positions.reduce((s: number, p: any) => s + (p.profitLoss ?? 0), 0);
+      const totalProfitLoss = data.positions.reduce(
+        (s: number, p: any) => s + (p.profitLoss ?? 0),
+        0,
+      );
       const totalCostBasis = totalValue - totalProfitLoss;
       const totalProfitLossPct = totalCostBasis > 0 ? (totalProfitLoss / totalCostBasis) * 100 : 0;
-      return { totalValue, totalProfitLoss, totalProfitLossPct, totalValuePln: data.totalValuePln ?? 0, cashValuePln: data.cashValuePln ?? 0 };
+      return {
+        totalValue,
+        totalProfitLoss,
+        totalProfitLossPct,
+        totalValuePln: data.totalValuePln ?? 0,
+        cashValuePln: data.cashValuePln ?? 0,
+      };
     }
-    const totalValue = data.totalValuePln ?? data.positions.reduce((s: number, p: any) => s + p.currentValuePln, 0);
-    const totalProfitLoss = data.positions.reduce((s: number, p: any) => s + (p.profitLossPln ?? p.profitLoss), 0);
+    const totalValue =
+      data.totalValuePln ?? data.positions.reduce((s: number, p: any) => s + p.currentValuePln, 0);
+    const totalProfitLoss = data.positions.reduce(
+      (s: number, p: any) => s + (p.profitLossPln ?? p.profitLoss),
+      0,
+    );
     const totalCostBasis = (data.stocksValuePln ?? totalValue) - totalProfitLoss;
     const totalProfitLossPct = totalCostBasis > 0 ? (totalProfitLoss / totalCostBasis) * 100 : 0;
-    return { totalValue, totalProfitLoss, totalProfitLossPct, totalValuePln: totalValue, cashValuePln: data.cashValuePln ?? 0 };
+    return {
+      totalValue,
+      totalProfitLoss,
+      totalProfitLossPct,
+      totalValuePln: totalValue,
+      cashValuePln: data.cashValuePln ?? 0,
+    };
   }, [data, useNativeCcy]);
 
   const recentSplitMap = useMemo(() => {
@@ -114,9 +148,11 @@ export function PortfolioPage() {
               Otwarte pozycje
               {data && (
                 <span className="ml-2 text-muted-foreground font-normal">
-                  ({data.positions.length} pozycji | {useNativeCcy
+                  ({data.positions.length} pozycji |{' '}
+                  {useNativeCcy
                     ? formatCurrency(totals?.totalValue ?? 0, baseCurrency)
-                    : formatPLN(data.stocksValuePln ?? data.totalValuePln)})
+                    : formatPLN(data.stocksValuePln ?? data.totalValuePln)}
+                  )
                 </span>
               )}
             </CardTitle>
@@ -184,11 +220,12 @@ export function PortfolioPage() {
                 </TableHeader>
                 <TableBody>
                   {data.positions.map((pos: any) => (
-                      <TableRow key={pos.isin}>
-                        <TableCell className="font-mono font-medium">
-                          {pos.ticker}
-                          <CategoryBadge category={pos.category} />
-                          {recentSplitMap.has(pos.isin) && (() => {
+                    <TableRow key={pos.isin}>
+                      <TableCell className="font-mono font-medium">
+                        {pos.ticker}
+                        <CategoryBadge category={pos.category} />
+                        {recentSplitMap.has(pos.isin) &&
+                          (() => {
                             const split = recentSplitMap.get(pos.isin)!;
                             const isReverse = split.ratio < 1;
                             const label = isReverse
@@ -200,76 +237,91 @@ export function PortfolioPage() {
                                   <AlertTriangle className="h-4 w-4 text-amber-500 inline ml-1 cursor-help" />
                                 </TooltipTrigger>
                                 <TooltipContent side="right" className="max-w-[280px]">
-                                  Spółka przeszła {isReverse ? 'reverse split' : 'split'} {label} w dniu {split.date}.
-                                  Ilość i cena zostały automatycznie skorygowane.
+                                  Spółka przeszła {isReverse ? 'reverse split' : 'split'} {label} w
+                                  dniu {split.date}. Ilość i cena zostały automatycznie skorygowane.
                                 </TooltipContent>
                               </Tooltip>
                             );
                           })()}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground max-w-[180px]">
-                          <TruncatedName name={pos.paperName} />
-                        </TableCell>
-                        <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
-                        {colVis.avgPrice && (
-                          <TableCell className="text-right">{formatNumber(pos.avgBuyPrice)}</TableCell>
-                        )}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground max-w-[180px]">
+                        <TruncatedName name={pos.paperName} />
+                      </TableCell>
+                      <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
+                      {colVis.avgPrice && (
                         <TableCell className="text-right">
-                          <span className="tabular-nums">{pos.currentPrice ? formatNumber(pos.currentPrice) : '—'}</span>
-                          <CcyChip ccy={pos.currency} className="ml-1.5" />
-                          {pos.priceManual && (
-                            <span className="ml-1 text-[10px] text-muted-foreground/60" title="Cena z ostatniej transakcji — instrument bez aktualnych notowań">⚠</span>
+                          {formatNumber(pos.avgBuyPrice)}
+                        </TableCell>
+                      )}
+                      <TableCell className="text-right">
+                        <span className="tabular-nums">
+                          {pos.currentPrice ? formatNumber(pos.currentPrice) : '—'}
+                        </span>
+                        <CcyChip ccy={pos.currency} className="ml-1.5" />
+                        {pos.priceManual && (
+                          <span
+                            className="ml-1 text-[10px] text-muted-foreground/60"
+                            title="Cena z ostatniej transakcji — instrument bez aktualnych notowań"
+                          >
+                            ⚠
+                          </span>
+                        )}
+                      </TableCell>
+                      {colVis.dailyChange && (
+                        <TableCell className="text-right">
+                          {pos.dailyChangePct != null ? (
+                            <PLBadge value={pos.dailyChangePct} />
+                          ) : (
+                            '—'
                           )}
                         </TableCell>
-                        {colVis.dailyChange && (
-                          <TableCell className="text-right">
-                            {pos.dailyChangePct != null ? (
-                              <PLBadge value={pos.dailyChangePct} />
-                            ) : '—'}
-                          </TableCell>
-                        )}
-                        <TableCell className="text-right font-medium">
-                          {useNativeCcy
-                            ? formatCurrency(pos.currentValue ?? 0, baseCurrency)
-                            : formatPLN(pos.currentValuePln)}
+                      )}
+                      <TableCell className="text-right font-medium">
+                        {useNativeCcy
+                          ? formatCurrency(pos.currentValue ?? 0, baseCurrency)
+                          : formatPLN(pos.currentValuePln)}
+                      </TableCell>
+                      {colVis.pl && (
+                        <TableCell
+                          className={`text-right font-medium ${plColor(pos.profitLossPct)}`}
+                        >
+                          {formatCurrency(pos.profitLoss, pos.currency)}
                         </TableCell>
-                        {colVis.pl && (
-                          <TableCell className={`text-right font-medium ${plColor(pos.profitLossPct)}`}>
-                            {formatCurrency(pos.profitLoss, pos.currency)}
-                          </TableCell>
-                        )}
-                        {colVis.plPct && (
-                          <TableCell className="text-right">
-                            <PLBadge value={pos.profitLossPct} />
-                          </TableCell>
-                        )}
-                        <TableCell className="text-right text-muted-foreground">
-                          {formatPercent(pos.weight).replace('+', '')}
+                      )}
+                      {colVis.plPct && (
+                        <TableCell className="text-right">
+                          <PLBadge value={pos.profitLossPct} />
                         </TableCell>
-                      </TableRow>
+                      )}
+                      <TableCell className="text-right text-muted-foreground">
+                        {formatPercent(pos.weight).replace('+', '')}
+                      </TableCell>
+                    </TableRow>
                   ))}
                   {totals && (
-                      <TableRow className="border-t-2 font-semibold">
-                        <TableCell colSpan={colsBeforeValue} className="text-right">Razem</TableCell>
-                        <TableCell className="text-right">
+                    <TableRow className="border-t-2 font-semibold">
+                      <TableCell colSpan={colsBeforeValue} className="text-right">
+                        Razem
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {useNativeCcy
+                          ? formatCurrency(totals.totalValue, baseCurrency)
+                          : formatPLN(totals.totalValuePln)}
+                      </TableCell>
+                      {colVis.pl && (
+                        <TableCell className={`text-right ${plColor(totals.totalProfitLoss)}`}>
                           {useNativeCcy
-                            ? formatCurrency(totals.totalValue, baseCurrency)
-                            : formatPLN(totals.totalValuePln)}
+                            ? formatCurrency(totals.totalProfitLoss, baseCurrency)
+                            : formatPLN(totals.totalProfitLoss)}
                         </TableCell>
-                        {colVis.pl && (
-                          <TableCell className={`text-right ${plColor(totals.totalProfitLoss)}`}>
-                            {useNativeCcy
-                              ? formatCurrency(totals.totalProfitLoss, baseCurrency)
-                              : formatPLN(totals.totalProfitLoss)}
-                          </TableCell>
-                        )}
-                        {colVis.plPct && (
-                          <TableCell className="text-right">
-                            <PLBadge value={totals.totalProfitLossPct} />
-                          </TableCell>
-                        )}
-                        <TableCell />
-                      </TableRow>
+                      )}
+                      {colVis.plPct && (
+                        <TableCell className="text-right">
+                          <PLBadge value={totals.totalProfitLossPct} />
+                        </TableCell>
+                      )}
+                      <TableCell />
+                    </TableRow>
                   )}
                 </TableBody>
               </Table>
@@ -303,9 +355,15 @@ export function PortfolioPage() {
               <TableBody>
                 {cashPositions.map((cp: any) => (
                   <TableRow key={cp.currency}>
-                    <TableCell><CcyChip ccy={cp.currency} /></TableCell>
-                    <TableCell className="text-right tabular-nums">{formatCurrency(cp.balance, cp.currency)}</TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">{formatPLN(cp.valuePln)}</TableCell>
+                    <TableCell>
+                      <CcyChip ccy={cp.currency} />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatCurrency(cp.balance, cp.currency)}
+                    </TableCell>
+                    <TableCell className="text-right font-medium tabular-nums">
+                      {formatPLN(cp.valuePln)}
+                    </TableCell>
                     <TableCell className="text-right text-muted-foreground tabular-nums">
                       {formatPercent(cp.weight).replace('+', '')}
                     </TableCell>
@@ -318,12 +376,8 @@ export function PortfolioPage() {
       )}
 
       {data?.positions?.length > 0 && (
-        <PortfolioDiversification
-          positions={data.positions}
-          totalValuePln={data.totalValuePln}
-        />
+        <PortfolioDiversification positions={data.positions} totalValuePln={data.totalValuePln} />
       )}
-
     </div>
   );
 }
@@ -345,7 +399,7 @@ function TruncatedName({ name }: { name: string }) {
     if (!el) return;
     const check = () => {
       const should = el.scrollWidth > el.clientWidth;
-      setIsTruncated(prev => (prev === should ? prev : should));
+      setIsTruncated((prev) => (prev === should ? prev : should));
     };
     check();
     const ro = new ResizeObserver(check);

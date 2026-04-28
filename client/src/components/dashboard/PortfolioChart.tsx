@@ -19,7 +19,12 @@ interface Props {
   showBenchmark?: boolean;
 }
 
-export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr', showBenchmark = true }: Props) {
+export function PortfolioChart({
+  data,
+  benchmarkLabel,
+  mode = 'mwr',
+  showBenchmark = true,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
@@ -66,7 +71,7 @@ export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr', showBenchma
       priceFormat: { type: 'custom', formatter: (v: number) => `${v.toFixed(2)}%` },
     });
 
-    const portfolioData = data.map(d => ({
+    const portfolioData = data.map((d) => ({
       time: d.date as string,
       value: isTwr ? d.twrPct : d.returnPct,
     }));
@@ -74,7 +79,7 @@ export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr', showBenchma
 
     // Show benchmark only when enabled and data is available (not all zeros from failed fetch)
     const benchmarkField = isTwr ? 'benchmarkTwrPct' : 'benchmarkReturnPct';
-    const hasBenchmarkData = showBenchmark && data.some(d => d[benchmarkField] !== 0);
+    const hasBenchmarkData = showBenchmark && data.some((d) => d[benchmarkField] !== 0);
 
     if (hasBenchmarkData) {
       const benchmarkSeries = chart.addSeries(LineSeries, {
@@ -84,7 +89,7 @@ export function PortfolioChart({ data, benchmarkLabel, mode = 'mwr', showBenchma
         title: `${benchmarkLabel} ${isTwr ? 'TWR ' : ''}%`,
         priceFormat: { type: 'custom', formatter: (v: number) => `${v.toFixed(2)}%` },
       });
-      const benchmarkData = data.map(d => ({
+      const benchmarkData = data.map((d) => ({
         time: d.date as string,
         value: isTwr ? d.benchmarkTwrPct : d.benchmarkReturnPct,
       }));

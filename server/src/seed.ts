@@ -6,7 +6,11 @@ import { seedTickerMap } from './db/ticker-map-repo.js';
 import { decodeWindows1250 } from './parsers/encoding.js';
 import { parseBossaTransactions } from './parsers/bossa-transactions.js';
 import { parseBossaOperations } from './parsers/bossa-operations.js';
-import { insertTransactions, getTransactionsCount, clearTransactions } from './db/transactions-repo.js';
+import {
+  insertTransactions,
+  getTransactionsCount,
+  clearTransactions,
+} from './db/transactions-repo.js';
 import { insertOperations, getOperationsCount, clearOperations } from './db/operations-repo.js';
 
 /**
@@ -43,7 +47,7 @@ async function seed() {
   // Import operations file
   const opsPattern = /historia_finansowa/;
   const files = fs.readdirSync(csvDir);
-  const opsFile = files.find(f => opsPattern.test(f) && f.endsWith('.csv'));
+  const opsFile = files.find((f) => opsPattern.test(f) && f.endsWith('.csv'));
   if (opsFile) {
     const filePath = path.join(csvDir, opsFile);
     const buffer = fs.readFileSync(filePath);
