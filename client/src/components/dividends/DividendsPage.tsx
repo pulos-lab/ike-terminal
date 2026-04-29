@@ -24,8 +24,20 @@ import {
   formatCurrency,
 } from '@/lib/formatters';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { Loader2, Coins, Plus, Pencil, Trash2, RefreshCw, Calendar, Clock } from 'lucide-react';
+import {
+  Loader2,
+  Coins,
+  Plus,
+  Pencil,
+  Trash2,
+  RefreshCw,
+  Calendar,
+  Clock,
+  ChevronDown,
+  ChevronRight,
+} from 'lucide-react';
 import { toast } from 'sonner';
+import { useToggleSet } from '@/hooks/useToggleSet';
 import type { DividendRecord, UpcomingDividend } from 'shared';
 
 const SOURCE_LABELS: Record<string, { label: string; className: string }> = {
@@ -72,6 +84,65 @@ function StatusBadge({ exDate, payDate }: { exDate: string; payDate: string | nu
 
 // ============ Upcoming Dividends Panel ============
 
+function UpcomingDividendCardMobile({ d }: { d: UpcomingDividend }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div
+        className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
+        onClick={() => setExpanded((v) => !v)}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setExpanded((v) => !v);
+          }
+        }}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {expanded ? (
+              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+            )}
+            <span className="font-mono font-semibold text-sm truncate">{d.ticker}</span>
+            <CcyChip ccy={d.currency} />
+          </div>
+          <span className="font-semibold text-sm tabular-nums text-gain shrink-0">
+            {d.estimatedAmount > 0 ? formatNumber(d.estimatedAmount) : '—'}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+          <span className="text-muted-foreground tabular-nums truncate">
+            ex: {formatDate(d.exDividendDate)} · {formatQuantity(d.shares)} szt.
+          </span>
+          <StatusBadge exDate={d.exDividendDate} payDate={d.paymentDate} />
+        </div>
+      </div>
+      {expanded && (
+        <div
+          className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-1 text-[11px]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex justify-between gap-3 items-baseline">
+            <span className="text-muted-foreground">Nazwa</span>
+            <span className="text-right">{d.name}</span>
+          </div>
+          <div className="flex justify-between gap-3 items-baseline">
+            <span className="text-muted-foreground">Data wypłaty</span>
+            <span className="tabular-nums text-right">
+              {d.paymentDate ? formatDate(d.paymentDate) : '—'}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UpcomingDividendsPanel() {
   const { data, isLoading } = useQuery({
     queryKey: QUERY_KEYS.upcomingDividends,
@@ -94,7 +165,12 @@ function UpcomingDividendsPanel() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
+        <div className="md:hidden flex flex-col gap-2">
+          {upcoming.map((d: UpcomingDividend) => (
+            <UpcomingDividendCardMobile key={d.ticker} d={d} />
+          ))}
+        </div>
+        <div className="hidden md:block overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -182,6 +258,7 @@ export function DividendsPage() {
   });
 
   const dividends: DividendRecord[] = data?.dividends || [];
+  const [expandedHistory, toggleHistory] = useToggleSet<number>();
 
   const yearlyData = dividends
     .reduce((acc: any[], d) => {
@@ -288,29 +365,112 @@ export function DividendsPage() {
         <CardContent>
           {isLoading ? (
             <LoadingSpinner />
+          ) : dividends.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground text-sm">
+              Brak danych. Kliknij &quot;Dodaj dywidende&quot; aby dodac pierwsza.
+            </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Data</TableHead>
-                    <TableHead>Ticker</TableHead>
-                    <TableHead>Opis</TableHead>
-                    <TableHead className="text-right">Kwota</TableHead>
-                    <TableHead>Waluta</TableHead>
-                    <TableHead>Źródło</TableHead>
-                    <TableHead className="w-[80px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {dividends.length === 0 ? (
+            <>
+              <div className="md:hidden flex flex-col gap-2">
+                {dividends.map((d: DividendRecord) => {
+                  const isExpanded = expandedHistory.has(d.id);
+                  const hasDescription = !!(d.description && d.description.trim());
+                  return (
+                    <div
+                      key={d.id}
+                      className="rounded-xl border border-border bg-card overflow-hidden"
+                    >
+                      <div
+                        className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
+                        onClick={() => toggleHistory(d.id)}
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={isExpanded}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleHistory(d.id);
+                          }
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                            )}
+                            <span className="font-mono font-semibold text-sm truncate">
+                              {d.ticker}
+                            </span>
+                            <CcyChip ccy={d.currency} />
+                          </div>
+                          <span className="font-semibold text-sm tabular-nums text-gain shrink-0">
+                            {formatNumber(d.amount)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                          <span className="text-muted-foreground tabular-nums">
+                            {formatDate(d.date)}
+                          </span>
+                          <SourceBadge source={d.source} />
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div
+                          className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-2 text-[11px]"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {hasDescription && (
+                            <div className="flex justify-between gap-3 items-baseline">
+                              <span className="text-muted-foreground shrink-0">Opis</span>
+                              <span className="text-right">{d.description}</span>
+                            </div>
+                          )}
+                          {d.source === 'manual' && (
+                            <div className="flex justify-end gap-1.5 pt-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setEditing(d)}
+                                className="h-7 px-2 text-xs"
+                              >
+                                <Pencil className="h-3 w-3 mr-1" />
+                                Edytuj
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setDeleting(d)}
+                                disabled={deleteMutation.isPending}
+                                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" />
+                                Usuń
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
+                <Table>
+                  <TableHeader>
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
-                        Brak danych. Kliknij &quot;Dodaj dywidende&quot; aby dodac pierwsza.
-                      </TableCell>
+                      <TableHead>Data</TableHead>
+                      <TableHead>Ticker</TableHead>
+                      <TableHead>Opis</TableHead>
+                      <TableHead className="text-right">Kwota</TableHead>
+                      <TableHead>Waluta</TableHead>
+                      <TableHead>Źródło</TableHead>
+                      <TableHead className="w-[80px]"></TableHead>
                     </TableRow>
-                  ) : (
-                    dividends.map((d: DividendRecord) => (
+                  </TableHeader>
+                  <TableBody>
+                    {dividends.map((d: DividendRecord) => (
                       <TableRow key={d.id}>
                         <TableCell>{formatDate(d.date)}</TableCell>
                         <TableCell className="font-mono font-medium">{d.ticker}</TableCell>
@@ -350,11 +510,11 @@ export function DividendsPage() {
                           )}
                         </TableCell>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

@@ -34,6 +34,8 @@ import {
 import { Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioDiversification } from './PortfolioDiversification';
+import { PortfolioPositionCardMobile } from './PortfolioPositionCardMobile';
+import { useToggleSet } from '@/hooks/useToggleSet';
 
 interface ColumnVisibility {
   avgPrice: boolean;
@@ -67,6 +69,7 @@ function saveVisibility(v: ColumnVisibility) {
 
 export function PortfolioPage() {
   const [colVis, setColVis] = useState<ColumnVisibility>(loadVisibility);
+  const [expandedPositions, togglePosition] = useToggleSet<string>();
 
   const toggleCol = (key: keyof ColumnVisibility) => {
     setColVis((prev) => {
@@ -161,7 +164,7 @@ export function PortfolioPage() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 text-muted-foreground"
+                  className="h-8 w-8 text-muted-foreground hidden md:inline-flex"
                   title="Widoczność kolumn"
                 >
                   {allVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
@@ -202,7 +205,39 @@ export function PortfolioPage() {
           {isLoading ? (
             <LoadingSpinner />
           ) : data?.positions?.length ? (
-            <div className="overflow-x-auto">
+            <>
+              <div className="md:hidden flex flex-col gap-2">
+                {data.positions.map((pos: any) => (
+                  <PortfolioPositionCardMobile
+                    key={pos.isin}
+                    position={pos}
+                    baseCurrency={baseCurrency}
+                    useNativeCcy={useNativeCcy}
+                    splitInfo={recentSplitMap.get(pos.isin)}
+                    isExpanded={expandedPositions.has(pos.isin)}
+                    onToggle={() => togglePosition(pos.isin)}
+                  />
+                ))}
+                {totals && (
+                  <div className="rounded-xl border-2 border-border bg-card p-3 flex items-center justify-between gap-2 font-semibold">
+                    <span className="text-sm">Razem</span>
+                    <div className="flex items-center gap-3 text-sm tabular-nums">
+                      <span>
+                        {useNativeCcy
+                          ? formatCurrency(totals.totalValue, baseCurrency)
+                          : formatPLN(totals.totalValuePln)}
+                      </span>
+                      <span className={plColor(totals.totalProfitLoss)}>
+                        {useNativeCcy
+                          ? formatCurrency(totals.totalProfitLoss, baseCurrency)
+                          : formatPLN(totals.totalProfitLoss)}
+                      </span>
+                      <PLBadge value={totals.totalProfitLossPct} />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -325,7 +360,8 @@ export function PortfolioPage() {
                   )}
                 </TableBody>
               </Table>
-            </div>
+              </div>
+            </>
           ) : (
             <EmptyState message="Brak otwartych pozycji. Zaimportuj historię transakcji lub dodaj ręcznie transakcje." />
           )}

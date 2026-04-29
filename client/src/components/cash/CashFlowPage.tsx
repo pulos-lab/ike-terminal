@@ -303,9 +303,205 @@ export function CashFlowPage() {
           <CardContent>
             {depositsLoading ? (
               <LoadingSpinner />
+            ) : yearGroups.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground text-sm">
+                Brak operacji gotówkowych. Kliknij &quot;Dodaj operację&quot; aby dodać pierwszą.
+              </div>
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
+              <>
+                <div className="md:hidden flex flex-col gap-2">
+                  {yearGroups.map((group) => {
+                    const isExpanded = expandedYears.has(group.year);
+                    const remaining = getRemaining(group);
+                    const usagePct = getUsagePct(group);
+                    const yearLimit = getYearLimit(group);
+                    const isFull = showLimits && yearLimit > 0 && remaining <= 0;
+                    return (
+                      <div
+                        key={group.year}
+                        className="rounded-xl border border-border bg-card overflow-hidden"
+                      >
+                        <div
+                          className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
+                          onClick={() => toggleYear(group.year)}
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={isExpanded}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              toggleYear(group.year);
+                            }
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              {isExpanded ? (
+                                <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                              )}
+                              <span className="font-semibold text-sm">{group.year}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                ({group.entries.length})
+                              </span>
+                            </div>
+                            <span className="font-semibold text-sm tabular-nums text-gain shrink-0">
+                              {group.totalDeposits > 0 ? fmtAgg(group.totalDeposits) : '—'}
+                            </span>
+                          </div>
+                          {showLimits && yearLimit > 0 && (
+                            <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                              <span className="text-muted-foreground">
+                                Pozostało:{' '}
+                                <span
+                                  className={`tabular-nums ${isFull ? 'text-gain' : 'text-yellow-500'}`}
+                                >
+                                  {formatPLN(remaining)}
+                                </span>
+                              </span>
+                              <Badge
+                                variant={isFull ? 'default' : 'secondary'}
+                                className={`text-xs shrink-0 ${isFull ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}
+                              >
+                                {usagePct.toFixed(0)}%
+                              </Badge>
+                            </div>
+                          )}
+                          {group.totalWithdrawals > 0 && (
+                            <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                              <span className="text-muted-foreground">Wypłaty</span>
+                              <span className="text-loss tabular-nums">
+                                −{fmtAgg(group.totalWithdrawals)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        {isExpanded && (
+                          <div
+                            className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-1 text-[11px]"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {showLimits && yearLimit > 0 && (
+                              <>
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold">
+                                  Limit
+                                </div>
+                                {showIKE && group.ikeLimit > 0 && (
+                                  <div className="flex justify-between gap-3 items-baseline">
+                                    <span className="text-muted-foreground">Limit IKE</span>
+                                    <span className="tabular-nums text-right">
+                                      {formatPLN(group.ikeLimit)}
+                                    </span>
+                                  </div>
+                                )}
+                                {showIKZE && group.ikzeLimit > 0 && (
+                                  <div className="flex justify-between gap-3 items-baseline">
+                                    <span className="text-muted-foreground">Limit IKZE</span>
+                                    <span className="tabular-nums text-right">
+                                      {formatPLN(group.ikzeLimit)}
+                                    </span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between gap-3 items-baseline">
+                                  <span className="text-muted-foreground">Pozostało</span>
+                                  <span
+                                    className={`tabular-nums text-right font-medium ${isFull ? 'text-gain' : 'text-yellow-500'}`}
+                                  >
+                                    {formatPLN(remaining)}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between gap-3 items-baseline">
+                                  <span className="text-muted-foreground">Wykorzystanie</span>
+                                  <Badge
+                                    variant={isFull ? 'default' : 'secondary'}
+                                    className={`text-xs ${isFull ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}
+                                  >
+                                    {usagePct.toFixed(0)}%
+                                  </Badge>
+                                </div>
+                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold mt-2">
+                                  Operacje ({group.entries.length})
+                                </div>
+                              </>
+                            )}
+                            {group.entries.map((entry) => (
+                              <div
+                                key={entry.id}
+                                className="flex items-center justify-between gap-2"
+                              >
+                                <span className="flex items-center gap-1.5 min-w-0 truncate">
+                                  {entry.type === 'deposit' ? (
+                                    <ArrowUp className="h-3 w-3 text-gain shrink-0" />
+                                  ) : (
+                                    <ArrowDown className="h-3 w-3 text-loss shrink-0" />
+                                  )}
+                                  <span className="text-muted-foreground tabular-nums">
+                                    {formatDate(entry.date)}
+                                  </span>
+                                  {entry.description && (
+                                    <DepositDescription text={entry.description} />
+                                  )}
+                                </span>
+                                <span className="flex items-center gap-1.5 shrink-0">
+                                  <span
+                                    className={`tabular-nums font-medium ${entry.type === 'deposit' ? 'text-gain' : 'text-loss'}`}
+                                  >
+                                    {entry.type === 'deposit' ? '+' : '−'}
+                                    {formatCurrency(
+                                      Math.abs(entry.amount),
+                                      entry.currency || 'PLN',
+                                    )}
+                                  </span>
+                                  {entry.source === 'manual' && (
+                                    <>
+                                      <Button
+                                        size="icon-xs"
+                                        variant="ghost"
+                                        onClick={() => setEditing(entry)}
+                                        className="text-muted-foreground hover:text-foreground"
+                                        aria-label="Edytuj"
+                                      >
+                                        <Pencil className="h-3 w-3" />
+                                      </Button>
+                                      <Button
+                                        size="icon-xs"
+                                        variant="ghost"
+                                        onClick={() => setDeleting(entry)}
+                                        disabled={deleteMutation.isPending}
+                                        className="text-muted-foreground hover:text-destructive"
+                                        aria-label="Usuń"
+                                      >
+                                        <Trash2 className="h-3 w-3" />
+                                      </Button>
+                                    </>
+                                  )}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div className="rounded-xl border-2 border-border bg-card p-3 flex items-center justify-between gap-2 font-semibold">
+                    <span className="text-sm">Razem</span>
+                    <div className="flex items-center gap-2 text-sm tabular-nums">
+                      <span className="text-gain">{fmtAgg(grandTotalDeposits)}</span>
+                      {grandTotalWithdrawals > 0 && (
+                        <span className="text-loss">−{fmtAgg(grandTotalWithdrawals)}</span>
+                      )}
+                    </div>
+                  </div>
+                  {grandTotalWithdrawals > 0 && (
+                    <div className="text-[11px] text-muted-foreground text-right pr-1">
+                      Netto: {fmtAgg(grandTotalDeposits - grandTotalWithdrawals)}
+                      {isMultiCurrency && ' (różne waluty, bez konwersji)'}
+                    </div>
+                  )}
+                </div>
+                <div className="hidden md:block overflow-x-auto">
+                  <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Rok</TableHead>
@@ -510,7 +706,8 @@ export function CashFlowPage() {
                     )}
                   </TableBody>
                 </Table>
-              </div>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>

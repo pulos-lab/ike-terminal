@@ -1,8 +1,14 @@
 import { Button } from '@/components/ui/button';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
-import { formatNumber, formatCurrency, formatQuantity, formatDate } from '@/lib/formatters';
-import { TrendingDown } from 'lucide-react';
+import {
+  formatNumber,
+  formatCurrency,
+  formatQuantity,
+  formatDate,
+  formatPLN,
+} from '@/lib/formatters';
+import { ChevronDown, ChevronRight, TrendingDown } from 'lucide-react';
 
 interface BuyLot {
   quantity: number;
@@ -29,9 +35,20 @@ interface Position {
 interface Props {
   position: Position;
   onSell: () => void;
+  isExpanded: boolean;
+  onToggle: () => void;
 }
 
-export function PositionCardMobile({ position, onSell }: Props) {
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-3 items-baseline">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="tabular-nums text-right">{value}</span>
+    </div>
+  );
+}
+
+export function PositionCardMobile({ position, onSell, isExpanded, onToggle }: Props) {
   const lots = position.buyLots || [];
   const buyDates = lots.map((l) => l.date).sort();
   const minBuyDate = buyDates[0] || '';
@@ -43,42 +60,109 @@ export function PositionCardMobile({ position, onSell }: Props) {
       : `${formatDate(minBuyDate)} – ${formatDate(maxBuyDate)}`
     : '—';
 
-  return (
-    <div className="rounded-xl border border-border bg-card p-3 flex gap-3 items-center">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-1">
-          <span className="font-mono font-semibold text-sm">{position.ticker}</span>
-          <CategoryBadge category={position.category} />
-          {lots.length > 1 && (
-            <span className="text-[10px] text-muted-foreground">({lots.length})</span>
-          )}
-        </div>
-        <p className="text-[11px] text-muted-foreground tabular-nums">
-          {formatQuantity(position.shares)} × {formatNumber(position.avgBuyPrice)} · {dateLabel}
-        </p>
-      </div>
+  const isMulti = lots.length > 1;
+  const costBasis = position.shares * position.avgBuyPrice;
 
-      <div className="text-right flex-shrink-0">
-        <p className="font-semibold text-sm tabular-nums">
-          {formatNumber(position.currentValuePln)} zł
-        </p>
-        <p className={`text-[11px] tabular-nums font-medium ${plColor(position.profitLossPct)}`}>
-          {formatCurrency(position.profitLoss, position.currency)}
-        </p>
-        <div className="mt-1 flex justify-end">
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div
+        className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
+        onClick={onToggle}
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {isExpanded ? (
+              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+            )}
+            <span className="font-mono font-semibold text-sm truncate">{position.ticker}</span>
+            <CategoryBadge category={position.category} />
+            {isMulti && (
+              <span className="text-[10px] text-muted-foreground shrink-0">({lots.length})</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="font-semibold text-sm tabular-nums">
+              {formatPLN(position.currentValuePln)}
+            </span>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSell();
+              }}
+              className="text-muted-foreground hover:text-destructive"
+              aria-label="Sprzedaj"
+            >
+              <TrendingDown className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+          <span className="text-muted-foreground tabular-nums truncate">{dateLabel}</span>
           <PLBadge value={position.profitLossPct} />
         </div>
       </div>
 
-      <Button
-        size="icon-sm"
-        variant="ghost"
-        onClick={onSell}
-        className="text-muted-foreground hover:text-destructive flex-shrink-0"
-        aria-label="Sprzedaj"
-      >
-        <TrendingDown className="h-4 w-4" />
-      </Button>
+      {isExpanded && (
+        <div
+          className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-1 text-[11px]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Row label="Ilość" value={`${formatQuantity(position.shares)} szt.`} />
+          <Row
+            label="Śr. cena"
+            value={`${formatNumber(position.avgBuyPrice)} ${position.currency}`}
+          />
+          <Row
+            label="Wartość pierwotna"
+            value={`${formatNumber(costBasis)} ${position.currency}`}
+          />
+          <Row label="Wartość bieżąca" value={formatPLN(position.currentValuePln)} />
+          <div className="flex justify-between gap-3 items-baseline">
+            <span className="text-muted-foreground">P/L</span>
+            <span
+              className={`tabular-nums text-right font-medium ${plColor(position.profitLossPct)}`}
+            >
+              {formatCurrency(position.profitLoss, position.currency)}
+            </span>
+          </div>
+          <Row label="Data zakupu" value={dateLabel} />
+
+          {isMulti && (
+            <>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold mt-2">
+                Loty ({lots.length})
+              </div>
+              <div className="flex flex-col gap-1">
+                {lots.map((lot, j) => (
+                  <div
+                    key={j}
+                    className="flex items-center justify-between gap-2 text-muted-foreground"
+                  >
+                    <span className="font-mono tabular-nums truncate">
+                      └ {formatQuantity(lot.quantity)} szt. · {formatNumber(lot.price)} ·{' '}
+                      {formatDate(lot.date)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

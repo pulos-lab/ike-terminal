@@ -26,8 +26,16 @@ import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { formatNumber, formatDate, formatCurrency, formatQuantity } from '@/lib/formatters';
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
-import { ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, Trash2, SlidersHorizontal } from 'lucide-react';
 import type { ClosedTrade } from 'shared';
+import { ClosedPositionCardMobile } from './ClosedPositionCardMobile';
+import {
+  Sheet,
+  SheetTrigger,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 
 interface TradeGroup {
   key: string;
@@ -259,6 +267,10 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
 
   const totalTrades = data?.trades?.length ?? 0;
   const isFiltered = plFilter !== 'all' || currencyFilter !== 'ALL' || dateRange !== 'ALL';
+  const activeFilterCount =
+    (plFilter !== 'all' ? 1 : 0) +
+    (currencyFilter !== 'ALL' ? 1 : 0) +
+    (dateRange !== 'ALL' ? 1 : 0);
 
   return (
     <div>
@@ -276,106 +288,265 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
         </CardHeader>
         <CardContent>
           {!isLoading && data?.trades?.length ? (
-            <div className="flex flex-wrap items-center gap-3 mb-4">
-              <div className="flex items-center rounded-md border">
-                <Button
-                  size="sm"
-                  variant={plFilter === 'all' ? 'secondary' : 'ghost'}
-                  className="h-7 px-2.5 text-xs rounded-r-none"
-                  onClick={() => setPlFilter('all')}
-                >
-                  Wszystkie
-                </Button>
-                <Button
-                  size="sm"
-                  variant={plFilter === 'profit' ? 'secondary' : 'ghost'}
-                  className="h-7 px-2.5 text-xs rounded-none border-x"
-                  onClick={() => setPlFilter('profit')}
-                >
-                  Zyski
-                </Button>
-                <Button
-                  size="sm"
-                  variant={plFilter === 'loss' ? 'secondary' : 'ghost'}
-                  className="h-7 px-2.5 text-xs rounded-l-none"
-                  onClick={() => setPlFilter('loss')}
-                >
-                  Straty
-                </Button>
+            <>
+              <div className="md:hidden mb-3 flex justify-end">
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <Button size="sm" variant="outline" className="h-8 px-3 text-xs gap-1.5">
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                      Filtry
+                      {activeFilterCount > 0 && (
+                        <span className="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold">
+                          {activeFilterCount}
+                        </span>
+                      )}
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="bottom" className="rounded-t-xl max-h-[85vh] overflow-auto">
+                    <SheetHeader className="pb-2">
+                      <SheetTitle>Filtry</SheetTitle>
+                    </SheetHeader>
+                    <div className="flex flex-col gap-4 px-4 pb-6">
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                          Wynik
+                        </span>
+                        <div className="grid grid-cols-3 rounded-md border overflow-hidden">
+                          <Button
+                            size="sm"
+                            variant={plFilter === 'all' ? 'secondary' : 'ghost'}
+                            className="h-9 text-xs rounded-none"
+                            onClick={() => setPlFilter('all')}
+                          >
+                            Wszystkie
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={plFilter === 'profit' ? 'secondary' : 'ghost'}
+                            className="h-9 text-xs rounded-none border-x"
+                            onClick={() => setPlFilter('profit')}
+                          >
+                            Zyski
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={plFilter === 'loss' ? 'secondary' : 'ghost'}
+                            className="h-9 text-xs rounded-none"
+                            onClick={() => setPlFilter('loss')}
+                          >
+                            Straty
+                          </Button>
+                        </div>
+                      </div>
+
+                      {availableCurrencies.length > 1 && (
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                            Waluta
+                          </span>
+                          <Select value={currencyFilter} onValueChange={setCurrencyFilter}>
+                            <SelectTrigger className="h-9 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ALL">Wszystkie waluty</SelectItem>
+                              {availableCurrencies.map((c) => (
+                                <SelectItem key={c} value={c}>
+                                  {c}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                          Okres
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          <Button
+                            size="sm"
+                            variant={dateRange === 'ALL' ? 'secondary' : 'outline'}
+                            className="h-8 px-3 text-xs"
+                            onClick={() => setDateRange('ALL')}
+                          >
+                            Wszystko
+                          </Button>
+                          {availableYears.slice(0, 4).map((year) => (
+                            <Button
+                              key={year}
+                              size="sm"
+                              variant={dateRange === String(year) ? 'secondary' : 'outline'}
+                              className="h-8 px-3 text-xs"
+                              onClick={() => setDateRange(String(year))}
+                            >
+                              {year}
+                            </Button>
+                          ))}
+                          <Button
+                            size="sm"
+                            variant={dateRange === 'CUSTOM' ? 'secondary' : 'outline'}
+                            className="h-8 px-3 text-xs"
+                            onClick={() => setDateRange('CUSTOM')}
+                          >
+                            Zakres
+                          </Button>
+                        </div>
+                        {dateRange === 'CUSTOM' && (
+                          <div className="flex items-center gap-2 mt-1">
+                            <Input
+                              type="date"
+                              value={customFrom}
+                              onChange={(e) => setCustomFrom(e.target.value)}
+                              className="h-9 text-xs flex-1"
+                            />
+                            <span className="text-muted-foreground text-xs">—</span>
+                            <Input
+                              type="date"
+                              value={customTo}
+                              onChange={(e) => setCustomTo(e.target.value)}
+                              className="h-9 text-xs flex-1"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {activeFilterCount > 0 && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 text-xs text-muted-foreground self-start"
+                          onClick={() => {
+                            setPlFilter('all');
+                            setCurrencyFilter('ALL');
+                            setDateRange('ALL');
+                            setCustomFrom('');
+                            setCustomTo('');
+                          }}
+                        >
+                          Wyczyść filtry
+                        </Button>
+                      )}
+                    </div>
+                  </SheetContent>
+                </Sheet>
               </div>
 
-              {availableCurrencies.length > 1 && (
-                <Select value={currencyFilter} onValueChange={setCurrencyFilter}>
-                  <SelectTrigger className="h-7 w-[140px] text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">Wszystkie waluty</SelectItem>
-                    {availableCurrencies.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-
-              <div className="ml-auto flex flex-wrap items-center gap-3">
+              <div className="hidden md:flex flex-wrap items-center gap-3 mb-4">
                 <div className="flex items-center rounded-md border">
                   <Button
                     size="sm"
-                    variant={dateRange === 'ALL' ? 'secondary' : 'ghost'}
+                    variant={plFilter === 'all' ? 'secondary' : 'ghost'}
                     className="h-7 px-2.5 text-xs rounded-r-none"
-                    onClick={() => setDateRange('ALL')}
+                    onClick={() => setPlFilter('all')}
                   >
-                    Wszystko
+                    Wszystkie
                   </Button>
-                  {availableYears.slice(0, 4).map((year, i) => (
-                    <Button
-                      key={year}
-                      size="sm"
-                      variant={dateRange === String(year) ? 'secondary' : 'ghost'}
-                      className={`h-7 px-2.5 text-xs rounded-none border-l ${i === availableYears.slice(0, 4).length - 1 && dateRange !== 'CUSTOM' ? 'rounded-r-md' : ''}`}
-                      onClick={() => setDateRange(String(year))}
-                    >
-                      {year}
-                    </Button>
-                  ))}
                   <Button
                     size="sm"
-                    variant={dateRange === 'CUSTOM' ? 'secondary' : 'ghost'}
-                    className="h-7 px-2.5 text-xs rounded-l-none border-l"
-                    onClick={() => setDateRange('CUSTOM')}
+                    variant={plFilter === 'profit' ? 'secondary' : 'ghost'}
+                    className="h-7 px-2.5 text-xs rounded-none border-x"
+                    onClick={() => setPlFilter('profit')}
                   >
-                    Zakres
+                    Zyski
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={plFilter === 'loss' ? 'secondary' : 'ghost'}
+                    className="h-7 px-2.5 text-xs rounded-l-none"
+                    onClick={() => setPlFilter('loss')}
+                  >
+                    Straty
                   </Button>
                 </div>
 
-                {dateRange === 'CUSTOM' && (
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      type="date"
-                      value={customFrom}
-                      onChange={(e) => setCustomFrom(e.target.value)}
-                      className="h-7 text-xs w-[130px]"
-                    />
-                    <span className="text-muted-foreground text-xs">—</span>
-                    <Input
-                      type="date"
-                      value={customTo}
-                      onChange={(e) => setCustomTo(e.target.value)}
-                      className="h-7 text-xs w-[130px]"
-                    />
-                  </div>
+                {availableCurrencies.length > 1 && (
+                  <Select value={currencyFilter} onValueChange={setCurrencyFilter}>
+                    <SelectTrigger className="h-7 w-[140px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">Wszystkie waluty</SelectItem>
+                      {availableCurrencies.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {c}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 )}
+
+                <div className="ml-auto flex flex-wrap items-center gap-3">
+                  <div className="flex items-center rounded-md border">
+                    <Button
+                      size="sm"
+                      variant={dateRange === 'ALL' ? 'secondary' : 'ghost'}
+                      className="h-7 px-2.5 text-xs rounded-r-none"
+                      onClick={() => setDateRange('ALL')}
+                    >
+                      Wszystko
+                    </Button>
+                    {availableYears.slice(0, 4).map((year, i) => (
+                      <Button
+                        key={year}
+                        size="sm"
+                        variant={dateRange === String(year) ? 'secondary' : 'ghost'}
+                        className={`h-7 px-2.5 text-xs rounded-none border-l ${i === availableYears.slice(0, 4).length - 1 && dateRange !== 'CUSTOM' ? 'rounded-r-md' : ''}`}
+                        onClick={() => setDateRange(String(year))}
+                      >
+                        {year}
+                      </Button>
+                    ))}
+                    <Button
+                      size="sm"
+                      variant={dateRange === 'CUSTOM' ? 'secondary' : 'ghost'}
+                      className="h-7 px-2.5 text-xs rounded-l-none border-l"
+                      onClick={() => setDateRange('CUSTOM')}
+                    >
+                      Zakres
+                    </Button>
+                  </div>
+
+                  {dateRange === 'CUSTOM' && (
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        type="date"
+                        value={customFrom}
+                        onChange={(e) => setCustomFrom(e.target.value)}
+                        className="h-7 text-xs w-[130px]"
+                      />
+                      <span className="text-muted-foreground text-xs">—</span>
+                      <Input
+                        type="date"
+                        value={customTo}
+                        onChange={(e) => setCustomTo(e.target.value)}
+                        className="h-7 text-xs w-[130px]"
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            </>
           ) : null}
 
           {isLoading ? (
             <LoadingSpinner />
           ) : groups.length ? (
-            <div className="overflow-x-auto">
+            <>
+              <div className="md:hidden flex flex-col gap-2">
+                {groups.map((group) => (
+                  <ClosedPositionCardMobile
+                    key={group.key}
+                    group={group}
+                    isExpanded={expandedGroups.has(group.key)}
+                    onToggle={() => toggleGroup(group.key)}
+                    onDelete={() => deleteMutation.mutate(group.sellTransactionId)}
+                    isDeleting={deleteMutation.isPending}
+                  />
+                ))}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -597,8 +768,9 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                   })}
                 </TableBody>
               </Table>
+              </div>
               {plSummary.length > 0 && (
-                <div className="mt-4 flex flex-wrap items-center gap-4 border-t pt-4">
+                <div className="mt-4 flex flex-wrap items-center gap-3 md:gap-4 border-t pt-4">
                   <span className="text-sm font-medium text-muted-foreground">
                     Podsumowanie P/L:
                   </span>
@@ -616,7 +788,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                   ))}
                 </div>
               )}
-            </div>
+            </>
           ) : data?.trades?.length ? (
             <EmptyState message="Brak transakcji dla wybranych filtrów." />
           ) : (
