@@ -181,7 +181,9 @@ export function CurrencyExchangePage() {
                           </div>
                           <div className="flex justify-between gap-3 items-baseline">
                             <span className="text-muted-foreground">Kurs</span>
-                            <span className="tabular-nums text-right">{formatNumber(ex.rate, 4)}</span>
+                            <span className="tabular-nums text-right">
+                              {formatNumber(ex.rate, 4)}
+                            </span>
                           </div>
                           {ex.source === 'manual' && (
                             <div className="flex justify-end pt-1">

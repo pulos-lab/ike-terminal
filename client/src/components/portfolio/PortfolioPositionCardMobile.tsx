@@ -159,7 +159,9 @@ export function PortfolioPositionCardMobile({
           <Row label="Udział w portfelu" value={formatPercent(position.weight).replace('+', '')} />
           <div className="flex justify-between gap-3 items-baseline">
             <span className="text-muted-foreground">P/L</span>
-            <span className={`tabular-nums text-right font-medium ${plColor(position.profitLossPct)}`}>
+            <span
+              className={`tabular-nums text-right font-medium ${plColor(position.profitLossPct)}`}
+            >
               {formatCurrency(position.profitLoss, position.currency)}
             </span>
           </div>

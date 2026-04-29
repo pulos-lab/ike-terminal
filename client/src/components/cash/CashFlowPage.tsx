@@ -502,210 +502,214 @@ export function CashFlowPage() {
                 </div>
                 <div className="hidden md:block overflow-x-auto">
                   <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Rok</TableHead>
-                      <TableHead className="text-right">Wpłaty</TableHead>
-                      <TableHead className="text-right">Wypłaty</TableHead>
-                      {showIKE && <TableHead className="text-right">Limit IKE</TableHead>}
-                      {showIKZE && <TableHead className="text-right">Limit IKZE</TableHead>}
-                      {showLimits && <TableHead className="text-right">Pozostało</TableHead>}
-                      {showLimits && <TableHead className="text-right">Wykorzystanie</TableHead>}
-                      <TableHead className="w-[80px]"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {yearGroups.length === 0 ? (
+                    <TableHeader>
                       <TableRow>
-                        <TableCell
-                          colSpan={totalCols}
-                          className="text-center py-12 text-muted-foreground"
-                        >
-                          Brak operacji gotówkowych. Kliknij &quot;Dodaj operację&quot; aby dodać
-                          pierwszą.
-                        </TableCell>
+                        <TableHead>Rok</TableHead>
+                        <TableHead className="text-right">Wpłaty</TableHead>
+                        <TableHead className="text-right">Wypłaty</TableHead>
+                        {showIKE && <TableHead className="text-right">Limit IKE</TableHead>}
+                        {showIKZE && <TableHead className="text-right">Limit IKZE</TableHead>}
+                        {showLimits && <TableHead className="text-right">Pozostało</TableHead>}
+                        {showLimits && <TableHead className="text-right">Wykorzystanie</TableHead>}
+                        <TableHead className="w-[80px]"></TableHead>
                       </TableRow>
-                    ) : (
-                      yearGroups.map((group) => {
-                        const isExpanded = expandedYears.has(group.year);
-                        const remaining = getRemaining(group);
-                        const usagePct = getUsagePct(group);
-                        const isFull = showLimits && remaining <= 0;
-                        return (
-                          <Fragment key={group.year}>
-                            <TableRow
-                              className="cursor-pointer hover:bg-muted/50"
-                              onClick={() => toggleYear(group.year)}
-                              role="button"
-                              tabIndex={0}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  toggleYear(group.year);
-                                }
-                              }}
-                            >
-                              <TableCell className="font-medium">
-                                <div className="flex items-center gap-1">
-                                  {isExpanded ? (
-                                    <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                                  ) : (
-                                    <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                                  )}
-                                  {group.year}
-                                  <span className="text-xs text-muted-foreground ml-1">
-                                    ({group.entries.length})
-                                  </span>
-                                </div>
-                              </TableCell>
-                              <TableCell className="text-right font-medium text-gain">
-                                {group.totalDeposits > 0 ? fmtAgg(group.totalDeposits) : '—'}
-                              </TableCell>
-                              <TableCell className="text-right font-medium text-loss">
-                                {group.totalWithdrawals > 0 ? fmtAgg(group.totalWithdrawals) : '—'}
-                              </TableCell>
-                              {showIKE && (
-                                <TableCell className="text-right text-muted-foreground">
-                                  {group.ikeLimit > 0 ? formatPLN(group.ikeLimit) : '—'}
+                    </TableHeader>
+                    <TableBody>
+                      {yearGroups.length === 0 ? (
+                        <TableRow>
+                          <TableCell
+                            colSpan={totalCols}
+                            className="text-center py-12 text-muted-foreground"
+                          >
+                            Brak operacji gotówkowych. Kliknij &quot;Dodaj operację&quot; aby dodać
+                            pierwszą.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        yearGroups.map((group) => {
+                          const isExpanded = expandedYears.has(group.year);
+                          const remaining = getRemaining(group);
+                          const usagePct = getUsagePct(group);
+                          const isFull = showLimits && remaining <= 0;
+                          return (
+                            <Fragment key={group.year}>
+                              <TableRow
+                                className="cursor-pointer hover:bg-muted/50"
+                                onClick={() => toggleYear(group.year)}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    toggleYear(group.year);
+                                  }
+                                }}
+                              >
+                                <TableCell className="font-medium">
+                                  <div className="flex items-center gap-1">
+                                    {isExpanded ? (
+                                      <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                                    )}
+                                    {group.year}
+                                    <span className="text-xs text-muted-foreground ml-1">
+                                      ({group.entries.length})
+                                    </span>
+                                  </div>
                                 </TableCell>
-                              )}
-                              {showIKZE && (
-                                <TableCell className="text-right text-muted-foreground">
-                                  {group.ikzeLimit > 0 ? formatPLN(group.ikzeLimit) : '—'}
+                                <TableCell className="text-right font-medium text-gain">
+                                  {group.totalDeposits > 0 ? fmtAgg(group.totalDeposits) : '—'}
                                 </TableCell>
-                              )}
-                              {showLimits && (
-                                <TableCell
-                                  className={`text-right font-medium ${isFull ? 'text-gain' : 'text-yellow-500'}`}
-                                >
-                                  {getYearLimit(group) > 0 ? formatPLN(remaining) : '—'}
+                                <TableCell className="text-right font-medium text-loss">
+                                  {group.totalWithdrawals > 0
+                                    ? fmtAgg(group.totalWithdrawals)
+                                    : '—'}
                                 </TableCell>
-                              )}
-                              {showLimits && (
-                                <TableCell className="text-right">
-                                  {getYearLimit(group) > 0 && (
-                                    <Badge
-                                      variant={isFull ? 'default' : 'secondary'}
-                                      className={`text-xs ${isFull ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}
-                                    >
-                                      {usagePct.toFixed(0)}%
-                                    </Badge>
-                                  )}
-                                </TableCell>
-                              )}
-                              <TableCell />
-                            </TableRow>
-
-                            {isExpanded &&
-                              group.entries.map((entry) => (
-                                <TableRow key={entry.id} className="bg-muted/30">
-                                  <TableCell className="text-muted-foreground pl-9 text-sm">
-                                    <div className="flex items-center gap-1.5">
-                                      {entry.type === 'deposit' ? (
-                                        <ArrowUp className="h-3 w-3 text-gain shrink-0" />
-                                      ) : (
-                                        <ArrowDown className="h-3 w-3 text-loss shrink-0" />
-                                      )}
-                                      {formatDate(entry.date)}
-                                      {entry.description && (
-                                        <DepositDescription text={entry.description} />
-                                      )}
-                                    </div>
+                                {showIKE && (
+                                  <TableCell className="text-right text-muted-foreground">
+                                    {group.ikeLimit > 0 ? formatPLN(group.ikeLimit) : '—'}
                                   </TableCell>
+                                )}
+                                {showIKZE && (
+                                  <TableCell className="text-right text-muted-foreground">
+                                    {group.ikzeLimit > 0 ? formatPLN(group.ikzeLimit) : '—'}
+                                  </TableCell>
+                                )}
+                                {showLimits && (
                                   <TableCell
-                                    className={`text-right ${entry.type === 'deposit' ? 'text-gain' : ''}`}
+                                    className={`text-right font-medium ${isFull ? 'text-gain' : 'text-yellow-500'}`}
                                   >
-                                    {entry.type === 'deposit'
-                                      ? formatCurrency(
-                                          Math.abs(entry.amount),
-                                          entry.currency || 'PLN',
-                                        )
-                                      : ''}
+                                    {getYearLimit(group) > 0 ? formatPLN(remaining) : '—'}
                                   </TableCell>
-                                  <TableCell
-                                    className={`text-right ${entry.type === 'withdrawal' ? 'text-loss' : ''}`}
-                                  >
-                                    {entry.type === 'withdrawal'
-                                      ? formatCurrency(
-                                          Math.abs(entry.amount),
-                                          entry.currency || 'PLN',
-                                        )
-                                      : ''}
-                                  </TableCell>
-                                  <TableCell colSpan={limitColCount > 0 ? limitColCount - 1 : 0} />
+                                )}
+                                {showLimits && (
                                   <TableCell className="text-right">
-                                    {entry.source === 'manual' && (
+                                    {getYearLimit(group) > 0 && (
                                       <Badge
-                                        variant="secondary"
-                                        className="text-xs bg-blue-500/10 text-blue-500"
+                                        variant={isFull ? 'default' : 'secondary'}
+                                        className={`text-xs ${isFull ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}
                                       >
-                                        ręczna
+                                        {usagePct.toFixed(0)}%
                                       </Badge>
                                     )}
                                   </TableCell>
-                                  <TableCell>
-                                    {entry.source === 'manual' && (
-                                      <div className="flex gap-1">
-                                        <Button
-                                          size="icon-xs"
-                                          variant="ghost"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setEditing(entry);
-                                          }}
-                                          className="text-muted-foreground hover:text-foreground"
-                                        >
-                                          <Pencil className="h-3 w-3" />
-                                        </Button>
-                                        <Button
-                                          size="icon-xs"
-                                          variant="ghost"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setDeleting(entry);
-                                          }}
-                                          disabled={deleteMutation.isPending}
-                                          className="text-muted-foreground hover:text-destructive"
-                                        >
-                                          <Trash2 className="h-3 w-3" />
-                                        </Button>
+                                )}
+                                <TableCell />
+                              </TableRow>
+
+                              {isExpanded &&
+                                group.entries.map((entry) => (
+                                  <TableRow key={entry.id} className="bg-muted/30">
+                                    <TableCell className="text-muted-foreground pl-9 text-sm">
+                                      <div className="flex items-center gap-1.5">
+                                        {entry.type === 'deposit' ? (
+                                          <ArrowUp className="h-3 w-3 text-gain shrink-0" />
+                                        ) : (
+                                          <ArrowDown className="h-3 w-3 text-loss shrink-0" />
+                                        )}
+                                        {formatDate(entry.date)}
+                                        {entry.description && (
+                                          <DepositDescription text={entry.description} />
+                                        )}
                                       </div>
-                                    )}
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                          </Fragment>
-                        );
-                      })
-                    )}
-                    {yearGroups.length > 0 && (
-                      <TableRow className="font-semibold border-t-2">
-                        <TableCell>Razem</TableCell>
-                        <TableCell className="text-right">{fmtAgg(grandTotalDeposits)}</TableCell>
-                        <TableCell className="text-right">
-                          {grandTotalWithdrawals > 0 ? fmtAgg(grandTotalWithdrawals) : '—'}
-                        </TableCell>
-                        {showLimits && <TableCell colSpan={showIKE && showIKZE ? 4 : 3} />}
-                        <TableCell />
-                      </TableRow>
-                    )}
-                    {yearGroups.length > 0 && grandTotalWithdrawals > 0 && (
-                      <TableRow className="font-semibold">
-                        <TableCell className="text-muted-foreground">Netto</TableCell>
-                        <TableCell colSpan={2} className="text-right">
-                          {fmtAgg(grandTotalDeposits - grandTotalWithdrawals)}
-                          {isMultiCurrency && (
-                            <span className="ml-2 text-xs text-muted-foreground font-normal">
-                              (różne waluty, bez konwersji)
-                            </span>
-                          )}
-                        </TableCell>
-                        {showLimits && <TableCell colSpan={showIKE && showIKZE ? 4 : 3} />}
-                        <TableCell />
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                                    </TableCell>
+                                    <TableCell
+                                      className={`text-right ${entry.type === 'deposit' ? 'text-gain' : ''}`}
+                                    >
+                                      {entry.type === 'deposit'
+                                        ? formatCurrency(
+                                            Math.abs(entry.amount),
+                                            entry.currency || 'PLN',
+                                          )
+                                        : ''}
+                                    </TableCell>
+                                    <TableCell
+                                      className={`text-right ${entry.type === 'withdrawal' ? 'text-loss' : ''}`}
+                                    >
+                                      {entry.type === 'withdrawal'
+                                        ? formatCurrency(
+                                            Math.abs(entry.amount),
+                                            entry.currency || 'PLN',
+                                          )
+                                        : ''}
+                                    </TableCell>
+                                    <TableCell
+                                      colSpan={limitColCount > 0 ? limitColCount - 1 : 0}
+                                    />
+                                    <TableCell className="text-right">
+                                      {entry.source === 'manual' && (
+                                        <Badge
+                                          variant="secondary"
+                                          className="text-xs bg-blue-500/10 text-blue-500"
+                                        >
+                                          ręczna
+                                        </Badge>
+                                      )}
+                                    </TableCell>
+                                    <TableCell>
+                                      {entry.source === 'manual' && (
+                                        <div className="flex gap-1">
+                                          <Button
+                                            size="icon-xs"
+                                            variant="ghost"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setEditing(entry);
+                                            }}
+                                            className="text-muted-foreground hover:text-foreground"
+                                          >
+                                            <Pencil className="h-3 w-3" />
+                                          </Button>
+                                          <Button
+                                            size="icon-xs"
+                                            variant="ghost"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setDeleting(entry);
+                                            }}
+                                            disabled={deleteMutation.isPending}
+                                            className="text-muted-foreground hover:text-destructive"
+                                          >
+                                            <Trash2 className="h-3 w-3" />
+                                          </Button>
+                                        </div>
+                                      )}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                            </Fragment>
+                          );
+                        })
+                      )}
+                      {yearGroups.length > 0 && (
+                        <TableRow className="font-semibold border-t-2">
+                          <TableCell>Razem</TableCell>
+                          <TableCell className="text-right">{fmtAgg(grandTotalDeposits)}</TableCell>
+                          <TableCell className="text-right">
+                            {grandTotalWithdrawals > 0 ? fmtAgg(grandTotalWithdrawals) : '—'}
+                          </TableCell>
+                          {showLimits && <TableCell colSpan={showIKE && showIKZE ? 4 : 3} />}
+                          <TableCell />
+                        </TableRow>
+                      )}
+                      {yearGroups.length > 0 && grandTotalWithdrawals > 0 && (
+                        <TableRow className="font-semibold">
+                          <TableCell className="text-muted-foreground">Netto</TableCell>
+                          <TableCell colSpan={2} className="text-right">
+                            {fmtAgg(grandTotalDeposits - grandTotalWithdrawals)}
+                            {isMultiCurrency && (
+                              <span className="ml-2 text-xs text-muted-foreground font-normal">
+                                (różne waluty, bez konwersji)
+                              </span>
+                            )}
+                          </TableCell>
+                          {showLimits && <TableCell colSpan={showIKE && showIKZE ? 4 : 3} />}
+                          <TableCell />
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
                 </div>
               </>
             )}

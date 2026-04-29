@@ -29,13 +29,7 @@ import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/comp
 import { ChevronRight, ChevronDown, Trash2, SlidersHorizontal } from 'lucide-react';
 import type { ClosedTrade } from 'shared';
 import { ClosedPositionCardMobile } from './ClosedPositionCardMobile';
-import {
-  Sheet,
-  SheetTrigger,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
+import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 
 interface TradeGroup {
   key: string;
@@ -547,227 +541,227 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                 ))}
               </div>
               <div className="hidden md:block overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Ticker</TableHead>
-                    <TableHead className="text-right">Ilość</TableHead>
-                    <TableHead>Data kupna</TableHead>
-                    <TableHead className="text-right">Cena kupna</TableHead>
-                    <TableHead>Data sprzedaży</TableHead>
-                    <TableHead className="text-right">Cena sprzedaży</TableHead>
-                    <TableHead className="text-right">P/L</TableHead>
-                    <TableHead className="text-right">P/L %</TableHead>
-                    <TableHead className="text-right">Prowizja</TableHead>
-                    <TableHead className="text-right">Dni</TableHead>
-                    <TableHead className="w-[40px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {groups.map((group) => {
-                    const isSingle = group.trades.length === 1;
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Ticker</TableHead>
+                      <TableHead className="text-right">Ilość</TableHead>
+                      <TableHead>Data kupna</TableHead>
+                      <TableHead className="text-right">Cena kupna</TableHead>
+                      <TableHead>Data sprzedaży</TableHead>
+                      <TableHead className="text-right">Cena sprzedaży</TableHead>
+                      <TableHead className="text-right">P/L</TableHead>
+                      <TableHead className="text-right">P/L %</TableHead>
+                      <TableHead className="text-right">Prowizja</TableHead>
+                      <TableHead className="text-right">Dni</TableHead>
+                      <TableHead className="w-[40px]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {groups.map((group) => {
+                      const isSingle = group.trades.length === 1;
 
-                    if (isSingle) {
-                      const trade = group.trades[0];
-                      return (
-                        <TableRow key={group.key}>
-                          <TableCell className="font-mono font-medium">
-                            {trade.ticker}
-                            <CategoryBadge category={trade.category} />
-                            {trade.isShort && (
-                              <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
-                                SHORT
-                              </span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatQuantity(trade.quantity)}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {formatDate(trade.buyDate)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatNumber(trade.buyPrice)}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {formatDate(trade.sellDate)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatNumber(trade.sellPrice)}
-                          </TableCell>
-                          <TableCell
-                            className={`text-right font-medium ${plColor(trade.profitLossPct)}`}
-                          >
-                            {formatCurrency(trade.profitLoss, trade.currency)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <PLBadge value={trade.profitLossPct} />
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground text-xs">
-                            <CostCell trade={trade} />
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground">
-                            {trade.holdingDays}d
-                          </TableCell>
-                          <TableCell>
-                            {trade.sellSource === 'manual' && (
-                              <Button
-                                size="icon-xs"
-                                variant="ghost"
-                                onClick={() => deleteMutation.mutate(trade.sellTransactionId)}
-                                disabled={deleteMutation.isPending}
-                                className="text-muted-foreground hover:text-destructive"
-                                title="Usuń transakcję sprzedaży"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    }
-
-                    // Multi-trade group
-                    const isExpanded = expandedGroups.has(group.key);
-                    const sameBuyDate =
-                      group.minBuyDate.slice(0, 10) === group.maxBuyDate.slice(0, 10);
-                    const sameBuyPrice = group.minBuyPrice === group.maxBuyPrice;
-
-                    return (
-                      <Fragment key={group.key}>
-                        <TableRow
-                          className="cursor-pointer hover:bg-muted/50"
-                          onClick={() => toggleGroup(group.key)}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              toggleGroup(group.key);
-                            }
-                          }}
-                        >
-                          <TableCell className="font-mono font-medium">
-                            <div className="flex items-center gap-1">
-                              {isExpanded ? (
-                                <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                              ) : (
-                                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                              )}
-                              {group.ticker}
-                              <CategoryBadge category={group.trades[0]?.category} />
-                              {group.trades.some((t) => t.isShort) && (
-                                <span className="text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
-                                  {group.trades.every((t) => t.isShort)
-                                    ? 'SHORT'
-                                    : `${group.trades.filter((t) => t.isShort).length}S`}
+                      if (isSingle) {
+                        const trade = group.trades[0];
+                        return (
+                          <TableRow key={group.key}>
+                            <TableCell className="font-mono font-medium">
+                              {trade.ticker}
+                              <CategoryBadge category={trade.category} />
+                              {trade.isShort && (
+                                <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
+                                  SHORT
                                 </span>
                               )}
-                              <span className="text-xs text-muted-foreground ml-1">
-                                ({group.trades.length})
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatQuantity(group.totalQuantity)}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground text-sm">
-                            {sameBuyDate
-                              ? formatDate(group.minBuyDate)
-                              : `${formatDate(group.minBuyDate)} – ${formatDate(group.maxBuyDate)}`}
-                          </TableCell>
-                          <TableCell className="text-right text-sm">
-                            {sameBuyPrice
-                              ? formatNumber(group.minBuyPrice)
-                              : `${formatNumber(group.minBuyPrice)} – ${formatNumber(group.maxBuyPrice)}`}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {formatDate(group.sellDate)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatNumber(group.sellPrice)}
-                          </TableCell>
-                          <TableCell
-                            className={`text-right font-medium ${plColor(group.weightedProfitLossPct)}`}
-                          >
-                            {formatCurrency(group.totalProfitLoss, group.currency)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <PLBadge value={group.weightedProfitLossPct} />
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground text-xs">
-                            {group.totalCost > 0 ? formatNumber(group.totalCost) : '—'}
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground">
-                            {group.avgHoldingDays}d
-                          </TableCell>
-                          <TableCell>
-                            {group.sellSource === 'manual' && (
-                              <Button
-                                size="icon-xs"
-                                variant="ghost"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  deleteMutation.mutate(group.sellTransactionId);
-                                }}
-                                disabled={deleteMutation.isPending}
-                                className="text-muted-foreground hover:text-destructive"
-                                title="Usuń transakcję sprzedaży"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {formatQuantity(trade.quantity)}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {formatDate(trade.buyDate)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {formatNumber(trade.buyPrice)}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {formatDate(trade.sellDate)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {formatNumber(trade.sellPrice)}
+                            </TableCell>
+                            <TableCell
+                              className={`text-right font-medium ${plColor(trade.profitLossPct)}`}
+                            >
+                              {formatCurrency(trade.profitLoss, trade.currency)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <PLBadge value={trade.profitLossPct} />
+                            </TableCell>
+                            <TableCell className="text-right text-muted-foreground text-xs">
+                              <CostCell trade={trade} />
+                            </TableCell>
+                            <TableCell className="text-right text-muted-foreground">
+                              {trade.holdingDays}d
+                            </TableCell>
+                            <TableCell>
+                              {trade.sellSource === 'manual' && (
+                                <Button
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  onClick={() => deleteMutation.mutate(trade.sellTransactionId)}
+                                  disabled={deleteMutation.isPending}
+                                  className="text-muted-foreground hover:text-destructive"
+                                  title="Usuń transakcję sprzedaży"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
 
-                        {isExpanded &&
-                          group.trades.map((trade, j) => (
-                            <TableRow key={`${group.key}-${j}`} className="bg-muted/30">
-                              <TableCell className="font-mono text-muted-foreground pl-9 text-sm">
-                                └ lot {j + 1}
-                                {trade.isShort && (
-                                  <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
-                                    S
+                      // Multi-trade group
+                      const isExpanded = expandedGroups.has(group.key);
+                      const sameBuyDate =
+                        group.minBuyDate.slice(0, 10) === group.maxBuyDate.slice(0, 10);
+                      const sameBuyPrice = group.minBuyPrice === group.maxBuyPrice;
+
+                      return (
+                        <Fragment key={group.key}>
+                          <TableRow
+                            className="cursor-pointer hover:bg-muted/50"
+                            onClick={() => toggleGroup(group.key)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                toggleGroup(group.key);
+                              }
+                            }}
+                          >
+                            <TableCell className="font-mono font-medium">
+                              <div className="flex items-center gap-1">
+                                {isExpanded ? (
+                                  <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                                ) : (
+                                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                                )}
+                                {group.ticker}
+                                <CategoryBadge category={group.trades[0]?.category} />
+                                {group.trades.some((t) => t.isShort) && (
+                                  <span className="text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
+                                    {group.trades.every((t) => t.isShort)
+                                      ? 'SHORT'
+                                      : `${group.trades.filter((t) => t.isShort).length}S`}
                                   </span>
                                 )}
-                              </TableCell>
-                              <TableCell className="text-right text-muted-foreground">
-                                {formatQuantity(trade.quantity)}
-                              </TableCell>
-                              <TableCell className="text-muted-foreground">
-                                {formatDate(trade.buyDate)}
-                              </TableCell>
-                              <TableCell className="text-right text-muted-foreground">
-                                {formatNumber(trade.buyPrice)}
-                              </TableCell>
-                              <TableCell className="text-muted-foreground">
-                                {formatDate(trade.sellDate)}
-                              </TableCell>
-                              <TableCell className="text-right text-muted-foreground">
-                                {formatNumber(trade.sellPrice)}
-                              </TableCell>
-                              <TableCell
-                                className={`text-right text-sm ${trade.profitLossPct >= 0 ? 'text-gain/70' : 'text-loss/70'}`}
-                              >
-                                {formatCurrency(trade.profitLoss, trade.currency)}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <PLBadge value={trade.profitLossPct} muted />
-                              </TableCell>
-                              <TableCell className="text-right text-muted-foreground text-xs">
-                                <CostCell trade={trade} muted />
-                              </TableCell>
-                              <TableCell className="text-right text-muted-foreground">
-                                {trade.holdingDays}d
-                              </TableCell>
-                              <TableCell />
-                            </TableRow>
-                          ))}
-                      </Fragment>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                                <span className="text-xs text-muted-foreground ml-1">
+                                  ({group.trades.length})
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {formatQuantity(group.totalQuantity)}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-sm">
+                              {sameBuyDate
+                                ? formatDate(group.minBuyDate)
+                                : `${formatDate(group.minBuyDate)} – ${formatDate(group.maxBuyDate)}`}
+                            </TableCell>
+                            <TableCell className="text-right text-sm">
+                              {sameBuyPrice
+                                ? formatNumber(group.minBuyPrice)
+                                : `${formatNumber(group.minBuyPrice)} – ${formatNumber(group.maxBuyPrice)}`}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {formatDate(group.sellDate)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {formatNumber(group.sellPrice)}
+                            </TableCell>
+                            <TableCell
+                              className={`text-right font-medium ${plColor(group.weightedProfitLossPct)}`}
+                            >
+                              {formatCurrency(group.totalProfitLoss, group.currency)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <PLBadge value={group.weightedProfitLossPct} />
+                            </TableCell>
+                            <TableCell className="text-right text-muted-foreground text-xs">
+                              {group.totalCost > 0 ? formatNumber(group.totalCost) : '—'}
+                            </TableCell>
+                            <TableCell className="text-right text-muted-foreground">
+                              {group.avgHoldingDays}d
+                            </TableCell>
+                            <TableCell>
+                              {group.sellSource === 'manual' && (
+                                <Button
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteMutation.mutate(group.sellTransactionId);
+                                  }}
+                                  disabled={deleteMutation.isPending}
+                                  className="text-muted-foreground hover:text-destructive"
+                                  title="Usuń transakcję sprzedaży"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+
+                          {isExpanded &&
+                            group.trades.map((trade, j) => (
+                              <TableRow key={`${group.key}-${j}`} className="bg-muted/30">
+                                <TableCell className="font-mono text-muted-foreground pl-9 text-sm">
+                                  └ lot {j + 1}
+                                  {trade.isShort && (
+                                    <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
+                                      S
+                                    </span>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right text-muted-foreground">
+                                  {formatQuantity(trade.quantity)}
+                                </TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {formatDate(trade.buyDate)}
+                                </TableCell>
+                                <TableCell className="text-right text-muted-foreground">
+                                  {formatNumber(trade.buyPrice)}
+                                </TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {formatDate(trade.sellDate)}
+                                </TableCell>
+                                <TableCell className="text-right text-muted-foreground">
+                                  {formatNumber(trade.sellPrice)}
+                                </TableCell>
+                                <TableCell
+                                  className={`text-right text-sm ${trade.profitLossPct >= 0 ? 'text-gain/70' : 'text-loss/70'}`}
+                                >
+                                  {formatCurrency(trade.profitLoss, trade.currency)}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <PLBadge value={trade.profitLossPct} muted />
+                                </TableCell>
+                                <TableCell className="text-right text-muted-foreground text-xs">
+                                  <CostCell trade={trade} muted />
+                                </TableCell>
+                                <TableCell className="text-right text-muted-foreground">
+                                  {trade.holdingDays}d
+                                </TableCell>
+                                <TableCell />
+                              </TableRow>
+                            ))}
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               </div>
               {plSummary.length > 0 && (
                 <div className="mt-4 flex flex-wrap items-center gap-3 md:gap-4 border-t pt-4">

@@ -79,10 +79,7 @@ export function ClosedPositionCardMobile({
   const costBasis = group.trades.reduce((s, t) => s + t.quantity * t.buyPrice, 0);
   const grossRevenue = group.totalQuantity * group.sellPrice;
 
-  const commission = group.trades.reduce(
-    (s, t) => s + t.buyCommission + t.sellCommission,
-    0,
-  );
+  const commission = group.trades.reduce((s, t) => s + t.buyCommission + t.sellCommission, 0);
   const fees = group.trades.flatMap((t) => t.fees ?? []);
 
   return (
@@ -143,7 +140,10 @@ export function ClosedPositionCardMobile({
           <SectionTitle>Transakcja</SectionTitle>
           <Row label="Ilość" value={`${formatQuantity(group.totalQuantity)} szt.`} />
           <Row label="Cena kupna" value={`${buyPriceLabel} ${group.currency}`} />
-          <Row label="Cena sprzedaży" value={`${formatNumber(group.sellPrice)} ${group.currency}`} />
+          <Row
+            label="Cena sprzedaży"
+            value={`${formatNumber(group.sellPrice)} ${group.currency}`}
+          />
           {group.totalCost > 0 && (
             <Row
               label="Prowizja"
@@ -188,7 +188,10 @@ export function ClosedPositionCardMobile({
 
           <SectionTitle>Wartości</SectionTitle>
           <Row label="Wartość kupna" value={`${formatNumber(costBasis)} ${group.currency}`} />
-          <Row label="Wartość sprzedaży" value={`${formatNumber(grossRevenue)} ${group.currency}`} />
+          <Row
+            label="Wartość sprzedaży"
+            value={`${formatNumber(grossRevenue)} ${group.currency}`}
+          />
           <div className="flex justify-between gap-3 items-baseline">
             <span className="text-muted-foreground">Zysk netto</span>
             <span
