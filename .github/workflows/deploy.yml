@@ -11,6 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Verify lockfile has Linux platform deps
+        run: |
+          if ! grep -q '"node_modules/@rollup/rollup-linux-x64-gnu"' package-lock.json; then
+            echo "::error::package-lock.json is missing the @rollup/rollup-linux-x64-gnu entry."
+            echo "This typically happens when the lockfile was regenerated on macOS without the Linux optional deps."
+            echo "Fix locally: rm -rf node_modules package-lock.json && npm install"
+            exit 1
+          fi
+
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
