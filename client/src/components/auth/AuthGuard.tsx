@@ -11,7 +11,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (isPending) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+      <div
+        data-test-id="client__auth__auth-guard-loading"
+        className="min-h-screen bg-[#0a0a0a] flex items-center justify-center"
+      >
         <div className="text-zinc-500 text-sm">Ładowanie...</div>
       </div>
     );
