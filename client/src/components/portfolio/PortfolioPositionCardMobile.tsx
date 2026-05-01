@@ -1,40 +1,44 @@
-import { Button } from '@/components/ui/button';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
-  formatNumber,
   formatCurrency,
-  formatQuantity,
-  formatDate,
+  formatNumber,
+  formatPercent,
   formatPLN,
+  formatQuantity,
 } from '@/lib/formatters';
-import { ChevronDown, ChevronRight, TrendingDown } from 'lucide-react';
-
-interface BuyLot {
-  quantity: number;
-  price: number;
-  commission: number;
-  date: string;
-  currency: string;
-}
+import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 
 interface Position {
-  paperName: string;
   ticker: string;
+  paperName: string;
+  isin: string;
   shares: number;
   avgBuyPrice: number;
   currentPrice: number | null;
+  currentValue?: number;
   currentValuePln: number;
   profitLoss: number;
+  profitLossPln?: number;
   profitLossPct: number;
   currency: string;
+  weight: number;
   category?: 'stock' | 'etf' | 'cfd';
-  buyLots?: BuyLot[];
+  dailyChangePct?: number;
+  priceManual?: boolean;
+}
+
+interface SplitInfo {
+  ratio: number;
+  date: string;
 }
 
 interface Props {
   position: Position;
-  onSell: () => void;
+  baseCurrency: string;
+  useNativeCcy: boolean;
+  splitInfo?: SplitInfo;
   isExpanded: boolean;
   onToggle: () => void;
 }
@@ -48,19 +52,25 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export function PositionCardMobile({ position, onSell, isExpanded, onToggle }: Props) {
-  const lots = position.buyLots || [];
-  const buyDates = lots.map((l) => l.date).sort();
-  const minBuyDate = buyDates[0] || '';
-  const maxBuyDate = buyDates[buyDates.length - 1] || '';
-  const sameBuyDate = minBuyDate.slice(0, 10) === maxBuyDate.slice(0, 10);
-  const dateLabel = minBuyDate
-    ? sameBuyDate
-      ? formatDate(minBuyDate)
-      : `${formatDate(minBuyDate)} – ${formatDate(maxBuyDate)}`
-    : '—';
+export function PortfolioPositionCardMobile({
+  position,
+  baseCurrency,
+  useNativeCcy,
+  splitInfo,
+  isExpanded,
+  onToggle,
+}: Props) {
+  const value = useNativeCcy
+    ? formatCurrency(position.currentValue ?? 0, baseCurrency)
+    : formatPLN(position.currentValuePln);
 
-  const isMulti = lots.length > 1;
+  const splitLabel = splitInfo
+    ? splitInfo.ratio < 1
+      ? `1:${Math.round(1 / splitInfo.ratio)}`
+      : `${Math.round(splitInfo.ratio)}:1`
+    : null;
+  const isReverseSplit = splitInfo ? splitInfo.ratio < 1 : false;
+
   const costBasis = position.shares * position.avgBuyPrice;
 
   return (
@@ -87,31 +97,46 @@ export function PositionCardMobile({ position, onSell, isExpanded, onToggle }: P
             )}
             <span className="font-mono font-semibold text-sm truncate">{position.ticker}</span>
             <CategoryBadge category={position.category} />
-            {isMulti && (
-              <span className="text-[10px] text-muted-foreground shrink-0">({lots.length})</span>
+            {splitInfo && splitLabel && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <AlertTriangle
+                    className="h-3.5 w-3.5 text-amber-500 shrink-0 cursor-help"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-[260px]">
+                  Spółka przeszła {isReverseSplit ? 'reverse split' : 'split'} {splitLabel} w dniu{' '}
+                  {splitInfo.date}. Ilość i cena zostały automatycznie skorygowane.
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {position.priceManual && (
+              <span
+                className="text-[10px] text-muted-foreground/70 shrink-0"
+                title="Cena z ostatniej transakcji — instrument bez aktualnych notowań"
+              >
+                ⚠
+              </span>
             )}
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="font-semibold text-sm tabular-nums">
-              {formatPLN(position.currentValuePln)}
-            </span>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSell();
-              }}
-              className="text-muted-foreground hover:text-destructive"
-              aria-label="Sprzedaj"
-            >
-              <TrendingDown className="h-4 w-4" />
-            </Button>
-          </div>
+          <span className="font-semibold text-sm tabular-nums shrink-0">{value}</span>
         </div>
 
         <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
-          <span className="text-muted-foreground tabular-nums truncate">{dateLabel}</span>
+          <span className="text-muted-foreground tabular-nums truncate">
+            Kurs:{' '}
+            <span className="text-foreground/80">
+              {position.currentPrice != null
+                ? `${formatNumber(position.currentPrice)} ${position.currency}`
+                : '—'}
+            </span>
+            {position.dailyChangePct != null && (
+              <span className={`ml-1.5 ${plColor(position.dailyChangePct)}`}>
+                {formatPercent(position.dailyChangePct)}
+              </span>
+            )}
+          </span>
           <PLBadge value={position.profitLossPct} />
         </div>
       </div>
@@ -123,14 +148,15 @@ export function PositionCardMobile({ position, onSell, isExpanded, onToggle }: P
         >
           <Row label="Ilość" value={`${formatQuantity(position.shares)} szt.`} />
           <Row
-            label="Śr. cena"
+            label="Śr. cena nabycia"
             value={`${formatNumber(position.avgBuyPrice)} ${position.currency}`}
           />
           <Row
             label="Wartość pierwotna"
             value={`${formatNumber(costBasis)} ${position.currency}`}
           />
-          <Row label="Wartość bieżąca" value={formatPLN(position.currentValuePln)} />
+          <Row label="Wartość bieżąca" value={value} />
+          <Row label="Udział w portfelu" value={formatPercent(position.weight).replace('+', '')} />
           <div className="flex justify-between gap-3 items-baseline">
             <span className="text-muted-foreground">P/L</span>
             <span
@@ -139,28 +165,6 @@ export function PositionCardMobile({ position, onSell, isExpanded, onToggle }: P
               {formatCurrency(position.profitLoss, position.currency)}
             </span>
           </div>
-          <Row label="Data zakupu" value={dateLabel} />
-
-          {isMulti && (
-            <>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold mt-2">
-                Loty ({lots.length})
-              </div>
-              <div className="flex flex-col gap-1">
-                {lots.map((lot, j) => (
-                  <div
-                    key={j}
-                    className="flex items-center justify-between gap-2 text-muted-foreground"
-                  >
-                    <span className="font-mono tabular-nums truncate">
-                      └ {formatQuantity(lot.quantity)} szt. · {formatNumber(lot.price)} ·{' '}
-                      {formatDate(lot.date)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
         </div>
       )}
     </div>

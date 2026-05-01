@@ -6,6 +6,7 @@ import {
   Coins,
   DollarSign,
   Wallet,
+  Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -16,12 +17,13 @@ const tabs = [
   { to: '/app/dividends', label: 'Dywidendy', icon: Coins },
   { to: '/app/currency', label: 'Waluty', icon: DollarSign },
   { to: '/app/cash', label: 'Depozyty', icon: Wallet },
+  { to: '/app/corrections-and-costs', label: 'Koszty', icon: Receipt },
 ];
 
 export function BottomTabBar() {
   return (
     <nav
-      className="md:hidden fixed bottom-0 inset-x-0 z-40 grid grid-cols-6 bg-transparent border-t border-border"
+      className="md:hidden fixed bottom-0 inset-x-0 z-40 grid grid-cols-7 bg-transparent border-t border-border"
       style={{ paddingBottom: 'env(safe-area-inset-bottom, 14px)' }}
     >
       {tabs.map((tab) => (

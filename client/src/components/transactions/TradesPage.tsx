@@ -290,6 +290,8 @@ export function TradesPage() {
                       <PositionCardMobile
                         key={pos.ticker}
                         position={pos}
+                        isExpanded={expandedPositions.has(pos.ticker)}
+                        onToggle={() => togglePosition(pos.ticker)}
                         onSell={() =>
                           sellingTicker === pos.ticker ? setSellingTicker(null) : startSell(pos)
                         }

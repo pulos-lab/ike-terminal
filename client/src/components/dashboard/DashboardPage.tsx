@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Info } from 'lucide-react';
+import { Info, Settings } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -12,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioChart } from './PortfolioChart';
 import { PerformanceStats } from './PerformanceStats';
@@ -153,35 +155,111 @@ export function DashboardPage() {
       <Card>
         <CardHeader className="pb-2">
           <TooltipProvider>
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
-                <CardTitle className="text-sm font-semibold">
-                  {activeName}
-                  {showBenchmark ? ` vs ${benchmarkLabel}` : ''}
-                </CardTitle>
-                {filteredHistory.length > 1 && (
-                  <ChartLegend
-                    portfolioPct={
-                      chartMode === 'twr'
-                        ? filteredHistory[filteredHistory.length - 1].twrPct
-                        : filteredHistory[filteredHistory.length - 1].returnPct
-                    }
-                    benchmarkPct={
-                      showBenchmark
-                        ? chartMode === 'twr'
-                          ? filteredHistory[filteredHistory.length - 1].benchmarkTwrPct
-                          : filteredHistory[filteredHistory.length - 1].benchmarkReturnPct
-                        : null
-                    }
-                    benchmarkLabel={benchmarkLabel}
-                  />
-                )}
+            {/* Tytuł + legend (mobile: pełna szerokość; desktop: tytuł-lewo, range-prawo) */}
+            <div className="flex flex-col md:flex-row md:flex-wrap md:items-center md:justify-between gap-x-4 gap-y-2">
+              <div className="flex items-center justify-between gap-2 md:flex-1 md:min-w-0 md:justify-start">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
+                  <CardTitle className="text-sm font-semibold">
+                    {activeName}
+                    {showBenchmark ? ` vs ${benchmarkLabel}` : ''}
+                  </CardTitle>
+                  {filteredHistory.length > 1 && (
+                    <ChartLegend
+                      portfolioPct={
+                        chartMode === 'twr'
+                          ? filteredHistory[filteredHistory.length - 1].twrPct
+                          : filteredHistory[filteredHistory.length - 1].returnPct
+                      }
+                      benchmarkPct={
+                        showBenchmark
+                          ? chartMode === 'twr'
+                            ? filteredHistory[filteredHistory.length - 1].benchmarkTwrPct
+                            : filteredHistory[filteredHistory.length - 1].benchmarkReturnPct
+                          : null
+                      }
+                      benchmarkLabel={benchmarkLabel}
+                    />
+                  )}
+                </div>
+
+                {/* Mobile-only: ⚙ Ustawienia (MWR/TWR + benchmark) */}
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="md:hidden text-muted-foreground shrink-0"
+                      aria-label="Ustawienia wykresu"
+                    >
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="bottom" className="rounded-t-xl max-h-[85vh] overflow-auto">
+                    <SheetHeader className="pb-2">
+                      <SheetTitle>Ustawienia wykresu</SheetTitle>
+                    </SheetHeader>
+                    <div className="flex flex-col gap-4 px-4 pb-6">
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                          Sposób liczenia
+                        </span>
+                        <div className="grid grid-cols-2 rounded-md border overflow-hidden">
+                          <Button
+                            size="sm"
+                            variant={chartMode === 'mwr' ? 'secondary' : 'ghost'}
+                            className="h-9 text-xs rounded-none"
+                            onClick={() => setChartMode('mwr')}
+                          >
+                            MWR
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={chartMode === 'twr' ? 'secondary' : 'ghost'}
+                            className="h-9 text-xs rounded-none border-l"
+                            onClick={() => setChartMode('twr')}
+                          >
+                            TWR
+                          </Button>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          {chartMode === 'mwr'
+                            ? 'Money-Weighted Return — uwzględnia wpłaty/wypłaty, pokazuje realną stopę zwrotu inwestora.'
+                            : 'Time-Weighted Return — eliminuje wpływ wpłat/wypłat, pokazuje czystą efektywność strategii.'}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                          Benchmark
+                        </span>
+                        <Select value={benchmark} onValueChange={setBenchmark}>
+                          <SelectTrigger className="h-9 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {BENCHMARKS.map((b) => (
+                              <SelectItem key={b.value} value={b.value}>
+                                {b.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[11px] text-muted-foreground">
+                          Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy
+                          przy tych samych wpłatach/wypłatach (DCA).
+                        </p>
+                      </div>
+                    </div>
+                  </SheetContent>
+                </Sheet>
               </div>
-              <div className="flex items-center gap-1">
+
+              {/* Zakres czasu — desktop obok tytułu, mobile w osobnym rzędzie z scroll */}
+              <div className="flex items-center gap-1 overflow-x-auto md:overflow-visible -mx-6 px-6 md:mx-0 md:px-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {PRESET_RANGES.map((r) => (
                   <button
                     key={r}
-                    className={`px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+                    className={`shrink-0 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
                       timeRange === r
                         ? 'bg-primary/10 text-primary'
                         : 'text-muted-foreground hover:text-foreground'
@@ -192,7 +270,7 @@ export function DashboardPage() {
                   </button>
                 ))}
                 <button
-                  className={`px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+                  className={`shrink-0 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
                     isCustom
                       ? 'bg-primary/10 text-primary'
                       : 'text-muted-foreground hover:text-foreground'
@@ -204,7 +282,27 @@ export function DashboardPage() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 mt-2">
+            {/* Mobile-only: custom date inputs poniżej range gdy isCustom */}
+            {isCustom && (
+              <div className="md:hidden flex items-center gap-1.5 mt-2">
+                <Input
+                  type="date"
+                  value={customFrom}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                  className="h-7 text-xs flex-1"
+                />
+                <span className="text-xs text-muted-foreground">—</span>
+                <Input
+                  type="date"
+                  value={customTo}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                  className="h-7 text-xs flex-1"
+                />
+              </div>
+            )}
+
+            {/* MWR/TWR + benchmark + info — DESKTOP ONLY */}
+            <div className="hidden md:flex flex-wrap items-center gap-2 mt-2">
               <div className="flex items-center bg-muted rounded-md p-0.5">
                 <Tooltip>
                   <TooltipTrigger asChild>

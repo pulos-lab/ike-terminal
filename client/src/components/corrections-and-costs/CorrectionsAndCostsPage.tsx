@@ -48,8 +48,11 @@ import {
   Landmark,
   Receipt,
   Plus,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useToggleSet } from '@/hooks/useToggleSet';
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
@@ -583,15 +586,21 @@ function SummaryCard({
   const formatted = currency ? formatCurrency(value, currency) : value.toLocaleString('pl-PL');
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+      <CardHeader className="pb-1 md:pb-2 px-3 pt-3 md:px-6 md:pt-6">
+        <CardTitle className="text-[10px] md:text-xs font-medium text-muted-foreground flex items-center gap-1">
           {icon}
           {label}
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className={`text-2xl font-semibold ${valueColor}`}>{formatted}</div>
-        {subtext && <div className="text-xs text-muted-foreground mt-0.5">{subtext}</div>}
+      <CardContent className="px-3 pb-3 md:px-6 md:pb-6">
+        <div className={`text-base md:text-2xl font-semibold tabular-nums ${valueColor}`}>
+          {formatted}
+        </div>
+        {subtext && (
+          <div className="text-[10px] md:text-xs text-muted-foreground mt-0.5 line-clamp-2">
+            {subtext}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -605,6 +614,8 @@ export function CorrectionsAndCostsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [deletingCA, setDeletingCA] = useState<CorporateAction | null>(null);
   const [deletingCost, setDeletingCost] = useState<AdditionalCost | null>(null);
+  const [expandedCA, toggleCA] = useToggleSet<number>();
+  const [expandedCost, toggleCost] = useToggleSet<number>();
 
   const {
     data: corpData,
@@ -699,7 +710,7 @@ export function CorrectionsAndCostsPage() {
     <div className="space-y-4">
       {/* Top-level summary (spójne z Dashboard / Portfel) — 3 merytoryczne kafle.
           Liczba pending-ów pokazana jako warning badge w tytule sekcji górnej. */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-2 md:gap-4">
         <SummaryCard
           label="Zwrot kapitału"
           value={totalCapitalReturn}
@@ -761,55 +772,135 @@ export function CorrectionsAndCostsPage() {
                 <AlertTriangle className="h-3.5 w-3.5" />
                 Wymagają domknięcia ({pending.length})
               </div>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-24">Data</TableHead>
-                    <TableHead className="w-36">Typ</TableHead>
-                    <TableHead className="w-24">Ticker</TableHead>
-                    <TableHead>Opis</TableHead>
-                    <TableHead className="text-right w-32">Kwota</TableHead>
-                    <TableHead className="w-16">Źródło</TableHead>
-                    <TableHead className="text-right w-48">Akcje</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pending.map((a) => (
-                    <TableRow key={a.id}>
-                      <TableCell className="whitespace-nowrap text-sm tabular-nums">
-                        {formatDate(a.date)}
-                      </TableCell>
-                      <TableCell>
-                        <SubkindBadge subkind={a.subkind} />
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{a.ticker ?? '—'}</TableCell>
-                      <TableCell className="text-sm">{a.description}</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">
-                        {formatCurrency(a.amount, a.currency)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-xs">
-                          {a.source}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button size="sm" variant="default" onClick={() => setResolving(a)}>
-                          <Briefcase className="h-3 w-3 mr-1" />
-                          Domknij
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="ml-1 text-destructive hover:text-destructive"
-                          onClick={() => setDeletingCA(a)}
+              <div className="md:hidden flex flex-col gap-2 mb-3">
+                {pending.map((a) => {
+                  const isExpanded = expandedCA.has(a.id);
+                  return (
+                    <div
+                      key={a.id}
+                      className="rounded-xl border border-border bg-card overflow-hidden"
+                    >
+                      <div
+                        className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
+                        onClick={() => toggleCA(a.id)}
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={isExpanded}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleCA(a.id);
+                          }
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                            )}
+                            <span className="font-mono font-semibold text-sm truncate">
+                              {a.ticker ?? '—'}
+                            </span>
+                            <SubkindBadge subkind={a.subkind} />
+                          </div>
+                          <span className="font-mono font-semibold text-sm tabular-nums shrink-0">
+                            {formatCurrency(a.amount, a.currency)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                          <span className="text-muted-foreground tabular-nums">
+                            {formatDate(a.date)}
+                          </span>
+                          <Badge variant="outline" className="text-[10px]">
+                            {a.source}
+                          </Badge>
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div
+                          className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-2 text-[11px]"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </TableCell>
+                          <div className="text-muted-foreground">{a.description}</div>
+                          <div className="flex justify-end gap-1.5 pt-1">
+                            <Button
+                              size="sm"
+                              variant="default"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => setResolving(a)}
+                            >
+                              <Briefcase className="h-3 w-3 mr-1" />
+                              Domknij
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                              onClick={() => setDeletingCA(a)}
+                            >
+                              <Trash2 className="h-3 w-3 mr-1" />
+                              Usuń
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-24">Data</TableHead>
+                      <TableHead className="w-36">Typ</TableHead>
+                      <TableHead className="w-24">Ticker</TableHead>
+                      <TableHead>Opis</TableHead>
+                      <TableHead className="text-right w-32">Kwota</TableHead>
+                      <TableHead className="w-16">Źródło</TableHead>
+                      <TableHead className="text-right w-48">Akcje</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {pending.map((a) => (
+                      <TableRow key={a.id}>
+                        <TableCell className="whitespace-nowrap text-sm tabular-nums">
+                          {formatDate(a.date)}
+                        </TableCell>
+                        <TableCell>
+                          <SubkindBadge subkind={a.subkind} />
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{a.ticker ?? '—'}</TableCell>
+                        <TableCell className="text-sm">{a.description}</TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {formatCurrency(a.amount, a.currency)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">
+                            {a.source}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button size="sm" variant="default" onClick={() => setResolving(a)}>
+                            <Briefcase className="h-3 w-3 mr-1" />
+                            Domknij
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="ml-1 text-destructive hover:text-destructive"
+                            onClick={() => setDeletingCA(a)}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           )}
 
@@ -824,57 +915,136 @@ export function CorrectionsAndCostsPage() {
                 Brak zrealizowanych zwrotów kapitału w tym portfelu.
               </p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-24">Data</TableHead>
-                    <TableHead className="w-36">Typ</TableHead>
-                    <TableHead className="w-24">Ticker</TableHead>
-                    <TableHead>Opis</TableHead>
-                    <TableHead className="text-right w-32">Kwota</TableHead>
-                    <TableHead className="w-16">Źródło</TableHead>
-                    <TableHead className="w-10"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {resolved.map((a) => (
-                    <TableRow key={a.id}>
-                      <TableCell className="whitespace-nowrap text-sm tabular-nums">
-                        {formatDate(a.date)}
-                      </TableCell>
-                      <TableCell>
-                        <SubkindBadge subkind={a.subkind} />
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{a.ticker ?? '—'}</TableCell>
-                      <TableCell className="text-sm">{a.description}</TableCell>
-                      <TableCell
-                        className={`text-right font-mono tabular-nums ${
-                          a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : ''
-                        }`}
+              <>
+                <div className="md:hidden flex flex-col gap-2">
+                  {resolved.map((a) => {
+                    const isExpanded = expandedCA.has(a.id);
+                    const amountColor =
+                      a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : '';
+                    return (
+                      <div
+                        key={a.id}
+                        className="rounded-xl border border-border bg-card overflow-hidden"
                       >
-                        {formatCurrency(a.amount, a.currency)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-xs">
-                          {a.source}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {a.source === 'manual' && (
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7 text-destructive"
-                            onClick={() => setDeletingCA(a)}
+                        <div
+                          className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
+                          onClick={() => toggleCA(a.id)}
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={isExpanded}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              toggleCA(a.id);
+                            }
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              {isExpanded ? (
+                                <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                              )}
+                              <span className="font-mono font-semibold text-sm truncate">
+                                {a.ticker ?? '—'}
+                              </span>
+                              <SubkindBadge subkind={a.subkind} />
+                            </div>
+                            <span
+                              className={`font-mono font-semibold text-sm tabular-nums shrink-0 ${amountColor}`}
+                            >
+                              {formatCurrency(a.amount, a.currency)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                            <span className="text-muted-foreground tabular-nums">
+                              {formatDate(a.date)}
+                            </span>
+                            <Badge variant="outline" className="text-[10px]">
+                              {a.source}
+                            </Badge>
+                          </div>
+                        </div>
+                        {isExpanded && (
+                          <div
+                            className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-2 text-[11px]"
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
+                            <div className="text-muted-foreground">{a.description}</div>
+                            {a.source === 'manual' && (
+                              <div className="flex justify-end pt-1">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                                  onClick={() => setDeletingCA(a)}
+                                >
+                                  <Trash2 className="h-3 w-3 mr-1" />
+                                  Usuń
+                                </Button>
+                              </div>
+                            )}
+                          </div>
                         )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="hidden md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-24">Data</TableHead>
+                        <TableHead className="w-36">Typ</TableHead>
+                        <TableHead className="w-24">Ticker</TableHead>
+                        <TableHead>Opis</TableHead>
+                        <TableHead className="text-right w-32">Kwota</TableHead>
+                        <TableHead className="w-16">Źródło</TableHead>
+                        <TableHead className="w-10"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {resolved.map((a) => (
+                        <TableRow key={a.id}>
+                          <TableCell className="whitespace-nowrap text-sm tabular-nums">
+                            {formatDate(a.date)}
+                          </TableCell>
+                          <TableCell>
+                            <SubkindBadge subkind={a.subkind} />
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">{a.ticker ?? '—'}</TableCell>
+                          <TableCell className="text-sm">{a.description}</TableCell>
+                          <TableCell
+                            className={`text-right font-mono tabular-nums ${
+                              a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : ''
+                            }`}
+                          >
+                            {formatCurrency(a.amount, a.currency)}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-xs">
+                              {a.source}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {a.source === 'manual' && (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7 text-destructive"
+                                onClick={() => setDeletingCA(a)}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
             )}
           </div>
         </CardContent>
@@ -985,64 +1155,145 @@ export function CorrectionsAndCostsPage() {
               Brak operacji kosztowych w tym portfelu.
             </p>
           ) : (
-            <div className="max-h-[600px] overflow-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-24">Data</TableHead>
-                    <TableHead className="w-32">Kategoria</TableHead>
-                    <TableHead>Opis</TableHead>
-                    <TableHead className="text-right w-32">Kwota</TableHead>
-                    <TableHead className="w-16">Waluta</TableHead>
-                    <TableHead className="w-16">Źródło</TableHead>
-                    <TableHead className="w-10"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {costs.map((c) => (
-                    <TableRow key={c.id}>
-                      <TableCell className="whitespace-nowrap text-sm tabular-nums">
-                        {formatDate(c.date)}
-                      </TableCell>
-                      <TableCell>
-                        <CostCategoryBadge category={virtualCategory(c)} />
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {c.description}
-                      </TableCell>
-                      <TableCell
-                        className={`text-right font-mono tabular-nums ${
-                          c.amount < 0 ? 'text-loss' : c.amount > 0 ? 'text-gain' : ''
-                        }`}
+            <>
+              <div className="md:hidden flex flex-col gap-2">
+                {costs.map((c) => {
+                  const isExpanded = expandedCost.has(c.id);
+                  const amountColor = c.amount < 0 ? 'text-loss' : c.amount > 0 ? 'text-gain' : '';
+                  const vCat = virtualCategory(c);
+                  return (
+                    <div
+                      key={c.id}
+                      className="rounded-xl border border-border bg-card overflow-hidden"
+                    >
+                      <div
+                        className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
+                        onClick={() => toggleCost(c.id)}
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={isExpanded}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleCost(c.id);
+                          }
+                        }}
                       >
-                        {formatNumber(c.amount)}
-                      </TableCell>
-                      <TableCell>
-                        <CcyChip ccy={c.currency} />
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-xs">
-                          {c.source}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {c.source === 'manual' && (
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7 text-destructive"
-                            onClick={() => setDeletingCost(c)}
-                            disabled={deleteCostMut.isPending}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                            )}
+                            <CostCategoryBadge category={vCat} />
+                            {c.ticker && (
+                              <span className="font-mono text-[11px] text-muted-foreground truncate">
+                                {c.ticker}
+                              </span>
+                            )}
+                          </div>
+                          <span
+                            className={`flex items-center gap-1 font-mono font-semibold text-sm tabular-nums shrink-0 ${amountColor}`}
                           >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        )}
-                      </TableCell>
+                            {formatNumber(c.amount)}
+                            <CcyChip ccy={c.currency} />
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                          <span className="text-muted-foreground tabular-nums">
+                            {formatDate(c.date)}
+                          </span>
+                          <Badge variant="outline" className="text-[10px]">
+                            {c.source}
+                          </Badge>
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div
+                          className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-2 text-[11px]"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="text-muted-foreground">{c.description}</div>
+                          {c.source === 'manual' && (
+                            <div className="flex justify-end pt-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                                onClick={() => setDeletingCost(c)}
+                                disabled={deleteCostMut.isPending}
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" />
+                                Usuń
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="hidden md:block max-h-[600px] overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-24">Data</TableHead>
+                      <TableHead className="w-32">Kategoria</TableHead>
+                      <TableHead>Opis</TableHead>
+                      <TableHead className="text-right w-32">Kwota</TableHead>
+                      <TableHead className="w-16">Waluta</TableHead>
+                      <TableHead className="w-16">Źródło</TableHead>
+                      <TableHead className="w-10"></TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {costs.map((c) => (
+                      <TableRow key={c.id}>
+                        <TableCell className="whitespace-nowrap text-sm tabular-nums">
+                          {formatDate(c.date)}
+                        </TableCell>
+                        <TableCell>
+                          <CostCategoryBadge category={virtualCategory(c)} />
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {c.description}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-mono tabular-nums ${
+                            c.amount < 0 ? 'text-loss' : c.amount > 0 ? 'text-gain' : ''
+                          }`}
+                        >
+                          {formatNumber(c.amount)}
+                        </TableCell>
+                        <TableCell>
+                          <CcyChip ccy={c.currency} />
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">
+                            {c.source}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {c.source === 'manual' && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-destructive"
+                              onClick={() => setDeletingCost(c)}
+                              disabled={deleteCostMut.isPending}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

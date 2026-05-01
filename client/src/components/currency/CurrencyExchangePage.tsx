@@ -17,8 +17,9 @@ import { CcyChip } from '@/components/ui/ccy-chip';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { AddFxExchangeDialog } from './AddFxExchangeDialog';
 import { formatNumber, formatDate } from '@/lib/formatters';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
+import { useToggleSet } from '@/hooks/useToggleSet';
 import type { FxExchangeRecord } from 'shared';
 
 export function CurrencyExchangePage() {
@@ -37,6 +38,7 @@ export function CurrencyExchangePage() {
 
   const [addOpen, setAddOpen] = useState(false);
   const [deleting, setDeleting] = useState<FxExchangeRecord | null>(null);
+  const [expandedFx, toggleFx] = useToggleSet<string>();
 
   const fx = pricesData?.fx;
   const usdEur = fx?.USDPLN && fx?.EURPLN ? fx.USDPLN / fx.EURPLN : null;
@@ -69,23 +71,27 @@ export function CurrencyExchangePage() {
       </div>
 
       {fx && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-3 gap-2 md:gap-3">
           <Card>
-            <CardContent className="pt-4 pb-3">
-              <div className="text-sm text-muted-foreground">USD/PLN</div>
-              <div className="text-2xl font-bold font-mono">{formatNumber(fx.USDPLN, 4)}</div>
+            <CardContent className="px-3 py-2.5 md:pt-4 md:pb-3 md:px-6">
+              <div className="text-[11px] md:text-sm text-muted-foreground">USD/PLN</div>
+              <div className="text-base md:text-2xl font-bold font-mono">
+                {formatNumber(fx.USDPLN, 4)}
+              </div>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="pt-4 pb-3">
-              <div className="text-sm text-muted-foreground">EUR/PLN</div>
-              <div className="text-2xl font-bold font-mono">{formatNumber(fx.EURPLN, 4)}</div>
+            <CardContent className="px-3 py-2.5 md:pt-4 md:pb-3 md:px-6">
+              <div className="text-[11px] md:text-sm text-muted-foreground">EUR/PLN</div>
+              <div className="text-base md:text-2xl font-bold font-mono">
+                {formatNumber(fx.EURPLN, 4)}
+              </div>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="pt-4 pb-3">
-              <div className="text-sm text-muted-foreground">USD/EUR</div>
-              <div className="text-2xl font-bold font-mono">
+            <CardContent className="px-3 py-2.5 md:pt-4 md:pb-3 md:px-6">
+              <div className="text-[11px] md:text-sm text-muted-foreground">USD/EUR</div>
+              <div className="text-base md:text-2xl font-bold font-mono">
                 {usdEur ? formatNumber(usdEur, 4) : '—'}
               </div>
             </CardContent>
@@ -100,22 +106,119 @@ export function CurrencyExchangePage() {
         <CardContent>
           {isLoading ? (
             <LoadingSpinner />
+          ) : !data?.exchanges?.length ? (
+            <div className="text-center py-12 text-muted-foreground text-sm">Brak danych.</div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Data</TableHead>
-                    <TableHead>Para</TableHead>
-                    <TableHead className="text-right">Kurs</TableHead>
-                    <TableHead className="text-right">Kwota (z)</TableHead>
-                    <TableHead className="text-right">Kwota (na)</TableHead>
-                    <TableHead className="w-[60px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data?.exchanges?.length ? (
-                    data.exchanges.map((ex: FxExchangeRecord, i: number) => (
+            <>
+              <div className="md:hidden flex flex-col gap-2">
+                {data.exchanges.map((ex: FxExchangeRecord, i: number) => {
+                  const key = `${ex.fromOperationId ?? i}-${ex.toOperationId ?? i}`;
+                  const isExpanded = expandedFx.has(key);
+                  return (
+                    <div
+                      key={key}
+                      className="rounded-xl border border-border bg-card overflow-hidden"
+                    >
+                      <div
+                        className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
+                        onClick={() => toggleFx(key)}
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={isExpanded}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleFx(key);
+                          }
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                            )}
+                            <CcyChip ccy={ex.currencyFrom} />
+                            <span className="text-muted-foreground text-xs">→</span>
+                            <CcyChip ccy={ex.currencyTo} />
+                          </div>
+                          <span className="font-mono font-semibold text-sm tabular-nums shrink-0">
+                            {formatNumber(ex.rate, 4)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                          <span className="tabular-nums truncate">
+                            <span className="text-loss">
+                              −{formatNumber(ex.amountFrom)} {ex.currencyFrom}
+                            </span>
+                            <span className="text-muted-foreground mx-1">→</span>
+                            <span className="text-gain">
+                              +{formatNumber(ex.amountTo)} {ex.currencyTo}
+                            </span>
+                          </span>
+                          <span className="text-muted-foreground tabular-nums shrink-0">
+                            {formatDate(ex.date)}
+                          </span>
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div
+                          className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-1 text-[11px]"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex justify-between gap-3 items-baseline">
+                            <span className="text-muted-foreground">Kwota (z)</span>
+                            <span className="tabular-nums text-right text-loss">
+                              −{formatNumber(ex.amountFrom)} {ex.currencyFrom}
+                            </span>
+                          </div>
+                          <div className="flex justify-between gap-3 items-baseline">
+                            <span className="text-muted-foreground">Kwota (na)</span>
+                            <span className="tabular-nums text-right text-gain">
+                              +{formatNumber(ex.amountTo)} {ex.currencyTo}
+                            </span>
+                          </div>
+                          <div className="flex justify-between gap-3 items-baseline">
+                            <span className="text-muted-foreground">Kurs</span>
+                            <span className="tabular-nums text-right">
+                              {formatNumber(ex.rate, 4)}
+                            </span>
+                          </div>
+                          {ex.source === 'manual' && (
+                            <div className="flex justify-end pt-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={deleteMutation.isPending}
+                                onClick={() => setDeleting(ex)}
+                                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" />
+                                Usuń
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Data</TableHead>
+                      <TableHead>Para</TableHead>
+                      <TableHead className="text-right">Kurs</TableHead>
+                      <TableHead className="text-right">Kwota (z)</TableHead>
+                      <TableHead className="text-right">Kwota (na)</TableHead>
+                      <TableHead className="w-[60px]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.exchanges.map((ex: FxExchangeRecord, i: number) => (
                       <TableRow key={i}>
                         <TableCell className="tabular-nums">{formatDate(ex.date)}</TableCell>
                         <TableCell>
@@ -148,17 +251,11 @@ export function CurrencyExchangePage() {
                           )}
                         </TableCell>
                       </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
-                        Brak danych.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

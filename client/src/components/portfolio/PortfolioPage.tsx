@@ -34,6 +34,8 @@ import {
 import { Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioDiversification } from './PortfolioDiversification';
+import { PortfolioPositionCardMobile } from './PortfolioPositionCardMobile';
+import { useToggleSet } from '@/hooks/useToggleSet';
 
 interface ColumnVisibility {
   avgPrice: boolean;
@@ -67,6 +69,7 @@ function saveVisibility(v: ColumnVisibility) {
 
 export function PortfolioPage() {
   const [colVis, setColVis] = useState<ColumnVisibility>(loadVisibility);
+  const [expandedPositions, togglePosition] = useToggleSet<string>();
 
   const toggleCol = (key: keyof ColumnVisibility) => {
     setColVis((prev) => {
@@ -161,7 +164,7 @@ export function PortfolioPage() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 text-muted-foreground"
+                  className="h-8 w-8 text-muted-foreground hidden md:inline-flex"
                   title="Widoczność kolumn"
                 >
                   {allVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
@@ -202,130 +205,164 @@ export function PortfolioPage() {
           {isLoading ? (
             <LoadingSpinner />
           ) : data?.positions?.length ? (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Ticker</TableHead>
-                    <TableHead>Nazwa</TableHead>
-                    <TableHead className="text-right">Ilość</TableHead>
-                    {colVis.avgPrice && <TableHead className="text-right">Śr. cena</TableHead>}
-                    <TableHead className="text-right">Kurs</TableHead>
-                    {colVis.dailyChange && <TableHead className="text-right">Zmiana</TableHead>}
-                    <TableHead className="text-right">Wartość ({baseCurrency})</TableHead>
-                    {colVis.pl && <TableHead className="text-right">P/L</TableHead>}
-                    {colVis.plPct && <TableHead className="text-right">P/L %</TableHead>}
-                    <TableHead className="text-right">Udział</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.positions.map((pos: any) => (
-                    <TableRow key={pos.isin}>
-                      <TableCell className="font-mono font-medium">
-                        {pos.ticker}
-                        <CategoryBadge category={pos.category} />
-                        {recentSplitMap.has(pos.isin) &&
-                          (() => {
-                            const split = recentSplitMap.get(pos.isin)!;
-                            const isReverse = split.ratio < 1;
-                            const label = isReverse
-                              ? `1:${Math.round(1 / split.ratio)}`
-                              : `${Math.round(split.ratio)}:1`;
-                            return (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <AlertTriangle className="h-4 w-4 text-amber-500 inline ml-1 cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent side="right" className="max-w-[280px]">
-                                  Spółka przeszła {isReverse ? 'reverse split' : 'split'} {label} w
-                                  dniu {split.date}. Ilość i cena zostały automatycznie skorygowane.
-                                </TooltipContent>
-                              </Tooltip>
-                            );
-                          })()}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground max-w-[180px]">
-                        <TruncatedName name={pos.paperName} />
-                      </TableCell>
-                      <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
-                      {colVis.avgPrice && (
-                        <TableCell className="text-right">
-                          {formatNumber(pos.avgBuyPrice)}
-                        </TableCell>
-                      )}
-                      <TableCell className="text-right">
-                        <span className="tabular-nums">
-                          {pos.currentPrice ? formatNumber(pos.currentPrice) : '—'}
-                        </span>
-                        <CcyChip ccy={pos.currency} className="ml-1.5" />
-                        {pos.priceManual && (
-                          <span
-                            className="ml-1 text-[10px] text-muted-foreground/60"
-                            title="Cena z ostatniej transakcji — instrument bez aktualnych notowań"
-                          >
-                            ⚠
-                          </span>
-                        )}
-                      </TableCell>
-                      {colVis.dailyChange && (
-                        <TableCell className="text-right">
-                          {pos.dailyChangePct != null ? (
-                            <PLBadge value={pos.dailyChangePct} />
-                          ) : (
-                            '—'
-                          )}
-                        </TableCell>
-                      )}
-                      <TableCell className="text-right font-medium">
-                        {useNativeCcy
-                          ? formatCurrency(pos.currentValue ?? 0, baseCurrency)
-                          : formatPLN(pos.currentValuePln)}
-                      </TableCell>
-                      {colVis.pl && (
-                        <TableCell
-                          className={`text-right font-medium ${plColor(pos.profitLossPct)}`}
-                        >
-                          {formatCurrency(pos.profitLoss, pos.currency)}
-                        </TableCell>
-                      )}
-                      {colVis.plPct && (
-                        <TableCell className="text-right">
-                          <PLBadge value={pos.profitLossPct} />
-                        </TableCell>
-                      )}
-                      <TableCell className="text-right text-muted-foreground">
-                        {formatPercent(pos.weight).replace('+', '')}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {totals && (
-                    <TableRow className="border-t-2 font-semibold">
-                      <TableCell colSpan={colsBeforeValue} className="text-right">
-                        Razem
-                      </TableCell>
-                      <TableCell className="text-right">
+            <>
+              <div className="md:hidden flex flex-col gap-2">
+                {data.positions.map((pos: any) => (
+                  <PortfolioPositionCardMobile
+                    key={pos.isin}
+                    position={pos}
+                    baseCurrency={baseCurrency}
+                    useNativeCcy={useNativeCcy}
+                    splitInfo={recentSplitMap.get(pos.isin)}
+                    isExpanded={expandedPositions.has(pos.isin)}
+                    onToggle={() => togglePosition(pos.isin)}
+                  />
+                ))}
+                {totals && (
+                  <div className="rounded-xl border-2 border-border bg-card p-3 flex items-center justify-between gap-2 font-semibold">
+                    <span className="text-sm">Razem</span>
+                    <div className="flex items-center gap-3 text-sm tabular-nums">
+                      <span>
                         {useNativeCcy
                           ? formatCurrency(totals.totalValue, baseCurrency)
                           : formatPLN(totals.totalValuePln)}
-                      </TableCell>
-                      {colVis.pl && (
-                        <TableCell className={`text-right ${plColor(totals.totalProfitLoss)}`}>
-                          {useNativeCcy
-                            ? formatCurrency(totals.totalProfitLoss, baseCurrency)
-                            : formatPLN(totals.totalProfitLoss)}
-                        </TableCell>
-                      )}
-                      {colVis.plPct && (
-                        <TableCell className="text-right">
-                          <PLBadge value={totals.totalProfitLossPct} />
-                        </TableCell>
-                      )}
-                      <TableCell />
+                      </span>
+                      <span className={plColor(totals.totalProfitLoss)}>
+                        {useNativeCcy
+                          ? formatCurrency(totals.totalProfitLoss, baseCurrency)
+                          : formatPLN(totals.totalProfitLoss)}
+                      </span>
+                      <PLBadge value={totals.totalProfitLossPct} />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Ticker</TableHead>
+                      <TableHead>Nazwa</TableHead>
+                      <TableHead className="text-right">Ilość</TableHead>
+                      {colVis.avgPrice && <TableHead className="text-right">Śr. cena</TableHead>}
+                      <TableHead className="text-right">Kurs</TableHead>
+                      {colVis.dailyChange && <TableHead className="text-right">Zmiana</TableHead>}
+                      <TableHead className="text-right">Wartość ({baseCurrency})</TableHead>
+                      {colVis.pl && <TableHead className="text-right">P/L</TableHead>}
+                      {colVis.plPct && <TableHead className="text-right">P/L %</TableHead>}
+                      <TableHead className="text-right">Udział</TableHead>
                     </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {data.positions.map((pos: any) => (
+                      <TableRow key={pos.isin}>
+                        <TableCell className="font-mono font-medium">
+                          {pos.ticker}
+                          <CategoryBadge category={pos.category} />
+                          {recentSplitMap.has(pos.isin) &&
+                            (() => {
+                              const split = recentSplitMap.get(pos.isin)!;
+                              const isReverse = split.ratio < 1;
+                              const label = isReverse
+                                ? `1:${Math.round(1 / split.ratio)}`
+                                : `${Math.round(split.ratio)}:1`;
+                              return (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <AlertTriangle className="h-4 w-4 text-amber-500 inline ml-1 cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right" className="max-w-[280px]">
+                                    Spółka przeszła {isReverse ? 'reverse split' : 'split'} {label}{' '}
+                                    w dniu {split.date}. Ilość i cena zostały automatycznie
+                                    skorygowane.
+                                  </TooltipContent>
+                                </Tooltip>
+                              );
+                            })()}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground max-w-[180px]">
+                          <TruncatedName name={pos.paperName} />
+                        </TableCell>
+                        <TableCell className="text-right">{formatQuantity(pos.shares)}</TableCell>
+                        {colVis.avgPrice && (
+                          <TableCell className="text-right">
+                            {formatNumber(pos.avgBuyPrice)}
+                          </TableCell>
+                        )}
+                        <TableCell className="text-right">
+                          <span className="tabular-nums">
+                            {pos.currentPrice ? formatNumber(pos.currentPrice) : '—'}
+                          </span>
+                          <CcyChip ccy={pos.currency} className="ml-1.5" />
+                          {pos.priceManual && (
+                            <span
+                              className="ml-1 text-[10px] text-muted-foreground/60"
+                              title="Cena z ostatniej transakcji — instrument bez aktualnych notowań"
+                            >
+                              ⚠
+                            </span>
+                          )}
+                        </TableCell>
+                        {colVis.dailyChange && (
+                          <TableCell className="text-right">
+                            {pos.dailyChangePct != null ? (
+                              <PLBadge value={pos.dailyChangePct} />
+                            ) : (
+                              '—'
+                            )}
+                          </TableCell>
+                        )}
+                        <TableCell className="text-right font-medium">
+                          {useNativeCcy
+                            ? formatCurrency(pos.currentValue ?? 0, baseCurrency)
+                            : formatPLN(pos.currentValuePln)}
+                        </TableCell>
+                        {colVis.pl && (
+                          <TableCell
+                            className={`text-right font-medium ${plColor(pos.profitLossPct)}`}
+                          >
+                            {formatCurrency(pos.profitLoss, pos.currency)}
+                          </TableCell>
+                        )}
+                        {colVis.plPct && (
+                          <TableCell className="text-right">
+                            <PLBadge value={pos.profitLossPct} />
+                          </TableCell>
+                        )}
+                        <TableCell className="text-right text-muted-foreground">
+                          {formatPercent(pos.weight).replace('+', '')}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {totals && (
+                      <TableRow className="border-t-2 font-semibold">
+                        <TableCell colSpan={colsBeforeValue} className="text-right">
+                          Razem
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {useNativeCcy
+                            ? formatCurrency(totals.totalValue, baseCurrency)
+                            : formatPLN(totals.totalValuePln)}
+                        </TableCell>
+                        {colVis.pl && (
+                          <TableCell className={`text-right ${plColor(totals.totalProfitLoss)}`}>
+                            {useNativeCcy
+                              ? formatCurrency(totals.totalProfitLoss, baseCurrency)
+                              : formatPLN(totals.totalProfitLoss)}
+                          </TableCell>
+                        )}
+                        {colVis.plPct && (
+                          <TableCell className="text-right">
+                            <PLBadge value={totals.totalProfitLossPct} />
+                          </TableCell>
+                        )}
+                        <TableCell />
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           ) : (
             <EmptyState message="Brak otwartych pozycji. Zaimportuj historię transakcji lub dodaj ręcznie transakcje." />
           )}
