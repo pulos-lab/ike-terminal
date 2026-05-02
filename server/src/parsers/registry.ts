@@ -2,6 +2,7 @@ import type { Transaction, CashOperation, BrokerType, ParseResult } from 'shared
 import type { TransactionTax } from './degiro-operations.js';
 import { parseBossaTransactions, isBossaFormat } from './bossa-transactions.js';
 import { parseMbankTransactions, isMbankFormat } from './mbank-transactions.js';
+import { parseMbankOperations, isMbankOperationsFormat } from './mbank-operations.js';
 import { parseDegiroTransactions, isDegiroFormat } from './degiro-transactions.js';
 import {
   parseDegiroOperations,
@@ -54,7 +55,9 @@ export const PARSER_REGISTRY: BrokerParser[] = [
     label: 'mBank eMakler',
     detect: isMbankFormat,
     parse: parseMbankTransactions,
-    supportsOperations: false,
+    supportsOperations: true,
+    detectOperations: isMbankOperationsFormat,
+    parseOperations: parseMbankOperations,
     needsNameResolution: true,
   },
   {
