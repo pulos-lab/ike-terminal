@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import type { CashOperation, ParseResult, SkippedRow } from 'shared';
-import { parseNumber, roundTo2 } from './utils.js';
+import { parseNumber, roundTo2, parseDegiroDate } from './utils.js';
 
 /**
  * Parse DEGIRO Account CSV (cash operations).
@@ -374,16 +374,4 @@ function isDegiroAccountHeader(header: string[]): boolean {
   const h3 = header[3]?.trim().toLowerCase();
   const h5 = header[5]?.trim().toLowerCase();
   return h0 === 'data' && h3 === 'produkt' && h5 === 'opis';
-}
-
-/**
- * Parse DEGIRO date (DD-MM-YYYY) + time (HH:MM) to ISO 8601.
- */
-function parseDegiroDate(dateStr: string, timeStr?: string): string {
-  const match = dateStr.match(/(\d{2})-(\d{2})-(\d{4})/);
-  if (match) {
-    const time = timeStr ? `${timeStr}:00` : '00:00:00';
-    return `${match[3]}-${match[2]}-${match[1]}T${time}`;
-  }
-  return dateStr;
 }

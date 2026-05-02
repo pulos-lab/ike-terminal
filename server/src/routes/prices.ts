@@ -3,6 +3,7 @@ import { fetchYahooPrice, fetchFxRate } from '../services/yahoo-finance.js';
 import { fetchStooqPrice } from '../services/stooq.js';
 import { getAllTickers } from '../db/ticker-map-repo.js';
 import { asyncHandler } from '../middleware/async-handler.js';
+import { mapWithConcurrency } from '../services/concurrency.js';
 
 const router = Router();
 
@@ -13,23 +14,15 @@ router.get(
     const tickers = getAllTickers(req.portfolioId);
     const prices: Record<string, { price: number | null; currency: string }> = {};
 
-    // Fetch in parallel with concurrency limit
-    const batchSize = 5;
-    for (let i = 0; i < tickers.length; i += batchSize) {
-      const batch = tickers.slice(i, i + batchSize);
-      await Promise.all(
-        batch.map(async (entry) => {
-          if (entry.exchange === 'NC') {
-            // NewConnect: Stooq only (Yahoo doesn't list all NC stocks)
-            const price = await fetchStooqPrice(entry.ticker);
-            prices[entry.ticker] = { price, currency: entry.currency };
-          } else {
-            const result = await fetchYahooPrice(entry.ticker);
-            prices[entry.ticker] = result || { price: null, currency: entry.currency };
-          }
-        }),
-      );
-    }
+    await mapWithConcurrency(tickers, 5, async (entry) => {
+      if (entry.exchange === 'NC') {
+        const price = await fetchStooqPrice(entry.ticker);
+        prices[entry.ticker] = { price, currency: entry.currency };
+      } else {
+        const result = await fetchYahooPrice(entry.ticker);
+        prices[entry.ticker] = result || { price: null, currency: entry.currency };
+      }
+    });
 
     // FX rates
     const [usdPln, cadPln, eurPln] = await Promise.all([

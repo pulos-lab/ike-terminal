@@ -83,7 +83,7 @@ export function parseMbankTransactions(
       date: isoDate,
       paperName,
       isin: paperName, // Placeholder — resolved after import via ticker name
-      quantity: Math.round(quantity),
+      quantity: Math.round(quantity), // GPW/NC: only whole shares; round removes CSV floating-point noise
       side: side as 'K' | 'S',
       price,
       value,

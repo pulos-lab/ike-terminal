@@ -345,7 +345,7 @@ export function mapGicsToStockwatch(
  * jeśli będzie potrzebny). Tutaj eksponujemy referencyjne przypadki jako
  * konstantę by łatwiej było weryfikować w REPL.
  */
-export const GICS_REFERENCE_CASES: Array<{
+const GICS_REFERENCE_CASES: Array<{
   sector: string | null;
   industry: string | null;
   expected: StockwatchSector | null;

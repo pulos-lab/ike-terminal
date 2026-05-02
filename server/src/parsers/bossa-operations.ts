@@ -482,15 +482,6 @@ function parseDividendTicker(title: string): string | null {
 }
 
 /**
- * Extract certificate ticker from buyout title — kept for backward compat with reconciliation.
- * "Wykup certyfikatów INTLGLD46805 (kwota brutto)" -> "INTLGLD46805"
- */
-export function parseCertificateTicker(title: string): string | null {
-  const match = title.match(/Wykup certyfikat(?:ów|\u00f3w)\s+(\S+)/);
-  return match ? match[1] : null;
-}
-
-/**
  * Extract FX rate from title
  * "Wymiana waluty PLN/USD 3.5713" -> { pair: "PLN/USD", rate: 3.5713 }
  */

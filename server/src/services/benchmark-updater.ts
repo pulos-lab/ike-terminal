@@ -7,28 +7,10 @@
  * Fallback: Yahoo Finance (range=1d) when Stooq is blocked.
  */
 import { getLastCachedDate, storeHistoricalPrices } from './history-cache.js';
-
-const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
+import { STOOQ_USER_AGENT, BENCHMARK_YAHOO_FALLBACK, parseStooqLiveCsv } from './stooq-utils.js';
 
 const BENCHMARK_TICKERS = ['wig', 'wig20', 'mwig40', 'swig80'];
-
-/** Stooq ticker → Yahoo ticker mapping for fallback */
-const YAHOO_FALLBACK: Record<string, string> = {
-  wig: 'WIG.WA',
-  wig20: 'WIG20.WA',
-  mwig40: 'MWIG40.WA',
-  swig80: 'SWIG80.WA',
-};
-
-/** Detect Stooq block/rate-limit responses (including new API key requirement) */
-function isStooqBlocked(text: string): boolean {
-  return (
-    text.includes('Przekroczony') ||
-    text.includes('limit') ||
-    text.includes('www@stooq.pl') ||
-    text.includes('apikey')
-  );
-}
+const FETCH_TIMEOUT = 10_000;
 
 /**
  * Fetch today's close from Stooq live quote API.
@@ -39,32 +21,11 @@ async function fetchStooqLiveClose(
 ): Promise<{ date: string; close: number } | null> {
   const url = `https://stooq.pl/q/l/?s=${ticker}&f=sd2t2ohlcv&h&e=csv`;
   const response = await fetch(url, {
-    headers: { 'User-Agent': USER_AGENT },
+    headers: { 'User-Agent': STOOQ_USER_AGENT },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT),
   });
   const text = await response.text();
-
-  if (isStooqBlocked(text)) return null;
-
-  const lines = text.trim().split('\n');
-  if (lines.length < 2) return null;
-
-  const headers = lines[0].split(',');
-  const values = lines[1].split(',');
-
-  const dateIdx = headers.findIndex(
-    (h) => h.toLowerCase() === 'data' || h.toLowerCase() === 'date',
-  );
-  const closeIdx = headers.findIndex(
-    (h) => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close',
-  );
-
-  if (dateIdx === -1 || closeIdx === -1) return null;
-
-  const date = values[dateIdx]?.trim();
-  const close = parseFloat(values[closeIdx]?.trim());
-
-  if (!date || isNaN(close)) return null;
-  return { date, close };
+  return parseStooqLiveCsv(text);
 }
 
 /**
@@ -77,7 +38,8 @@ async function fetchYahooLiveClose(
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1d&range=1d`;
     const response = await fetch(url, {
-      headers: { 'User-Agent': USER_AGENT },
+      headers: { 'User-Agent': STOOQ_USER_AGENT },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT),
     });
     const json = (await response.json()) as any;
 
@@ -121,7 +83,7 @@ export async function updateBenchmarkPrices(): Promise<void> {
 
       // Fallback to Yahoo if Stooq is blocked
       if (!liveData) {
-        const yahooTicker = YAHOO_FALLBACK[ticker];
+        const yahooTicker = BENCHMARK_YAHOO_FALLBACK[ticker];
         if (yahooTicker) {
           liveData = await fetchYahooLiveClose(yahooTicker);
           source = 'yahoo-live';

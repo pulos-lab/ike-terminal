@@ -1,6 +1,7 @@
 import { getCached, setCached } from './price-cache.js';
 import { getAllTickers } from '../db/ticker-map-repo.js';
 import type { TickerSearchResult } from 'shared';
+import { stripTickerSuffix } from './stooq-utils.js';
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 
@@ -43,7 +44,7 @@ export async function validateStooq(
   expectedName?: string,
 ): Promise<TickerSearchResult | null> {
   // Only try for short, simple tickers (likely Polish)
-  const raw = query.replace('.WA', '').toLowerCase();
+  const raw = stripTickerSuffix(query).toLowerCase();
   if (raw.length > 20 || raw.includes('.') || raw.includes(' ')) return null;
 
   try {

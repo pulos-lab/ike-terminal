@@ -34,3 +34,17 @@ export function parseDottedDate(dateStr: string): string {
   }
   return dateStr;
 }
+
+/**
+ * Parse DEGIRO date (DD-MM-YYYY) + optional time (HH:MM) to ISO 8601.
+ * "25-02-2026" + "09:47" -> "2026-02-25T09:47:00"
+ * "25-02-2026"           -> "2026-02-25T00:00:00"
+ */
+export function parseDegiroDate(dateStr: string, timeStr?: string): string {
+  const match = dateStr.match(/(\d{2})-(\d{2})-(\d{4})/);
+  if (match) {
+    const time = timeStr ? `${timeStr}:00` : '00:00:00';
+    return `${match[3]}-${match[2]}-${match[1]}T${time}`;
+  }
+  return dateStr;
+}

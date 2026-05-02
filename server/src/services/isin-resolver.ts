@@ -4,6 +4,7 @@ import { getTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { searchYahoo, validateStooq, searchStooqByName } from './ticker-search.js';
 import { fetchYahooPrice } from './yahoo-finance.js';
 import { resolveSector } from './sector-resolver.js';
+import { mapWithConcurrency } from './concurrency.js';
 
 interface UnresolvedIsin {
   isin: string;
@@ -14,20 +15,6 @@ interface UnresolvedIsin {
 export interface ResolveResult {
   resolved: TickerMapEntry[];
   unresolved: UnresolvedIsin[];
-}
-
-// Concurrency limiter — avoid hammering Yahoo/Stooq APIs
-const MAX_CONCURRENT = 3;
-
-async function withConcurrencyLimit<T>(items: T[], fn: (item: T) => Promise<void>): Promise<void> {
-  const queue = [...items];
-  const workers = Array.from({ length: Math.min(MAX_CONCURRENT, queue.length) }, async () => {
-    while (queue.length > 0) {
-      const item = queue.shift()!;
-      await fn(item);
-    }
-  });
-  await Promise.all(workers);
 }
 
 /**
@@ -518,7 +505,7 @@ export async function resolveUnknownIsins(
 
   const items = Array.from(unknowns.entries());
 
-  await withConcurrencyLimit(items, async ([isin, { paperName, currency, category }]) => {
+  await mapWithConcurrency(items, 3, async ([isin, { paperName, currency, category }]) => {
     try {
       // CFD instruments: resolve via static map (Yahoo/Stooq search won't find them)
       if (category === 'cfd') {

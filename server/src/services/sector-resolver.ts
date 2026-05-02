@@ -25,10 +25,7 @@ export interface ResolvedSector {
   subsector: string | null;
 }
 
-/** Usuń sufix giełdowy z tickera przed lookupem w GPW_SECTOR_MAP. */
-function stripExchangeSuffix(ticker: string): string {
-  return ticker.toUpperCase().replace(/\.(WA|NC)$/i, '');
-}
+import { stripTickerSuffix } from './stooq-utils.js';
 
 /** Normalizacja nazwy firmy: usuń "S.A.", "SA", "ASI", puste znaki, lowercase. */
 function normalizeName(name: string): string {
@@ -74,7 +71,7 @@ export async function resolveSector(entry: TickerMapEntry): Promise<ResolvedSect
 
   // 1) GPW / NewConnect — statyczna mapa stockwatch.
   if (exchange === 'GPW' || exchange === 'NC') {
-    const stripped = stripExchangeSuffix(ticker);
+    const stripped = stripTickerSuffix(ticker).toUpperCase();
     const byTicker = GPW_SECTOR_MAP[stripped];
     if (byTicker) {
       return { supersector: byTicker.supersector, subsector: byTicker.subsector };
