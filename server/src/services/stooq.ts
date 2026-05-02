@@ -1,45 +1,18 @@
 import { getCached, setCached } from './price-cache.js';
 import { storeHistoricalPrices, loadHistoricalPrices, getLastCachedDate } from './history-cache.js';
 import { config } from '../config.js';
+import {
+  STOOQ_USER_AGENT,
+  BENCHMARK_YAHOO_FALLBACK,
+  isStooqBlocked,
+  parseStooqCsvHeaders,
+  parseStooqLiveCsv,
+  stripTickerSuffix,
+} from './stooq-utils.js';
+import { createConcurrencyLimiter } from './concurrency.js';
 
-/** Stooq ticker → Yahoo ticker mapping for benchmark live fallback */
-const BENCHMARK_YAHOO_FALLBACK: Record<string, string> = {
-  wig: 'WIG.WA',
-  wig20: 'WIG20.WA',
-  mwig40: 'MWIG40.WA',
-  swig80: 'SWIG80.WA',
-};
-
-/** Detect Stooq block/rate-limit responses (including new API key requirement) */
-function isStooqBlocked(text: string): boolean {
-  return (
-    text.includes('Przekroczony') ||
-    text.includes('limit') ||
-    text.includes('www@stooq.pl') ||
-    text.includes('apikey')
-  );
-}
-
-const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
-
-// Concurrency limiter for Stooq requests (max 3 simultaneous)
-const STOOQ_MAX_CONCURRENT = 3;
-let stooqActiveCount = 0;
-const stooqQueue: Array<() => void> = [];
-
-async function withStooqLimit<T>(fn: () => Promise<T>): Promise<T> {
-  if (stooqActiveCount >= STOOQ_MAX_CONCURRENT) {
-    await new Promise<void>((resolve) => stooqQueue.push(resolve));
-  }
-  stooqActiveCount++;
-  try {
-    return await fn();
-  } finally {
-    stooqActiveCount--;
-    const next = stooqQueue.shift();
-    if (next) next();
-  }
-}
+const withStooqLimit = createConcurrencyLimiter(3);
+const FETCH_TIMEOUT = 15_000; // 15 seconds (Stooq can be slow)
 
 // Tickers that have a different symbol on Stooq than on Bossa/GPW
 const STOOQ_TICKER_ALIASES: Record<string, string> = {
@@ -53,7 +26,7 @@ const STOOQ_TICKER_BLACKLIST = new Set([
 ]);
 
 function resolveStooqTicker(ticker: string): string | null {
-  const raw = ticker.replace('.WA', '').toLowerCase();
+  const raw = stripTickerSuffix(ticker).toLowerCase();
   if (STOOQ_TICKER_BLACKLIST.has(raw)) return null;
   return STOOQ_TICKER_ALIASES[raw] || raw;
 }
@@ -73,24 +46,15 @@ export async function fetchStooqPrice(ticker: string): Promise<number | null> {
     try {
       const url = `https://stooq.pl/q/l/?s=${stooqTicker}&f=sd2t2ohlcv&h&e=csv`;
       const response = await fetch(url, {
-        headers: { 'User-Agent': USER_AGENT },
+        headers: { 'User-Agent': STOOQ_USER_AGENT },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
       });
       const text = await response.text();
-      const lines = text.trim().split('\n');
-      if (lines.length < 2) return null;
+      const result = parseStooqLiveCsv(text);
+      if (!result) return null;
 
-      const headers = lines[0].split(',');
-      const values = lines[1].split(',');
-      const closeIdx = headers.findIndex(
-        (h) => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close',
-      );
-
-      if (closeIdx === -1) return null;
-      const price = parseFloat(values[closeIdx]);
-      if (isNaN(price)) return null;
-
-      setCached(cacheKey, price, config.cache.stooqLiveTtl);
-      return price;
+      setCached(cacheKey, result.close, config.cache.stooqLiveTtl);
+      return result.close;
     } catch (error) {
       console.error(`Stooq price fetch failed for ${ticker}:`, error);
       return null;
@@ -116,7 +80,10 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
       const d1 = start.toISOString().slice(0, 10).replace(/-/g, '');
       const d2 = end.toISOString().slice(0, 10).replace(/-/g, '');
       const url = `https://stooq.pl/q/d/l/?s=${stooqTicker}&i=d&d1=${d1}&d2=${d2}`;
-      const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+      const response = await fetch(url, {
+        headers: { 'User-Agent': STOOQ_USER_AGENT },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
+      });
       const text = await response.text();
       if (isStooqBlocked(text)) {
         // Fallback to SQLite cache
@@ -152,17 +119,11 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
         return null;
       }
 
-      const headers = lines[0].split(',');
-      const closeIdx = headers.findIndex(
-        (h) => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close',
-      );
+      const { dateIdx, closeIdx } = parseStooqCsvHeaders(lines[0]);
       if (closeIdx === -1) return null;
 
       // Parse all rows, sort by date, take second-to-last
       const rows: { date: string; close: number }[] = [];
-      const dateIdx = headers.findIndex(
-        (h) => h.toLowerCase() === 'data' || h.toLowerCase() === 'date',
-      );
       for (let i = 1; i < lines.length; i++) {
         const vals = lines[i].split(',');
         const date = dateIdx >= 0 ? vals[dateIdx] : '';
@@ -190,29 +151,14 @@ async function fetchLiveClose(
   stooqTicker: string,
 ): Promise<{ date: string; close: number } | null> {
   try {
-    // Try Stooq live quote API first
     const url = `https://stooq.pl/q/l/?s=${stooqTicker}&f=sd2t2ohlcv&h&e=csv`;
-    const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+    const response = await fetch(url, {
+      headers: { 'User-Agent': STOOQ_USER_AGENT },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT),
+    });
     const text = await response.text();
-
-    if (!isStooqBlocked(text)) {
-      const lines = text.trim().split('\n');
-      if (lines.length >= 2) {
-        const headers = lines[0].split(',');
-        const values = lines[1].split(',');
-        const dateIdx = headers.findIndex(
-          (h) => h.toLowerCase() === 'data' || h.toLowerCase() === 'date',
-        );
-        const closeIdx = headers.findIndex(
-          (h) => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close',
-        );
-        if (dateIdx !== -1 && closeIdx !== -1) {
-          const date = values[dateIdx]?.trim();
-          const close = parseFloat(values[closeIdx]?.trim());
-          if (date && !isNaN(close)) return { date, close };
-        }
-      }
-    }
+    const result = parseStooqLiveCsv(text);
+    if (result) return result;
   } catch {
     /* fall through to Yahoo */
   }
@@ -223,13 +169,16 @@ async function fetchLiveClose(
 
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1d&range=1d`;
-    const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+    const response = await fetch(url, {
+      headers: { 'User-Agent': STOOQ_USER_AGENT },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT),
+    });
     const json = (await response.json()) as any;
-    const result = json.chart?.result?.[0];
-    if (!result?.timestamp?.length) return null;
-    const lastIdx = result.timestamp.length - 1;
-    const ts = result.timestamp[lastIdx];
-    const close = result.indicators?.quote?.[0]?.close?.[lastIdx];
+    const chartResult = json.chart?.result?.[0];
+    if (!chartResult?.timestamp?.length) return null;
+    const lastIdx = chartResult.timestamp.length - 1;
+    const ts = chartResult.timestamp[lastIdx];
+    const close = chartResult.indicators?.quote?.[0]?.close?.[lastIdx];
     if (!ts || close == null || isNaN(close)) return null;
     const date = new Date(ts * 1000).toISOString().split('T')[0];
     return { date, close };
@@ -281,7 +230,8 @@ export async function fetchStooqHistory(
       }
 
       const response = await fetch(url, {
-        headers: { 'User-Agent': USER_AGENT },
+        headers: { 'User-Agent': STOOQ_USER_AGENT },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
       });
       const text = await response.text();
       if (isStooqBlocked(text)) {
@@ -313,13 +263,7 @@ export async function fetchStooqHistory(
         return [];
       }
 
-      const headers = lines[0].split(',');
-      const dateIdx = headers.findIndex(
-        (h) => h.toLowerCase() === 'data' || h.toLowerCase() === 'date',
-      );
-      const closeIdx = headers.findIndex(
-        (h) => h.toLowerCase().includes('zamkni') || h.toLowerCase() === 'close',
-      );
+      const { dateIdx, closeIdx } = parseStooqCsvHeaders(lines[0]);
 
       if (dateIdx === -1 || closeIdx === -1) {
         if (cachedData.length > 0) return cachedData;
@@ -342,8 +286,14 @@ export async function fetchStooqHistory(
         storeHistoricalPrices(stooqTicker, freshData, 'stooq');
       }
 
-      // Merge: load full range from persistent cache (now includes fresh data)
-      const mergedData = loadHistoricalPrices(stooqTicker, startDate);
+      // Merge in-memory instead of reloading full history from SQLite
+      const existingDates = new Set(cachedData.map((d) => d.date));
+      const mergedData = [...cachedData];
+      for (const point of freshData) {
+        if (!existingDates.has(point.date)) {
+          mergedData.push(point);
+        }
+      }
       mergedData.sort((a, b) => a.date.localeCompare(b.date));
       setCached(cacheKey, mergedData, 12 * 3600);
       return mergedData;

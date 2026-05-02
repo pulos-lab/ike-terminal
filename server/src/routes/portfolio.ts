@@ -416,17 +416,24 @@ router.get(
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
 
-    const totals = {
-      fees: operations.filter((o) => o.category === 'fee').reduce((s, o) => s + o.amount, 0),
-      commissionRefunds: operations
-        .filter((o) => o.category === 'commission_refund')
-        .reduce((s, o) => s + o.amount, 0),
-      tradeFees: operations
-        .filter((o) => o.category === 'trade_fee')
-        .reduce((s, o) => s + o.amount, 0),
-      other: operations.filter((o) => o.category === 'other').reduce((s, o) => s + o.amount, 0),
-      grandTotal: operations.reduce((s, o) => s + o.amount, 0),
-    };
+    const totals = { fees: 0, commissionRefunds: 0, tradeFees: 0, other: 0, grandTotal: 0 };
+    for (const o of operations) {
+      totals.grandTotal += o.amount;
+      switch (o.category) {
+        case 'fee':
+          totals.fees += o.amount;
+          break;
+        case 'commission_refund':
+          totals.commissionRefunds += o.amount;
+          break;
+        case 'trade_fee':
+          totals.tradeFees += o.amount;
+          break;
+        case 'other':
+          totals.other += o.amount;
+          break;
+      }
+    }
 
     // Base currency = jedyna waluta wpłat/wypłat lub PLN fallback. UI używa tego do
     // wyświetlenia sum na kaflach w odpowiedniej walucie (XTB USD sub-account → USD, nie PLN).

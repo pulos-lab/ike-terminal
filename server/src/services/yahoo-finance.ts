@@ -12,6 +12,7 @@ const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/
 const HEADERS = {
   'User-Agent': USER_AGENT,
 };
+const FETCH_TIMEOUT = 10_000; // 10 seconds
 
 // ============ Yahoo Auth (crumb + cookies for v10) ============
 
@@ -27,6 +28,7 @@ async function refreshYahooCrumb(): Promise<void> {
     const resp1 = await fetch('https://fc.yahoo.com/', {
       headers: { 'User-Agent': USER_AGENT },
       redirect: 'manual',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT),
     });
     const setCookieHeaders = resp1.headers.getSetCookie?.() || [];
     cachedCookies = setCookieHeaders.map((c) => c.split(';')[0]).join('; ');
@@ -39,6 +41,7 @@ async function refreshYahooCrumb(): Promise<void> {
     // Step 2: Get crumb with cookies
     const resp2 = await fetch('https://query2.finance.yahoo.com/v1/test/getcrumb', {
       headers: { 'User-Agent': USER_AGENT, Cookie: cachedCookies },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT),
     });
     if (!resp2.ok) {
       console.warn(`[yahoo-auth] Crumb fetch failed: HTTP ${resp2.status}`);
@@ -74,6 +77,7 @@ async function yahooQuoteSummary(ticker: string, modules: string[]): Promise<any
 
   const resp = await fetch(url, {
     headers: { 'User-Agent': USER_AGENT, Cookie: auth.cookies },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT),
   });
 
   if (resp.status === 401 || resp.status === 403) {
@@ -89,6 +93,7 @@ async function yahooQuoteSummary(ticker: string, modules: string[]): Promise<any
     const url2 = `${YAHOO_V10_BASE}/${encodeURIComponent(ticker)}?${params2}`;
     const resp2 = await fetch(url2, {
       headers: { 'User-Agent': USER_AGENT, Cookie: auth2.cookies },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT),
     });
     if (!resp2.ok) return null;
     const json2 = await resp2.json();
@@ -194,39 +199,51 @@ export async function fetchAssetProfile(ticker: string): Promise<AssetProfile | 
 async function yahooChart(ticker: string, params: Record<string, string>): Promise<any> {
   const qs = new URLSearchParams(params).toString();
   const url = `${YAHOO_BASE}/${encodeURIComponent(ticker)}?${qs}`;
-  const resp = await fetch(url, { headers: HEADERS });
+  const resp = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT) });
   if (!resp.ok) throw new Error(`Yahoo HTTP ${resp.status}`);
   const json = await resp.json();
   return json?.chart?.result?.[0] ?? null;
 }
 
+// In-flight request deduplication — prevents duplicate Yahoo API calls for the same ticker
+type YahooPriceResult = { price: number; currency: string; previousClose: number | null } | null;
+const inFlightPrices = new Map<string, Promise<YahooPriceResult>>();
+
 /**
  * Fetch current price from Yahoo Finance (v8 chart API)
  */
-export async function fetchYahooPrice(
-  ticker: string,
-): Promise<{ price: number; currency: string; previousClose: number | null } | null> {
+export async function fetchYahooPrice(ticker: string): Promise<YahooPriceResult> {
   const cacheKey = `yahoo_live_${ticker}`;
   const cached = getCached<{ price: number; currency: string; previousClose: number | null }>(
     cacheKey,
   );
   if (cached) return cached;
 
-  try {
-    const result = await yahooChart(ticker, { interval: '1d', range: '1d' });
-    if (!result?.meta?.regularMarketPrice) return null;
+  const existing = inFlightPrices.get(ticker);
+  if (existing) return existing;
 
-    const data = {
-      price: result.meta.regularMarketPrice,
-      currency: result.meta.currency || 'USD',
-      previousClose: result.meta.chartPreviousClose ?? result.meta.previousClose ?? null,
-    };
-    setCached(cacheKey, data);
-    return data;
-  } catch (error) {
-    console.error(`Yahoo price fetch failed for ${ticker}:`, error);
-    return null;
-  }
+  const promise = (async (): Promise<YahooPriceResult> => {
+    try {
+      const result = await yahooChart(ticker, { interval: '1d', range: '1d' });
+      if (!result?.meta?.regularMarketPrice) return null;
+
+      const data = {
+        price: result.meta.regularMarketPrice,
+        currency: result.meta.currency || 'USD',
+        previousClose: result.meta.chartPreviousClose ?? result.meta.previousClose ?? null,
+      };
+      setCached(cacheKey, data);
+      return data;
+    } catch (error) {
+      console.error(`Yahoo price fetch failed for ${ticker}:`, error);
+      return null;
+    } finally {
+      inFlightPrices.delete(ticker);
+    }
+  })();
+
+  inFlightPrices.set(ticker, promise);
+  return promise;
 }
 
 /**

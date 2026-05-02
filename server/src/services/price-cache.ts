@@ -6,14 +6,6 @@ const cache = new NodeCache({
   checkperiod: 120,
 });
 
-export function getCachedPrice(key: string): number | undefined {
-  return cache.get<number>(key);
-}
-
-export function setCachedPrice(key: string, price: number, ttl?: number): void {
-  cache.set(key, price, ttl || config.cache.priceTtl);
-}
-
 export function getCached<T>(key: string): T | undefined {
   return cache.get<T>(key);
 }

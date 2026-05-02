@@ -91,6 +91,10 @@ export function parseBossaTransactions(
       skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName });
       continue;
     }
+    if (price <= 0) {
+      skipped.push({ row: rowNum, reason: 'invalid_price', paperName });
+      continue;
+    }
 
     const isoDate = parseDottedDate(dateStr);
 
@@ -106,7 +110,7 @@ export function parseBossaTransactions(
       date: isoDate,
       paperName: canonicalPaperName,
       isin: canonicalIsin,
-      quantity: Math.round(quantity),
+      quantity: Math.round(quantity), // GPW/NC: only whole shares; round removes CSV floating-point noise
       side,
       price,
       value,

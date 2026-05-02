@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
-import { parseNumber, roundTo2 } from './utils.js';
+import { parseNumber, roundTo2, parseDegiroDate } from './utils.js';
 
 /**
  * Parse DEGIRO Transactions CSV.
@@ -214,18 +214,6 @@ function mapColumns(header: string[]): ColumnMap {
   }
 
   return { fee: feeIdx, fxRate: fxRateIdx };
-}
-
-/**
- * Parse DEGIRO date (DD-MM-YYYY) + time (HH:MM) to ISO 8601.
- */
-function parseDegiroDate(dateStr: string, timeStr?: string): string {
-  const match = dateStr.match(/(\d{2})-(\d{2})-(\d{4})/);
-  if (match) {
-    const time = timeStr ? `${timeStr}:00` : '00:00:00';
-    return `${match[3]}-${match[2]}-${match[1]}T${time}`;
-  }
-  return dateStr;
 }
 
 /**

@@ -582,8 +582,20 @@ function reconcileBossaRedemptions(
   if (redemptions.length === 0) return 0;
   let added = 0;
 
+  // Load all transactions once and group by ticker to avoid N+1 DB queries
+  const allTx = getAllTransactions(pid);
+  const txByTicker = new Map<string, typeof allTx>();
+  for (const t of allTx) {
+    let arr = txByTicker.get(t.paperName);
+    if (!arr) {
+      arr = [];
+      txByTicker.set(t.paperName, arr);
+    }
+    arr.push(t);
+  }
+
   for (const red of redemptions) {
-    const allTxForTicker = getAllTransactions(pid).filter((t) => t.paperName === red.ticker);
+    const allTxForTicker = txByTicker.get(red.ticker) || [];
     if (allTxForTicker.length === 0) {
       warnings.push(
         `Bossa: ${red.description} bez pasujących zakupów w historii (ticker: ${red.ticker}) — pomijam syntetyczną sprzedaż`,
