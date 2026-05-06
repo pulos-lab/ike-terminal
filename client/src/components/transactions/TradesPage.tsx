@@ -1,4 +1,4 @@
-import { useState, Fragment } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { usePortfolio } from '@/lib/portfolio-context';
@@ -95,6 +95,8 @@ export function TradesPage() {
     price: '',
     commission: '0',
   });
+  // Czy user ręcznie tknął prowizję — wyłącza auto-recalc po zmianie ceny/ilości.
+  const [sellCommissionTouched, setSellCommissionTouched] = useState(false);
 
   // Expand/collapse lot details
   const [expandedPositions, togglePosition] = useToggleSet<string>();
@@ -164,7 +166,19 @@ export function TradesPage() {
       price,
       commission,
     });
+    setSellCommissionTouched(false);
   }
+
+  // Auto-recalc prowizji po zmianie ceny/ilości (analogicznie do AddTransactionDialog).
+  // Jeśli user ręcznie nadpisał prowizję — przestajemy nadpisywać jego wartość.
+  useEffect(() => {
+    if (!sellingTicker) return;
+    if (sellCommissionTouched) return;
+    if (!sellForm.quantity || !sellForm.price) return;
+    const next = calcCommission(sellingTicker, sellForm.quantity, sellForm.price);
+    setSellForm((prev) => (prev.commission === next ? prev : { ...prev, commission: next }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sellingTicker, sellForm.quantity, sellForm.price, sellCommissionTouched]);
 
   const isSellValid =
     sellForm.date &&
@@ -498,16 +512,23 @@ export function TradesPage() {
                                       </div>
                                       <div className="flex flex-col gap-2">
                                         <label className="text-xs text-muted-foreground">
-                                          Prowizja
+                                          Prowizja{' '}
+                                          {!sellCommissionTouched && (
+                                            <span className="text-[10px] opacity-60">(auto)</span>
+                                          )}
                                         </label>
                                         <Input
                                           type="number"
                                           step="0.01"
                                           min="0"
                                           value={sellForm.commission}
-                                          onChange={(e) =>
-                                            setSellForm({ ...sellForm, commission: e.target.value })
-                                          }
+                                          onChange={(e) => {
+                                            setSellForm({
+                                              ...sellForm,
+                                              commission: e.target.value,
+                                            });
+                                            setSellCommissionTouched(true);
+                                          }}
                                           className="h-8 w-[90px] text-right"
                                         />
                                       </div>
