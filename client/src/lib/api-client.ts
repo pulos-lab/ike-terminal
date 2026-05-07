@@ -99,7 +99,13 @@ export const api = {
     }),
   updateDividend: (
     id: number,
-    body: { date: string; ticker: string; amount: number; currency: string },
+    body: {
+      date: string;
+      ticker: string;
+      amount: number;
+      currency: string;
+      description?: string;
+    },
   ) =>
     request<{ success: boolean }>(`/portfolio/dividends/${id}`, {
       method: 'PUT',

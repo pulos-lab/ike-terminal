@@ -34,6 +34,8 @@ export interface DividendDialogValues {
   ticker: string;
   amount: number;
   currency: string;
+  description?: string;
+  source?: string;
 }
 
 interface AddDividendDialogProps {
@@ -53,6 +55,7 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
   const [ticker, setTicker] = useState(defaultValues?.ticker ?? '');
   const [amount, setAmount] = useState(defaultValues?.amount ? String(defaultValues.amount) : '');
   const [currency, setCurrency] = useState(defaultValues?.currency ?? 'PLN');
+  const [description, setDescription] = useState(defaultValues?.description ?? '');
 
   useEffect(() => {
     if (!open) return;
@@ -60,6 +63,7 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
     setTicker(defaultValues?.ticker ?? '');
     setAmount(defaultValues?.amount ? String(defaultValues.amount) : '');
     setCurrency(defaultValues?.currency ?? 'PLN');
+    setDescription(defaultValues?.description ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultValues?.id]);
 
@@ -81,6 +85,7 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
         ticker,
         amount: parseFloat(amount),
         currency,
+        description: description.trim() ? description.trim() : undefined,
       });
     },
     onSuccess: () => {
@@ -150,6 +155,23 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
               </Select>
             </div>
           </div>
+
+          {isEdit && (
+            <div>
+              <label className="text-xs text-muted-foreground">Opis</label>
+              <textarea
+                className="w-full min-h-[60px] rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-y"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Opis dywidendy"
+              />
+              {defaultValues?.source === 'auto-yahoo' && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Po zapisie zostanie oznaczone jako Ręczne.
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         <DialogFooter>

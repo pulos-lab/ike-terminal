@@ -257,6 +257,9 @@ router.post(
 );
 
 // PUT /api/portfolio/dividends/:id
+// Editable sources: 'manual' and 'auto-yahoo' only. Broker imports stay locked
+// (CSV/XLSX is the source of truth). Editing an auto-yahoo entry flips its source
+// to 'manual' as the "edited" marker — the rich original description is preserved.
 router.put(
   '/dividends/:id',
   asyncHandler((req, res) => {
@@ -266,15 +269,27 @@ router.put(
     if (!existing || existing.operationType !== 'dividend') {
       return res.status(404).json({ error: 'Dywidenda nie znaleziona' });
     }
-    const { date, ticker, amount, currency } = req.body as DividendInput;
+    if (existing.source !== 'manual' && existing.source !== 'auto-yahoo') {
+      return res.status(403).json({ error: 'Importy z brokerów są nieedytowalne' });
+    }
+    const { date, ticker, amount, currency, description } = req.body as DividendInput;
+    const newTicker = ticker?.toUpperCase() || existing.ticker;
+    const tickerChanged = newTicker !== existing.ticker;
+    const newDescription =
+      description !== undefined
+        ? description
+        : tickerChanged
+          ? `Wypłata dywidendy ${newTicker}`
+          : existing.description;
     const updated = updateOperation(
       id,
       {
         date: date || existing.date,
         amount: amount ?? existing.amount,
         currency: currency || existing.currency,
-        ticker: ticker?.toUpperCase() || existing.ticker,
-        description: ticker ? `Wypłata dywidendy ${ticker.toUpperCase()}` : existing.description,
+        ticker: newTicker,
+        description: newDescription,
+        source: existing.source === 'auto-yahoo' ? 'manual' : existing.source,
       },
       pid,
     );
@@ -286,6 +301,7 @@ router.put(
 );
 
 // DELETE /api/portfolio/dividends/:id
+// Same source whitelist as PUT — broker imports are protected.
 router.delete(
   '/dividends/:id',
   asyncHandler((req, res) => {
@@ -294,6 +310,9 @@ router.delete(
     const existing = getOperationById(id, pid);
     if (!existing || existing.operationType !== 'dividend') {
       return res.status(404).json({ error: 'Dywidenda nie znaleziona' });
+    }
+    if (existing.source !== 'manual' && existing.source !== 'auto-yahoo') {
+      return res.status(403).json({ error: 'Importy z brokerów są nieedytowalne' });
     }
     const deleted = deleteOperation(id, pid);
     if (!deleted) {
