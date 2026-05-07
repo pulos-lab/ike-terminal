@@ -25,6 +25,7 @@ import { TradesSummary } from './TradesSummary';
 import { PositionCardMobile } from './PositionCardMobile';
 import { TradesFeed } from './TradesFeed';
 import { AddTransactionDialog } from './AddTransactionDialog';
+import { SellPositionDialog } from './SellPositionDialog';
 import { toast } from 'sonner';
 
 interface BuyLot {
@@ -97,6 +98,10 @@ export function TradesPage() {
   });
   // Czy user ręcznie tknął prowizję — wyłącza auto-recalc po zmianie ceny/ilości.
   const [sellCommissionTouched, setSellCommissionTouched] = useState(false);
+
+  // Mobile sell flow — modal Dialog zamiast inline form (na małym ekranie inline jest niepraktyczny).
+  // Trzymane osobno od `sellingTicker`, żeby desktopowy inline flow działał niezależnie.
+  const [mobileSellPosition, setMobileSellPosition] = useState<Position | null>(null);
 
   // Expand/collapse lot details
   const [expandedPositions, togglePosition] = useToggleSet<string>();
@@ -306,9 +311,7 @@ export function TradesPage() {
                         position={pos}
                         isExpanded={expandedPositions.has(pos.ticker)}
                         onToggle={() => togglePosition(pos.ticker)}
-                        onSell={() =>
-                          sellingTicker === pos.ticker ? setSellingTicker(null) : startSell(pos)
-                        }
+                        onSell={() => setMobileSellPosition(pos)}
                       />
                     ))}
                   </div>
@@ -592,6 +595,11 @@ export function TradesPage() {
       )}
 
       <AddTransactionDialog open={addOpen} onClose={() => setAddOpen(false)} />
+
+      <SellPositionDialog
+        position={mobileSellPosition}
+        onClose={() => setMobileSellPosition(null)}
+      />
     </div>
   );
 }
