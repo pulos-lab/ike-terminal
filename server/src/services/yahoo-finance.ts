@@ -5,6 +5,7 @@ import {
   getLastCachedDate,
   getFirstCachedDate,
 } from './history-cache.js';
+import { getYahooAuth, invalidateYahooAuth } from './yahoo-auth.js';
 
 const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const YAHOO_V10_BASE = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary';
@@ -13,55 +14,6 @@ const HEADERS = {
   'User-Agent': USER_AGENT,
 };
 const FETCH_TIMEOUT = 10_000; // 10 seconds
-
-// ============ Yahoo Auth (crumb + cookies for v10) ============
-
-let cachedCrumb: string | null = null;
-let cachedCookies: string | null = null;
-let crumbExpiresAt = 0;
-
-const CRUMB_TTL = 6 * 3600 * 1000; // 6 hours
-
-async function refreshYahooCrumb(): Promise<void> {
-  try {
-    // Step 1: Get cookies from fc.yahoo.com
-    const resp1 = await fetch('https://fc.yahoo.com/', {
-      headers: { 'User-Agent': USER_AGENT },
-      redirect: 'manual',
-      signal: AbortSignal.timeout(FETCH_TIMEOUT),
-    });
-    const setCookieHeaders = resp1.headers.getSetCookie?.() || [];
-    cachedCookies = setCookieHeaders.map((c) => c.split(';')[0]).join('; ');
-
-    if (!cachedCookies) {
-      console.warn('[yahoo-auth] No cookies received from fc.yahoo.com');
-      return;
-    }
-
-    // Step 2: Get crumb with cookies
-    const resp2 = await fetch('https://query2.finance.yahoo.com/v1/test/getcrumb', {
-      headers: { 'User-Agent': USER_AGENT, Cookie: cachedCookies },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT),
-    });
-    if (!resp2.ok) {
-      console.warn(`[yahoo-auth] Crumb fetch failed: HTTP ${resp2.status}`);
-      return;
-    }
-    cachedCrumb = await resp2.text();
-    crumbExpiresAt = Date.now() + CRUMB_TTL;
-    console.log('[yahoo-auth] Crumb refreshed successfully');
-  } catch (error) {
-    console.error('[yahoo-auth] Failed to refresh crumb:', error);
-  }
-}
-
-async function getYahooAuth(): Promise<{ crumb: string; cookies: string } | null> {
-  if (!cachedCrumb || !cachedCookies || Date.now() > crumbExpiresAt) {
-    await refreshYahooCrumb();
-  }
-  if (!cachedCrumb || !cachedCookies) return null;
-  return { crumb: cachedCrumb, cookies: cachedCookies };
-}
 
 // ============ v10 quoteSummary ============
 
@@ -82,7 +34,7 @@ async function yahooQuoteSummary(ticker: string, modules: string[]): Promise<any
 
   if (resp.status === 401 || resp.status === 403) {
     // Crumb expired — refresh and retry once
-    cachedCrumb = null;
+    invalidateYahooAuth();
     const auth2 = await getYahooAuth();
     if (!auth2) return null;
 
