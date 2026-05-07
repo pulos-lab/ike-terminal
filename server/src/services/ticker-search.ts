@@ -2,27 +2,39 @@ import { getCached, setCached } from './price-cache.js';
 import { getAllTickers } from '../db/ticker-map-repo.js';
 import type { TickerSearchResult } from 'shared';
 import { stripTickerSuffix } from './stooq-utils.js';
+import { getYahooAuth } from './yahoo-auth.js';
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 
 /**
- * Search Yahoo Finance for ticker symbols
+ * Search Yahoo Finance for ticker symbols.
+ * Uses crumb+cookies auth — bez tego Yahoo zwraca HTTP 500 dla większości zapytań.
  */
 export async function searchYahoo(query: string): Promise<TickerSearchResult[]> {
   try {
-    const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=10&newsCount=0&listsCount=0`;
-    const resp = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+    const auth = await getYahooAuth();
+    const params = new URLSearchParams({
+      q: query,
+      quotesCount: '10',
+      newsCount: '0',
+      listsCount: '0',
+    });
+    if (auth?.crumb) params.set('crumb', auth.crumb);
+    const url = `https://query2.finance.yahoo.com/v1/finance/search?${params}`;
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': USER_AGENT,
+        ...(auth?.cookies ? { Cookie: auth.cookies } : {}),
+      },
+    });
     if (!resp.ok) return [];
     const json = await resp.json();
     const quotes: any[] = json?.quotes || [];
     return quotes
-      .filter(
-        (q: any) =>
-          q.typeDisp === 'Equity' ||
-          q.quoteType === 'EQUITY' ||
-          q.typeDisp === 'ETF' ||
-          q.quoteType === 'ETF',
-      )
+      .filter((q: any) => {
+        const t = String(q.quoteType || q.typeDisp || '').toUpperCase();
+        return t === 'EQUITY' || t === 'ETF';
+      })
       .map((q: any) => ({
         symbol: q.symbol,
         name: q.longname || q.shortname || q.symbol,
@@ -200,6 +212,7 @@ export async function searchTickers(query: string): Promise<TickerSearchResult[]
   }
 
   const limited = results.slice(0, 15);
-  setCached(cacheKey, limited, 300); // cache 5 min
+  // Krótszy TTL dla pustych wyników — chwilowy 500 z Yahoo nie blokuje podpowiedzi na 5 min
+  setCached(cacheKey, limited, limited.length === 0 ? 30 : 300);
   return limited;
 }
