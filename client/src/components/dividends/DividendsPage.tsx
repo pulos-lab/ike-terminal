@@ -427,7 +427,7 @@ export function DividendsPage() {
                               <span className="text-right">{d.description}</span>
                             </div>
                           )}
-                          {d.source === 'manual' && (
+                          {(d.source === 'manual' || d.source === 'auto-yahoo') && (
                             <div className="flex justify-end gap-1.5 pt-1">
                               <Button
                                 size="sm"
@@ -487,7 +487,7 @@ export function DividendsPage() {
                           <SourceBadge source={d.source} />
                         </TableCell>
                         <TableCell>
-                          {d.source === 'manual' && (
+                          {(d.source === 'manual' || d.source === 'auto-yahoo') && (
                             <div className="flex gap-1">
                               <Button
                                 size="icon-xs"
@@ -531,6 +531,8 @@ export function DividendsPage() {
                 ticker: editing.ticker,
                 amount: editing.amount,
                 currency: editing.currency,
+                description: editing.description,
+                source: editing.source,
               }
             : undefined
         }

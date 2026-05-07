@@ -213,6 +213,7 @@ export interface DividendInput {
   ticker: string;
   amount: number;
   currency: string;
+  description?: string;
 }
 
 export interface DepositInput {
