@@ -45,6 +45,8 @@ export function invalidateDividends(qc: QueryClient) {
 export function invalidateFx(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: QUERY_KEYS.fxHistory });
   qc.invalidateQueries({ queryKey: QUERY_KEYS.positions });
+  qc.invalidateQueries({ queryKey: QUERY_KEYS.metrics });
+  qc.invalidateQueries({ queryKey: QUERY_KEYS.cashFlow });
 }
 
 /** Invalidate corporate actions data — rippels through metrics/transactions po resolve (synthetic SELL). */

@@ -325,13 +325,18 @@ export interface FxImpactCurrencyEntry {
   exposurePln: number;
   /** Jaki % całego portfela stanowi ta waluta (exposurePln / totalPortfolio). */
   exposurePctOfPortfolio: number;
-  /** Średni ważony kurs PLN za 1 jednostkę waluty przy zakupach. */
-  avgPlnPerCurrency: number;
+  /** Średni ważony kurs PLN za 1 jednostkę waluty przy zakupach.
+   *  `null` gdy waluta jest w portfelu (np. CSU.TO/CAD kupione przez Bossa za PLN),
+   *  ale brak operacji `fx_exchange`/`deposit` z fxRate ani implied rate z Yahoo —
+   *  ekspozycja jest znana, ale kurs wejścia nie. Frontend pokazuje "brak danych". */
+  avgPlnPerCurrency: number | null;
   /** Dzisiejszy kurs PLN za 1 jednostkę waluty. */
   todayPlnPerCurrency: number;
-  /** Wpływ walut dla tej waluty w PLN (exposureNative × (today − avg)). */
+  /** Wpływ walut dla tej waluty w PLN (exposureNative × (today − avg)).
+   *  0 gdy `avgPlnPerCurrency` jest null (impact niemożliwy do policzenia). */
   impactPln: number;
-  /** Wpływ walut dla tej waluty jako % zmiany kursu (today/avg − 1). */
+  /** Wpływ walut dla tej waluty jako % zmiany kursu (today/avg − 1).
+   *  0 gdy `avgPlnPerCurrency` jest null. */
   impactPct: number;
   /** Łączna suma wydarzeń "zakupu" tej waluty (natywnie). */
   totalAcquiredNative: number;

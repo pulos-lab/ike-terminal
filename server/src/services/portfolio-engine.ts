@@ -1038,12 +1038,22 @@ export function computeFxImpact(
    *  Gdy podane, nadpisuje liczone wewnętrznie `exposureNative × todayFx` — gwarantuje że
    *  Σ exposurePln + część PLN = totalPortfolioValuePln (matematycznie). */
   exposurePlnByCurrency?: Map<string, number>,
+  /** Implied acquisition events dla transakcji walut obcych rozliczanych przez brokera
+   *  w PLN (np. Bossa: kupno CSU.TO/CAD płacone z PLN bez explicit fx_exchange).
+   *  Caller (route) pre-fetchuje Yahoo historical native price na dacie transakcji
+   *  i wylicza `acquiredNative = qty × native_price`, `plnPaid = transaction.value`.
+   *  Mapa: currency → { acquiredNative (Σ), plnPaid (Σ) }.
+   *  Akumulowane z acquisition events z `operations` (nie zamieniają się). */
+  impliedAcquisitions?: Map<string, { acquiredNative: number; plnPaid: number }>,
 ): FxImpact | null {
   const breakdown: FxImpactCurrencyEntry[] = [];
 
   for (const [currency, exposureNative] of foreignExposures) {
     if (currency === 'PLN') continue;
     if (exposureNative <= 0) continue;
+
+    const todayPlnPerCurrency = todayFxRatesToPln.get(currency) ?? 0;
+    if (todayPlnPerCurrency <= 0) continue;
 
     let totalAcquiredNative = 0;
     let sumAcquiredTimesPlnPerX = 0;
@@ -1068,15 +1078,24 @@ export function computeFxImpact(
       sumAcquiredTimesPlnPerX += acquired * plnPerX;
     }
 
-    if (totalAcquiredNative <= 0) continue;
+    // Doliczyć implied acquisitions (broker rozliczał wewnętrznie w PLN, np. Bossa CAD).
+    const implied = impliedAcquisitions?.get(currency.toUpperCase());
+    if (implied && implied.acquiredNative > 0) {
+      totalAcquiredNative += implied.acquiredNative;
+      sumAcquiredTimesPlnPerX += implied.plnPaid;
+    }
 
-    const avgPlnPerCurrency = sumAcquiredTimesPlnPerX / totalAcquiredNative;
-    const todayPlnPerCurrency = todayFxRatesToPln.get(currency) ?? 0;
-    if (todayPlnPerCurrency <= 0) continue;
+    // Acquisition-dependent fields — gdy brak ANY acquisition events (operations + implied),
+    // ekspozycja jest pokazywana ale impact jest nieznany (avg=null, impact=0).
+    let avgPlnPerCurrency: number | null = null;
+    let impactPln = 0;
+    let impactPct = 0;
+    if (totalAcquiredNative > 0) {
+      avgPlnPerCurrency = sumAcquiredTimesPlnPerX / totalAcquiredNative;
+      impactPln = exposureNative * (todayPlnPerCurrency - avgPlnPerCurrency);
+      impactPct = avgPlnPerCurrency > 0 ? (todayPlnPerCurrency / avgPlnPerCurrency - 1) * 100 : 0;
+    }
 
-    const impactPln = exposureNative * (todayPlnPerCurrency - avgPlnPerCurrency);
-    const impactPct =
-      avgPlnPerCurrency > 0 ? (todayPlnPerCurrency / avgPlnPerCurrency - 1) * 100 : 0;
     const exposurePln =
       exposurePlnByCurrency?.get(currency) ?? exposureNative * todayPlnPerCurrency;
     const exposurePctOfPortfolio =
