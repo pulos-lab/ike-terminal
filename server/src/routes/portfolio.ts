@@ -32,6 +32,7 @@ import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db
 import type {
   DividendInput,
   DepositInput,
+  Transaction,
   TransactionInput,
   TickerMapEntry,
   FxExchangeInput,
@@ -1178,6 +1179,78 @@ router.get(
       );
     }
 
+    // Implied FX acquisitions — dla zakupów zagranicznych akcji rozliczanych przez
+    // brokera bezpośrednio w PLN, gdzie nie ma explicit fx_exchange w bazie (typowy
+    // scenariusz Bossa Zagranica: kupno CSU.TO/CAD płacone z PLN, broker konwertuje
+    // wewnętrznie i nie eksponuje kursu w pliku importu).
+    //
+    // Warunek: tx.side='K' AND tx.currency='PLN' AND ticker_map.currency != 'PLN'.
+    // Dla każdej takiej transakcji fetchujemy Yahoo historical native close cenę
+    // na dacie transakcji i wyliczamy implied rate jako proxy:
+    //   acquiredNative = qty × native_price       // ile waluty obcej "weszło" do portfela
+    //   plnPaid = tx.value                        // ile PLN zapłacono (bez prowizji)
+    // Engine sumuje to z acquisition events z `operations` (akumulacja, nie zamiana).
+    type ImpliedTxBucket = { nativeCcy: string; dates: Set<string>; txs: Transaction[] };
+    const impliedTxsByTicker = new Map<string, ImpliedTxBucket>();
+    for (const tx of transactions) {
+      if (tx.side !== 'K') continue;
+      const settleCcy = (tx.currency || '').toUpperCase();
+      if (settleCcy !== 'PLN') continue; // cross-rate (np. DEGIRO USD↔EUR) obsługiwane przez historicalCrossRates
+      const entry = tickerMap.get(tx.isin);
+      const yahooTicker = entry?.ticker;
+      if (!yahooTicker) continue;
+      const rawNative = (entry?.currency || '').toUpperCase();
+      if (!rawNative || rawNative === 'PLN') continue; // akcja kwotowana w PLN — żaden implied rate niepotrzebny
+      const nativeCcy = rawNative === 'GBX' ? 'GBP' : rawNative;
+      let bucket = impliedTxsByTicker.get(yahooTicker);
+      if (!bucket) {
+        bucket = { nativeCcy, dates: new Set<string>(), txs: [] };
+        impliedTxsByTicker.set(yahooTicker, bucket);
+      }
+      bucket.dates.add(tx.date.split('T')[0]);
+      bucket.txs.push(tx);
+    }
+
+    const impliedAcquisitions = new Map<string, { acquiredNative: number; plnPaid: number }>();
+    if (impliedTxsByTicker.size > 0) {
+      await Promise.all(
+        [...impliedTxsByTicker.entries()].map(async ([ticker, bucket]) => {
+          const sortedDates = [...bucket.dates].sort();
+          const start = sortedDates[0];
+          const end = sortedDates[sortedDates.length - 1];
+          try {
+            const history = await fetchYahooHistory(ticker, start, end);
+            const dateToPrice = new Map<string, number>();
+            for (const d of history) dateToPrice.set(d.date, d.close);
+            for (const tx of bucket.txs) {
+              const date = tx.date.split('T')[0];
+              let nativePrice = dateToPrice.get(date);
+              if (!nativePrice) {
+                // Weekend/holiday fallback — najbliższa wcześniejsza data
+                const earlier = [...dateToPrice.keys()]
+                  .filter((d) => d <= date)
+                  .sort()
+                  .pop();
+                if (earlier) nativePrice = dateToPrice.get(earlier);
+              }
+              if (!nativePrice || nativePrice <= 0) continue;
+              const acquiredNative = tx.quantity * nativePrice;
+              const plnPaid = tx.value;
+              if (acquiredNative <= 0 || plnPaid <= 0) continue;
+              const cur = bucket.nativeCcy;
+              const existing = impliedAcquisitions.get(cur) ?? { acquiredNative: 0, plnPaid: 0 };
+              existing.acquiredNative += acquiredNative;
+              existing.plnPaid += plnPaid;
+              impliedAcquisitions.set(cur, existing);
+            }
+          } catch {
+            // Brak historii → implied dla tego tickera pomijany; waluta dostanie
+            // avgPlnPerCurrency=null w breakdown jeśli nie ma żadnego innego acquisition event.
+          }
+        }),
+      );
+    }
+
     const fxImpact = computeFxImpact(
       operations,
       foreignExposures,
@@ -1185,6 +1258,7 @@ router.get(
       totalPortfolioValuePln,
       historicalCrossRates,
       exposurePlnByCurrency,
+      impliedAcquisitions,
     );
 
     // KROK 4: ujednolicenie wartości na ekranie. currentValue = LIVE wycena (ta sama

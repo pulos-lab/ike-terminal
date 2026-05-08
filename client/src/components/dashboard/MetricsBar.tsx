@@ -93,7 +93,7 @@ interface FxImpactCurrencyEntry {
   exposureNative: number;
   exposurePln: number;
   exposurePctOfPortfolio: number;
-  avgPlnPerCurrency: number;
+  avgPlnPerCurrency: number | null;
   todayPlnPerCurrency: number;
   impactPln: number;
   impactPct: number;
@@ -148,16 +148,25 @@ function FxImpactTooltipBody({ fxImpact }: { fxImpact: FxImpactData }) {
           {fxImpact.breakdown.map((e) => (
             <li key={e.currency} className="text-muted-foreground">
               <div className="font-medium text-foreground">
-                {e.currency}: {formatPercent(e.impactPct)} kursu ({formatPLN(e.impactPln)})
+                {e.currency}:{' '}
+                {e.avgPlnPerCurrency !== null
+                  ? `${formatPercent(e.impactPct)} kursu (${formatPLN(e.impactPln)})`
+                  : 'wpływ kursu nieznany'}
               </div>
               <div className="text-[10px] pl-2">
                 • Ekspozycja: {e.exposureNative.toFixed(2)} {e.currency} ({formatPLN(e.exposurePln)}
                 , {e.exposurePctOfPortfolio.toFixed(1)}% portfela)
               </div>
-              <div className="text-[10px] pl-2">
-                • Średni kurs: {e.avgPlnPerCurrency.toFixed(3)} → dziś:{' '}
-                {e.todayPlnPerCurrency.toFixed(3)}
-              </div>
+              {e.avgPlnPerCurrency !== null ? (
+                <div className="text-[10px] pl-2">
+                  • Średni kurs: {e.avgPlnPerCurrency.toFixed(3)} → dziś:{' '}
+                  {e.todayPlnPerCurrency.toFixed(3)}
+                </div>
+              ) : (
+                <div className="text-[10px] pl-2 italic text-muted-foreground/70">
+                  • Brak danych o kursie wejścia (broker rozliczał wewnętrznie)
+                </div>
+              )}
             </li>
           ))}
         </ul>
