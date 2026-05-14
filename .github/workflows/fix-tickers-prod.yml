@@ -1,0 +1,86 @@
+name: Fix Tickers on Production
+
+# Ręczny trigger — naprawa ticker_map na produkcji.
+# Używa tego samego DEPLOY_SSH_KEY co deploy.yml.
+# Domyślnie DRY-RUN (preview only). Wymaga jawnego `apply: true` żeby zapisać.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Zapisać zmiany w bazie? (false = dry-run)'
+        required: true
+        type: boolean
+        default: false
+      restart_server:
+        description: 'Zrestartować serwer po naprawie?'
+        required: true
+        type: boolean
+        default: false
+      fix_orlen_name:
+        description: 'Naprawić name=ORZLOPONY → Orlen (manual SQL)?'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Run fix:nc
+        run: |
+          FLAG="${{ inputs.apply == true && '-- --apply' || '' }}"
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
+            cd /opt/ike-terminal/app &&
+            DATA_DIR=/opt/ike-terminal/data npm run fix:nc -w server $FLAG
+          "
+
+      - name: Run fix:tickers
+        run: |
+          FLAG="${{ inputs.apply == true && '-- --apply' || '' }}"
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
+            cd /opt/ike-terminal/app &&
+            DATA_DIR=/opt/ike-terminal/data npm run fix:tickers -w server $FLAG
+          "
+
+      - name: Fix Orlen name (manual SQL)
+        if: inputs.fix_orlen_name == true && inputs.apply == true
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
+            cd /opt/ike-terminal/app &&
+            node -e "
+              const Database = require(\"better-sqlite3\");
+              const fs = require(\"fs\");
+              const dataDir = \"/opt/ike-terminal/data\";
+              const files = fs.readdirSync(dataDir).filter(f => f.endsWith(\".db\") && !/auth|price_history|bug-reports/.test(f));
+              let total = 0;
+              for (const f of files) {
+                const db = new Database(dataDir + \"/\" + f);
+                const result = db.prepare(\"UPDATE ticker_map SET name = ? WHERE isin = ? AND name = ?\").run(\"Orlen\", \"PKN.WA\", \"ORZLOPONY\");
+                if (result.changes > 0) console.log(\"Updated\", f, \"changes:\", result.changes);
+                total += result.changes;
+                db.close();
+              }
+              console.log(\"Total Orlen name fixes:\", total);
+            "
+          '
+
+      - name: Restart server
+        if: inputs.restart_server == true && inputs.apply == true
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} '
+            sudo systemctl restart ike-terminal
+          '
+
+      - name: Health check
+        if: inputs.restart_server == true && inputs.apply == true
+        run: |
+          sleep 5
+          curl -fsS https://tixterminal.app/api/health || curl -fsS https://tixterminal.app/ -I | head -1
