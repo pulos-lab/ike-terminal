@@ -8,6 +8,8 @@
     "seed": "tsx src/seed.ts",
     "seed-benchmarks": "tsx src/seed-benchmarks.ts",
     "scrape:gpw-sectors": "tsx scripts/scrape-gpw-sectors.ts",
+    "fix:nc": "tsx src/scripts/fix-nc-misidentification.ts",
+    "audit:tickers": "tsx src/scripts/audit-ticker-map.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

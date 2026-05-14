@@ -80,7 +80,7 @@ function splitEtfName(name: string): string {
 }
 
 // Stooq ticker aliases for renamed/rebranded Polish companies (old ticker → current Stooq ticker)
-const STOOQ_ALIASES: Record<string, string> = {
+export const STOOQ_ALIASES: Record<string, string> = {
   DINO: 'DNP', // Dino Polska
   R22: 'CBF', // R22 → CyberFolks
   BRU: 'MBR', // old ticker → Mo-BRUK
@@ -116,6 +116,34 @@ const STOOQ_ALIASES: Record<string, string> = {
   BLU: 'CLC', // Blumerang Pre-IPO → Columbus Energy (2018)
 };
 
+/**
+ * Wczesny NC offline guard używany w resolverze przed jakimkolwiek requestem do
+ * Yahoo/Stooq. Jeśli paper name ma sufiks `-NC`/`-NC-FIX` (Bossa autorytatywnie
+ * mówi "NewConnect"), statyczna mapa NC jest wystarczająca i bezpieczniejsza
+ * niż Yahoo (który czasem zwraca .WA symbol bez OHLC dla NC spółki — np. SEV.WA
+ * dla SEVENET). Wyekstrahowane do osobnej funkcji żeby umożliwić czysty test.
+ */
+export function tryNcOfflineGuard(isin: string, paperName: string): TickerMapEntry | null {
+  const isNewConnect = /-NC(?:-FIX)?$/i.test(paperName);
+  if (!isNewConnect) return null;
+  const cleanName = paperName
+    .replace(/-NC(?:-FIX)?$/i, '')
+    .replace(/-C$/i, '')
+    .replace(/\.WA$/i, '')
+    .trim();
+  if (cleanName.length < 2) return null;
+  const ncEntry = findNcTicker(cleanName);
+  if (!ncEntry) return null;
+  return {
+    isin,
+    ticker: `${ncEntry.ticker}.WA`,
+    name: ncEntry.name,
+    exchange: 'NC' as TickerMapEntry['exchange'],
+    currency: 'PLN',
+    priceSource: 'stooq',
+  };
+}
+
 async function resolveIsin(
   isin: string,
   paperName: string,
@@ -137,6 +165,15 @@ async function resolveIsin(
     .replace(/-C$/i, '')
     .replace(/\.WA$/i, '') // strip .WA suffix for Stooq lookups
     .trim();
+
+  // Wczesny guard NC: jeśli paper name ma sufiks -NC (Bossa), statyczna mapa
+  // jest autorytatywna. Yahoo czasem zwraca .WA symbol dla NC spółki (np. SEV.WA
+  // dla SEVENET) bez aktualnych danych OHLC — wtedy Strategy 1 (Yahoo by ISIN)
+  // akceptuje pusty wynik, a późniejszy NC offline fallback (line ~309) już nie
+  // odpala. Sprawdzenie tutaj — przed jakimkolwiek requestem do Yahoo/Stooq —
+  // gwarantuje że NC offline map wygra dla każdej ścieżki ISIN-u.
+  const ncGuard = tryNcOfflineGuard(isin, paperName);
+  if (ncGuard) return ncGuard;
 
   // === Polish pseudo-ISINs: Stooq FIRST (authoritative for GPW) ===
   // This covers: mBank tickers (CDR, KTY), XTB new format (Cyfrowy Polsat, PGE),
