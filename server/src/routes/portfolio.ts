@@ -63,7 +63,7 @@ import {
   computeSmartDeletePlan,
 } from '../services/portfolio-engine.js';
 import { BENCHMARKS, type BenchmarkKey } from 'shared';
-import { searchTickers } from '../services/ticker-search.js';
+import { searchTickers, fetchYahooTickerName } from '../services/ticker-search.js';
 import { scanDividends } from '../services/dividend-scanner.js';
 
 const router = Router();
@@ -796,30 +796,30 @@ router.get(
 );
 
 // GET /api/portfolio/ticker-info?symbol=X
-// Lekki lookup waluty notowania pojedynczego tickera — używany przez AddTransactionDialog
-// po debounce, gdy user wpisuje ticker bez wyboru z listy autocomplete. Yahoo search nie
-// zwraca currency, więc dla zagranicznych tickerów (AAPL/SPGI/…) trzeba zrobić price fetch
-// lub uzyć lokalnego ticker_map. Zwraca tylko { currency } żeby było szybko.
+// Lekki lookup waluty + nazwy pojedynczego tickera — używany przez AddTransactionDialog
+// po debounce, gdy user wpisuje ticker bez wyboru z listy autocomplete. Yahoo chart API
+// nie zwraca nazwy, search nie zwraca currency — wewnątrz robimy oba calls równolegle.
 router.get(
   '/ticker-info',
   asyncHandler(async (req, res) => {
     const symbol = ((req.query.symbol as string) || '').trim().slice(0, 50);
-    if (!symbol) return res.json({ currency: null });
+    if (!symbol) return res.json({ currency: null, name: null });
     const pid = req.portfolioId;
 
     // 1) lokalny ticker_map — najszybciej, bez sieci
     const entry = getTickerBySymbol(symbol, pid);
-    if (entry?.currency) return res.json({ currency: entry.currency });
+    if (entry?.currency) return res.json({ currency: entry.currency, name: entry.name });
 
-    // 2) heurystyka — polskie suffixy zawsze PLN
     const up = symbol.toUpperCase();
-    if (up.endsWith('.WA') || up.endsWith('.NC')) return res.json({ currency: 'PLN' });
+    const isPolishSuffix = up.endsWith('.WA') || up.endsWith('.NC');
 
-    // 3) Yahoo price fetch (cache 1-4h via getCached)
-    const yahoo = await fetchYahooPrice(symbol);
-    if (yahoo?.currency) return res.json({ currency: yahoo.currency });
-
-    res.json({ currency: null });
+    // 2) Yahoo: price (currency) + search (name) w parallel. Cache obu warstw poniżej.
+    const [yahoo, name] = await Promise.all([
+      fetchYahooPrice(symbol),
+      fetchYahooTickerName(symbol),
+    ]);
+    const currency = yahoo?.currency || (isPolishSuffix ? 'PLN' : null);
+    res.json({ currency, name: name || null });
   }),
 );
 
@@ -1387,26 +1387,32 @@ router.post(
     // Look up ticker in ticker_map
     let entry = getTickerBySymbol(ticker, pid);
 
-    // If not found, try to auto-create from Yahoo
+    // If not found, try to auto-create from Yahoo. Fetch price + display name in parallel
+    // so the new ticker_map entry doesn't fall back to the bare symbol (Yahoo chart API
+    // doesn't return name, only currency — so we hit Yahoo search separately for longname).
     if (!entry) {
-      const yahooData = await fetchYahooPrice(ticker);
+      const [yahooData, yahooName] = await Promise.all([
+        fetchYahooPrice(ticker),
+        fetchYahooTickerName(ticker),
+      ]);
       if (!yahooData) {
         return res
           .status(400)
           .json({ error: `Nie znaleziono tickera: ${ticker}. Sprawdź symbol.` });
       }
 
+      const upperTicker = ticker.toUpperCase();
       const newEntry: TickerMapEntry = {
-        isin: `AUTO_${ticker.toUpperCase()}`,
-        ticker: ticker.toUpperCase(),
-        name: ticker.toUpperCase(),
+        isin: `AUTO_${upperTicker}`,
+        ticker: upperTicker,
+        name: yahooName || upperTicker,
         exchange: 'OTHER',
         currency: overrideCurrency || yahooData.currency || 'USD',
         priceSource: 'yahoo',
       };
 
       // Try Stooq for .WA tickers
-      if (ticker.toUpperCase().endsWith('.WA')) {
+      if (upperTicker.endsWith('.WA')) {
         newEntry.exchange = 'GPW';
         newEntry.currency = overrideCurrency || 'PLN';
         newEntry.priceSource = 'stooq';
@@ -1475,19 +1481,23 @@ router.put(
     if (ticker && ticker !== existing.isin) {
       let entry = getTickerBySymbol(ticker, pid);
       if (!entry) {
-        const yahooData = await fetchYahooPrice(ticker);
+        const [yahooData, yahooName] = await Promise.all([
+          fetchYahooPrice(ticker),
+          fetchYahooTickerName(ticker),
+        ]);
         if (!yahooData) {
           return res.status(400).json({ error: `Nie znaleziono tickera: ${ticker}` });
         }
+        const upperTicker = ticker.toUpperCase();
         const newEntry: TickerMapEntry = {
-          isin: `AUTO_${ticker.toUpperCase()}`,
-          ticker: ticker.toUpperCase(),
-          name: ticker.toUpperCase(),
+          isin: `AUTO_${upperTicker}`,
+          ticker: upperTicker,
+          name: yahooName || upperTicker,
           exchange: 'OTHER',
           currency: yahooData.currency || 'USD',
           priceSource: 'yahoo',
         };
-        if (ticker.toUpperCase().endsWith('.WA')) {
+        if (upperTicker.endsWith('.WA')) {
           newEntry.exchange = 'GPW';
           newEntry.currency = 'PLN';
           newEntry.priceSource = 'stooq';

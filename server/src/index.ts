@@ -18,6 +18,7 @@ import portfolioRouter from './routes/portfolio.js';
 import importRouter from './routes/import.js';
 import bugReportsRouter from './routes/bug-reports.js';
 import { updateBenchmarkPrices } from './services/benchmark-updater.js';
+import { backfillTickerNamesForPortfolio } from './services/ticker-name-backfill.js';
 import { scanAllPortfolios } from './services/dividend-scanner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -182,6 +183,35 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 const server = app.listen(config.port, () => {
   console.log(`Server running on http://localhost:${config.port} [${config.nodeEnv}]`);
 });
+
+// ── Ticker name backfill (one-shot per startup, idempotent) ────────────────
+// Naprawia ticker_map.name dla wpisów gdzie `name = ticker` — pozostałość po
+// starszej wersji POST /transactions auto-create, która używała symbolu jako
+// placeholderu. WHERE filtruje już-naprawione wpisy, więc kolejne uruchomienia
+// nie powtarzają roboty. Fire-and-forget by nie blokować startupu.
+setTimeout(() => {
+  (async () => {
+    let totalUpdated = 0;
+    for (const portfolio of getAllPortfolios()) {
+      try {
+        const { candidates, updated, skipped } = await backfillTickerNamesForPortfolio(
+          portfolio.id,
+        );
+        totalUpdated += updated;
+        if (candidates > 0) {
+          console.log(
+            `[ticker-name-backfill] ${portfolio.id}: ${candidates} candidate(s) → ${updated} updated, ${skipped} skipped`,
+          );
+        }
+      } catch (err: any) {
+        console.error(`[ticker-name-backfill] ${portfolio.id}: ${err.message}`);
+      }
+    }
+    if (totalUpdated > 0) {
+      console.log(`[ticker-name-backfill] done — ${totalUpdated} name(s) refreshed from Yahoo`);
+    }
+  })();
+}, 15_000);
 
 // ── Benchmark price updater (fetch latest from Stooq every 6h) ─────────────
 setTimeout(() => {
