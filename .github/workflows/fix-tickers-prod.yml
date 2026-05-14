@@ -36,18 +36,18 @@ jobs:
 
       - name: Run fix:nc
         run: |
-          FLAG="${{ inputs.apply == true && '-- --apply' || '' }}"
+          FLAG="${{ inputs.apply == true && '--apply' || '' }}"
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
             cd /opt/ike-terminal/app &&
-            DATA_DIR=/opt/ike-terminal/data npm run fix:nc -w server $FLAG
+            DATA_DIR=/opt/ike-terminal/data node server/dist/scripts/fix-nc-misidentification.js $FLAG
           "
 
       - name: Run fix:tickers
         run: |
-          FLAG="${{ inputs.apply == true && '-- --apply' || '' }}"
+          FLAG="${{ inputs.apply == true && '--apply' || '' }}"
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
             cd /opt/ike-terminal/app &&
-            DATA_DIR=/opt/ike-terminal/data npm run fix:tickers -w server $FLAG
+            DATA_DIR=/opt/ike-terminal/data node server/dist/scripts/fix-tickers.js $FLAG
           "
 
       - name: Fix Orlen name (manual SQL)
