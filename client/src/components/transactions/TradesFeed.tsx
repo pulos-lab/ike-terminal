@@ -117,6 +117,11 @@ interface EditForm {
   quantity: string;
   price: string;
   commission: string;
+  /** Waluta zakupu — '' = równa walucie notowania (brak przewalutowania). */
+  paymentCurrency: string;
+  fxRate: string;
+  /** Quote currency snapshot (read-only) — żeby UI mogło policzyć showFxRate. */
+  quoteCurrency: string;
 }
 
 // TradesFeed jest memoizowany — bez tego każdy setTab w parent (TradesPage) re-renderuje
@@ -140,6 +145,9 @@ export const TradesFeed = memo(function TradesFeed() {
     quantity: '',
     price: '',
     commission: '0',
+    paymentCurrency: '',
+    fxRate: '',
+    quoteCurrency: '',
   });
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TxItem | null>(null);
@@ -175,6 +183,8 @@ export const TradesFeed = memo(function TradesFeed() {
         quantity: number;
         price: number;
         commission: number;
+        paymentCurrency: string;
+        fxRate: number;
       }>;
     }) => api.updateTransaction(id, body),
     onSuccess: () => {
@@ -196,12 +206,21 @@ export const TradesFeed = memo(function TradesFeed() {
     if (tx.id == null) return;
     startTransition(() => {
       setEditingId(tx.id!);
+      const paymentCcy = tx.paymentCurrency || tx.currency;
+      // Prowizja w bazie jest w walucie notowania (quote). Dla edycji konwertujemy na
+      // paymentCurrency by user widział kwotę zgodną z tym co broker pobrał.
+      const fxNum = tx.fxRate || 0;
+      const commDisplay =
+        paymentCcy !== tx.currency && fxNum > 0 ? tx.commission * fxNum : tx.commission;
       setEditForm({
         date: tx.date.slice(0, 10),
         side: tx.side,
         quantity: tx.quantity.toString(),
         price: tx.price.toString(),
-        commission: tx.commission.toString(),
+        commission: (Math.round(commDisplay * 100) / 100).toString(),
+        paymentCurrency: paymentCcy === tx.currency ? '' : paymentCcy,
+        fxRate: tx.fxRate ? tx.fxRate.toString() : '',
+        quoteCurrency: tx.currency,
       });
       setError(null);
     });
@@ -223,6 +242,14 @@ export const TradesFeed = memo(function TradesFeed() {
       setError('Uzupełnij poprawnie wszystkie pola (data, ilość > 0, cena > 0)');
       return;
     }
+    // Payment currency: '' = takie samo jak quote (brak FX). Wysyłamy explicit żeby backend mógł
+    // wyzerować ewentualne stare przewalutowanie. Backend traktuje pusty string jak fallback do quote.
+    const paymentCcy = editForm.paymentCurrency || editForm.quoteCurrency;
+    const fxNum = parseFloat(editForm.fxRate);
+    const hasFx = paymentCcy !== editForm.quoteCurrency && fxNum > 0;
+    const sendFx = hasFx ? fxNum : 0;
+    // Pole prowizji w edycji jest w paymentCurrency (gdy ≠ quote). Konwertujemy do quote.
+    const commQuote = hasFx ? comm / fxNum : comm;
     updateMutation.mutate({
       id: editingId,
       body: {
@@ -230,7 +257,9 @@ export const TradesFeed = memo(function TradesFeed() {
         side: editForm.side,
         quantity: qty,
         price: prc,
-        commission: comm,
+        commission: Math.round(commQuote * 100) / 100,
+        paymentCurrency: paymentCcy,
+        fxRate: sendFx,
       },
     });
   }, [editingId, editForm, updateMutation]);
@@ -365,13 +394,71 @@ export const TradesFeed = memo(function TradesFeed() {
                       />
                     </div>
                     <div className="flex flex-col gap-1 col-span-2">
-                      <label className="text-[10px] text-muted-foreground">Prowizja</label>
+                      <label className="text-[10px] text-muted-foreground">
+                        Prowizja{' '}
+                        <span className="opacity-60">
+                          ({editForm.paymentCurrency || editForm.quoteCurrency || tx.currency})
+                        </span>
+                      </label>
                       <Input
                         type="number"
                         step="0.01"
                         min="0"
                         value={editForm.commission}
                         onChange={(e) => setEditForm({ ...editForm, commission: e.target.value })}
+                        className="h-8 text-right text-xs"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-muted-foreground">
+                        Waluta zakupu{' '}
+                        <span className="opacity-60">
+                          (notow.: {editForm.quoteCurrency || tx.currency})
+                        </span>
+                      </label>
+                      <Select
+                        value={editForm.paymentCurrency || editForm.quoteCurrency || tx.currency}
+                        onValueChange={(v) => {
+                          const qc = editForm.quoteCurrency || tx.currency;
+                          setEditForm({
+                            ...editForm,
+                            paymentCurrency: v === qc ? '' : v,
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="h-8" size="sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from(
+                            new Set([
+                              editForm.quoteCurrency || tx.currency,
+                              'PLN',
+                              'USD',
+                              'EUR',
+                              'GBP',
+                            ]),
+                          ).map((c) => (
+                            <SelectItem key={c} value={c}>
+                              {c}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-muted-foreground">Kurs FX</label>
+                      <Input
+                        type="number"
+                        step="0.0001"
+                        min="0"
+                        value={editForm.fxRate}
+                        onChange={(e) => setEditForm({ ...editForm, fxRate: e.target.value })}
+                        disabled={
+                          !editForm.paymentCurrency ||
+                          editForm.paymentCurrency === (editForm.quoteCurrency || tx.currency)
+                        }
+                        placeholder="0.0000"
                         className="h-8 text-right text-xs"
                       />
                     </div>
@@ -784,7 +871,8 @@ function EditRow({
   saveEdit,
   cancelEdit,
 }: EditRowProps) {
-  const paymentCcy = tx.paymentCurrency || tx.currency;
+  const quoteCcy = editForm.quoteCurrency || tx.currency;
+  const selectedPayment = editForm.paymentCurrency || quoteCcy;
   return (
     <tr className="border-b border-border/50 bg-muted/30">
       <td className="py-2 pr-4">
@@ -797,7 +885,23 @@ function EditRow({
       </td>
       <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">{tx.ticker}</td>
       <td className="py-2 pr-4">
-        <CcyChip ccy={paymentCcy} />
+        <Select
+          value={selectedPayment}
+          onValueChange={(v) =>
+            setEditForm({ ...editForm, paymentCurrency: v === quoteCcy ? '' : v })
+          }
+        >
+          <SelectTrigger className="h-8 w-[80px]" size="sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {Array.from(new Set([quoteCcy, 'PLN', 'USD', 'EUR', 'GBP'])).map((c) => (
+              <SelectItem key={c} value={c}>
+                {c}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </td>
       <td className="py-2 pr-4">
         <Select
@@ -837,16 +941,33 @@ function EditRow({
         <CcyChip ccy={tx.currency} />
       </td>
       <td className="py-2 pr-4">
-        <Input
-          type="number"
-          step="0.01"
-          min="0"
-          value={editForm.commission}
-          onChange={(e) => setEditForm({ ...editForm, commission: e.target.value })}
-          className="h-8 w-[80px] text-right text-xs"
-        />
+        <div className="flex items-center gap-1">
+          <Input
+            type="number"
+            step="0.01"
+            min="0"
+            value={editForm.commission}
+            onChange={(e) => setEditForm({ ...editForm, commission: e.target.value })}
+            title={`Prowizja w ${selectedPayment}`}
+            className="h-8 w-[80px] text-right text-xs"
+          />
+          <span className="text-[10px] text-muted-foreground">{selectedPayment}</span>
+        </div>
       </td>
-      <td className="py-2 pr-4" />
+      <td className="py-2 pr-4">
+        {selectedPayment !== quoteCcy ? (
+          <Input
+            type="number"
+            step="0.0001"
+            min="0"
+            value={editForm.fxRate}
+            onChange={(e) => setEditForm({ ...editForm, fxRate: e.target.value })}
+            placeholder={`${quoteCcy}/${selectedPayment}`}
+            title={`Kurs ${quoteCcy}/${selectedPayment}`}
+            className="h-8 w-[90px] text-right text-xs"
+          />
+        ) : null}
+      </td>
       <td className="py-2 text-right">
         <div className="inline-flex gap-1">
           <Button

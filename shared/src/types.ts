@@ -414,8 +414,18 @@ export interface TransactionInput {
   quantity: number;
   price: number;
   commission: number;
-  currency?: string; // override waluty z tickera
-  fxRate?: number; // kurs wymiany brokera (informacyjny)
+  /**
+   * QUOTE currency — waluta notowania papieru. Opcjonalna; jeśli undefined, backend ustawia
+   * z `ticker_map.currency`. Override stosuj tylko w wyjątkowych sytuacjach (np. auto-create).
+   */
+  currency?: string;
+  /**
+   * PAYMENT currency — waluta zakupu/rozliczenia (co broker zdjął z konta).
+   * Gdy różna od `currency`, oznacza że broker dokonał przewalutowania.
+   */
+  paymentCurrency?: string;
+  /** Kurs wymiany broker'a: 1 unit `currency` = `fxRate` × `paymentCurrency`. */
+  fxRate?: number;
   category?: InstrumentCategory;
 }
 

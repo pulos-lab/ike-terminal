@@ -128,6 +128,7 @@ export const api = {
     price: number;
     commission: number;
     currency?: string;
+    paymentCurrency?: string;
     fxRate?: number;
     category?: string;
   }) =>
@@ -144,6 +145,8 @@ export const api = {
       quantity: number;
       price: number;
       commission: number;
+      paymentCurrency: string;
+      fxRate: number;
     }>,
   ) =>
     request<{ success: boolean }>(`/portfolio/transactions/${id}`, {
@@ -209,6 +212,11 @@ export const api = {
   searchTickers: (query: string) =>
     request<Array<{ symbol: string; name: string; exchange: string; currency?: string }>>(
       `/portfolio/ticker-search?q=${encodeURIComponent(query)}`,
+    ),
+  // Pojedynczy lookup waluty notowania (sprawdza ticker_map + Yahoo)
+  getTickerInfo: (symbol: string) =>
+    request<{ currency: string | null }>(
+      `/portfolio/ticker-info?symbol=${encodeURIComponent(symbol)}`,
     ),
 
   // Ticker map — sector backfill (dla istniejących entries bez sectora)

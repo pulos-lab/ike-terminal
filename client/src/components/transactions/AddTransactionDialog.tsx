@@ -32,11 +32,11 @@ import { toast } from 'sonner';
  * ("Sprzedaj" button w rzędzie pozycji — context-aware, prefilled qty/price). Ten dialog
  * obsługuje generyczny add (K lub S) poza kontekstem istniejącej pozycji.
  *
- * 10 pól w układzie grid-cols-2 w `max-w-2xl`. Auto-calc prowizji po zmianie ticker/qty/price
- * (bazuje na ustawieniach portfela — commission rates per GPW/Foreign). Pre-fill kursu FX
- * z live rates (pricesData.fx).
+ * Pola: data, ticker, side, kategoria, ilość, cena (w walucie notowania), prowizja,
+ * waluta zakupu (paymentCurrency), kurs FX (gdy paymentCurrency ≠ waluta notowania).
+ * Auto-calc prowizji + pre-fill kursu FX live z pricesData.fx.
  */
-const CURRENCIES = ['auto', 'PLN', 'USD', 'EUR', 'GBP'] as const;
+const PAYMENT_CURRENCIES = ['auto', 'PLN', 'USD', 'EUR', 'GBP'] as const;
 
 interface AddTransactionDialogProps {
   open: boolean;
@@ -55,7 +55,10 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
   const [price, setPrice] = useState('');
   const [commission, setCommission] = useState('0');
   const [commissionTouched, setCommissionTouched] = useState(false);
-  const [currency, setCurrency] = useState<string>('auto');
+  /** Waluta notowania papieru — z TickerAutocomplete result lub heurystycznie z suffixu. */
+  const [quoteCurrency, setQuoteCurrency] = useState<string>('');
+  /** Waluta zakupu/rozliczenia — wybór usera. 'auto' = równa walucie notowania (brak FX). */
+  const [paymentCurrency, setPaymentCurrency] = useState<string>('auto');
   const [fxRate, setFxRate] = useState('');
   const [category, setCategory] = useState<'stock' | 'etf' | 'cfd'>('stock');
 
@@ -75,14 +78,72 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     setPrice('');
     setCommission('0');
     setCommissionTouched(false);
-    setCurrency('auto');
+    setQuoteCurrency('');
+    setPaymentCurrency('auto');
     setFxRate('');
     setCategory('stock');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Auto-calc prowizji na podstawie settings (chyba że user ręcznie zmienił)
-  const calcCommission = (tk: string, qty: string, prc: string): string => {
+  // Pre-fill kursu FX broker'a — działa gdy quote = USD/EUR/GBP i payment = PLN.
+  // fxRate w aplikacji to: 1 unit `quote` = fxRate × `payment` (np. 1 USD = 4.00 PLN).
+  const getLiveFxRate = (quote: string, payment: string): string => {
+    const fx = pricesData?.fx;
+    if (!fx) return '';
+    if (payment !== 'PLN') return '';
+    if (quote === 'USD' && fx.USDPLN) return fx.USDPLN.toFixed(4);
+    if (quote === 'EUR' && fx.EURPLN) return fx.EURPLN.toFixed(4);
+    if (quote === 'GBP' && fx.GBPPLN) return fx.GBPPLN.toFixed(4);
+    return '';
+  };
+
+  /** Heurystyka dla quoteCurrency gdy user wpisuje ticker ręcznie (bez wyboru z autocomplete). */
+  const inferQuoteFromTicker = (t: string): string => {
+    const up = t.toUpperCase();
+    if (up.endsWith('.WA') || up.endsWith('.NC')) return 'PLN';
+    return '';
+  };
+
+  // Auto-fetch waluty notowania z backendu gdy user wpisuje ticker ręcznie (bez wyboru z listy).
+  // Bez tego — dla AAPL/MSFT/SPGI/… effectiveQuote='' → showFxRate=false → fxRate nie ustawiony →
+  // auto-calc prowizji nie konwertuje, pole "Kurs przeliczenia" się nie pokazuje.
+  // Yahoo search NIE zwraca currency, więc używamy dedykowanego /ticker-info (lokalny ticker_map
+  // → Yahoo price fetch fallback).
+  useEffect(() => {
+    if (quoteCurrency) return; // już znamy z autocomplete
+    const t = ticker.trim();
+    if (t.length < 2) return;
+    if (inferQuoteFromTicker(t)) return; // .WA/.NC — heurystyka wystarczy
+    const timer = setTimeout(async () => {
+      try {
+        const info = await api.getTickerInfo(t);
+        if (info?.currency) setQuoteCurrency(info.currency);
+      } catch {
+        /* network error — silent */
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [ticker, quoteCurrency]);
+
+  // Efektywna waluta notowania: explicit (z autocomplete / auto-fetch) lub heurystyka z suffixu.
+  const effectiveQuote = quoteCurrency || inferQuoteFromTicker(ticker);
+  // Efektywna waluta zakupu: 'auto' fallback = waluta notowania (brak przewalutowania).
+  const effectivePayment = paymentCurrency !== 'auto' ? paymentCurrency : effectiveQuote;
+  const showFxRate = Boolean(
+    effectiveQuote && effectivePayment && effectivePayment !== effectiveQuote,
+  );
+
+  // Auto-calc prowizji. Settings są wyrażone w walucie notowania (PL → PLN, FOREIGN → quote).
+  // Gdy paymentCurrency ≠ quote, wynik konwertujemy przez fxRate na paymentCurrency, żeby pole
+  // pokazywało liczbę zgodną z tym, co broker faktycznie pobiera (np. 19 PLN dla AAPL/PLN).
+  const calcCommission = (
+    tk: string,
+    qty: string,
+    prc: string,
+    paymentCcy: string,
+    quoteCcy: string,
+    fxRateStr: string,
+  ): string => {
     const q = parseFloat(qty);
     const p = parseFloat(prc);
     if (!q || !p || q <= 0 || p <= 0) return '0';
@@ -95,53 +156,54 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
       ? activeSettings?.minCommissionPl || 0
       : activeSettings?.minCommissionForeign || 0;
     if (rate <= 0 && min <= 0) return '0';
-    const comm = Math.max((value * rate) / 100, min);
-    return (Math.round(comm * 100) / 100).toString();
+    // Prowizja w walucie notowania (quote).
+    const commQuote = Math.max((value * rate) / 100, min);
+    // Konwersja na paymentCurrency jeśli różna od quote (i mamy fxRate).
+    const fx = parseFloat(fxRateStr);
+    const commPayment =
+      paymentCcy && quoteCcy && paymentCcy !== quoteCcy && fx > 0 ? commQuote * fx : commQuote;
+    return (Math.round(commPayment * 100) / 100).toString();
   };
 
   useEffect(() => {
     if (commissionTouched) return;
     if (!ticker || !quantity || !price) return;
-    setCommission(calcCommission(ticker, quantity, price));
+    setCommission(
+      calcCommission(ticker, quantity, price, effectivePayment, effectiveQuote, fxRate),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticker, quantity, price, commissionTouched]);
-
-  // Pre-fill kursu FX przy zmianie waluty
-  const getLiveFxRate = (cur: string): string => {
-    const fx = pricesData?.fx;
-    if (!fx) return '';
-    if (cur === 'USD' && fx.USDPLN) return fx.USDPLN.toFixed(4);
-    if (cur === 'EUR' && fx.EURPLN) return fx.EURPLN.toFixed(4);
-    if (cur === 'GBP' && fx.GBPPLN) return fx.GBPPLN.toFixed(4);
-    return '';
-  };
+  }, [ticker, quantity, price, commissionTouched, effectivePayment, effectiveQuote, fxRate]);
 
   useEffect(() => {
-    if (currency === 'auto' || currency === 'PLN') {
+    if (!showFxRate) {
       setFxRate('');
       return;
     }
-    setFxRate(getLiveFxRate(currency));
+    setFxRate(getLiveFxRate(effectiveQuote, effectivePayment));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currency, pricesData]);
-
-  const effectiveCurrency =
-    currency !== 'auto' ? currency : ticker.endsWith('.WA') || ticker.endsWith('.NC') ? 'PLN' : '';
-  const showFxRate = effectiveCurrency && effectiveCurrency !== 'PLN';
+  }, [effectiveQuote, effectivePayment, pricesData, showFxRate]);
 
   const createMut = useMutation({
-    mutationFn: () =>
-      api.createTransaction({
+    mutationFn: () => {
+      const fxNum = parseFloat(fxRate);
+      const commInput = parseFloat(commission) || 0;
+      // Pole prowizji jest w paymentCurrency gdy ≠ quote. Backend oczekuje w walucie notowania
+      // (zgodnie z value/price/total) — konwertujemy przez fxRate.
+      const commQuote = showFxRate && fxNum > 0 ? commInput / fxNum : commInput;
+      return api.createTransaction({
         date,
         ticker,
         side,
         quantity: parseFloat(quantity),
         price: parseFloat(price),
-        commission: parseFloat(commission) || 0,
-        currency: currency !== 'auto' ? currency : undefined,
-        fxRate: fxRate ? parseFloat(fxRate) : undefined,
+        commission: Math.round(commQuote * 100) / 100,
+        // `currency` (quote) zostaje przyjęte z ticker_map na backendzie —
+        // wysyłamy tylko jeśli user explicit zmienił via TickerAutocomplete (rzadko).
+        paymentCurrency: paymentCurrency !== 'auto' ? paymentCurrency : undefined,
+        fxRate: showFxRate && fxNum > 0 ? fxNum : undefined,
         category,
-      }),
+      });
+    },
     onSuccess: () => {
       invalidatePortfolio(qc);
       toast.success(
@@ -155,10 +217,14 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
   const valid =
     date && ticker.trim() && quantity && parseFloat(quantity) > 0 && price && parseFloat(price) > 0;
 
-  const plnPreview =
-    showFxRate && fxRate && quantity && price
-      ? parseFloat(quantity) * parseFloat(price) * parseFloat(fxRate)
-      : null;
+  // Podgląd wartości transakcji w paymentCurrency (z uwzględnieniem prowizji).
+  // Prowizja jest już w paymentCurrency (input pola), więc dodajemy/odejmujemy bezpośrednio.
+  const plnPreview = (() => {
+    if (!showFxRate || !fxRate || !quantity || !price) return null;
+    const valuePayment = parseFloat(quantity) * parseFloat(price) * parseFloat(fxRate);
+    const commPayment = parseFloat(commission) || 0;
+    return side === 'K' ? valuePayment + commPayment : valuePayment - commPayment;
+  })();
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !createMut.isPending && onClose()}>
@@ -180,7 +246,14 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
             <label className="text-xs text-muted-foreground">Ticker *</label>
             <TickerAutocomplete
               value={ticker}
-              onChange={setTicker}
+              onChange={(v, result) => {
+                setTicker(v);
+                // Aktualizuj walutę notowania z TickerAutocomplete result. Gdy user wpisuje
+                // ręcznie bez wyboru z listy — result undefined, czyść (heurystyka z suffixu
+                // zadziała w effectiveQuote).
+                if (result?.currency) setQuoteCurrency(result.currency);
+                else setQuoteCurrency('');
+              }}
               placeholder="np. AAPL, CDR.WA"
             />
           </div>
@@ -226,7 +299,9 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
             />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground">Cena *</label>
+            <label className="text-xs text-muted-foreground">
+              Cena *{effectiveQuote && <span className="ml-1 opacity-60">({effectiveQuote})</span>}
+            </label>
             <Input
               type="number"
               step="0.01"
@@ -239,7 +314,10 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
 
           <div>
             <label className="text-xs text-muted-foreground">
-              Prowizja{' '}
+              Prowizja
+              {effectivePayment && (
+                <span className="ml-1 opacity-60">({effectivePayment})</span>
+              )}{' '}
               {!commissionTouched && <span className="text-[10px] opacity-60">(auto)</span>}
             </label>
             <Input
@@ -255,15 +333,20 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
             />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground">Waluta rozliczenia</label>
-            <Select value={currency} onValueChange={setCurrency}>
+            <label className="text-xs text-muted-foreground">
+              Waluta zakupu
+              {effectiveQuote && (
+                <span className="text-[10px] ml-1 opacity-60">(notowanie: {effectiveQuote})</span>
+              )}
+            </label>
+            <Select value={paymentCurrency} onValueChange={setPaymentCurrency}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {CURRENCIES.map((c) => (
+                {PAYMENT_CURRENCIES.map((c) => (
                   <SelectItem key={c} value={c}>
-                    {c === 'auto' ? 'Auto (z tickera)' : c}
+                    {c === 'auto' ? 'Auto (= waluta notowania)' : c}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -273,12 +356,11 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
           {showFxRate && (
             <div className="md:col-span-2">
               <label className="text-xs text-muted-foreground">
-                Kurs {effectiveCurrency}/PLN *
-                {fxRate && (
-                  <span className="text-[10px] ml-1 opacity-60">
-                    (live: {getLiveFxRate(effectiveCurrency) || '—'})
-                  </span>
-                )}
+                Kurs przeliczenia {effectiveQuote}/{effectivePayment} *
+                <span className="text-[10px] ml-1 opacity-60">
+                  (live: {getLiveFxRate(effectiveQuote, effectivePayment) || '—'} — nadpisz kursem z
+                  broker'a jeśli różny)
+                </span>
               </label>
               <Input
                 type="number"
@@ -286,11 +368,11 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
                 min="0"
                 value={fxRate}
                 onChange={(e) => setFxRate(e.target.value)}
-                placeholder="0.0000"
+                placeholder={getLiveFxRate(effectiveQuote, effectivePayment) || '0.0000'}
               />
               {plnPreview && (
                 <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-                  Wartość w PLN: <strong>{formatNumber(plnPreview)} zł</strong>
+                  Wartość w {effectivePayment}: <strong>{formatNumber(plnPreview)}</strong>
                 </p>
               )}
             </div>
