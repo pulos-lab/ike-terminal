@@ -795,6 +795,34 @@ router.get(
   }),
 );
 
+// GET /api/portfolio/ticker-info?symbol=X
+// Lekki lookup waluty notowania pojedynczego tickera — używany przez AddTransactionDialog
+// po debounce, gdy user wpisuje ticker bez wyboru z listy autocomplete. Yahoo search nie
+// zwraca currency, więc dla zagranicznych tickerów (AAPL/SPGI/…) trzeba zrobić price fetch
+// lub uzyć lokalnego ticker_map. Zwraca tylko { currency } żeby było szybko.
+router.get(
+  '/ticker-info',
+  asyncHandler(async (req, res) => {
+    const symbol = ((req.query.symbol as string) || '').trim().slice(0, 50);
+    if (!symbol) return res.json({ currency: null });
+    const pid = req.portfolioId;
+
+    // 1) lokalny ticker_map — najszybciej, bez sieci
+    const entry = getTickerBySymbol(symbol, pid);
+    if (entry?.currency) return res.json({ currency: entry.currency });
+
+    // 2) heurystyka — polskie suffixy zawsze PLN
+    const up = symbol.toUpperCase();
+    if (up.endsWith('.WA') || up.endsWith('.NC')) return res.json({ currency: 'PLN' });
+
+    // 3) Yahoo price fetch (cache 1-4h via getCached)
+    const yahoo = await fetchYahooPrice(symbol);
+    if (yahoo?.currency) return res.json({ currency: yahoo.currency });
+
+    res.json({ currency: null });
+  }),
+);
+
 // GET /api/portfolio/fx-history
 router.get(
   '/fx-history',
@@ -1345,6 +1373,7 @@ router.post(
       price,
       commission,
       currency: overrideCurrency,
+      paymentCurrency,
       fxRate,
       category,
     } = req.body as TransactionInput;
@@ -1372,14 +1401,14 @@ router.post(
         ticker: ticker.toUpperCase(),
         name: ticker.toUpperCase(),
         exchange: 'OTHER',
-        currency: yahooData.currency || 'USD',
+        currency: overrideCurrency || yahooData.currency || 'USD',
         priceSource: 'yahoo',
       };
 
       // Try Stooq for .WA tickers
       if (ticker.toUpperCase().endsWith('.WA')) {
         newEntry.exchange = 'GPW';
-        newEntry.currency = 'PLN';
+        newEntry.currency = overrideCurrency || 'PLN';
         newEntry.priceSource = 'stooq';
       }
 
@@ -1387,9 +1416,15 @@ router.post(
       entry = newEntry;
     }
 
+    const quoteCurrency = entry.currency;
     const value = quantity * price;
     const comm = commission || 0;
     const total = side === 'K' ? value + comm : value - comm;
+    // Payment currency: explicit z body lub fallback na quote (brak przewalutowania).
+    const effectivePaymentCurrency = paymentCurrency || quoteCurrency;
+    // Sanity: jeśli waluty są równe, fxRate nieistotny — wyzeruj na undefined dla czystości.
+    const effectiveFxRate =
+      effectivePaymentCurrency !== quoteCurrency && fxRate && fxRate > 0 ? fxRate : undefined;
 
     const id = insertTransaction(
       {
@@ -1402,7 +1437,9 @@ router.post(
         value,
         commission: comm,
         total,
-        currency: overrideCurrency || entry.currency,
+        currency: quoteCurrency,
+        paymentCurrency: effectivePaymentCurrency,
+        fxRate: effectiveFxRate,
         category: category || 'stock',
         source: 'manual',
       },
@@ -1424,7 +1461,7 @@ router.put(
       return res.status(404).json({ error: 'Transakcja nie znaleziona' });
     }
 
-    const { date, ticker, side, quantity, price, commission } =
+    const { date, ticker, side, quantity, price, commission, paymentCurrency, fxRate } =
       req.body as Partial<TransactionInput>;
 
     const updates: Partial<import('shared').Transaction> = {};
@@ -1461,6 +1498,17 @@ router.put(
       updates.isin = entry.isin;
       updates.paperName = entry.name;
       updates.currency = entry.currency;
+    }
+
+    // Payment currency + FX rate (explicit edit). Quote currency = updates.currency lub existing.
+    const effectiveCurrency = updates.currency ?? existing.currency;
+    if (paymentCurrency !== undefined) {
+      updates.paymentCurrency = paymentCurrency || effectiveCurrency;
+    }
+    if (fxRate !== undefined) {
+      const finalPaymentCcy =
+        updates.paymentCurrency ?? existing.paymentCurrency ?? effectiveCurrency;
+      updates.fxRate = finalPaymentCcy !== effectiveCurrency && fxRate > 0 ? fxRate : undefined;
     }
 
     // Recalculate value/total if quantity or price changed
