@@ -76,4 +76,29 @@ describe('resolveIsin — full integration for SEVENET-NC trap', () => {
     expect(result?.exchange).toBe('GPW');
     expect(result?.ticker).toBe('CDR.WA');
   });
+
+  it('XTB-style SEVENET (paperName="SEV.WA", isin="SEV.WA") → NC (cross-check Stooq name)', async () => {
+    // XTB importuje NC ticker jako "SEV.WA" (bez -NC suffix). Bez fix'a validateStooq
+    // hardkodowało exchange='GPW'. Teraz cross-check z NC offline map name match.
+    (tickerSearch.validateStooq as any).mockResolvedValue({
+      symbol: 'SEV.WA',
+      name: 'SEVENET',
+    });
+    const result = await resolveIsin('SEV.WA', 'SEV.WA', 'PLN');
+    expect(result?.exchange).toBe('NC');
+    expect(result?.ticker).toBe('SEV.WA');
+    expect(result?.priceSource).toBe('stooq');
+  });
+
+  it('XTB-style Orlen (paperName="ORL.WA") → GPW (NC name nie matchuje Stooq name)', async () => {
+    // Kolizja ticker code'u: ORL jest w NC map jako ORZLOPONY, ale na GPW to Orlen.
+    // Stooq zwraca "Orlen" → NC name "ORZLOPONY" nie pasuje → klasyfikuj GPW.
+    (tickerSearch.validateStooq as any).mockResolvedValue({
+      symbol: 'ORL.WA',
+      name: 'Orlen',
+    });
+    const result = await resolveIsin('ORL.WA', 'ORL.WA', 'PLN');
+    expect(result?.exchange).toBe('GPW');
+    expect(result?.ticker).toBe('ORL.WA');
+  });
 });

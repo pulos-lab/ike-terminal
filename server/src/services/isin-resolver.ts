@@ -195,7 +195,20 @@ export async function resolveIsin(
     for (const candidate of candidates) {
       const stooqResult = await validateStooq(candidate);
       if (stooqResult) {
-        const exchange = 'GPW' as TickerMapEntry['exchange'];
+        // NC detection: validateStooq potwierdza ticker, ale endpoint /q/l/ nie
+        // zwraca exchange code (XWAR vs XNCO). Cross-check z NC offline map:
+        // jeśli ticker code jest w NC byName *i* nazwa z Stooqu pasuje do NC
+        // entry (uniknięcie kolizji typu ORL→ORZLOPONY/Orlen), klasyfikuj NC.
+        // Naprawia case XTB import "SEV.WA" → SEVENET (NewConnect).
+        const tickerBase = stooqResult.symbol.replace(/\.WA$/i, '').toUpperCase();
+        const ncEntry = findNcTicker(tickerBase);
+        const stooqNameUpper = (stooqResult.name || '').toUpperCase();
+        const isNc =
+          ncEntry !== null &&
+          ncEntry.ticker.toUpperCase() === tickerBase &&
+          (stooqNameUpper.includes(ncEntry.name.toUpperCase()) ||
+            ncEntry.name.toUpperCase().includes(stooqNameUpper));
+        const exchange = (isNc ? 'NC' : 'GPW') as TickerMapEntry['exchange'];
         return {
           isin,
           ticker: stooqResult.symbol,
