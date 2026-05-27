@@ -101,4 +101,29 @@ describe('resolveIsin — full integration for SEVENET-NC trap', () => {
     expect(result?.exchange).toBe('GPW');
     expect(result?.ticker).toBe('ORL.WA');
   });
+
+  it('DEGIRO SEVENET (real ISIN PLSEVNT00018, paperName="Sevenet S.A.") → NC (buildEntry override)', async () => {
+    // DEGIRO ma real PL ISIN → Yahoo Strategy 1 first → Yahoo trap zwraca SEV.WA
+    // Bez buildEntry override exchange byłoby hardkodowane GPW. Z override:
+    // tickerBase "SEV" matchuje NC byTicker → NC entry name "SEVENET" matchuje
+    // paperName "Sevenet S.A." → exchange override na NC.
+    (tickerSearch.searchYahoo as any).mockResolvedValue([
+      { symbol: 'SEV.WA', name: 'Sevenet S.A.', exchange: '' },
+    ]);
+    const result = await resolveIsin('PLSEVNT00018', 'Sevenet S.A.', 'PLN');
+    expect(result?.exchange).toBe('NC');
+    expect(result?.ticker).toBe('SEV.WA');
+    expect(result?.priceSource).toBe('stooq');
+  });
+
+  it('DEGIRO Orlen (real ISIN PLPKN0000018, paperName="Orlen S.A.") → GPW (kolizja chroniona)', async () => {
+    // Smoke test: kolizja ORL ticker code. NC ma ORZLOPONY, ale paperName/Yahoo
+    // mówią "Orlen" → no substring match → zostaje GPW.
+    (tickerSearch.searchYahoo as any).mockResolvedValue([
+      { symbol: 'ORL.WA', name: 'Orlen', exchange: '' },
+    ]);
+    const result = await resolveIsin('PLPKN0000018', 'Orlen S.A.', 'PLN');
+    expect(result?.exchange).toBe('GPW');
+    expect(result?.ticker).toBe('ORL.WA');
+  });
 });
