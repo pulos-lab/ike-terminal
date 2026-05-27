@@ -251,18 +251,38 @@ export async function searchTickers(query: string): Promise<TickerSearchResult[]
 
 /**
  * Lookup display name (longname/shortname) for a single ticker symbol via Yahoo
- * search. Returns null if not found. Used to seed real names into auto-created
- * ticker_map entries instead of falling back to the bare symbol.
+ * search. Returns null if not found OR if Yahoo doesn't return an exact symbol
+ * match — strict matching protects CFD/certificate entries (e.g. `OIL`) from
+ * being overwritten by an arbitrary first-quote like "Marathon Oil Corporation".
+ *
+ * Uses the same crumb+cookies auth as `searchYahoo` — without it Yahoo returns
+ * HTTP 500 for /v1/finance/search calls in production (PR #46).
  */
 export async function fetchYahooTickerName(symbol: string): Promise<string | null> {
   try {
-    const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(symbol)}&quotesCount=10&newsCount=0&listsCount=0`;
-    const resp = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+    const auth = await getYahooAuth();
+    const params = new URLSearchParams({
+      q: symbol,
+      quotesCount: '10',
+      newsCount: '0',
+      listsCount: '0',
+    });
+    if (auth?.crumb) params.set('crumb', auth.crumb);
+    const url = `https://query2.finance.yahoo.com/v1/finance/search?${params}`;
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': USER_AGENT,
+        ...(auth?.cookies ? { Cookie: auth.cookies } : {}),
+      },
+    });
     if (!resp.ok) return null;
     const json = await resp.json();
     const quotes: any[] = json?.quotes || [];
     const upper = symbol.toUpperCase();
-    const match = quotes.find((q) => (q.symbol || '').toUpperCase() === upper) || quotes[0];
+    // Strict: require Yahoo to return a quote with the EXACT same symbol. Without
+    // this, querying for "OIL" (a CFD ticker) returns "Marathon Oil Corporation"
+    // as quotes[0] and clobbers the legit CFD name. No fallback to quotes[0].
+    const match = quotes.find((q) => (q.symbol || '').toUpperCase() === upper);
     if (!match) return null;
     return match.longname || match.shortname || null;
   } catch {
