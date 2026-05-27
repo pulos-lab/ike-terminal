@@ -219,9 +219,9 @@ export const api = {
     request<Array<{ symbol: string; name: string; exchange: string; currency?: string }>>(
       `/portfolio/ticker-search?q=${encodeURIComponent(query)}`,
     ),
-  // Pojedynczy lookup waluty notowania (sprawdza ticker_map + Yahoo)
+  // Pojedynczy lookup waluty + nazwy ticker'a (sprawdza ticker_map + Yahoo)
   getTickerInfo: (symbol: string) =>
-    request<{ currency: string | null }>(
+    request<{ currency: string | null; name: string | null }>(
       `/portfolio/ticker-info?symbol=${encodeURIComponent(symbol)}`,
     ),
 

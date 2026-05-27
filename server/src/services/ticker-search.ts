@@ -164,6 +164,36 @@ function searchLocal(query: string): TickerSearchResult[] {
 }
 
 /**
+ * Score a result against the query. Higher = more relevant. Used to sort merged
+ * results so that exact/prefix symbol matches come before fuzzy name matches.
+ *
+ * Scoring (each tier 100 wider than the next, so ties break within tier):
+ *   1000+ exact symbol match (case-insensitive)
+ *    900+ symbol starts with query
+ *    800+ symbol (stripped of `.WA`/`.NC`/etc.) starts with query
+ *    700+ name starts with query
+ *    500+ symbol contains query
+ *    400+ name contains query
+ *      0  fallback (shouldn't happen if filter passed)
+ * Within a tier, shorter symbol wins (FIG beats FIGS for "fig").
+ */
+function relevanceScore(r: TickerSearchResult, q: string): number {
+  const lq = q.toLowerCase();
+  const symLower = r.symbol.toLowerCase();
+  const symBase = symLower.split('.')[0];
+  const nameLower = (r.name || '').toLowerCase();
+  // Sub-score: shorter symbol = better (max 99 bonus)
+  const lengthBonus = Math.max(0, 99 - r.symbol.length);
+  if (symLower === lq) return 1000 + lengthBonus;
+  if (symLower.startsWith(lq)) return 900 + lengthBonus;
+  if (symBase.startsWith(lq)) return 800 + lengthBonus;
+  if (nameLower.startsWith(lq)) return 700 + lengthBonus;
+  if (symLower.includes(lq)) return 500 + lengthBonus;
+  if (nameLower.includes(lq)) return 400 + lengthBonus;
+  return 0;
+}
+
+/**
  * Search tickers across Yahoo, Stooq, and local database
  */
 export async function searchTickers(query: string): Promise<TickerSearchResult[]> {
@@ -180,11 +210,12 @@ export async function searchTickers(query: string): Promise<TickerSearchResult[]
     Promise.resolve(searchLocal(query)),
   ]);
 
-  // Merge and deduplicate by symbol
+  // Merge and deduplicate by symbol — local first so its richer metadata
+  // (e.g. real currency from ticker_map) survives the dedupe; ordering will
+  // be redone by relevance score below.
   const seen = new Set<string>();
   const results: TickerSearchResult[] = [];
 
-  // Local results first (most relevant for existing portfolio)
   for (const r of localResults) {
     const key = r.symbol.toUpperCase();
     if (!seen.has(key)) {
@@ -192,8 +223,6 @@ export async function searchTickers(query: string): Promise<TickerSearchResult[]
       results.push(r);
     }
   }
-
-  // Stooq result (Polish stocks)
   if (stooqResult) {
     const key = stooqResult.symbol.toUpperCase();
     if (!seen.has(key)) {
@@ -201,8 +230,6 @@ export async function searchTickers(query: string): Promise<TickerSearchResult[]
       results.push(stooqResult);
     }
   }
-
-  // Yahoo results
   for (const r of yahooResults) {
     const key = r.symbol.toUpperCase();
     if (!seen.has(key)) {
@@ -211,8 +238,54 @@ export async function searchTickers(query: string): Promise<TickerSearchResult[]
     }
   }
 
+  // Sort by relevance — exact symbol match wins, then prefix, then contains.
+  // Without this, the merge order put any local "name contains query" match
+  // ahead of an exact Yahoo symbol match (e.g. SOMEFIG.WA before FIG for "fig").
+  results.sort((a, b) => relevanceScore(b, query) - relevanceScore(a, query));
+
   const limited = results.slice(0, 15);
   // Krótszy TTL dla pustych wyników — chwilowy 500 z Yahoo nie blokuje podpowiedzi na 5 min
   setCached(cacheKey, limited, limited.length === 0 ? 30 : 300);
   return limited;
+}
+
+/**
+ * Lookup display name (longname/shortname) for a single ticker symbol via Yahoo
+ * search. Returns null if not found OR if Yahoo doesn't return an exact symbol
+ * match — strict matching protects CFD/certificate entries (e.g. `OIL`) from
+ * being overwritten by an arbitrary first-quote like "Marathon Oil Corporation".
+ *
+ * Uses the same crumb+cookies auth as `searchYahoo` — without it Yahoo returns
+ * HTTP 500 for /v1/finance/search calls in production (PR #46).
+ */
+export async function fetchYahooTickerName(symbol: string): Promise<string | null> {
+  try {
+    const auth = await getYahooAuth();
+    const params = new URLSearchParams({
+      q: symbol,
+      quotesCount: '10',
+      newsCount: '0',
+      listsCount: '0',
+    });
+    if (auth?.crumb) params.set('crumb', auth.crumb);
+    const url = `https://query2.finance.yahoo.com/v1/finance/search?${params}`;
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': USER_AGENT,
+        ...(auth?.cookies ? { Cookie: auth.cookies } : {}),
+      },
+    });
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    const quotes: any[] = json?.quotes || [];
+    const upper = symbol.toUpperCase();
+    // Strict: require Yahoo to return a quote with the EXACT same symbol. Without
+    // this, querying for "OIL" (a CFD ticker) returns "Marathon Oil Corporation"
+    // as quotes[0] and clobbers the legit CFD name. No fallback to quotes[0].
+    const match = quotes.find((q) => (q.symbol || '').toUpperCase() === upper);
+    if (!match) return null;
+    return match.longname || match.shortname || null;
+  } catch {
+    return null;
+  }
 }
