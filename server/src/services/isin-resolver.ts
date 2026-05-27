@@ -440,7 +440,31 @@ async function buildEntry(
   paperName: string,
   txCurrency: string,
 ): Promise<TickerMapEntry> {
-  const exchange = inferExchange(ticker, yahooExchange);
+  let exchange = inferExchange(ticker, yahooExchange);
+
+  // NC override dla .WA: Yahoo/inferExchange domyślnie klasyfikuje wszystkie
+  // .WA jako GPW, ale część polskich tickerów to NewConnect (np. SEV.WA = SEVENET).
+  // Cross-check NC offline map: jeśli ticker base matches NC byTicker AND nazwa
+  // (z Yahoo lub Stooq) matchuje NC entry name (substring obie strony) → NC.
+  // Pokrywa case DEGIRO real ISIN + Yahoo trap (PLSEVNT00018 → SEV.WA), manual
+  // entries z nazwą NC spółki, oraz każdy inny path który prowadzi do .WA.
+  if (ticker.endsWith('.WA')) {
+    const tickerBase = ticker.replace(/\.WA$/i, '').toUpperCase();
+    const ncEntry = findNcTicker(tickerBase);
+    if (ncEntry && ncEntry.ticker.toUpperCase() === tickerBase) {
+      const yahooNameUpper = (name || '').toUpperCase();
+      const ncNameUpper = ncEntry.name.toUpperCase();
+      if (
+        yahooNameUpper.includes(ncNameUpper) ||
+        ncNameUpper.includes(yahooNameUpper) ||
+        // Też matchuj jeśli paperName user'a pasuje (DEGIRO "Sevenet S.A." → SEVENET)
+        paperName.toUpperCase().includes(ncNameUpper)
+      ) {
+        exchange = 'NC';
+      }
+    }
+  }
+
   const priceSource = inferPriceSource(ticker, exchange);
   const resolvedName = name || paperName;
 
