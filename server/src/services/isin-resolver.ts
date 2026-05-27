@@ -144,7 +144,7 @@ export function tryNcOfflineGuard(isin: string, paperName: string): TickerMapEnt
   };
 }
 
-async function resolveIsin(
+export async function resolveIsin(
   isin: string,
   paperName: string,
   txCurrency: string,

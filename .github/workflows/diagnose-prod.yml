@@ -1,0 +1,31 @@
+name: Diagnose ISIN on Production
+
+# Read-only diagnostic — pokazuje stan ticker_map + ostatnie transakcje
+# dla danego ISIN-u / nazwy na produkcyjnych portfelach.
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: 'ISIN lub fragment nazwy/tickera (np. PLSEVNT00018, SEVENET, SEV)'
+        required: true
+        type: string
+        default: SEVENET
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Diagnose
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
+            cd /opt/ike-terminal/app &&
+            DATA_DIR=/opt/ike-terminal/data node server/dist/scripts/diagnose-isin.js '${{ inputs.query }}'
+          "
