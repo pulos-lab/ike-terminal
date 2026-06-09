@@ -106,10 +106,10 @@ export function DashboardPage() {
     // Filter to requested date range
     let filtered = history;
     if (startDate) {
-      filtered = filtered.filter((p: any) => p.date >= startDate);
+      filtered = filtered.filter((p) => p.date >= startDate);
     }
     if (endDate) {
-      filtered = filtered.filter((p: any) => p.date <= endDate);
+      filtered = filtered.filter((p) => p.date <= endDate);
     }
 
     if (!filtered.length) return [];
@@ -121,7 +121,7 @@ export function DashboardPage() {
     // im wyższy zwrot bazowy na początku zakresu).
     const base = filtered[0];
 
-    return filtered.map((p: any) => ({
+    return filtered.map((p) => ({
       ...p,
       returnPct: chainLinkPct(p.returnPct, base.returnPct),
       benchmarkReturnPct: chainLinkPct(p.benchmarkReturnPct, base.benchmarkReturnPct),

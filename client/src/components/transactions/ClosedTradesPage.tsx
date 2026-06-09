@@ -146,21 +146,20 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
   const availableCurrencies = useMemo(() => {
     if (!data?.trades?.length) return [];
     const set = new Set<string>();
-    for (const trade of data.trades as ClosedTrade[]) set.add(trade.currency);
+    for (const trade of data.trades) set.add(trade.currency);
     return Array.from(set).sort();
   }, [data]);
 
   const availableYears = useMemo(() => {
     if (!data?.trades?.length) return [];
     const set = new Set<number>();
-    for (const trade of data.trades as ClosedTrade[])
-      set.add(new Date(trade.sellDate).getFullYear());
+    for (const trade of data.trades) set.add(new Date(trade.sellDate).getFullYear());
     return Array.from(set).sort((a, b) => b - a);
   }, [data]);
 
-  const filteredTrades = useMemo(() => {
+  const filteredTrades = useMemo((): ClosedTrade[] => {
     if (!data?.trades?.length) return [];
-    let trades = data.trades as ClosedTrade[];
+    let trades = data.trades;
 
     if (plFilter === 'profit') trades = trades.filter((t) => t.profitLoss > 0);
     else if (plFilter === 'loss') trades = trades.filter((t) => t.profitLoss < 0);

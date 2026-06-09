@@ -389,12 +389,15 @@ export interface StockSplitInput {
 
 // ============ Price Types ============
 
+/**
+ * Pojedynczy wpis z GET /api/prices/live. `price` jest null gdy fetch z
+ * Yahoo/Stooq się nie powiódł — UI pokazuje wtedy "—" zamiast udawanej ceny.
+ * `previousClose` jest obecne tylko dla źródła Yahoo (Stooq go nie zwraca).
+ */
 export interface LivePrice {
-  price: number;
+  price: number | null;
   currency: string;
-  change?: number;
-  changePct?: number;
-  timestamp?: string;
+  previousClose?: number | null;
 }
 
 // ============ Ticker Search Types ============
@@ -567,22 +570,151 @@ export interface CashPosition {
   weight: number;
 }
 
+/** Split z ostatnich 7 dni — GET /portfolio/positions zwraca je do notyfikacji UI. */
+export interface RecentSplit {
+  isin: string;
+  ticker: string;
+  date: string;
+  ratio: number;
+}
+
 export interface PortfolioPositionsResponse {
   positions: Position[];
   cashPositions: CashPosition[];
   totalValuePln: number;
   stocksValuePln: number;
   cashValuePln: number;
+  recentSplits: RecentSplit[];
+  /** Waluta bazowa portfela (np. 'PLN' dla Bossa, 'USD' dla XTB USD sub-account). */
+  baseCurrency: string;
 }
 
 export interface PortfolioHistoryResponse {
   history: PortfolioHistoryPoint[];
   metrics: PortfolioMetrics;
+  /** Waluta bazowa portfela — history/metrics są liczone w tej walucie. */
+  baseCurrency: string;
+}
+
+/**
+ * GET /portfolio/metrics — celowo NIE jest PortfolioMetrics: endpoint pomija
+ * `totalCapitalReturn` (UI topbara go nie pokazuje) i dokłada `baseCurrency`
+ * oraz `fxImpact`. `currentValue`/`totalReturn` mogą być nadpisane wyceną LIVE
+ * (spójność z panelem Portfel), XIRR zostaje z historii close-of-day.
+ */
+export interface PortfolioMetricsResponse {
+  currentValue: number;
+  totalInvested: number;
+  xirr: number;
+  totalReturn: number;
+  totalReturnPct: number;
+  totalDividends: number;
+  /** Waluta bazowa portfela (np. 'PLN' dla Bossa, 'USD' dla XTB USD sub-account). */
+  baseCurrency: string;
+  /** null gdy portfel czysto PLN-owy lub brak danych o kursach wejścia. */
+  fxImpact: FxImpact | null;
+}
+
+export interface ClosedTradesResponse {
+  trades: ClosedTrade[];
+}
+
+export interface DividendsResponse {
+  dividends: DividendRecord[];
+  /** Suma dywidend wypłaconych w PLN (bez konwersji innych walut). */
+  totalPln: number;
+  /** Suma dywidend wypłaconych w USD (bez konwersji). */
+  totalUsd: number;
+}
+
+/**
+ * Transakcja wzbogacona przez GET /portfolio/transactions o dane z ticker_map:
+ * ticker/name/exchange + znormalizowane currency (quote) i paymentCurrency
+ * (zawsze ustawione — fallback do quote gdy brak przewalutowania).
+ */
+export interface TransactionWithMeta extends Transaction {
+  ticker: string;
+  name: string;
+  exchange: string;
+  paymentCurrency: string;
+}
+
+export interface TransactionsResponse {
+  transactions: TransactionWithMeta[];
+}
+
+/** Pojedynczy wiersz z GET /portfolio/deposits (deposit + withdrawal w jednej liście). */
+export interface DepositRecord {
+  id: number;
+  date: string;
+  amount: number;
+  currency: string;
+  description: string;
+  source: CashOperation['source'];
+  type: 'deposit' | 'withdrawal';
+}
+
+export interface DepositsResponse {
+  deposits: DepositRecord[];
+  /** Suma surowych amount (withdrawals są ujemne) — bez konwersji walut. */
+  total: number;
+}
+
+/** Pojedynczy wiersz z GET /portfolio/fees (legacy endpoint, UI używa additional-costs). */
+export interface FeeRecord {
+  id: number;
+  date: string;
+  amount: number;
+  currency: string;
+  description: string;
+  source: CashOperation['source'];
+}
+
+export interface FeesResponse {
+  fees: FeeRecord[];
+  total: number;
+}
+
+export interface FxHistoryResponse {
+  exchanges: FxExchangeRecord[];
+}
+
+/** Punkt wykresu z GET /portfolio/cash-flow — wartości w walucie bazowej portfela. */
+export interface CashFlowChartPoint {
+  date: string;
+  portfolioValue: number;
+  netCashFlow: number;
+}
+
+export interface CashFlowResponse {
+  cashFlow: CashFlowRecord[];
+  chartData: CashFlowChartPoint[];
+  /** Waluta bazowa portfela — cashFlow/chartData są w tej walucie. */
+  baseCurrency: string;
+}
+
+export interface SplitsResponse {
+  splits: StockSplit[];
+}
+
+export interface ImportStatusResponse {
+  transactions: number;
+  operations: number;
+  /** SQLite UTC timestamp 'YYYY-MM-DD HH:MM:SS' albo null gdy brak importów. */
+  lastImportDate: string | null;
+}
+
+/** Kursy FX z GET /prices/live — dokładnie te pary, które serwer faktycznie wysyła. */
+export interface LiveFxRates {
+  USDPLN: number;
+  CADPLN: number;
+  EURPLN: number;
+  GBPPLN: number;
 }
 
 export interface LivePricesResponse {
   prices: Record<string, LivePrice>;
-  fx: Record<string, number>;
+  fx: LiveFxRates;
   timestamp: string;
 }
 

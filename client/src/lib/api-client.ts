@@ -1,4 +1,20 @@
-import type { Portfolio, PortfolioSettings } from 'shared';
+import type {
+  CashFlowResponse,
+  ClosedTradesResponse,
+  DepositsResponse,
+  DividendsResponse,
+  FeesResponse,
+  FxHistoryResponse,
+  ImportStatusResponse,
+  LivePricesResponse,
+  Portfolio,
+  PortfolioHistoryResponse,
+  PortfolioMetricsResponse,
+  PortfolioPositionsResponse,
+  PortfolioSettings,
+  SplitsResponse,
+  TransactionsResponse,
+} from 'shared';
 
 const API_BASE = '/api';
 
@@ -108,10 +124,10 @@ export const api = {
     }),
 
   // Portfolio
-  getPositions: () => request<any>('/portfolio/positions'),
-  getMetrics: () => request<any>('/portfolio/metrics'),
-  getClosedTrades: () => request<any>('/portfolio/closed-trades'),
-  getDividends: () => request<any>('/portfolio/dividends'),
+  getPositions: () => request<PortfolioPositionsResponse>('/portfolio/positions'),
+  getMetrics: () => request<PortfolioMetricsResponse>('/portfolio/metrics'),
+  getClosedTrades: () => request<ClosedTradesResponse>('/portfolio/closed-trades'),
+  getDividends: () => request<DividendsResponse>('/portfolio/dividends'),
   createDividend: (body: { date: string; ticker: string; amount: number; currency: string }) =>
     request<{ id: number }>('/portfolio/dividends', {
       method: 'POST',
@@ -145,7 +161,7 @@ export const api = {
       method: 'DELETE',
     }),
   // Transactions CRUD
-  getTransactions: () => request<any>('/portfolio/transactions'),
+  getTransactions: () => request<TransactionsResponse>('/portfolio/transactions'),
   createTransaction: (body: {
     date: string;
     ticker: string;
@@ -257,7 +273,7 @@ export const api = {
     }>('/portfolio/ticker-map/refresh-sectors', { method: 'POST' }),
 
   // Deposits CRUD
-  getDeposits: () => request<any>('/portfolio/deposits'),
+  getDeposits: () => request<DepositsResponse>('/portfolio/deposits'),
   createDeposit: (
     body: { date: string; amount: number },
     type: 'deposit' | 'withdrawal' = 'deposit',
@@ -277,7 +293,7 @@ export const api = {
     }),
 
   // Fees (legacy — zachowane dla backward compat, UI używa getAdditionalCosts)
-  getFees: () => request<{ fees: any[]; total: number }>('/portfolio/fees'),
+  getFees: () => request<FeesResponse>('/portfolio/fees'),
 
   // Additional costs (ujednolicony endpoint: fee + trade_fee + commission_refund + other)
   // Konsumowany przez CorrectionsAndCostsPage w sekcji "Pozostałe przepływy".
@@ -361,7 +377,7 @@ export const api = {
       method: 'DELETE',
     }),
 
-  getFxHistory: () => request<any>('/portfolio/fx-history'),
+  getFxHistory: () => request<FxHistoryResponse>('/portfolio/fx-history'),
   createFxExchange: (body: {
     date: string;
     currencyFrom: string;
@@ -377,16 +393,16 @@ export const api = {
     request<{ success: boolean }>(`/portfolio/fx-exchanges/${fromId}/${toId}`, {
       method: 'DELETE',
     }),
-  getCashFlow: () => request<any>('/portfolio/cash-flow'),
+  getCashFlow: () => request<CashFlowResponse>('/portfolio/cash-flow'),
 
   postHistory: (body: { benchmark: string; startDate?: string; endDate?: string }) =>
-    request<any>('/portfolio/history', {
+    request<PortfolioHistoryResponse>('/portfolio/history', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
 
   // Stock Splits
-  getSplits: () => request<any>('/portfolio/splits'),
+  getSplits: () => request<SplitsResponse>('/portfolio/splits'),
   createSplit: (body: { isin: string; ticker: string; splitDate: string; ratio: number }) =>
     request<{ success: boolean }>('/portfolio/splits', {
       method: 'POST',
@@ -398,10 +414,10 @@ export const api = {
     }),
 
   // Prices
-  getLivePrices: () => request<any>('/prices/live'),
+  getLivePrices: () => request<LivePricesResponse>('/prices/live'),
 
   // Import
-  getImportStatus: () => request<any>('/import/status'),
+  getImportStatus: () => request<ImportStatusResponse>('/import/status'),
 
   /**
    * Klasyfikacja pliku — zwraca wykryty broker + rolę (transactions/operations).

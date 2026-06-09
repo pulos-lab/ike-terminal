@@ -9,28 +9,7 @@ import {
   formatPLN,
 } from '@/lib/formatters';
 import { ChevronDown, ChevronRight, TrendingDown } from 'lucide-react';
-
-interface BuyLot {
-  quantity: number;
-  price: number;
-  commission: number;
-  date: string;
-  currency: string;
-}
-
-interface Position {
-  paperName: string;
-  ticker: string;
-  shares: number;
-  avgBuyPrice: number;
-  currentPrice: number | null;
-  currentValuePln: number;
-  profitLoss: number;
-  profitLossPct: number;
-  currency: string;
-  category?: 'stock' | 'etf' | 'cfd';
-  buyLots?: BuyLot[];
-}
+import type { Position } from 'shared';
 
 interface Props {
   position: Position;

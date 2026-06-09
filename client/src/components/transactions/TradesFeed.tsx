@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { DeleteTransactionDialog } from './DeleteTransactionDialog';
 import { cn } from '@/lib/utils';
 import { Search, Info, Pencil, Trash2, Check, X, Loader2 } from 'lucide-react';
+import type { TransactionWithMeta } from 'shared';
 
 // useSyncExternalStore na matchMedia — idiomatic React 18. Tailwind md: breakpoint = 768px.
 // Renderujemy TYLKO jeden widok (desktop ALBO mobile), a nie oba z display hacks — eliminuje
@@ -41,29 +42,6 @@ function useIsDesktop(): boolean {
     () => window.matchMedia('(min-width: 768px)').matches,
     () => true, // SSR fallback (nieużywane, ale wymagane)
   );
-}
-
-interface TxItem {
-  id?: number;
-  date: string;
-  ticker: string;
-  isin: string;
-  paperName: string;
-  quantity: number;
-  side: 'K' | 'S';
-  price: number;
-  value: number;
-  commission: number;
-  total: number;
-  /** Quote currency (waluta notowania papieru) */
-  currency: string;
-  /** Payment currency (waluta rozliczenia) — może być != currency gdy broker auto-konwertował */
-  paymentCurrency?: string;
-  category?: 'stock' | 'etf' | 'cfd';
-  fxRate?: number;
-  source?: string;
-  /** Ustawiane przez reconciliation (Bossa wykupy certyfikatów / wezwania skupu) — źródło auto-generowanej sprzedaży. */
-  syntheticOrigin?: string;
 }
 
 /**
@@ -150,9 +128,9 @@ export const TradesFeed = memo(function TradesFeed() {
     quoteCurrency: '',
   });
   const [error, setError] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<TxItem | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TransactionWithMeta | null>(null);
 
-  const rows: TxItem[] = data?.transactions || [];
+  const rows: TransactionWithMeta[] = data?.transactions || [];
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -202,7 +180,7 @@ export const TradesFeed = memo(function TradesFeed() {
 
   // Stabilne handlery przez useCallback — kluczowe, żeby memo NormalRow nie re-renderowała
   // 6000+ wierszy przy każdym setEditingId / setDeleteTarget.
-  const startEdit = useCallback((tx: TxItem) => {
+  const startEdit = useCallback((tx: TransactionWithMeta) => {
     if (tx.id == null) return;
     startTransition(() => {
       setEditingId(tx.id!);
@@ -264,7 +242,7 @@ export const TradesFeed = memo(function TradesFeed() {
     });
   }, [editingId, editForm, updateMutation]);
 
-  const requestDelete = useCallback((tx: TxItem) => {
+  const requestDelete = useCallback((tx: TransactionWithMeta) => {
     if (tx.id == null) return;
     startTransition(() => setDeleteTarget(tx));
   }, []);
@@ -587,7 +565,7 @@ export const TradesFeed = memo(function TradesFeed() {
 const ROW_HEIGHT = 40;
 
 interface VirtualTableProps {
-  rows: TxItem[];
+  rows: TransactionWithMeta[];
   editingId: number | null;
   editForm: EditForm;
   setEditForm: (f: EditForm) => void;
@@ -595,8 +573,8 @@ interface VirtualTableProps {
   updatePending: boolean;
   saveEdit: () => void;
   cancelEdit: () => void;
-  onEdit: (tx: TxItem) => void;
-  onDelete: (tx: TxItem) => void;
+  onEdit: (tx: TransactionWithMeta) => void;
+  onDelete: (tx: TransactionWithMeta) => void;
 }
 
 function VirtualTable({
@@ -759,7 +737,7 @@ function SimpleTable({
  * Wartość transakcji w PLN. `null` gdy nie da się przeliczyć (waluta obca bez
  * kursu FX) — UI pokazuje wtedy "—" zamiast udawać, że surowa kwota to złotówki.
  */
-function valuePln(tx: TxItem): number | null {
+function valuePln(tx: TransactionWithMeta): number | null {
   if (tx.currency === 'PLN') return tx.total;
   if (tx.fxRate && tx.fxRate > 0) return tx.total * tx.fxRate;
   return null;
@@ -772,13 +750,13 @@ function valuePln(tx: TxItem): number | null {
 // zmiana editingId re-renderuje tylko jeden wiersz — target.
 
 interface NormalRowProps {
-  tx: TxItem;
-  onEdit: (tx: TxItem) => void;
-  onDelete: (tx: TxItem) => void;
+  tx: TransactionWithMeta;
+  onEdit: (tx: TransactionWithMeta) => void;
+  onDelete: (tx: TransactionWithMeta) => void;
 }
 
 /** Cena w walucie kwotowania — gdy autoFx i fxRate dostępny, przelicz z PLN na quote currency. */
-function quotePrice(tx: TxItem): number {
+function quotePrice(tx: TransactionWithMeta): number {
   const autoFx = (tx.paymentCurrency || tx.currency) !== tx.currency;
   if (autoFx && tx.fxRate && tx.fxRate > 0) return tx.price / tx.fxRate;
   return tx.price;
@@ -865,7 +843,7 @@ const NormalRow = memo(function NormalRow({ tx, onEdit, onDelete }: NormalRowPro
 });
 
 interface EditRowProps {
-  tx: TxItem;
+  tx: TransactionWithMeta;
   editForm: EditForm;
   setEditForm: (f: EditForm) => void;
   isEditValid: boolean;

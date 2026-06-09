@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useLocalStorage } from '@/lib/use-local-storage';
+import { formatTimestampLocal } from '@/lib/formatters';
 import { useTheme } from '@/lib/use-theme';
 import { cn } from '@/lib/utils';
 import {
@@ -160,7 +161,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   });
 
   const lastImport = importStatus?.lastImportDate
-    ? new Date(importStatus.lastImportDate + 'Z').toLocaleDateString('pl-PL')
+    ? formatTimestampLocal(importStatus.lastImportDate)
     : null;
 
   return (

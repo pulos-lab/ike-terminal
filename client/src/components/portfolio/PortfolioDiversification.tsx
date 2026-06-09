@@ -1,17 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useTheme } from '@/lib/use-theme';
-
-interface Position {
-  ticker: string;
-  paperName: string;
-  currentValuePln: number;
-  currency: string;
-  weight: number;
-  exchange?: string;
-  sector?: string;
-  supersector?: string;
-}
+import type { Position } from 'shared';
 
 interface Props {
   positions: Position[];

@@ -5,16 +5,7 @@ import { QUERY_KEYS } from '@/lib/query-keys';
 import { formatPLN, formatNumber } from '@/lib/formatters';
 import { plColor } from '@/components/ui/pl-badge';
 import { cn } from '@/lib/utils';
-
-interface Position {
-  ticker: string;
-  shares: number;
-  currentValuePln: number;
-  profitLossPln: number;
-  profitLossPct: number;
-  currency: string;
-  category?: string;
-}
+import type { Position } from 'shared';
 
 interface Props {
   tab: 'all' | 'open' | 'closed';
@@ -54,8 +45,8 @@ function AllTilesView() {
 
   const stats = useMemo(() => {
     const txs = data?.transactions || [];
-    const buys = txs.filter((t: any) => t.side === 'K').length;
-    const sells = txs.filter((t: any) => t.side === 'S').length;
+    const buys = txs.filter((t) => t.side === 'K').length;
+    const sells = txs.filter((t) => t.side === 'S').length;
     // Agregaty PLN tylko z transakcji przeliczalnych — wiersze w walucie obcej
     // bez kursu FX pomijamy zamiast sumować surowe kwoty jak złotówki.
     let turnover = 0;
@@ -71,9 +62,9 @@ function AllTilesView() {
       commissionPln += (t.commission ?? 0) * fx;
     }
     const commissionPct = turnover > 0 ? (commissionPln / turnover) * 100 : 0;
-    const tickers = new Set(txs.map((t: any) => t.ticker)).size;
-    const currencies = new Set(txs.map((t: any) => t.currency)).size;
-    const categories = new Set(txs.map((t: any) => t.category || 'stock')).size;
+    const tickers = new Set(txs.map((t) => t.ticker)).size;
+    const currencies = new Set(txs.map((t) => t.currency)).size;
+    const categories = new Set(txs.map((t) => t.category || 'stock')).size;
     return {
       count: txs.length,
       buys,
@@ -235,30 +226,27 @@ function ClosedTilesView({
         fromDate = `${dateRange}-01-01`;
         toDate = `${dateRange}-12-31`;
       }
-      if (fromDate) trades = trades.filter((t: any) => t.sellDate.slice(0, 10) >= fromDate!);
-      if (toDate) trades = trades.filter((t: any) => t.sellDate.slice(0, 10) <= toDate!);
+      if (fromDate) trades = trades.filter((t) => t.sellDate.slice(0, 10) >= fromDate!);
+      if (toDate) trades = trades.filter((t) => t.sellDate.slice(0, 10) <= toDate!);
     }
-    const totalPnl = trades.reduce((s: number, t: any) => s + t.profitLoss, 0);
+    const totalPnl = trades.reduce((s, t) => s + t.profitLoss, 0);
     // Cost basis = actual invested capital (buyPrice × quantity + buyCommission).
     // Note: aggregated in mixed currency when trades span PLN/USD/EUR etc — FX conversion
     // would require historic fx per trade, which the backend doesn't return. This matches
     // how profitLoss is aggregated — accurate for PLN-dominated portfolios.
     const totalCost = trades.reduce(
-      (s: number, t: any) => s + (t.buyPrice ?? 0) * (t.quantity ?? 0) + (t.buyCommission ?? 0),
+      (s, t) => s + (t.buyPrice ?? 0) * (t.quantity ?? 0) + (t.buyCommission ?? 0),
       0,
     );
     const pnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;
-    const profitable = trades.filter((t: any) => t.profitLoss > 0).length;
-    const losers = trades.filter((t: any) => t.profitLoss < 0).length;
+    const profitable = trades.filter((t) => t.profitLoss > 0).length;
+    const losers = trades.filter((t) => t.profitLoss < 0).length;
     const winRate = trades.length > 0 ? (profitable / trades.length) * 100 : 0;
-    const holdDays = trades.map((t: any) => t.holdingDays).filter((d: number) => d >= 0);
-    const avgHold =
-      holdDays.length > 0
-        ? holdDays.reduce((s: number, d: number) => s + d, 0) / holdDays.length
-        : 0;
+    const holdDays = trades.map((t) => t.holdingDays).filter((d) => d >= 0);
+    const avgHold = holdDays.length > 0 ? holdDays.reduce((s, d) => s + d, 0) / holdDays.length : 0;
     const minHold = holdDays.length > 0 ? Math.min(...holdDays) : 0;
     const maxHold = holdDays.length > 0 ? Math.max(...holdDays) : 0;
-    const uniqueTickers = new Set(trades.map((t: any) => t.ticker)).size;
+    const uniqueTickers = new Set(trades.map((t) => t.ticker)).size;
     return {
       count: trades.length,
       uniqueTickers,

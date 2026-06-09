@@ -55,16 +55,36 @@ export function formatPercent(value: number | null | undefined): string {
 }
 
 /**
- * Format date as DD.MM.YYYY
+ * Format date as DD.MM.YYYY.
+ *
+ * Czysty string slicing zamiast `new Date()` — `new Date('2024-05-03')` parsuje
+ * jako UTC midnight, więc `toLocaleDateString` w strefach na zachód od UTC
+ * pokazywało POPRZEDNI dzień. Daty domenowe (data transakcji/dywidendy) są
+ * kalendarzowe, nie chwilowe — nie wolno ich przepuszczać przez strefę czasową.
+ *
+ * Akceptuje 'YYYY-MM-DD' oraz ISO datetime ('YYYY-MM-DDTHH:MM:SS[Z]' /
+ * 'YYYY-MM-DD HH:MM:SS'). Nierozpoznany input przechodzi bez zmian.
  */
 export function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const m = /^(\d{4})-(\d{2})-(\d{2})($|[T ])/.exec(dateStr);
+  if (!m) return dateStr;
+  return `${m[3]}.${m[2]}.${m[1]}`;
 }
 
 /**
- * Format date with time
+ * SQLite CURRENT_TIMESTAMP zapisuje UTC bez oznaczenia strefy
+ * ('YYYY-MM-DD HH:MM:SS'). Tu Date round-trip jest CELOWY: normalizujemy do
+ * ISO + 'Z' i pokazujemy datę w lokalnej strefie użytkownika (timestamp to
+ * moment w czasie, w przeciwieństwie do dat kalendarzowych w formatDate).
+ * Nieparsowalny input przechodzi bez zmian.
  */
+export function formatTimestampLocal(timestamp: string): string {
+  const iso = timestamp.replace(' ', 'T');
+  const withZone = /(Z|[+-]\d{2}:\d{2})$/.test(iso) ? iso : `${iso}Z`;
+  const d = new Date(withZone);
+  if (isNaN(d.getTime())) return timestamp;
+  return d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
 
 /**
  * Format quantity — integer if whole, up to 4 decimal places for small
