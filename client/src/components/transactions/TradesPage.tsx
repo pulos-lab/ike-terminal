@@ -27,31 +27,7 @@ import { TradesFeed } from './TradesFeed';
 import { AddTransactionDialog } from './AddTransactionDialog';
 import { SellPositionDialog } from './SellPositionDialog';
 import { toast } from 'sonner';
-
-interface BuyLot {
-  quantity: number;
-  price: number;
-  commission: number;
-  date: string;
-  currency: string;
-}
-
-interface Position {
-  paperName: string;
-  isin: string;
-  ticker: string;
-  shares: number;
-  avgBuyPrice: number;
-  currentPrice: number | null;
-  currentValuePln: number;
-  profitLoss: number;
-  profitLossPln: number;
-  profitLossPct: number;
-  currency: string;
-  weight: number;
-  category?: 'stock' | 'etf' | 'cfd';
-  buyLots?: BuyLot[];
-}
+import type { Position } from 'shared';
 
 interface SellForm {
   date: string;

@@ -72,16 +72,7 @@ function DepositDescription({ text }: { text: string }) {
 // Historyczne limity IKE/IKZE są centralne w shared/src/ike-ikze-limits.ts (2012–2026).
 // Trzymaj tam wszystkie edycje — ten komponent jest tylko konsumentem.
 import { IKE_LIMITS, IKZE_LIMITS, IKZE_DG_LIMITS } from 'shared';
-
-interface CashEntry {
-  id: number;
-  date: string;
-  amount: number;
-  currency: string;
-  source: string;
-  description: string;
-  type: 'deposit' | 'withdrawal';
-}
+import type { DepositRecord } from 'shared';
 
 interface YearGroup {
   year: number;
@@ -93,7 +84,7 @@ interface YearGroup {
   hasForeignDeposits: boolean;
   ikeLimit: number;
   ikzeLimit: number;
-  entries: CashEntry[];
+  entries: DepositRecord[];
 }
 
 /**
@@ -140,8 +131,8 @@ export function CashFlowPage() {
   const [showPortfolio, setShowPortfolio] = useState(true);
   const [showCashFlow, setShowCashFlow] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
-  const [editing, setEditing] = useState<CashEntry | null>(null);
-  const [deleting, setDeleting] = useState<CashEntry | null>(null);
+  const [editing, setEditing] = useState<DepositRecord | null>(null);
+  const [deleting, setDeleting] = useState<DepositRecord | null>(null);
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.deleteDeposit(id),
@@ -161,10 +152,9 @@ export function CashFlowPage() {
     onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
   });
 
-  const entries: CashEntry[] = (depositsData?.deposits || []).map((d: any) => ({
-    ...d,
-    type: d.type || 'deposit',
-  }));
+  // Server zawsze ustawia `type` ('deposit' | 'withdrawal') — żadna normalizacja
+  // po stronie klienta nie jest potrzebna.
+  const entries: DepositRecord[] = depositsData?.deposits ?? [];
   const ikzeLimits = activeSettings.ikzeIsDG ? IKZE_DG_LIMITS : IKZE_LIMITS;
 
   // Dominant currency across all entries — if all entries share one currency,
@@ -186,7 +176,7 @@ export function CashFlowPage() {
   const yearGroups = useMemo(() => {
     if (!entries.length) return [];
 
-    const byYear = new Map<number, CashEntry[]>();
+    const byYear = new Map<number, DepositRecord[]>();
     for (const entry of entries) {
       const year = parseInt(entry.date.slice(0, 4));
       const arr = byYear.get(year) || [];

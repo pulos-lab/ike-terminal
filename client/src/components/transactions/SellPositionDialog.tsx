@@ -15,20 +15,13 @@ import { invalidatePortfolio } from '@/lib/query-keys';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { Loader2, TrendingDown } from 'lucide-react';
 import { toast } from 'sonner';
+import type { Position } from 'shared';
 
 /**
  * Mobile-friendly modal sprzedaży otwartej pozycji. Desktop ma własny inline flow
  * w rzędzie tabeli (TradesPage) — na mobile nie ma miejsca na inline form,
  * więc pokazujemy ten sam zestaw pól w Dialogu.
  */
-
-interface Position {
-  ticker: string;
-  shares: number;
-  currentPrice: number | null;
-  currency: string;
-  category?: 'stock' | 'etf' | 'cfd';
-}
 
 interface Props {
   position: Position | null;

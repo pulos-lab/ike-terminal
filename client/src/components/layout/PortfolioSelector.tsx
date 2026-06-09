@@ -75,9 +75,7 @@ export function PortfolioSelector() {
   const portfolioBaseCurrency = useMemo(() => {
     const deposits = depositsData?.deposits || [];
     if (!deposits.length) return 'PLN'; // domyślnie — pusty portfel nie blokuje IKE/IKZE
-    const currencies = new Set<string>(
-      deposits.map((d: any) => (d.currency || 'PLN').toUpperCase()),
-    );
+    const currencies = new Set<string>(deposits.map((d) => (d.currency || 'PLN').toUpperCase()));
     if (currencies.size === 1) return [...currencies][0];
     return 'PLN'; // mixed — nie blokujemy (PLN przeważa w typowym use case)
   }, [depositsData]);

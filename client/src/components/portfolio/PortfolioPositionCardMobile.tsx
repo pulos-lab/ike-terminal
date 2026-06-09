@@ -9,25 +9,7 @@ import {
   formatQuantity,
 } from '@/lib/formatters';
 import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
-
-interface Position {
-  ticker: string;
-  paperName: string;
-  isin: string;
-  shares: number;
-  avgBuyPrice: number;
-  currentPrice: number | null;
-  currentValue?: number;
-  currentValuePln: number;
-  profitLoss: number;
-  profitLossPln?: number;
-  profitLossPct: number;
-  currency: string;
-  weight: number;
-  category?: 'stock' | 'etf' | 'cfd';
-  dailyChangePct?: number;
-  priceManual?: boolean;
-}
+import type { Position } from 'shared';
 
 interface SplitInfo {
   ratio: number;

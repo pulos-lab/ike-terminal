@@ -5,6 +5,7 @@ import { plColor } from '@/components/ui/pl-badge';
 import { formatCurrency, formatPercent, formatPLN } from '@/lib/formatters';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { TrendingUp, TrendingDown, DollarSign, Target, ArrowLeftRight } from 'lucide-react';
+import type { FxImpact } from 'shared';
 
 export function MetricsBar() {
   const { data } = useQuery({
@@ -88,29 +89,7 @@ export function MetricsBar() {
   );
 }
 
-interface FxImpactCurrencyEntry {
-  currency: string;
-  exposureNative: number;
-  exposurePln: number;
-  exposurePctOfPortfolio: number;
-  avgPlnPerCurrency: number | null;
-  todayPlnPerCurrency: number;
-  impactPln: number;
-  impactPct: number;
-  totalAcquiredNative: number;
-}
-
-interface FxImpactData {
-  fxImpactPct: number; // % portfela (main)
-  fxImpactPctOfForeign: number; // % ekspozycji zagranicznej
-  fxImpactPln: number;
-  foreignExposurePln: number;
-  foreignExposurePctOfPortfolio: number;
-  totalPortfolioValuePln: number;
-  breakdown: FxImpactCurrencyEntry[];
-}
-
-function FxImpactTooltipBody({ fxImpact }: { fxImpact: FxImpactData }) {
+function FxImpactTooltipBody({ fxImpact }: { fxImpact: FxImpact }) {
   const positive = fxImpact.fxImpactPct >= 0;
   const absPctPortfolio = Math.abs(fxImpact.fxImpactPct);
   const absPln = Math.abs(fxImpact.fxImpactPln);

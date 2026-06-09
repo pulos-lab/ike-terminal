@@ -97,35 +97,28 @@ export function PortfolioPage() {
     if (!data?.positions?.length) return null;
     if (useNativeCcy) {
       // Sumy w walucie portfela — raw sum z pos.currentValue/profitLoss (native)
-      const totalValue = data.positions.reduce((s: number, p: any) => s + (p.currentValue ?? 0), 0);
-      const totalProfitLoss = data.positions.reduce(
-        (s: number, p: any) => s + (p.profitLoss ?? 0),
-        0,
-      );
+      const totalValue = data.positions.reduce((s, p) => s + p.currentValue, 0);
+      const totalProfitLoss = data.positions.reduce((s, p) => s + p.profitLoss, 0);
       const totalCostBasis = totalValue - totalProfitLoss;
       const totalProfitLossPct = totalCostBasis > 0 ? (totalProfitLoss / totalCostBasis) * 100 : 0;
       return {
         totalValue,
         totalProfitLoss,
         totalProfitLossPct,
-        totalValuePln: data.totalValuePln ?? 0,
-        cashValuePln: data.cashValuePln ?? 0,
+        totalValuePln: data.totalValuePln,
+        cashValuePln: data.cashValuePln,
       };
     }
-    const totalValue =
-      data.totalValuePln ?? data.positions.reduce((s: number, p: any) => s + p.currentValuePln, 0);
-    const totalProfitLoss = data.positions.reduce(
-      (s: number, p: any) => s + (p.profitLossPln ?? p.profitLoss),
-      0,
-    );
-    const totalCostBasis = (data.stocksValuePln ?? totalValue) - totalProfitLoss;
+    const totalValue = data.totalValuePln;
+    const totalProfitLoss = data.positions.reduce((s, p) => s + p.profitLossPln, 0);
+    const totalCostBasis = data.stocksValuePln - totalProfitLoss;
     const totalProfitLossPct = totalCostBasis > 0 ? (totalProfitLoss / totalCostBasis) * 100 : 0;
     return {
       totalValue,
       totalProfitLoss,
       totalProfitLossPct,
       totalValuePln: totalValue,
-      cashValuePln: data.cashValuePln ?? 0,
+      cashValuePln: data.cashValuePln,
     };
   }, [data, useNativeCcy]);
 
@@ -207,7 +200,7 @@ export function PortfolioPage() {
           ) : data?.positions?.length ? (
             <>
               <div className="md:hidden flex flex-col gap-2">
-                {data.positions.map((pos: any) => (
+                {data.positions.map((pos) => (
                   <PortfolioPositionCardMobile
                     key={pos.isin}
                     position={pos}
@@ -254,7 +247,7 @@ export function PortfolioPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.positions.map((pos: any) => (
+                    {data.positions.map((pos) => (
                       <TableRow key={pos.isin}>
                         <TableCell className="font-mono font-medium">
                           {pos.ticker}
@@ -390,7 +383,7 @@ export function PortfolioPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {cashPositions.map((cp: any) => (
+                {cashPositions.map((cp) => (
                   <TableRow key={cp.currency}>
                     <TableCell>
                       <CcyChip ccy={cp.currency} />
@@ -412,7 +405,7 @@ export function PortfolioPage() {
         </Card>
       )}
 
-      {data?.positions?.length > 0 && (
+      {data && data.positions.length > 0 && (
         <PortfolioDiversification positions={data.positions} totalValuePln={data.totalValuePln} />
       )}
     </div>
