@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { DEFAULT_FX_PLN } from 'shared';
 import { fetchYahooPrice, fetchFxRate } from '../services/yahoo-finance.js';
 import { fetchStooqPrice } from '../services/stooq.js';
 import { getAllTickers } from '../db/ticker-map-repo.js';
@@ -26,9 +27,9 @@ router.get(
 
     // FX rates
     const [usdPln, cadPln, eurPln] = await Promise.all([
-      fetchFxRate('USDPLN').then((r) => r || 4.0),
-      fetchFxRate('CADPLN').then((r) => r || 2.95),
-      fetchFxRate('EURPLN').then((r) => r || 4.3),
+      fetchFxRate('USDPLN').then((r) => r || DEFAULT_FX_PLN.USD),
+      fetchFxRate('CADPLN').then((r) => r || DEFAULT_FX_PLN.CAD),
+      fetchFxRate('EURPLN').then((r) => r || DEFAULT_FX_PLN.EUR),
     ]);
 
     res.json({

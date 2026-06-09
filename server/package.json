@@ -28,8 +28,7 @@
     "node-cache": "^5.1.2",
     "papaparse": "^5.5.2",
     "resend": "^6.10.0",
-    "shared": "1.0.0",
-    "yahoo-finance2": "^2.14.0"
+    "shared": "1.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

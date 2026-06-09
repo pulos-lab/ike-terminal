@@ -4,10 +4,6 @@ export function decodeWindows1250(buffer: Buffer): string {
   return iconv.decode(buffer, 'win1250');
 }
 
-export function decodeLatin1(buffer: Buffer): string {
-  return iconv.decode(buffer, 'latin1');
-}
-
 /**
  * Auto-detect encoding and decode buffer.
  * Checks for UTF-8 BOM first, then validates UTF-8 content (DEGIRO uses UTF-8

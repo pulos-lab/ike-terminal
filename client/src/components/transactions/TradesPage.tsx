@@ -207,43 +207,19 @@ export function TradesPage() {
       <div className="flex items-center gap-1 border-b border-border overflow-x-auto overflow-y-hidden">
         <TabButton
           active={tab === 'all'}
-          onClick={() => {
-            const t0 = performance.now();
-            setTab('all');
-            requestAnimationFrame(() =>
-              requestAnimationFrame(() =>
-                console.log(`[perf] tab→all: ${(performance.now() - t0).toFixed(0)}ms`),
-              ),
-            );
-          }}
+          onClick={() => setTab('all')}
           label="Wszystkie"
           count={txCount}
         />
         <TabButton
           active={tab === 'open'}
-          onClick={() => {
-            const t0 = performance.now();
-            setTab('open');
-            requestAnimationFrame(() =>
-              requestAnimationFrame(() =>
-                console.log(`[perf] tab→open: ${(performance.now() - t0).toFixed(0)}ms`),
-              ),
-            );
-          }}
+          onClick={() => setTab('open')}
           label="Otwarte"
           count={positions.length}
         />
         <TabButton
           active={tab === 'closed'}
-          onClick={() => {
-            const t0 = performance.now();
-            setTab('closed');
-            requestAnimationFrame(() =>
-              requestAnimationFrame(() =>
-                console.log(`[perf] tab→closed: ${(performance.now() - t0).toFixed(0)}ms`),
-              ),
-            );
-          }}
+          onClick={() => setTab('closed')}
           label="Zamknięte"
           count={closedCount}
         />

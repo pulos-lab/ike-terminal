@@ -13,7 +13,3 @@ export function getCached<T>(key: string): T | undefined {
 export function setCached<T>(key: string, value: T, ttl?: number): void {
   cache.set(key, value, ttl || config.cache.priceTtl);
 }
-
-export function clearCache(): void {
-  cache.flushAll();
-}
