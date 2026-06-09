@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { NavLink, useNavigate, useMatch } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { QUERY_KEYS } from '@/lib/query-keys';
 import { useSession, signOut } from '@/lib/auth-client';
 import {
   LayoutDashboard,
@@ -153,7 +154,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   const { data: importStatus } = useQuery({
-    queryKey: ['import', 'status'],
+    queryKey: QUERY_KEYS.importStatus,
     queryFn: api.getImportStatus,
   });
 

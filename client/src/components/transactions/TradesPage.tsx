@@ -185,14 +185,19 @@ export function TradesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sellingTicker, sellForm.quantity, sellForm.price, sellCommissionTouched]);
 
+  const positions: Position[] = posData?.positions || [];
+
+  // Pozycja, dla której otwarty jest inline sell form — ilość nie może przekroczyć
+  // posiadanych akcji (backend i tak by odrzucił/oversold, ale walidujemy od razu w UI).
+  const sellingPos = sellingTicker ? positions.find((p) => p.ticker === sellingTicker) : undefined;
+
   const isSellValid =
     sellForm.date &&
     sellForm.quantity &&
     parseFloat(sellForm.quantity) > 0 &&
+    (!sellingPos || parseFloat(sellForm.quantity) <= sellingPos.shares) &&
     sellForm.price &&
     parseFloat(sellForm.price) > 0;
-
-  const positions: Position[] = posData?.positions || [];
 
   return (
     <div className="space-y-4">
@@ -452,7 +457,8 @@ export function TradesPage() {
                                         </label>
                                         <Input
                                           type="number"
-                                          min="1"
+                                          step="0.0001"
+                                          min="0.0001"
                                           max={pos.shares}
                                           value={sellForm.quantity}
                                           onChange={(e) =>

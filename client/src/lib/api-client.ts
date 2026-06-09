@@ -31,10 +31,14 @@ function portfolioHeaders(): Record<string, string> {
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  // Merge headers zamiast spread całych options PO headers — caller podający własne
+  // options.headers nadpisałby cały obiekt i zgubił Content-Type + X-Portfolio-Id.
+  // Teraz defaults przeżywają, a pojedyncze nagłówki można świadomie nadpisać.
+  const { headers: optionHeaders, ...restOptions } = options ?? {};
   const response = await fetch(`${API_BASE}${url}`, {
-    headers: portfolioHeaders(),
     credentials: 'include', // send auth cookies
-    ...options,
+    ...restOptions,
+    headers: { ...portfolioHeaders(), ...(optionHeaders ?? {}) },
   });
 
   // Redirect to login on 401 (session expired or not authenticated)

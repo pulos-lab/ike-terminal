@@ -335,6 +335,7 @@ export const TradesFeed = memo(function TradesFeed() {
             const paymentCcy = tx.paymentCurrency || tx.currency;
             const autoFx = paymentCcy !== tx.currency;
             const isEditing = tx.id != null && editingId === tx.id;
+            const pln = valuePln(tx);
 
             if (isEditing) {
               return (
@@ -521,8 +522,11 @@ export const TradesFeed = memo(function TradesFeed() {
                   </p>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <p className="text-sm font-semibold tabular-nums">
-                    {formatNumber(valuePln(tx))} zł
+                  <p
+                    className="text-sm font-semibold tabular-nums"
+                    title={pln == null ? 'Brak kursu FX — nie można przeliczyć na PLN' : undefined}
+                  >
+                    {pln != null ? `${formatNumber(pln)} zł` : '—'}
                   </p>
                   <p className="text-[10px] text-muted-foreground tabular-nums">
                     {formatNumber(tx.value)} {tx.currency}
@@ -751,10 +755,14 @@ function SimpleTable({
   );
 }
 
-function valuePln(tx: TxItem): number {
+/**
+ * Wartość transakcji w PLN. `null` gdy nie da się przeliczyć (waluta obca bez
+ * kursu FX) — UI pokazuje wtedy "—" zamiast udawać, że surowa kwota to złotówki.
+ */
+function valuePln(tx: TxItem): number | null {
   if (tx.currency === 'PLN') return tx.total;
   if (tx.fxRate && tx.fxRate > 0) return tx.total * tx.fxRate;
-  return tx.total; // fallback — we do not always have fx, best-effort
+  return null;
 }
 
 // ============ Row components ============
@@ -779,6 +787,7 @@ function quotePrice(tx: TxItem): number {
 const NormalRow = memo(function NormalRow({ tx, onEdit, onDelete }: NormalRowProps) {
   const paymentCcy = tx.paymentCurrency || tx.currency;
   const autoFx = paymentCcy !== tx.currency;
+  const pln = valuePln(tx);
   // content-visibility: auto — browser skipuje layout + paint dla wierszy poza viewportem.
   // contain-intrinsic-size: rezerwuje miejsce w scrollu. Razem to natywny mechanizm
   // "lazy rendering" bez React-level wirtualizacji — skaluje layout z O(n) do O(widocznych).
@@ -819,8 +828,11 @@ const NormalRow = memo(function NormalRow({ tx, onEdit, onDelete }: NormalRowPro
       <td className="py-2.5 pr-4 text-right text-muted-foreground tabular-nums text-xs">
         {tx.commission > 0 ? formatNumber(tx.commission) : '—'}
       </td>
-      <td className="py-2.5 pr-4 text-right tabular-nums font-medium">
-        {formatNumber(valuePln(tx))}
+      <td
+        className="py-2.5 pr-4 text-right tabular-nums font-medium"
+        title={pln == null ? 'Brak kursu FX — nie można przeliczyć na PLN' : undefined}
+      >
+        {pln != null ? formatNumber(pln) : '—'}
       </td>
       <td className="py-2.5 text-right">
         {tx.id != null && (

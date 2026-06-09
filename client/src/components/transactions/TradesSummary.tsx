@@ -56,8 +56,20 @@ function AllTilesView() {
     const txs = data?.transactions || [];
     const buys = txs.filter((t: any) => t.side === 'K').length;
     const sells = txs.filter((t: any) => t.side === 'S').length;
-    const turnover = txs.reduce((s: number, t: any) => s + valuePln(t), 0);
-    const commissionPln = txs.reduce((s: number, t: any) => s + (t.commission ?? 0) * fxFor(t), 0);
+    // Agregaty PLN tylko z transakcji przeliczalnych — wiersze w walucie obcej
+    // bez kursu FX pomijamy zamiast sumować surowe kwoty jak złotówki.
+    let turnover = 0;
+    let commissionPln = 0;
+    let unconvertible = 0;
+    for (const t of txs) {
+      const fx = fxFor(t);
+      if (fx == null) {
+        unconvertible += 1;
+        continue;
+      }
+      turnover += (t.total ?? 0) * fx;
+      commissionPln += (t.commission ?? 0) * fx;
+    }
     const commissionPct = turnover > 0 ? (commissionPln / turnover) * 100 : 0;
     const tickers = new Set(txs.map((t: any) => t.ticker)).size;
     const currencies = new Set(txs.map((t: any) => t.currency)).size;
@@ -69,6 +81,7 @@ function AllTilesView() {
       turnover,
       commissionPln,
       commissionPct,
+      unconvertible,
       tickers,
       currencies,
       categories,
@@ -82,7 +95,15 @@ function AllTilesView() {
         value={String(stats.count)}
         sub={`${stats.buys} kupno · ${stats.sells} sprzedaż`}
       />
-      <Tile label="Obrót" value={formatPLN(stats.turnover)} sub="łącznie" />
+      <Tile
+        label="Obrót"
+        value={formatPLN(stats.turnover)}
+        sub={
+          stats.unconvertible > 0
+            ? `łącznie (bez ${stats.unconvertible} poz. bez kursu)`
+            : 'łącznie'
+        }
+      />
       <Tile
         label="Prowizje"
         value={formatPLN(stats.commissionPln)}
@@ -313,13 +334,10 @@ function Tile({ label, value, valueClass, sub, subClass }: TileProps) {
   );
 }
 
-// PLN conversion helpers — consistent with TradesFeed
-function fxFor(tx: { currency: string; fxRate?: number }): number {
+// PLN conversion helper — consistent with TradesFeed.valuePln.
+// `null` = waluta obca bez kursu FX, nie da się przeliczyć (wiersz pomijamy w agregatach).
+function fxFor(tx: { currency: string; fxRate?: number }): number | null {
   if (tx.currency === 'PLN') return 1;
   if (tx.fxRate && tx.fxRate > 0) return tx.fxRate;
-  return 1;
-}
-
-function valuePln(tx: { currency: string; fxRate?: number; total: number }): number {
-  return tx.total * fxFor(tx);
+  return null;
 }
