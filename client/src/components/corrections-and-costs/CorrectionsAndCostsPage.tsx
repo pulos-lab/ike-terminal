@@ -48,10 +48,9 @@ import {
   Landmark,
   Receipt,
   Plus,
-  ChevronDown,
-  ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { ExpandableCard, ExpandableCardSubRow } from '@/components/ui/expandable-card';
 import { useToggleSet } from '@/hooks/useToggleSet';
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
@@ -780,77 +779,56 @@ export function CorrectionsAndCostsPage() {
                 {pending.map((a) => {
                   const isExpanded = expandedCA.has(a.id);
                   return (
-                    <div
+                    <ExpandableCard
                       key={a.id}
-                      className="rounded-xl border border-border bg-card overflow-hidden"
-                    >
-                      <div
-                        className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
-                        onClick={() => toggleCA(a.id)}
-                        role="button"
-                        tabIndex={0}
-                        aria-expanded={isExpanded}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            toggleCA(a.id);
-                          }
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            {isExpanded ? (
-                              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                            ) : (
-                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                            )}
-                            <span className="font-mono font-semibold text-sm truncate">
-                              {a.ticker ?? '—'}
-                            </span>
-                            <SubkindBadge subkind={a.subkind} />
-                          </div>
-                          <span className="font-mono font-semibold text-sm tabular-nums shrink-0">
-                            {formatCurrency(a.amount, a.currency)}
+                      expanded={isExpanded}
+                      onToggle={() => toggleCA(a.id)}
+                      headerLeft={
+                        <>
+                          <span className="font-mono font-semibold text-sm truncate">
+                            {a.ticker ?? '—'}
                           </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                          <SubkindBadge subkind={a.subkind} />
+                        </>
+                      }
+                      headerRight={
+                        <span className="font-mono font-semibold text-sm tabular-nums shrink-0">
+                          {formatCurrency(a.amount, a.currency)}
+                        </span>
+                      }
+                      subHeader={
+                        <ExpandableCardSubRow>
                           <span className="text-muted-foreground tabular-nums">
                             {formatDate(a.date)}
                           </span>
                           <Badge variant="outline" className="text-[10px]">
                             {a.source}
                           </Badge>
-                        </div>
-                      </div>
-                      {isExpanded && (
-                        <div
-                          className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-2 text-[11px]"
-                          onClick={(e) => e.stopPropagation()}
+                        </ExpandableCardSubRow>
+                      }
+                    >
+                      <div className="text-muted-foreground">{a.description}</div>
+                      <div className="flex justify-end gap-1.5 pt-1">
+                        <Button
+                          size="sm"
+                          variant="default"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => setResolving(a)}
                         >
-                          <div className="text-muted-foreground">{a.description}</div>
-                          <div className="flex justify-end gap-1.5 pt-1">
-                            <Button
-                              size="sm"
-                              variant="default"
-                              className="h-7 px-2 text-xs"
-                              onClick={() => setResolving(a)}
-                            >
-                              <Briefcase className="h-3 w-3 mr-1" />
-                              Domknij
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                              onClick={() => setDeletingCA(a)}
-                            >
-                              <Trash2 className="h-3 w-3 mr-1" />
-                              Usuń
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                          <Briefcase className="h-3 w-3 mr-1" />
+                          Domknij
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                          onClick={() => setDeletingCA(a)}
+                        >
+                          <Trash2 className="h-3 w-3 mr-1" />
+                          Usuń
+                        </Button>
+                      </div>
+                    </ExpandableCard>
                   );
                 })}
               </div>
@@ -926,72 +904,51 @@ export function CorrectionsAndCostsPage() {
                     const amountColor =
                       a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : '';
                     return (
-                      <div
+                      <ExpandableCard
                         key={a.id}
-                        className="rounded-xl border border-border bg-card overflow-hidden"
-                      >
-                        <div
-                          className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
-                          onClick={() => toggleCA(a.id)}
-                          role="button"
-                          tabIndex={0}
-                          aria-expanded={isExpanded}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              toggleCA(a.id);
-                            }
-                          }}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              {isExpanded ? (
-                                <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                              ) : (
-                                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                              )}
-                              <span className="font-mono font-semibold text-sm truncate">
-                                {a.ticker ?? '—'}
-                              </span>
-                              <SubkindBadge subkind={a.subkind} />
-                            </div>
-                            <span
-                              className={`font-mono font-semibold text-sm tabular-nums shrink-0 ${amountColor}`}
-                            >
-                              {formatCurrency(a.amount, a.currency)}
+                        expanded={isExpanded}
+                        onToggle={() => toggleCA(a.id)}
+                        headerLeft={
+                          <>
+                            <span className="font-mono font-semibold text-sm truncate">
+                              {a.ticker ?? '—'}
                             </span>
-                          </div>
-                          <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                            <SubkindBadge subkind={a.subkind} />
+                          </>
+                        }
+                        headerRight={
+                          <span
+                            className={`font-mono font-semibold text-sm tabular-nums shrink-0 ${amountColor}`}
+                          >
+                            {formatCurrency(a.amount, a.currency)}
+                          </span>
+                        }
+                        subHeader={
+                          <ExpandableCardSubRow>
                             <span className="text-muted-foreground tabular-nums">
                               {formatDate(a.date)}
                             </span>
                             <Badge variant="outline" className="text-[10px]">
                               {a.source}
                             </Badge>
-                          </div>
-                        </div>
-                        {isExpanded && (
-                          <div
-                            className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-2 text-[11px]"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <div className="text-muted-foreground">{a.description}</div>
-                            {a.source === 'manual' && (
-                              <div className="flex justify-end pt-1">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                                  onClick={() => setDeletingCA(a)}
-                                >
-                                  <Trash2 className="h-3 w-3 mr-1" />
-                                  Usuń
-                                </Button>
-                              </div>
-                            )}
+                          </ExpandableCardSubRow>
+                        }
+                      >
+                        <div className="text-muted-foreground">{a.description}</div>
+                        {a.source === 'manual' && (
+                          <div className="flex justify-end pt-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                              onClick={() => setDeletingCA(a)}
+                            >
+                              <Trash2 className="h-3 w-3 mr-1" />
+                              Usuń
+                            </Button>
                           </div>
                         )}
-                      </div>
+                      </ExpandableCard>
                     );
                   })}
                 </div>
@@ -1166,76 +1123,55 @@ export function CorrectionsAndCostsPage() {
                   const amountColor = c.amount < 0 ? 'text-loss' : c.amount > 0 ? 'text-gain' : '';
                   const vCat = virtualCategory(c);
                   return (
-                    <div
+                    <ExpandableCard
                       key={c.id}
-                      className="rounded-xl border border-border bg-card overflow-hidden"
-                    >
-                      <div
-                        className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
-                        onClick={() => toggleCost(c.id)}
-                        role="button"
-                        tabIndex={0}
-                        aria-expanded={isExpanded}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            toggleCost(c.id);
-                          }
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            {isExpanded ? (
-                              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                            ) : (
-                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                            )}
-                            <CostCategoryBadge category={vCat} />
-                            {c.ticker && (
-                              <span className="font-mono text-[11px] text-muted-foreground truncate">
-                                {c.ticker}
-                              </span>
-                            )}
-                          </div>
-                          <span
-                            className={`flex items-center gap-1 font-mono font-semibold text-sm tabular-nums shrink-0 ${amountColor}`}
-                          >
-                            {formatNumber(c.amount)}
-                            <CcyChip ccy={c.currency} />
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                      expanded={isExpanded}
+                      onToggle={() => toggleCost(c.id)}
+                      headerLeft={
+                        <>
+                          <CostCategoryBadge category={vCat} />
+                          {c.ticker && (
+                            <span className="font-mono text-[11px] text-muted-foreground truncate">
+                              {c.ticker}
+                            </span>
+                          )}
+                        </>
+                      }
+                      headerRight={
+                        <span
+                          className={`flex items-center gap-1 font-mono font-semibold text-sm tabular-nums shrink-0 ${amountColor}`}
+                        >
+                          {formatNumber(c.amount)}
+                          <CcyChip ccy={c.currency} />
+                        </span>
+                      }
+                      subHeader={
+                        <ExpandableCardSubRow>
                           <span className="text-muted-foreground tabular-nums">
                             {formatDate(c.date)}
                           </span>
                           <Badge variant="outline" className="text-[10px]">
                             {c.source}
                           </Badge>
-                        </div>
-                      </div>
-                      {isExpanded && (
-                        <div
-                          className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-2 text-[11px]"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <div className="text-muted-foreground">{c.description}</div>
-                          {c.source === 'manual' && (
-                            <div className="flex justify-end pt-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                                onClick={() => setDeletingCost(c)}
-                                disabled={deleteCostMut.isPending}
-                              >
-                                <Trash2 className="h-3 w-3 mr-1" />
-                                Usuń
-                              </Button>
-                            </div>
-                          )}
+                        </ExpandableCardSubRow>
+                      }
+                    >
+                      <div className="text-muted-foreground">{c.description}</div>
+                      {c.source === 'manual' && (
+                        <div className="flex justify-end pt-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                            onClick={() => setDeletingCost(c)}
+                            disabled={deleteCostMut.isPending}
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            Usuń
+                          </Button>
                         </div>
                       )}
-                    </div>
+                    </ExpandableCard>
                   );
                 })}
               </div>

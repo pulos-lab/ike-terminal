@@ -4,6 +4,7 @@ import { Toaster } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PortfolioProvider } from '@/lib/portfolio-context';
+import { useTheme } from '@/lib/use-theme';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { LoginPage } from '@/components/auth/LoginPage';
 import { VerifyOTPPage } from '@/components/auth/VerifyOTPPage';
@@ -30,11 +31,14 @@ const queryClient = new QueryClient({
 });
 
 function App() {
+  // Toaster podąża za centralnym motywem aplikacji — theme="system" ignorował
+  // toggle w AppShell (sonner czyta wtedy tylko prefers-color-scheme).
+  const { theme } = useTheme();
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <Toaster richColors position="bottom-center" closeButton theme="system" />
+          <Toaster richColors position="bottom-center" closeButton theme={theme} />
           <BrowserRouter>
             <Routes>
               {/* Public routes */}

@@ -17,7 +17,8 @@ import { CcyChip } from '@/components/ui/ccy-chip';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { AddFxExchangeDialog } from './AddFxExchangeDialog';
 import { formatNumber, formatDate } from '@/lib/formatters';
-import { Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
+import { ExpandableCard, ExpandableCardSubRow } from '@/components/ui/expandable-card';
 import { toast } from 'sonner';
 import { useToggleSet } from '@/hooks/useToggleSet';
 import type { FxExchangeRecord } from 'shared';
@@ -115,39 +116,25 @@ export function CurrencyExchangePage() {
                   const key = `${ex.fromOperationId ?? i}-${ex.toOperationId ?? i}`;
                   const isExpanded = expandedFx.has(key);
                   return (
-                    <div
+                    <ExpandableCard
                       key={key}
-                      className="rounded-xl border border-border bg-card overflow-hidden"
-                    >
-                      <div
-                        className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
-                        onClick={() => toggleFx(key)}
-                        role="button"
-                        tabIndex={0}
-                        aria-expanded={isExpanded}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            toggleFx(key);
-                          }
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            {isExpanded ? (
-                              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                            ) : (
-                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                            )}
-                            <CcyChip ccy={ex.currencyFrom} />
-                            <span className="text-muted-foreground text-xs">→</span>
-                            <CcyChip ccy={ex.currencyTo} />
-                          </div>
-                          <span className="font-mono font-semibold text-sm tabular-nums shrink-0">
-                            {formatNumber(ex.rate, 4)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                      expanded={isExpanded}
+                      onToggle={() => toggleFx(key)}
+                      expandedClassName="gap-1"
+                      headerLeft={
+                        <>
+                          <CcyChip ccy={ex.currencyFrom} />
+                          <span className="text-muted-foreground text-xs">→</span>
+                          <CcyChip ccy={ex.currencyTo} />
+                        </>
+                      }
+                      headerRight={
+                        <span className="font-mono font-semibold text-sm tabular-nums shrink-0">
+                          {formatNumber(ex.rate, 4)}
+                        </span>
+                      }
+                      subHeader={
+                        <ExpandableCardSubRow>
                           <span className="tabular-nums truncate">
                             <span className="text-loss">
                               −{formatNumber(ex.amountFrom)} {ex.currencyFrom}
@@ -160,48 +147,40 @@ export function CurrencyExchangePage() {
                           <span className="text-muted-foreground tabular-nums shrink-0">
                             {formatDate(ex.date)}
                           </span>
-                        </div>
+                        </ExpandableCardSubRow>
+                      }
+                    >
+                      <div className="flex justify-between gap-3 items-baseline">
+                        <span className="text-muted-foreground">Kwota (z)</span>
+                        <span className="tabular-nums text-right text-loss">
+                          −{formatNumber(ex.amountFrom)} {ex.currencyFrom}
+                        </span>
                       </div>
-                      {isExpanded && (
-                        <div
-                          className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-1 text-[11px]"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <div className="flex justify-between gap-3 items-baseline">
-                            <span className="text-muted-foreground">Kwota (z)</span>
-                            <span className="tabular-nums text-right text-loss">
-                              −{formatNumber(ex.amountFrom)} {ex.currencyFrom}
-                            </span>
-                          </div>
-                          <div className="flex justify-between gap-3 items-baseline">
-                            <span className="text-muted-foreground">Kwota (na)</span>
-                            <span className="tabular-nums text-right text-gain">
-                              +{formatNumber(ex.amountTo)} {ex.currencyTo}
-                            </span>
-                          </div>
-                          <div className="flex justify-between gap-3 items-baseline">
-                            <span className="text-muted-foreground">Kurs</span>
-                            <span className="tabular-nums text-right">
-                              {formatNumber(ex.rate, 4)}
-                            </span>
-                          </div>
-                          {ex.source === 'manual' && (
-                            <div className="flex justify-end pt-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={deleteMutation.isPending}
-                                onClick={() => setDeleting(ex)}
-                                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                              >
-                                <Trash2 className="h-3 w-3 mr-1" />
-                                Usuń
-                              </Button>
-                            </div>
-                          )}
+                      <div className="flex justify-between gap-3 items-baseline">
+                        <span className="text-muted-foreground">Kwota (na)</span>
+                        <span className="tabular-nums text-right text-gain">
+                          +{formatNumber(ex.amountTo)} {ex.currencyTo}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-3 items-baseline">
+                        <span className="text-muted-foreground">Kurs</span>
+                        <span className="tabular-nums text-right">{formatNumber(ex.rate, 4)}</span>
+                      </div>
+                      {ex.source === 'manual' && (
+                        <div className="flex justify-end pt-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={deleteMutation.isPending}
+                            onClick={() => setDeleting(ex)}
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            Usuń
+                          </Button>
                         </div>
                       )}
-                    </div>
+                    </ExpandableCard>
                   );
                 })}
               </div>

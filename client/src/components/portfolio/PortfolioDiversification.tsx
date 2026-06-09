@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useTheme } from '@/lib/use-theme';
 
 interface Position {
   ticker: string;
@@ -53,10 +54,12 @@ const EMBER_PALETTE_LIGHT = [
   '#7a9e68', // moss (oliwkowy)
 ];
 
-function getEmberPalette() {
-  return document.documentElement.classList.contains('dark')
-    ? EMBER_PALETTE_DARK
-    : EMBER_PALETTE_LIGHT;
+// Paleta zależy od motywu — isDark przychodzi z useTheme(), żeby useMemo
+// przeliczały kolory natychmiast po toggle dark/light (wcześniej czytaliśmy
+// klasę DOM wewnątrz memo i kolory aktualizowały się dopiero przy
+// niezwiązanym re-renderze).
+function getEmberPalette(isDark: boolean) {
+  return isDark ? EMBER_PALETTE_DARK : EMBER_PALETTE_LIGHT;
 }
 
 const REGION_MAP: Record<string, string> = {
@@ -330,16 +333,27 @@ function SectorsChart({
 }) {
   const [drillSupersector, setDrillSupersector] = useState<string | null>(null);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  const { isDark } = useTheme();
 
   // Dane donuta: poziom 1 — wszystkie nadsektory; poziom 2 — podsektory wybranego
   // nadsektora (membership liczony po p.supersector === drillSupersector).
   const sectorData = useMemo(() => {
     if (drillSupersector === null) {
-      return groupBy(positions, (p) => p.supersector || 'Inne', getEmberPalette(), totalValuePln);
+      return groupBy(
+        positions,
+        (p) => p.supersector || 'Inne',
+        getEmberPalette(isDark),
+        totalValuePln,
+      );
     }
     const filtered = positions.filter((p) => (p.supersector || 'Inne') === drillSupersector);
-    return groupBy(filtered, (p) => p.sector || 'Pozostałe', getEmberPalette(), totalValuePln);
-  }, [positions, totalValuePln, drillSupersector]);
+    return groupBy(
+      filtered,
+      (p) => p.sector || 'Pozostałe',
+      getEmberPalette(isDark),
+      totalValuePln,
+    );
+  }, [positions, totalValuePln, drillSupersector, isDark]);
 
   // Spółki dopasowane do aktualnego kontekstu (hover lub drill-down).
   // Priorytet: hover > drill-down > nic.
@@ -453,6 +467,7 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 }
 
 export function PortfolioDiversification({ positions, totalValuePln }: Props) {
+  const { isDark } = useTheme();
   const metrics = useMemo(() => {
     if (!positions.length) return null;
 
@@ -483,24 +498,25 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
       groupBy(
         positions,
         (p) => REGION_MAP[p.exchange || ''] || 'Inne',
-        getEmberPalette(),
+        getEmberPalette(isDark),
         totalValuePln,
       ),
-    [positions, totalValuePln],
+    [positions, totalValuePln, isDark],
   );
 
   const currencyData = useMemo(
-    () => groupBy(positions, (p) => p.currency, getEmberPalette(), totalValuePln),
-    [positions, totalValuePln],
+    () => groupBy(positions, (p) => p.currency, getEmberPalette(isDark), totalValuePln),
+    [positions, totalValuePln, isDark],
   );
 
   const topPositionsData = useMemo(() => {
+    const palette = getEmberPalette(isDark);
     const sorted = [...positions].sort((a, b) => b.currentValuePln - a.currentValuePln);
     const top5: SliceData[] = sorted.slice(0, 5).map((p, i) => ({
       name: p.ticker,
       value: p.currentValuePln,
       pct: totalValuePln > 0 ? (p.currentValuePln / totalValuePln) * 100 : 0,
-      color: getEmberPalette()[i],
+      color: palette[i],
     }));
     const restValue = sorted.slice(5).reduce((s, p) => s + p.currentValuePln, 0);
     if (restValue > 0) {
@@ -508,11 +524,11 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
         name: 'Pozostałe',
         value: restValue,
         pct: totalValuePln > 0 ? (restValue / totalValuePln) * 100 : 0,
-        color: getEmberPalette()[5],
+        color: palette[5],
       });
     }
     return top5;
-  }, [positions, totalValuePln]);
+  }, [positions, totalValuePln, isDark]);
 
   if (!metrics) return null;
 

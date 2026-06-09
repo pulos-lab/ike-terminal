@@ -25,19 +25,9 @@ import {
 } from '@/lib/formatters';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { groupDividendsByYearAndCurrency } from '@/lib/dividends-yearly';
-import {
-  Loader2,
-  Coins,
-  Plus,
-  Pencil,
-  Trash2,
-  RefreshCw,
-  Calendar,
-  Clock,
-  ChevronDown,
-  ChevronRight,
-} from 'lucide-react';
+import { Loader2, Coins, Plus, Pencil, Trash2, RefreshCw, Calendar, Clock } from 'lucide-react';
 import { toast } from 'sonner';
+import { ExpandableCard, ExpandableCardSubRow } from '@/components/ui/expandable-card';
 import { useToggleSet } from '@/hooks/useToggleSet';
 import type { DividendRecord, UpcomingDividend } from 'shared';
 
@@ -88,59 +78,41 @@ function StatusBadge({ exDate, payDate }: { exDate: string; payDate: string | nu
 function UpcomingDividendCardMobile({ d }: { d: UpcomingDividend }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
-      <div
-        className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
-        onClick={() => setExpanded((v) => !v)}
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            setExpanded((v) => !v);
-          }
-        }}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            {expanded ? (
-              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-            ) : (
-              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-            )}
-            <span className="font-mono font-semibold text-sm truncate">{d.ticker}</span>
-            <CcyChip ccy={d.currency} />
-          </div>
-          <span className="font-semibold text-sm tabular-nums text-gain shrink-0">
-            {d.estimatedAmount > 0 ? formatNumber(d.estimatedAmount) : '—'}
-          </span>
-        </div>
-        <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+    <ExpandableCard
+      expanded={expanded}
+      onToggle={() => setExpanded((v) => !v)}
+      expandedClassName="gap-1"
+      headerLeft={
+        <>
+          <span className="font-mono font-semibold text-sm truncate">{d.ticker}</span>
+          <CcyChip ccy={d.currency} />
+        </>
+      }
+      headerRight={
+        <span className="font-semibold text-sm tabular-nums text-gain shrink-0">
+          {d.estimatedAmount > 0 ? formatNumber(d.estimatedAmount) : '—'}
+        </span>
+      }
+      subHeader={
+        <ExpandableCardSubRow>
           <span className="text-muted-foreground tabular-nums truncate">
             ex: {formatDate(d.exDividendDate)} · {formatQuantity(d.shares)} szt.
           </span>
           <StatusBadge exDate={d.exDividendDate} payDate={d.paymentDate} />
-        </div>
+        </ExpandableCardSubRow>
+      }
+    >
+      <div className="flex justify-between gap-3 items-baseline">
+        <span className="text-muted-foreground">Nazwa</span>
+        <span className="text-right">{d.name}</span>
       </div>
-      {expanded && (
-        <div
-          className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-1 text-[11px]"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex justify-between gap-3 items-baseline">
-            <span className="text-muted-foreground">Nazwa</span>
-            <span className="text-right">{d.name}</span>
-          </div>
-          <div className="flex justify-between gap-3 items-baseline">
-            <span className="text-muted-foreground">Data wypłaty</span>
-            <span className="tabular-nums text-right">
-              {d.paymentDate ? formatDate(d.paymentDate) : '—'}
-            </span>
-          </div>
-        </div>
-      )}
-    </div>
+      <div className="flex justify-between gap-3 items-baseline">
+        <span className="text-muted-foreground">Data wypłaty</span>
+        <span className="tabular-nums text-right">
+          {d.paymentDate ? formatDate(d.paymentDate) : '—'}
+        </span>
+      </div>
+    </ExpandableCard>
   );
 }
 
@@ -380,83 +352,62 @@ export function DividendsPage() {
                   const isExpanded = expandedHistory.has(d.id);
                   const hasDescription = !!(d.description && d.description.trim());
                   return (
-                    <div
+                    <ExpandableCard
                       key={d.id}
-                      className="rounded-xl border border-border bg-card overflow-hidden"
-                    >
-                      <div
-                        className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
-                        onClick={() => toggleHistory(d.id)}
-                        role="button"
-                        tabIndex={0}
-                        aria-expanded={isExpanded}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            toggleHistory(d.id);
-                          }
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            {isExpanded ? (
-                              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                            ) : (
-                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                            )}
-                            <span className="font-mono font-semibold text-sm truncate">
-                              {d.ticker}
-                            </span>
-                            <CcyChip ccy={d.currency} />
-                          </div>
-                          <span className="font-semibold text-sm tabular-nums text-gain shrink-0">
-                            {formatNumber(d.amount)}
+                      expanded={isExpanded}
+                      onToggle={() => toggleHistory(d.id)}
+                      headerLeft={
+                        <>
+                          <span className="font-mono font-semibold text-sm truncate">
+                            {d.ticker}
                           </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
+                          <CcyChip ccy={d.currency} />
+                        </>
+                      }
+                      headerRight={
+                        <span className="font-semibold text-sm tabular-nums text-gain shrink-0">
+                          {formatNumber(d.amount)}
+                        </span>
+                      }
+                      subHeader={
+                        <ExpandableCardSubRow>
                           <span className="text-muted-foreground tabular-nums">
                             {formatDate(d.date)}
                           </span>
                           <SourceBadge source={d.source} />
-                        </div>
-                      </div>
-                      {isExpanded && (
-                        <div
-                          className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-2 text-[11px]"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {hasDescription && (
-                            <div className="flex justify-between gap-3 items-baseline">
-                              <span className="text-muted-foreground shrink-0">Opis</span>
-                              <span className="text-right">{d.description}</span>
-                            </div>
-                          )}
-                          {(d.source === 'manual' || d.source === 'auto-yahoo') && (
-                            <div className="flex justify-end gap-1.5 pt-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setEditing(d)}
-                                className="h-7 px-2 text-xs"
-                              >
-                                <Pencil className="h-3 w-3 mr-1" />
-                                Edytuj
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setDeleting(d)}
-                                disabled={deleteMutation.isPending}
-                                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                              >
-                                <Trash2 className="h-3 w-3 mr-1" />
-                                Usuń
-                              </Button>
-                            </div>
-                          )}
+                        </ExpandableCardSubRow>
+                      }
+                    >
+                      {hasDescription && (
+                        <div className="flex justify-between gap-3 items-baseline">
+                          <span className="text-muted-foreground shrink-0">Opis</span>
+                          <span className="text-right">{d.description}</span>
                         </div>
                       )}
-                    </div>
+                      {(d.source === 'manual' || d.source === 'auto-yahoo') && (
+                        <div className="flex justify-end gap-1.5 pt-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setEditing(d)}
+                            className="h-7 px-2 text-xs"
+                          >
+                            <Pencil className="h-3 w-3 mr-1" />
+                            Edytuj
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setDeleting(d)}
+                            disabled={deleteMutation.isPending}
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            Usuń
+                          </Button>
+                        </div>
+                      )}
+                    </ExpandableCard>
                   );
                 })}
               </div>

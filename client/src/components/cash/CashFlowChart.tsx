@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChart, AreaSeries, type IChartApi, type ISeriesApi } from 'lightweight-charts';
 import { formatCurrency } from '@/lib/formatters';
+import { useTheme } from '@/lib/use-theme';
 import { Maximize2 } from 'lucide-react';
 
 interface CashFlowChartProps {
@@ -17,6 +18,9 @@ export function CashFlowChart({ data, currency, showPortfolio, showCashFlow }: C
   const portfolioSeriesRef = useRef<ISeriesApi<'Area'> | null>(null);
   const cashFlowSeriesRef = useRef<ISeriesApi<'Area'> | null>(null);
   const [zoomed, setZoomed] = useState(false);
+  // Reaktywny motyw — wykres i tooltip przekolorowują się natychmiast po toggle
+  // dark/light (wcześniej klasa DOM była czytana raz per mount/effect).
+  const { isDark } = useTheme();
 
   useEffect(() => {
     if (!containerRef.current || !data.length) return;
@@ -24,8 +28,6 @@ export function CashFlowChart({ data, currency, showPortfolio, showCashFlow }: C
     if (chartRef.current) {
       chartRef.current.remove();
     }
-
-    const isDark = document.documentElement.classList.contains('dark');
 
     const fmt = (v: number) => {
       if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M ${currency}`;
@@ -182,15 +184,13 @@ export function CashFlowChart({ data, currency, showPortfolio, showCashFlow }: C
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, currency]);
+  }, [data, currency, isDark]);
 
   // Toggle widoczności serii bez przebudowy wykresu
   useEffect(() => {
     portfolioSeriesRef.current?.applyOptions({ visible: showPortfolio });
     cashFlowSeriesRef.current?.applyOptions({ visible: showCashFlow });
   }, [showPortfolio, showCashFlow]);
-
-  const isDark = document.documentElement.classList.contains('dark');
 
   return (
     <div style={{ position: 'relative' }} ref={containerRef}>

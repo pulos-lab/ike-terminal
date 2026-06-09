@@ -25,6 +25,7 @@ import {
   TooltipTrigger as UITooltipTrigger,
 } from '@/components/ui/tooltip';
 import { formatPLN, formatDate, formatCurrency } from '@/lib/formatters';
+import { ExpandableCard, ExpandableCardSubRow } from '@/components/ui/expandable-card';
 import { useToggleSet } from '@/hooks/useToggleSet';
 import {
   ChevronRight,
@@ -86,9 +87,34 @@ interface YearGroup {
   year: number;
   totalDeposits: number;
   totalWithdrawals: number;
+  /** Suma wpłat wyłącznie w PLN — limity IKE/IKZE są denominowane w PLN. */
+  plnDeposits: number;
+  /** Czy rok zawiera wpłaty w walucie innej niż PLN (limit nieporównywalny bez kursu). */
+  hasForeignDeposits: boolean;
   ikeLimit: number;
   ikzeLimit: number;
   entries: CashEntry[];
+}
+
+/**
+ * Placeholder "—" z tooltipem dla kolumn limitu, gdy rok zawiera wpłaty
+ * w walucie obcej — porównywanie kwot np. w USD z limitem w PLN dawałoby
+ * bezsensowne procenty, więc uczciwie pokazujemy brak danych.
+ */
+function LimitUnavailable() {
+  return (
+    <UITooltip>
+      <UITooltipTrigger asChild>
+        <span className="inline-flex items-center gap-1 cursor-help text-muted-foreground">
+          —<Info className="h-3 w-3" />
+        </span>
+      </UITooltipTrigger>
+      <UITooltipContent className="max-w-xs">
+        Limity IKE/IKZE są wyrażone w PLN, a ten rok zawiera wpłaty w innych walutach. Bez kursów
+        wymiany nie da się rzetelnie policzyć wykorzystania limitu.
+      </UITooltipContent>
+    </UITooltip>
+  );
 }
 
 export function CashFlowPage() {
@@ -170,9 +196,17 @@ export function CashFlowPage() {
 
     const groups: YearGroup[] = [];
     for (const [year, yearEntries] of byYear) {
-      const totalDeposits = yearEntries
-        .filter((e) => e.type === 'deposit')
+      const depositEntries = yearEntries.filter((e) => e.type === 'deposit');
+      const totalDeposits = depositEntries.reduce((s, d) => s + Math.abs(d.amount), 0);
+      // Limity IKE/IKZE są w PLN — do wykorzystania limitu liczymy wyłącznie
+      // wpłaty PLN. Gdy rok ma wpłaty w obcej walucie, UI pokazuje "—" z tooltipem
+      // zamiast bezsensownego porównania np. USD z limitem PLN.
+      const plnDeposits = depositEntries
+        .filter((e) => (e.currency || 'PLN').toUpperCase() === 'PLN')
         .reduce((s, d) => s + Math.abs(d.amount), 0);
+      const hasForeignDeposits = depositEntries.some(
+        (e) => (e.currency || 'PLN').toUpperCase() !== 'PLN',
+      );
       const totalWithdrawals = yearEntries
         .filter((e) => e.type === 'withdrawal')
         .reduce((s, d) => s + Math.abs(d.amount), 0);
@@ -183,6 +217,8 @@ export function CashFlowPage() {
         year,
         totalDeposits,
         totalWithdrawals,
+        plnDeposits,
+        hasForeignDeposits,
         ikeLimit,
         ikzeLimit,
         entries: yearEntries,
@@ -209,14 +245,15 @@ export function CashFlowPage() {
     return total;
   };
 
+  // Wykorzystanie limitu liczone wyłącznie z wpłat PLN (limity są PLN-only).
   const getRemaining = (group: YearGroup) => {
     const limit = getYearLimit(group);
-    return Math.max(limit - group.totalDeposits, 0);
+    return Math.max(limit - group.plnDeposits, 0);
   };
 
   const getUsagePct = (group: YearGroup) => {
     const limit = getYearLimit(group);
-    return limit > 0 ? (group.totalDeposits / limit) * 100 : 0;
+    return limit > 0 ? (group.plnDeposits / limit) * 100 : 0;
   };
 
   const limitColCount = (showIKE ? 1 : 0) + (showIKZE ? 1 : 0) + (showLimits ? 2 : 0);
@@ -315,173 +352,164 @@ export function CashFlowPage() {
                     const remaining = getRemaining(group);
                     const usagePct = getUsagePct(group);
                     const yearLimit = getYearLimit(group);
-                    const isFull = showLimits && yearLimit > 0 && remaining <= 0;
+                    const isFull =
+                      showLimits && yearLimit > 0 && !group.hasForeignDeposits && remaining <= 0;
                     return (
-                      <div
+                      <ExpandableCard
                         key={group.year}
-                        className="rounded-xl border border-border bg-card overflow-hidden"
-                      >
-                        <div
-                          className="p-3 flex flex-col gap-1 cursor-pointer hover:bg-muted/40 active:bg-muted/60 transition-colors"
-                          onClick={() => toggleYear(group.year)}
-                          role="button"
-                          tabIndex={0}
-                          aria-expanded={isExpanded}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              toggleYear(group.year);
-                            }
-                          }}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              {isExpanded ? (
-                                <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                              ) : (
-                                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                              )}
-                              <span className="font-semibold text-sm">{group.year}</span>
-                              <span className="text-[10px] text-muted-foreground">
-                                ({group.entries.length})
-                              </span>
-                            </div>
-                            <span className="font-semibold text-sm tabular-nums text-gain shrink-0">
-                              {group.totalDeposits > 0 ? fmtAgg(group.totalDeposits) : '—'}
+                        expanded={isExpanded}
+                        onToggle={() => toggleYear(group.year)}
+                        expandedClassName="gap-1"
+                        headerLeft={
+                          <>
+                            <span className="font-semibold text-sm">{group.year}</span>
+                            <span className="text-[10px] text-muted-foreground">
+                              ({group.entries.length})
                             </span>
-                          </div>
-                          {showLimits && yearLimit > 0 && (
-                            <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
-                              <span className="text-muted-foreground">
-                                Pozostało:{' '}
-                                <span
-                                  className={`tabular-nums ${isFull ? 'text-gain' : 'text-yellow-500'}`}
-                                >
-                                  {formatPLN(remaining)}
-                                </span>
-                              </span>
-                              <Badge
-                                variant={isFull ? 'default' : 'secondary'}
-                                className={`text-xs shrink-0 ${isFull ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}
-                              >
-                                {usagePct.toFixed(0)}%
-                              </Badge>
-                            </div>
-                          )}
-                          {group.totalWithdrawals > 0 && (
-                            <div className="flex items-center justify-between gap-2 text-[11px] pl-5">
-                              <span className="text-muted-foreground">Wypłaty</span>
-                              <span className="text-loss tabular-nums">
-                                −{fmtAgg(group.totalWithdrawals)}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                        {isExpanded && (
-                          <div
-                            className="bg-muted/20 border-t border-border px-3 py-2.5 flex flex-col gap-1 text-[11px]"
-                            onClick={(e) => e.stopPropagation()}
-                          >
+                          </>
+                        }
+                        headerRight={
+                          <span className="font-semibold text-sm tabular-nums text-gain shrink-0">
+                            {group.totalDeposits > 0 ? fmtAgg(group.totalDeposits) : '—'}
+                          </span>
+                        }
+                        subHeader={
+                          <>
                             {showLimits && yearLimit > 0 && (
-                              <>
-                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold">
-                                  Limit
-                                </div>
-                                {showIKE && group.ikeLimit > 0 && (
-                                  <div className="flex justify-between gap-3 items-baseline">
-                                    <span className="text-muted-foreground">Limit IKE</span>
-                                    <span className="tabular-nums text-right">
-                                      {formatPLN(group.ikeLimit)}
+                              <ExpandableCardSubRow>
+                                <span className="text-muted-foreground">
+                                  Pozostało:{' '}
+                                  {group.hasForeignDeposits ? (
+                                    <LimitUnavailable />
+                                  ) : (
+                                    <span
+                                      className={`tabular-nums ${isFull ? 'text-gain' : 'text-yellow-500'}`}
+                                    >
+                                      {formatPLN(remaining)}
                                     </span>
-                                  </div>
-                                )}
-                                {showIKZE && group.ikzeLimit > 0 && (
-                                  <div className="flex justify-between gap-3 items-baseline">
-                                    <span className="text-muted-foreground">Limit IKZE</span>
-                                    <span className="tabular-nums text-right">
-                                      {formatPLN(group.ikzeLimit)}
-                                    </span>
-                                  </div>
-                                )}
-                                <div className="flex justify-between gap-3 items-baseline">
-                                  <span className="text-muted-foreground">Pozostało</span>
-                                  <span
-                                    className={`tabular-nums text-right font-medium ${isFull ? 'text-gain' : 'text-yellow-500'}`}
-                                  >
-                                    {formatPLN(remaining)}
-                                  </span>
-                                </div>
-                                <div className="flex justify-between gap-3 items-baseline">
-                                  <span className="text-muted-foreground">Wykorzystanie</span>
+                                  )}
+                                </span>
+                                {group.hasForeignDeposits ? (
+                                  <LimitUnavailable />
+                                ) : (
                                   <Badge
                                     variant={isFull ? 'default' : 'secondary'}
-                                    className={`text-xs ${isFull ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}
+                                    className={`text-xs shrink-0 ${isFull ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}
                                   >
                                     {usagePct.toFixed(0)}%
                                   </Badge>
-                                </div>
-                                <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold mt-2">
-                                  Operacje ({group.entries.length})
-                                </div>
-                              </>
+                                )}
+                              </ExpandableCardSubRow>
                             )}
-                            {group.entries.map((entry) => (
-                              <div
-                                key={entry.id}
-                                className="flex items-center justify-between gap-2"
-                              >
-                                <span className="flex items-center gap-1.5 min-w-0 truncate">
-                                  {entry.type === 'deposit' ? (
-                                    <ArrowUp className="h-3 w-3 text-gain shrink-0" />
-                                  ) : (
-                                    <ArrowDown className="h-3 w-3 text-loss shrink-0" />
-                                  )}
-                                  <span className="text-muted-foreground tabular-nums">
-                                    {formatDate(entry.date)}
-                                  </span>
-                                  {entry.description && (
-                                    <DepositDescription text={entry.description} />
-                                  )}
+                            {group.totalWithdrawals > 0 && (
+                              <ExpandableCardSubRow>
+                                <span className="text-muted-foreground">Wypłaty</span>
+                                <span className="text-loss tabular-nums">
+                                  −{fmtAgg(group.totalWithdrawals)}
                                 </span>
-                                <span className="flex items-center gap-1.5 shrink-0">
-                                  <span
-                                    className={`tabular-nums font-medium ${entry.type === 'deposit' ? 'text-gain' : 'text-loss'}`}
-                                  >
-                                    {entry.type === 'deposit' ? '+' : '−'}
-                                    {formatCurrency(
-                                      Math.abs(entry.amount),
-                                      entry.currency || 'PLN',
-                                    )}
-                                  </span>
-                                  {entry.source === 'manual' && (
-                                    <>
-                                      <Button
-                                        size="icon-xs"
-                                        variant="ghost"
-                                        onClick={() => setEditing(entry)}
-                                        className="text-muted-foreground hover:text-foreground"
-                                        aria-label="Edytuj"
-                                      >
-                                        <Pencil className="h-3 w-3" />
-                                      </Button>
-                                      <Button
-                                        size="icon-xs"
-                                        variant="ghost"
-                                        onClick={() => setDeleting(entry)}
-                                        disabled={deleteMutation.isPending}
-                                        className="text-muted-foreground hover:text-destructive"
-                                        aria-label="Usuń"
-                                      >
-                                        <Trash2 className="h-3 w-3" />
-                                      </Button>
-                                    </>
-                                  )}
+                              </ExpandableCardSubRow>
+                            )}
+                          </>
+                        }
+                      >
+                        {showLimits && yearLimit > 0 && (
+                          <>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold">
+                              Limit
+                            </div>
+                            {showIKE && group.ikeLimit > 0 && (
+                              <div className="flex justify-between gap-3 items-baseline">
+                                <span className="text-muted-foreground">Limit IKE</span>
+                                <span className="tabular-nums text-right">
+                                  {formatPLN(group.ikeLimit)}
                                 </span>
                               </div>
-                            ))}
-                          </div>
+                            )}
+                            {showIKZE && group.ikzeLimit > 0 && (
+                              <div className="flex justify-between gap-3 items-baseline">
+                                <span className="text-muted-foreground">Limit IKZE</span>
+                                <span className="tabular-nums text-right">
+                                  {formatPLN(group.ikzeLimit)}
+                                </span>
+                              </div>
+                            )}
+                            <div className="flex justify-between gap-3 items-baseline">
+                              <span className="text-muted-foreground">Pozostało</span>
+                              {group.hasForeignDeposits ? (
+                                <LimitUnavailable />
+                              ) : (
+                                <span
+                                  className={`tabular-nums text-right font-medium ${isFull ? 'text-gain' : 'text-yellow-500'}`}
+                                >
+                                  {formatPLN(remaining)}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex justify-between gap-3 items-baseline">
+                              <span className="text-muted-foreground">Wykorzystanie</span>
+                              {group.hasForeignDeposits ? (
+                                <LimitUnavailable />
+                              ) : (
+                                <Badge
+                                  variant={isFull ? 'default' : 'secondary'}
+                                  className={`text-xs ${isFull ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}
+                                >
+                                  {usagePct.toFixed(0)}%
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold mt-2">
+                              Operacje ({group.entries.length})
+                            </div>
+                          </>
                         )}
-                      </div>
+                        {group.entries.map((entry) => (
+                          <div key={entry.id} className="flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5 min-w-0 truncate">
+                              {entry.type === 'deposit' ? (
+                                <ArrowUp className="h-3 w-3 text-gain shrink-0" />
+                              ) : (
+                                <ArrowDown className="h-3 w-3 text-loss shrink-0" />
+                              )}
+                              <span className="text-muted-foreground tabular-nums">
+                                {formatDate(entry.date)}
+                              </span>
+                              {entry.description && <DepositDescription text={entry.description} />}
+                            </span>
+                            <span className="flex items-center gap-1.5 shrink-0">
+                              <span
+                                className={`tabular-nums font-medium ${entry.type === 'deposit' ? 'text-gain' : 'text-loss'}`}
+                              >
+                                {entry.type === 'deposit' ? '+' : '−'}
+                                {formatCurrency(Math.abs(entry.amount), entry.currency || 'PLN')}
+                              </span>
+                              {entry.source === 'manual' && (
+                                <>
+                                  <Button
+                                    size="icon-xs"
+                                    variant="ghost"
+                                    onClick={() => setEditing(entry)}
+                                    className="text-muted-foreground hover:text-foreground"
+                                    aria-label="Edytuj"
+                                  >
+                                    <Pencil className="h-3 w-3" />
+                                  </Button>
+                                  <Button
+                                    size="icon-xs"
+                                    variant="ghost"
+                                    onClick={() => setDeleting(entry)}
+                                    disabled={deleteMutation.isPending}
+                                    className="text-muted-foreground hover:text-destructive"
+                                    aria-label="Usuń"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </ExpandableCard>
                     );
                   })}
                   <div className="rounded-xl border-2 border-border bg-card p-3 flex items-center justify-between gap-2 font-semibold">
@@ -530,7 +558,7 @@ export function CashFlowPage() {
                           const isExpanded = expandedYears.has(group.year);
                           const remaining = getRemaining(group);
                           const usagePct = getUsagePct(group);
-                          const isFull = showLimits && remaining <= 0;
+                          const isFull = showLimits && !group.hasForeignDeposits && remaining <= 0;
                           return (
                             <Fragment key={group.year}>
                               <TableRow
@@ -580,19 +608,30 @@ export function CashFlowPage() {
                                   <TableCell
                                     className={`text-right font-medium ${isFull ? 'text-gain' : 'text-yellow-500'}`}
                                   >
-                                    {getYearLimit(group) > 0 ? formatPLN(remaining) : '—'}
+                                    {getYearLimit(group) > 0 ? (
+                                      group.hasForeignDeposits ? (
+                                        <LimitUnavailable />
+                                      ) : (
+                                        formatPLN(remaining)
+                                      )
+                                    ) : (
+                                      '—'
+                                    )}
                                   </TableCell>
                                 )}
                                 {showLimits && (
                                   <TableCell className="text-right">
-                                    {getYearLimit(group) > 0 && (
-                                      <Badge
-                                        variant={isFull ? 'default' : 'secondary'}
-                                        className={`text-xs ${isFull ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}
-                                      >
-                                        {usagePct.toFixed(0)}%
-                                      </Badge>
-                                    )}
+                                    {getYearLimit(group) > 0 &&
+                                      (group.hasForeignDeposits ? (
+                                        <LimitUnavailable />
+                                      ) : (
+                                        <Badge
+                                          variant={isFull ? 'default' : 'secondary'}
+                                          className={`text-xs ${isFull ? 'bg-gain/10 text-gain' : 'bg-muted text-muted-foreground'}`}
+                                        >
+                                          {usagePct.toFixed(0)}%
+                                        </Badge>
+                                      ))}
                                   </TableCell>
                                 )}
                                 <TableCell />

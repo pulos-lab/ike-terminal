@@ -2,6 +2,22 @@ import type { Portfolio, PortfolioSettings } from 'shared';
 
 const API_BASE = '/api';
 
+/**
+ * Błąd HTTP z API — zachowuje `message` identycznie jak wcześniejsze `Error`
+ * (wszyscy konsumenci czytają `.message`), ale dokłada `status`, żeby logika
+ * (np. PortfolioProvider) mogła rozróżniać 403/404 bez substring-matchowania
+ * treści komunikatu.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 let activePortfolioId = (() => {
   try {
     return localStorage.getItem('activePortfolioId') || 'default';
@@ -44,12 +60,12 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   // Redirect to login on 401 (session expired or not authenticated)
   if (response.status === 401) {
     window.location.href = '/login';
-    throw new Error('Session expired');
+    throw new ApiError('Session expired', 401);
   }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(error.error || `HTTP ${response.status}`);
+    throw new ApiError(error.error || `HTTP ${response.status}`, response.status);
   }
 
   return response.json();
