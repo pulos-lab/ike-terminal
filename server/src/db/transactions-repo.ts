@@ -170,6 +170,12 @@ export function clearTransactions(portfolioId: string = 'default'): void {
   db.prepare('DELETE FROM transactions').run();
 }
 
+/** Usuwa wyłącznie wiersze z importów (import_batch ustawiony) — ręczne wpisy zostają. */
+export function clearImportedTransactions(portfolioId: string = 'default'): void {
+  const db = getDb(portfolioId);
+  db.prepare('DELETE FROM transactions WHERE import_batch IS NOT NULL').run();
+}
+
 /** Purge ALL data from a portfolio database (transactions, operations, ticker map, snapshots, etc.) */
 export function purgeAllData(portfolioId: string = 'default'): void {
   const db = getDb(portfolioId);

@@ -26,6 +26,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { formatPercent } from '@/lib/formatters';
+import { chainLinkPct } from '@/lib/returns';
 import { cn } from '@/lib/utils';
 
 interface ChartDataPoint {
@@ -104,8 +105,7 @@ function computeMonthlyReturns(history: ChartDataPoint[], year: number): Monthly
     const linked = (key: 'twrPct' | 'benchmarkTwrPct'): number => {
       const endVal = endPoint[key];
       if (!prevPoint) return endVal;
-      const ratio = (1 + endVal / 100) / (1 + prevPoint[key] / 100);
-      return (ratio - 1) * 100;
+      return chainLinkPct(endVal, prevPoint[key]);
     };
 
     rows.push({

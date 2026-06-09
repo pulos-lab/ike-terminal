@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Info, Settings } from 'lucide-react';
 import { api } from '@/lib/api-client';
+import { chainLinkPct } from '@/lib/returns';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -114,18 +115,18 @@ export function DashboardPage() {
     if (!filtered.length) return [];
     if (!startDate && !endDate) return filtered; // ALL — no rebase needed
 
-    // Rebase: subtract first point's return so chart starts at 0%
-    const baseReturn = filtered[0].returnPct;
-    const baseBenchReturn = filtered[0].benchmarkReturnPct;
-    const baseTwr = filtered[0].twrPct;
-    const baseBenchTwr = filtered[0].benchmarkTwrPct;
+    // Rebase: chain-linking, żeby wykres startował od 0%. Skumulowane procenty
+    // nie składają się addytywnie — dzielimy indeksy (1 + pct/100) zamiast
+    // odejmować punkty procentowe (odejmowanie zawyża/zaniża wynik tym bardziej,
+    // im wyższy zwrot bazowy na początku zakresu).
+    const base = filtered[0];
 
     return filtered.map((p: any) => ({
       ...p,
-      returnPct: p.returnPct - baseReturn,
-      benchmarkReturnPct: p.benchmarkReturnPct - baseBenchReturn,
-      twrPct: p.twrPct - baseTwr,
-      benchmarkTwrPct: p.benchmarkTwrPct - baseBenchTwr,
+      returnPct: chainLinkPct(p.returnPct, base.returnPct),
+      benchmarkReturnPct: chainLinkPct(p.benchmarkReturnPct, base.benchmarkReturnPct),
+      twrPct: chainLinkPct(p.twrPct, base.twrPct),
+      benchmarkTwrPct: chainLinkPct(p.benchmarkTwrPct, base.benchmarkTwrPct),
     }));
   }, [data, startDate, endDate]);
 

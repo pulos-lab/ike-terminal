@@ -1,19 +1,26 @@
 import { Router } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import type { DetectResult } from 'shared';
-import { decodeCSVBuffer } from '../parsers/encoding.js';
 import { classifyFile, bulkImport, requiresOperationsFile } from '../services/import-service.js';
 import {
   getTransactionsCount,
-  clearTransactions,
+  clearImportedTransactions,
   getLastImportDate,
 } from '../db/transactions-repo.js';
-import { getOperationsCount, clearOperations } from '../db/operations-repo.js';
+import { getOperationsCount, clearImportedOperations } from '../db/operations-repo.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 
 const router = Router();
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+
+/** Błąd z fileFilter — rozpoznawany w error-middleware na końcu routera, mapowany na 400. */
+class UnsupportedFileTypeError extends Error {
+  constructor() {
+    super('Dozwolone są tylko pliki CSV i XLSX');
+  }
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -27,7 +34,7 @@ const upload = multer({
     if (isCSV || isXLSX) {
       cb(null, true);
     } else {
-      cb(new Error('Dozwolone są tylko pliki CSV i XLSX'));
+      cb(new UnsupportedFileTypeError());
     }
   },
 });
@@ -97,14 +104,15 @@ router.post(
 
 /**
  * DELETE /api/import/clear — czyści wszystkie zaimportowane dane (używane do reset testów).
- * Nie dotyka ręcznych wpisów z innych endpointów (dividends, transactions POST).
+ * Nie dotyka ręcznych wpisów z innych endpointów (dividends, transactions POST) —
+ * usuwa tylko wiersze z ustawionym import_batch.
  */
 router.delete(
   '/clear',
   asyncHandler((req, res) => {
     const pid = req.portfolioId;
-    clearTransactions(pid);
-    clearOperations(pid);
+    clearImportedTransactions(pid);
+    clearImportedOperations(pid);
     res.json({ success: true });
   }),
 );
@@ -119,6 +127,25 @@ router.get('/status', (req, res) => {
     operations: getOperationsCount(pid),
     lastImportDate: getLastImportDate(pid),
   });
+});
+
+/**
+ * Error-middleware dla uploadu: błędy multera (limit rozmiaru) i fileFiltera
+ * dostają czytelne 413/400 zamiast generycznego 500 z globalnego handlera.
+ */
+router.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        error: `Plik jest za duży — maksymalny rozmiar to ${MAX_FILE_SIZE / (1024 * 1024)} MB`,
+      });
+    }
+    return res.status(400).json({ error: `Błąd uploadu pliku: ${err.message}` });
+  }
+  if (err instanceof UnsupportedFileTypeError) {
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
 });
 
 export default router;

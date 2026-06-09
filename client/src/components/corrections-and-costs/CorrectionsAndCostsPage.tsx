@@ -232,6 +232,10 @@ function ResolveDialog({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  // UWAGA: initializery useState odpalają się raz na mount — rodzic MUSI
+  // renderować ten dialog z key={action.id}, żeby zmiana akcji zresetowała
+  // formularz (inaczej ticker się nie prefilluje, a wartości qty/price/isin
+  // przenoszą się między różnymi akcjami).
   const [quantity, setQuantity] = useState('');
   const [price, setPrice] = useState('');
   const [ticker, setTicker] = useState(action?.ticker ?? '');
@@ -1299,6 +1303,7 @@ export function CorrectionsAndCostsPage() {
       </Card>
 
       <ResolveDialog
+        key={resolving?.id ?? 'none'}
         action={resolving}
         onClose={() => setResolving(null)}
         onSuccess={() => invalidateCorporateActions(qc)}
