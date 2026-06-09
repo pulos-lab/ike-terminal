@@ -1,6 +1,11 @@
 import { getDb } from './connection.js';
+import { bumpPortfolioDataVersion } from './data-version.js';
 import type { CashOperation, OperationType, SkippedRow } from 'shared';
 import type { InsertWithDedupResult } from './transactions-repo.js';
+
+// Każda funkcja zapisu bumpuje wersję danych portfela (data-version.ts) —
+// to unieważnia memo computePortfolioHistory dla wszystkich ścieżek zapisu
+// (routes + import-service) bez dotykania callerów.
 
 export function insertOperations(
   operations: CashOperation[],
@@ -34,7 +39,9 @@ export function insertOperations(
     return count;
   });
 
-  return insertMany(operations);
+  const count = insertMany(operations);
+  if (count > 0) bumpPortfolioDataVersion(portfolioId);
+  return count;
 }
 
 /** Insert operations with duplicate detection (count-based). */
@@ -106,6 +113,7 @@ export function insertOperationsWithDedup(
     }
   })();
 
+  if (inserted > 0) bumpPortfolioDataVersion(portfolioId);
   return { inserted, duplicates };
 }
 
@@ -149,12 +157,14 @@ export function getOperationsCount(portfolioId: string = 'default'): number {
 export function clearOperations(portfolioId: string = 'default'): void {
   const db = getDb(portfolioId);
   db.prepare('DELETE FROM cash_operations').run();
+  bumpPortfolioDataVersion(portfolioId);
 }
 
 /** Usuwa wyłącznie wiersze z importów (import_batch ustawiony) — ręczne wpisy zostają. */
 export function clearImportedOperations(portfolioId: string = 'default'): void {
   const db = getDb(portfolioId);
   db.prepare('DELETE FROM cash_operations WHERE import_batch IS NOT NULL').run();
+  bumpPortfolioDataVersion(portfolioId);
 }
 
 export function getOperationById(
@@ -189,6 +199,7 @@ export function insertOperation(op: CashOperation, portfolioId: string = 'defaul
       op.importBatch || null,
       op.subkind || null,
     );
+  bumpPortfolioDataVersion(portfolioId);
   return Number(result.lastInsertRowid);
 }
 
@@ -223,12 +234,14 @@ export function updateOperation(
       merged.subkind || null,
       id,
     );
+  if (result.changes > 0) bumpPortfolioDataVersion(portfolioId);
   return result.changes > 0;
 }
 
 export function deleteOperation(id: number, portfolioId: string = 'default'): boolean {
   const db = getDb(portfolioId);
   const result = db.prepare('DELETE FROM cash_operations WHERE id = ?').run(id);
+  if (result.changes > 0) bumpPortfolioDataVersion(portfolioId);
   return result.changes > 0;
 }
 

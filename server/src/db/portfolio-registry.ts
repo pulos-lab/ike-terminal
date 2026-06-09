@@ -26,7 +26,26 @@ function loadPortfolios(): Portfolio[] {
 function savePortfolios(list: Portfolio[]): void {
   const dir = config.dataDir;
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(getRegistryPath(), JSON.stringify(list, null, 2));
+  // Atomic write: zapis do pliku tymczasowego w TYM SAMYM katalogu + rename.
+  // Zwykły writeFileSync przerwany w połowie (crash/kill procesu) zostawiał
+  // uszkodzony portfolios.json — rejestr wszystkich użytkowników. rename na
+  // tym samym systemie plików jest atomowy, więc czytelnicy widzą zawsze
+  // albo starą, albo nową pełną zawartość. PID + timestamp w nazwie tymczasowej
+  // chroni przed kolizją równoległych zapisów.
+  const target = getRegistryPath();
+  const tmp = path.join(dir, `.portfolios.json.${process.pid}.${Date.now()}.tmp`);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(list, null, 2));
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    // Sprzątnij osierocony plik tymczasowy, błąd propagujemy do callera
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // ignore — tmp mógł nie powstać
+    }
+    throw err;
+  }
 }
 
 // ── User-scoped queries ─────────────────────────────────────────────────────

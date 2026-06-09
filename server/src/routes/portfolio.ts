@@ -56,7 +56,6 @@ import {
   computeClosedTrades,
   extractDividends,
   extractFxExchanges,
-  computePortfolioHistory,
   computeCashFlow,
   computeCashFlowChartData,
   computeXirr,
@@ -67,6 +66,8 @@ import {
   computeSmartDeletePlan,
 } from '../services/portfolio-engine.js';
 import { BENCHMARKS, type BenchmarkKey } from 'shared';
+import { computePortfolioHistoryMemoized } from '../services/history-memo.js';
+import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { searchTickers, fetchYahooTickerName } from '../services/ticker-search.js';
 import { scanDividends } from '../services/dividend-scanner.js';
 
@@ -167,6 +168,10 @@ router.get(
       for (const s of newSplits) {
         invalidateCachedPrices(s.ticker);
       }
+      // Nowe splity zmieniają korektę transakcji → unieważnij memo historii.
+      // Bump tylko dla FAKTYCZNIE nowych wykryć (upsertSplits leci też dla już
+      // zapisanych splitów przy każdym requeście — bump wtedy zabiłby cache).
+      if (newSplits.length > 0) bumpPortfolioDataVersion(pid);
     }
 
     // Compute cash balances per currency — kursy pobierane dla KAŻDEJ waluty
@@ -975,15 +980,17 @@ router.post(
 
     const baseCurrency = detectBaseCurrency(operations);
 
-    // Always compute full history – client filters & rebases by date range
-    const result = await computePortfolioHistory(
+    // Always compute full history – client filters & rebases by date range.
+    // Memo (history-memo.ts): jeden page load dashboardu woła /history,
+    // /cash-flow i /metrics — bez memo każdy z nich liczył pełną historię
+    // od zera. Klucz zawiera dataVersion, więc zapisy unieważniają cache.
+    const result = await computePortfolioHistoryMemoized(
+      pid,
       transactions,
       operations,
       tickerMap,
       benchTicker,
       benchConfig.source,
-      undefined,
-      undefined,
       savedSplits,
       baseCurrency,
     );
@@ -1006,6 +1013,9 @@ router.post(
       for (const s of newSplits) {
         invalidateCachedPrices(s.ticker);
       }
+      // Nowe splity → unieważnij memo (zwracany result już je uwzględnia,
+      // ale wpisy z innymi benchmarkami / starszą wersją muszą się przeliczyć).
+      if (newSplits.length > 0) bumpPortfolioDataVersion(pid);
     }
 
     res.json({ history: result.history, metrics: result.metrics, baseCurrency });
@@ -1028,14 +1038,13 @@ router.get(
     // history points to już wartości w walucie bazowej. computeCashFlow nie
     // potrzebuje dodatkowej konwersji — dailyFxRates i baseCurrency tylko dla
     // backward-compat sygnatury (identity transform w base currency).
-    const { history, dailyFxRates } = await computePortfolioHistory(
+    const { history, dailyFxRates } = await computePortfolioHistoryMemoized(
+      pid,
       transactions,
       operations,
       tickerMap,
       '^GSPC',
       'yahoo', // default benchmark, doesn't matter for cash flow
-      undefined,
-      undefined,
       savedSplits,
       baseCurrency,
     );
@@ -1133,14 +1142,13 @@ router.get(
     // KROK 2: history (close-of-day, dla wykresu/XIRR) + positions (LIVE, dla wartości
     // pokazywanej na ekranie) lecą równolegle. Positions dostaje pre-fetched FX.
     const [{ metrics }, { positions, totalValuePln: stocksValuePln }] = await Promise.all([
-      computePortfolioHistory(
+      computePortfolioHistoryMemoized(
+        pid,
         transactions,
         operations,
         tickerMap,
         '^GSPC',
         'yahoo', // benchmark ticker nie wpływa na metrics
-        undefined,
-        undefined,
         savedSplits,
         baseCurrency,
       ),
@@ -1744,6 +1752,8 @@ router.post(
         source: 'manual',
       },
     ]);
+    // Ręczny split zmienia korektę transakcji → unieważnij memo historii
+    bumpPortfolioDataVersion(pid);
     res.json({ success: true });
   }),
 );
@@ -1758,6 +1768,8 @@ router.delete(
     if (!deleted) {
       return res.status(404).json({ error: 'Split nie znaleziony' });
     }
+    // Usunięty split zmienia korektę transakcji → unieważnij memo historii
+    bumpPortfolioDataVersion(pid);
     res.json({ success: true });
   }),
 );
