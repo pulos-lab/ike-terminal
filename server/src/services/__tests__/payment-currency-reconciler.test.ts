@@ -106,7 +106,9 @@ describe('simulateLedger — Bossa', () => {
     expect(warnings).toEqual([]);
   });
 
-  it('zakup bez żadnego salda → fallback do PLN + warning', () => {
+  it('zakup bez żadnego salda i bez kursu → fallback do PLN + zbiorczy warning o braku kursu', () => {
+    // Bossa nie eksportuje kursu auto-FX — symulacja NIE debetuje PLN kwotą
+    // dolarową (kurs 1:1 byłby ~4× za mały), tylko raportuje lukę.
     const operations: CashOperation[] = [];
     const transactions = [
       tx({
@@ -125,10 +127,11 @@ describe('simulateLedger — Bossa', () => {
     expect(computed.get(100)).toBe('PLN');
     expect(warnings.length).toBe(1);
     expect(warnings[0]).toMatch(/AAPL/);
-    expect(warnings[0]).toMatch(/saldo PLN/);
+    expect(warnings[0]).toMatch(/bez znanego/);
+    expect(warnings[0]).toMatch(/kursu FX/);
   });
 
-  it('trzy kolejne zakupy bez pokrycia → 1 warning (tylko tx wpychająca saldo w minus)', () => {
+  it('trzy kolejne zakupy bez kursu → 1 zbiorczy warning per waluta', () => {
     const operations: CashOperation[] = [];
     const transactions = [
       tx({
@@ -163,7 +166,45 @@ describe('simulateLedger — Bossa', () => {
     const { warnings } = simulateLedger(transactions, operations, 'PLN');
 
     expect(warnings.length).toBe(1);
-    expect(warnings[0]).toMatch(/AAPL/);
+    expect(warnings[0]).toMatch(/3 transakcji USD/);
+    expect(warnings[0]).toMatch(/AAPL/); // pierwszy przykład
+  });
+
+  it('brak kursu NIE zaniża salda PLN dla kolejnych transakcji', () => {
+    // Przed fixem: zakup USD bez kursu debetował PLN kwotą 200 (zamiast ~800),
+    // więc saldo PLN wyglądało na większe niż realnie i kolejny zakup PLN
+    // dostawał błędną klasyfikację/warningi. Teraz debet jest pomijany —
+    // saldo PLN zostaje nietknięte przez transakcję USD.
+    const operations = [
+      op({ id: 1, date: '2026-01-01', operationType: 'deposit', amount: 1000, currency: 'PLN' }),
+    ];
+    const transactions = [
+      tx({
+        id: 100,
+        date: '2026-02-01',
+        side: 'K',
+        quantity: 1,
+        price: 200,
+        currency: 'USD',
+        paperName: 'AAPL',
+      }),
+      tx({
+        id: 101,
+        date: '2026-02-02',
+        side: 'K',
+        quantity: 10,
+        price: 90,
+        currency: 'PLN',
+        paperName: 'CDR',
+      }),
+    ];
+
+    const { computed, warnings } = simulateLedger(transactions, operations, 'PLN');
+
+    // Zakup PLN za 900 mieści się w nietkniętym saldzie 1000 → rozliczenie PLN, bez warningu o minusie
+    expect(computed.get(101)).toBe('PLN');
+    expect(warnings.some((w) => w.includes('poniżej zera'))).toBe(false);
+    expect(warnings.some((w) => w.includes('kursu FX'))).toBe(true);
   });
 
   it('dwie niezależne dziury (wpłata wraca saldo na plus, potem znów minus) → 2 warningi', () => {

@@ -79,6 +79,9 @@ export function simulateLedger(
 
   const computed = new Map<number, string>();
   const warnings: string[] = [];
+  // Transakcje auto-FX bez znanego kursu — zbierane i raportowane zbiorczo
+  // per waluta (jeden warning zamiast jednego na każdą transakcję).
+  const missingFx = new Map<string, { count: number; example: string }>();
 
   for (const ev of events) {
     if (ev.kind === 'op') {
@@ -99,17 +102,32 @@ export function simulateLedger(
       } else {
         // Auto-FX fallback: broker converted baseCurrency → quoteCurrency.
         computed.set(tx.id!, baseCurrency);
-        const fxRate = tx.fxRate && tx.fxRate > 0 ? tx.fxRate : 1;
-        const prevBase = balance.get(baseCurrency) ?? 0;
-        addBalance(baseCurrency, -tx.total * fxRate);
-        const newBase = balance.get(baseCurrency) ?? 0;
-        // Warning tylko przy przejściu ≥0 → <0 — kolejne tx w minusie to follow-up tej samej luki w CSV.
-        if (prevBase >= -BALANCE_EPSILON && newBase < -BALANCE_EPSILON) {
-          const date = tx.date.slice(0, 10);
-          warnings.push(
-            `Transakcja ${tx.paperName} ${date}: saldo ${baseCurrency} spadło poniżej zera ` +
-              `(${newBase.toFixed(2)}) — brak pokrycia w CSV (możliwa brakująca wpłata/FX).`,
-          );
+        const hasFxRate = tx.fxRate !== undefined && tx.fxRate > 0;
+        if (hasFxRate || tx.currency === baseCurrency) {
+          const fxRate = hasFxRate ? tx.fxRate! : 1; // quote==base → kurs 1 jest dosłownie poprawny
+          const prevBase = balance.get(baseCurrency) ?? 0;
+          addBalance(baseCurrency, -tx.total * fxRate);
+          const newBase = balance.get(baseCurrency) ?? 0;
+          // Warning tylko przy przejściu ≥0 → <0 — kolejne tx w minusie to follow-up tej samej luki w CSV.
+          if (prevBase >= -BALANCE_EPSILON && newBase < -BALANCE_EPSILON) {
+            const date = tx.date.slice(0, 10);
+            warnings.push(
+              `Transakcja ${tx.paperName} ${date}: saldo ${baseCurrency} spadło poniżej zera ` +
+                `(${newBase.toFixed(2)}) — brak pokrycia w CSV (możliwa brakująca wpłata/FX).`,
+            );
+          }
+        } else {
+          // Nieznany kurs rozliczenia (np. Bossa nie eksportuje kursu auto-FX).
+          // NIE udajemy kursu 1:1 — debet PLN kwotą dolarową (~4× za mały)
+          // zawyżał saldo bazowe i kaskadowo psuł klasyfikację kolejnych
+          // transakcji oraz tłumił/fałszował warningi o braku pokrycia.
+          // Zostawiamy saldo bazowe nietknięte i raportujemy lukę zbiorczo.
+          const entry = missingFx.get(tx.currency) ?? {
+            count: 0,
+            example: `${tx.paperName} ${tx.date.slice(0, 10)}`,
+          };
+          entry.count++;
+          missingFx.set(tx.currency, entry);
         }
       }
     } else {
@@ -118,6 +136,14 @@ export function simulateLedger(
       computed.set(tx.id!, tx.currency);
       addBalance(tx.currency, tx.total);
     }
+  }
+
+  for (const [currency, info] of missingFx) {
+    warnings.push(
+      `${info.count} transakcji ${currency} rozliczonych przez auto-przewalutowanie bez znanego ` +
+        `kursu FX (np. ${info.example}) — debet salda ${baseCurrency} pominięty w symulacji, ` +
+        `klasyfikacja waluty płatności może być przybliżona.`,
+    );
   }
 
   return { computed, warnings };

@@ -92,6 +92,20 @@ export function initSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_splits_isin ON stock_splits(isin);
 
+    -- Rejestr podatków transakcyjnych (Degiro stamp duty / FTT) doliczonych do
+    -- prowizji transakcji. Klucz unikalny czyni doliczanie idempotentnym —
+    -- reimport tego samego Account.csv nie zwiększy prowizji drugi raz.
+    CREATE TABLE IF NOT EXISTS applied_transaction_taxes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      transaction_id INTEGER NOT NULL,
+      isin TEXT NOT NULL,
+      tax_date TEXT NOT NULL,
+      description TEXT NOT NULL,
+      amount REAL NOT NULL,
+      applied_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(isin, tax_date, description, amount)
+    );
+
     CREATE TABLE IF NOT EXISTS portfolio_snapshots (
       date TEXT PRIMARY KEY,
       total_value_pln REAL NOT NULL,
