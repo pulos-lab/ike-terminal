@@ -273,20 +273,6 @@ export function getLatestDividendDate(portfolioId: string): string | null {
   return row.latest || null;
 }
 
-/**
- * Delete all auto-yahoo dividends from a portfolio.
- * Used to clean up stale/duplicate entries before re-scanning.
- */
-export function deleteAutoYahooDividends(portfolioId: string): number {
-  const db = getDb(portfolioId);
-  const result = db
-    .prepare(
-      `DELETE FROM cash_operations WHERE operation_type = 'dividend' AND source = 'auto-yahoo'`,
-    )
-    .run();
-  return result.changes;
-}
-
 // ── Portfolio metadata (key-value store per portfolio) ──────────────────────
 
 export function getMetadata(portfolioId: string, key: string): string | null {

@@ -110,13 +110,22 @@ export function parseDegiroOperations(
   const operations: CashOperation[] = [];
 
   // ── Dividends: pair gross + tax by ISIN + date + time ──
+  // Każdy wiersz podatku może być sparowany TYLKO RAZ — dwie dywidendy tego
+  // samego ISIN-u o tym samym timestampie (np. częściowe księgowania) nie mogą
+  // odjąć tego samego podatku dwukrotnie.
   const dividendRows = parsed.filter((r) => r.description === 'Dywidenda');
   const taxRows = parsed.filter((r) => r.description === 'Podatek Dywidendowy');
+  const usedTaxRows = new Set<number>();
 
   for (const div of dividendRows) {
     const tax = taxRows.find(
-      (t) => t.isin === div.isin && t.date === div.date && t.time === div.time,
+      (t) =>
+        t.isin === div.isin &&
+        t.date === div.date &&
+        t.time === div.time &&
+        !usedTaxRows.has(t.rowNum),
     );
+    if (tax) usedTaxRows.add(tax.rowNum);
     const grossAmount = Math.abs(div.amount);
     const taxAmount = tax ? Math.abs(tax.amount) : 0;
     const netAmount = roundTo2(grossAmount - taxAmount);

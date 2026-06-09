@@ -143,6 +143,23 @@ describe('detectSplits', () => {
     expect(splits[1].ratio).toBeCloseTo(2);
   });
 
+  it('does NOT report a false reverse split for a post-split buy', () => {
+    // tx1 pre-split: 1070 vs provider 107 → split 10:1.
+    // tx2 post-split: 107 vs provider 107 — porównanie ze SKALOWANĄ ceną
+    // (107×10) dawałoby ratio 0.1 i fałszywy reverse split.
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 1070, date: '2023-06-15' }),
+      makeTx({ side: 'K', quantity: 100, price: 107, date: '2024-08-01' }),
+    ];
+    const tickerMap = makeTickerMap([{ isin: 'TEST0001', ticker: 'TEST' }]);
+    const prices = makePriceMap('TEST', { '2023-06-15': 107, '2024-08-01': 107 });
+
+    const splits = detectSplits(txs, prices, tickerMap);
+    expect(splits).toHaveLength(1);
+    expect(splits[0].ratio).toBeCloseTo(10);
+    expect(splits[0].date).toBe('2023-06-15');
+  });
+
   it('skips if no provider price on transaction date', () => {
     const txs = [makeTx({ side: 'K', quantity: 100, price: 1000, date: '2024-01-10' })];
     const tickerMap = makeTickerMap([{ isin: 'TEST0001', ticker: 'TEST' }]);

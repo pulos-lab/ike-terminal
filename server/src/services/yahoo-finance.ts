@@ -340,6 +340,56 @@ export async function fetchYahooDividendEvents(
 }
 
 /**
+ * Fetch stock split events from Yahoo Finance (v8 chart API).
+ * Returns real split dates + ratios (numerator/denominator), e.g. 10:1 split → ratio 10.
+ * Used to assign REAL dates to heuristically detected splits — without them
+ * adjustment of transactions cannot distinguish pre- from post-split buys.
+ */
+export async function fetchYahooSplitEvents(
+  ticker: string,
+  startDate: string,
+  endDate?: string,
+): Promise<Array<{ date: string; ratio: number }>> {
+  const end = endDate || new Date().toISOString().split('T')[0];
+  const cacheKey = `yahoo_splitevents_${ticker}_${startDate}_${end}`;
+  const cached = getCached<Array<{ date: string; ratio: number }>>(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const period1 = String(Math.floor(new Date(startDate).getTime() / 1000));
+    const period2 = String(Math.floor(new Date(end).getTime() / 1000));
+
+    const result = await yahooChart(ticker, {
+      interval: '1d',
+      period1,
+      period2,
+      events: 'split',
+    });
+
+    if (!result?.events?.splits) {
+      setCached(cacheKey, [], 12 * 3600);
+      return [];
+    }
+
+    const splits: Record<string, { date: number; numerator: number; denominator: number }> =
+      result.events.splits;
+    const events = Object.values(splits)
+      .filter((s) => s.numerator > 0 && s.denominator > 0)
+      .map((s) => ({
+        date: new Date(s.date * 1000).toISOString().split('T')[0],
+        ratio: s.numerator / s.denominator,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    setCached(cacheKey, events, 12 * 3600);
+    return events;
+  } catch (error) {
+    console.error(`Yahoo split events fetch failed for ${ticker}:`, error);
+    return [];
+  }
+}
+
+/**
  * Fetch a single historical price directly from Yahoo, bypassing all caches.
  * Used for split detection — after a split, Yahoo retroactively adjusts historical
  * prices, but our persistent cache still holds old (pre-split) values.

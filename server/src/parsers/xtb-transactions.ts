@@ -768,34 +768,22 @@ export async function parseXtbFile(
   for (const raw of rawRows) {
     if (raw.type === 'dividend') continue; // already processed in pass 3a
 
-    if (raw.type === 'deposit') {
+    if (raw.type === 'deposit' || raw.type === 'withdrawal') {
       const isoTime = parseXtbTime(raw.time);
       if (!isoTime) {
         opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.comment });
         continue;
       }
 
+      // Kierunek po ZNAKU kwoty, nie po typie wiersza — storno wpłaty (ujemny
+      // "deposit") musi trafić jako withdrawal, jak w parserach mBank/Bossa.
+      // Wymuszanie znaku przez Math.abs zamieniało korekty w fałszywe wpłaty
+      // i zawyżało mianownik MWR.
       operations.push({
         date: isoTime,
-        operationType: 'deposit',
+        operationType: raw.amount >= 0 ? 'deposit' : 'withdrawal',
         description: raw.comment,
-        amount: Math.abs(raw.amount),
-        currency: accountCurrency,
-        source: 'xtb',
-        importBatch,
-      });
-    } else if (raw.type === 'withdrawal') {
-      const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) {
-        opsSkipped.push({ row: raw.rowNum, reason: 'invalid_date', paperName: raw.comment });
-        continue;
-      }
-
-      operations.push({
-        date: isoTime,
-        operationType: 'withdrawal',
-        description: raw.comment,
-        amount: -Math.abs(raw.amount), // negative for withdrawal
+        amount: raw.amount,
         currency: accountCurrency,
         source: 'xtb',
         importBatch,

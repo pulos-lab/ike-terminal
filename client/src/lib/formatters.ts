@@ -13,7 +13,7 @@ export function formatPLN(value: number): string {
 /**
  * Format number as USD currency
  */
-export function formatUSD(value: number): string {
+function formatUSD(value: number): string {
   return new Intl.NumberFormat('pl-PL', {
     style: 'currency',
     currency: 'USD',
@@ -65,16 +65,6 @@ export function formatDate(dateStr: string): string {
 /**
  * Format date with time
  */
-export function formatDateTime(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('pl-PL', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
 
 /**
  * Format quantity — integer if whole, up to 4 decimal places for small

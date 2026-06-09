@@ -87,10 +87,24 @@ export function initSchema(db: Database.Database): void {
       ratio REAL NOT NULL,
       source TEXT DEFAULT 'auto',
       detected_at TEXT DEFAULT (datetime('now')),
-      UNIQUE(isin)
+      UNIQUE(isin, split_date)
     );
 
     CREATE INDEX IF NOT EXISTS idx_splits_isin ON stock_splits(isin);
+
+    -- Rejestr podatków transakcyjnych (Degiro stamp duty / FTT) doliczonych do
+    -- prowizji transakcji. Klucz unikalny czyni doliczanie idempotentnym —
+    -- reimport tego samego Account.csv nie zwiększy prowizji drugi raz.
+    CREATE TABLE IF NOT EXISTS applied_transaction_taxes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      transaction_id INTEGER NOT NULL,
+      isin TEXT NOT NULL,
+      tax_date TEXT NOT NULL,
+      description TEXT NOT NULL,
+      amount REAL NOT NULL,
+      applied_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(isin, tax_date, description, amount)
+    );
 
     CREATE TABLE IF NOT EXISTS portfolio_snapshots (
       date TEXT PRIMARY KEY,
@@ -140,20 +154,19 @@ export function initSchema(db: Database.Database): void {
     db.exec('ALTER TABLE transactions ADD COLUMN synthetic_origin TEXT');
   }
 
-  // Migration: tighten stock_splits UNIQUE from (isin, split_date) to (isin)
-  // SQLite doesn't support ALTER CONSTRAINT, so recreate the table
+  // Migration: poszerzenie stock_splits z UNIQUE(isin) do UNIQUE(isin, split_date) —
+  // ISIN może mieć wiele splitów (np. 2:1 a potem 10:1); klucz po samym ISIN-ie
+  // po cichu nadpisywał wcześniejsze splity. SQLite nie wspiera ALTER CONSTRAINT,
+  // więc tabela jest przebudowywana. Wykrywamy stary constraint po unikalnym
+  // indeksie z JEDNĄ kolumną (idx_splits_isin jest nieunikalny, więc nie łapie się).
   const splitsIndexes = db.prepare('PRAGMA index_list(stock_splits)').all() as any[];
-  const hasOldConstraint = splitsIndexes.some((idx: any) => {
+  const hasNarrowConstraint = splitsIndexes.some((idx: any) => {
+    if (!idx.unique) return false;
     const cols = db.prepare(`PRAGMA index_info('${idx.name}')`).all() as any[];
-    return cols.length === 2; // old constraint had 2 columns (isin, split_date)
+    return cols.length === 1;
   });
-  if (hasOldConstraint) {
+  if (hasNarrowConstraint) {
     db.exec(`
-      -- Keep only the latest split per ISIN before migration
-      DELETE FROM stock_splits WHERE id NOT IN (
-        SELECT MAX(id) FROM stock_splits GROUP BY isin
-      );
-      -- Recreate with new constraint
       CREATE TABLE stock_splits_new (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         isin TEXT NOT NULL,
@@ -162,7 +175,7 @@ export function initSchema(db: Database.Database): void {
         ratio REAL NOT NULL,
         source TEXT DEFAULT 'auto',
         detected_at TEXT DEFAULT (datetime('now')),
-        UNIQUE(isin)
+        UNIQUE(isin, split_date)
       );
       INSERT INTO stock_splits_new SELECT * FROM stock_splits;
       DROP TABLE stock_splits;

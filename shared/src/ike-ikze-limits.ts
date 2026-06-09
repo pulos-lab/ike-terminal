@@ -79,26 +79,3 @@ export const IKZE_DG_LIMITS: Record<number, number> = {
   2025: 15611.4,
   2026: 16957.8,
 };
-
-/**
- * Pobierz limit IKE dla danego roku. Zwraca 0 dla lat nieobsługiwanych.
- */
-export function getIKELimit(year: number): number {
-  return IKE_LIMITS[year] ?? 0;
-}
-
-/**
- * Pobierz limit IKZE dla danego roku. Wariant zależy od flagi `isJDG`
- * (prowadzenie pozarolniczej działalności gospodarczej).
- */
-export function getIKZELimit(year: number, isJDG: boolean = false): number {
-  if (isJDG) return IKZE_DG_LIMITS[year] ?? 0;
-  return IKZE_LIMITS[year] ?? 0;
-}
-
-/**
- * Lata dla których dostępny jest limit — używane przez UI do iteracji po historii.
- */
-export const SUPPORTED_IKE_IKZE_YEARS: number[] = Object.keys(IKE_LIMITS)
-  .map(Number)
-  .sort((a, b) => a - b);

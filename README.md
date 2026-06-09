@@ -141,10 +141,10 @@ npm run seed-benchmarks -w server  # seed historycznych benchmarków WIG*
 
 ## Tech Stack
 
-- **Frontend:** React 19, Vite 7, TailwindCSS 4, shadcn/ui + Radix UI, TanStack Query 5, React Router 7, Zustand 5, lightweight-charts 5, Recharts 3, lucide-react
+- **Frontend:** React 19, Vite 7, TailwindCSS 4, shadcn/ui + Radix UI, TanStack Query 5, React Router 7, lightweight-charts 5, Recharts 3, lucide-react
 - **Backend:** Express 4, TypeScript, better-sqlite3 12, Better Auth 1.5, Resend 6 (email), express-rate-limit, Helmet
 - **Parsery:** PapaParse (CSV), ExcelJS (XLSX)
-- **Dane rynkowe:** yahoo-finance2, Stooq API
+- **Dane rynkowe:** Yahoo Finance (bezpośrednie API HTTP), Stooq API
 - **Monorepo:** npm workspaces (`shared`, `server`, `client`)
 - **CI/CD:** GitHub Actions (deploy via SSH + rsync)
 

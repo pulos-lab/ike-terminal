@@ -176,6 +176,33 @@ export function clearImportedTransactions(portfolioId: string = 'default'): void
   db.prepare('DELETE FROM transactions WHERE import_batch IS NOT NULL').run();
 }
 
+/**
+ * Rejestruje doliczenie podatku transakcyjnego (Degiro stamp duty / FTT) do prowizji.
+ * Zwraca false, gdy identyczny podatek (isin, data+czas, opis, kwota) był już
+ * doliczony wcześniej — caller MUSI wtedy pominąć aktualizację prowizji
+ * (idempotencja reimportu tego samego Account.csv).
+ */
+export function recordAppliedTransactionTax(
+  tax: {
+    transactionId: number;
+    isin: string;
+    taxDate: string;
+    description: string;
+    amount: number;
+  },
+  portfolioId: string = 'default',
+): boolean {
+  const db = getDb(portfolioId);
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO applied_transaction_taxes
+        (transaction_id, isin, tax_date, description, amount)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(tax.transactionId, tax.isin, tax.taxDate, tax.description, tax.amount);
+  return result.changes > 0;
+}
+
 /** Purge ALL data from a portfolio database (transactions, operations, ticker map, snapshots, etc.) */
 export function purgeAllData(portfolioId: string = 'default'): void {
   const db = getDb(portfolioId);
