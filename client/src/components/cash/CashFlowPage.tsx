@@ -36,6 +36,7 @@ import {
   ArrowUp,
   ArrowDown,
   Info,
+  AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -80,7 +81,12 @@ interface YearGroup {
   totalWithdrawals: number;
   /** Suma wpłat wyłącznie w PLN — limity IKE/IKZE są denominowane w PLN. */
   plnDeposits: number;
-  /** Czy rok zawiera wpłaty w walucie innej niż PLN (limit nieporównywalny bez kursu). */
+  /**
+   * Czy rok zawiera wpłaty w walucie innej niż PLN. Na kontach IKE/IKZE wpłaty
+   * są możliwe WYŁĄCZNIE w PLN — wpłata walutowa oznacza niespójność danych
+   * (portfel błędnie oznaczony jako IKE/IKZE albo zaimportowano pliki z innego
+   * rachunku), a nie problem przeliczenia kursowego.
+   */
   hasForeignDeposits: boolean;
   ikeLimit: number;
   ikzeLimit: number;
@@ -89,8 +95,8 @@ interface YearGroup {
 
 /**
  * Placeholder "—" z tooltipem dla kolumn limitu, gdy rok zawiera wpłaty
- * w walucie obcej — porównywanie kwot np. w USD z limitem w PLN dawałoby
- * bezsensowne procenty, więc uczciwie pokazujemy brak danych.
+ * w walucie obcej. Na IKE/IKZE wpłaty są wyłącznie w PLN, więc taki rok
+ * sygnalizuje niespójność danych z typem konta — limit nie ma tu sensu.
  */
 function LimitUnavailable() {
   return (
@@ -101,8 +107,9 @@ function LimitUnavailable() {
         </span>
       </UITooltipTrigger>
       <UITooltipContent className="max-w-xs">
-        Limity IKE/IKZE są wyrażone w PLN, a ten rok zawiera wpłaty w innych walutach. Bez kursów
-        wymiany nie da się rzetelnie policzyć wykorzystania limitu.
+        Na kontach IKE/IKZE wpłaty są możliwe wyłącznie w PLN. Wpłata walutowa w tym roku oznacza,
+        że te dane nie pochodzą z konta IKE/IKZE — sprawdź typ portfela w ustawieniach albo
+        zaimportowane pliki.
       </UITooltipContent>
     </UITooltip>
   );
@@ -188,9 +195,10 @@ export function CashFlowPage() {
     for (const [year, yearEntries] of byYear) {
       const depositEntries = yearEntries.filter((e) => e.type === 'deposit');
       const totalDeposits = depositEntries.reduce((s, d) => s + Math.abs(d.amount), 0);
-      // Limity IKE/IKZE są w PLN — do wykorzystania limitu liczymy wyłącznie
-      // wpłaty PLN. Gdy rok ma wpłaty w obcej walucie, UI pokazuje "—" z tooltipem
-      // zamiast bezsensownego porównania np. USD z limitem PLN.
+      // Na IKE/IKZE wpłaty są wyłącznie w PLN, więc na poprawnych danych
+      // plnDeposits == totalDeposits. Wpłata walutowa = niespójność z typem
+      // konta (błędny typ portfela lub import z innego rachunku) — wtedy UI
+      // pokazuje "—" z tooltipem i baner ostrzegawczy zamiast liczyć limit.
       const plnDeposits = depositEntries
         .filter((e) => (e.currency || 'PLN').toUpperCase() === 'PLN')
         .reduce((s, d) => s + Math.abs(d.amount), 0);
@@ -322,6 +330,18 @@ export function CashFlowPage() {
             )}
           </CardContent>
         </Card>
+
+        {showLimits && yearGroups.some((g) => g.hasForeignDeposits) && (
+          <div className="rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3 flex items-start gap-2 text-sm">
+            <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+            <span>
+              Wykryto wpłaty w walucie innej niż PLN. Na kontach IKE/IKZE wpłaty są możliwe
+              wyłącznie w PLN — ten portfel prawdopodobnie nie jest kontem IKE/IKZE (sprawdź typ w
+              ustawieniach portfela) albo zaimportowano pliki z innego rachunku. Wykorzystanie
+              limitów dla lat z wpłatami walutowymi nie jest liczone.
+            </span>
+          </div>
+        )}
 
         <Card>
           <CardHeader className="pb-2">
