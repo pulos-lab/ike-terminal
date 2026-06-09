@@ -113,10 +113,19 @@ export function detectSplits(
       providerPrice = providerPrice / 100;
     }
 
-    // Apply any already-detected scaling for this ticker to compare fairly
     const currentRatio = cumulativeRatio.get(entry.ticker) ?? 1;
-    const scaledProviderPrice = providerPrice * currentRatio;
 
+    // Transakcja zgodna z surową (nieskalowaną) ceną providera = obserwacja
+    // PO splicie. Bez tego resetu porównanie ze skalowaną ceną dawałoby
+    // rawRatio ≈ 1/currentRatio i fałszywy "reverse split" dla każdego
+    // zakupu zrobionego już po splicie.
+    if (currentRatio !== 1 && !isPlausibleSplitRatio(tx.price / providerPrice)) {
+      cumulativeRatio.set(entry.ticker, 1);
+      continue;
+    }
+
+    // Apply any already-detected scaling for this ticker to compare fairly
+    const scaledProviderPrice = providerPrice * currentRatio;
     const rawRatio = tx.price / scaledProviderPrice;
 
     // Only accept ratios matching known splits (>=2x or <=0.5x).
@@ -126,7 +135,10 @@ export function detectSplits(
       splits.push({
         ticker: entry.ticker,
         isin: tx.isin,
-        date: new Date().toISOString().split('T')[0], // Use today — the actual split date
+        // Data transakcji = dolne ograniczenie daty splitu (split zaszedł PO niej,
+        // bo provider pokazuje już skorygowaną cenę). Realną datę nadaje
+        // resolveSplitEventDates (Yahoo split events) w portfolio-engine.
+        date: dateKey,
         ratio: snappedRatio,
         txPrice: tx.price,
         providerPrice: scaledProviderPrice,
@@ -207,12 +219,13 @@ export function adjustTransactionsForSplits(
 
     const txDate = tx.date.split('T')[0];
 
-    // Compute cumulative ratio from splits that happened ON or AFTER this transaction.
-    // FIX: use >= instead of > — the split date from detection is today (or the actual
-    // split date), and ALL pre-existing transactions need adjustment.
+    // Cumulative ratio ze splitów, które zaszły ŚCIŚLE PO dacie transakcji.
+    // split.date to ex-date — pierwszy dzień handlu w skali post-split, więc
+    // transakcja z tego dnia jest już post-split i NIE podlega korekcie.
+    // Inkluzywne >= podwójnie korygowałoby zakupy zrobione po splicie.
     let ratio = 1;
     for (const split of isinSplits) {
-      if (split.date >= txDate) {
+      if (split.date > txDate) {
         ratio *= split.ratio;
       }
     }

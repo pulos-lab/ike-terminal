@@ -19,6 +19,8 @@ import {
   updateOperation,
   deleteOperation,
   getOperationById,
+  getMetadata,
+  setMetadata,
 } from '../db/operations-repo.js';
 import {
   getTickerMap,
@@ -127,11 +129,23 @@ router.get(
     // per portfel). Nie blokuje response — user zobaczy nowe sektory po kolejnym
     // odświeżeniu widoku.
     void lazyBackfillSectors(pid);
+
+    // Sieciowa detekcja splitów (cache-bypass do Yahoo) odpala się raz na dobę
+    // per portfel — wykrycia są persystowane, więc częstszy skan tylko mnoży
+    // niecache'owane requesty (ryzyko rate-limitu) bez nowych informacji.
+    const todayStr = new Date().toISOString().split('T')[0];
+    const splitScanDue = getMetadata(pid, 'last_split_scan') !== todayStr;
+
     const {
       positions,
       totalValuePln: stocksValuePln,
       detectedSplits,
-    } = await computeOpenPositions(transactions, tickerMap, savedSplits);
+    } = await computeOpenPositions(transactions, tickerMap, savedSplits, undefined, {
+      skipSplitDetection: !splitScanDue,
+    });
+    if (splitScanDue) {
+      setMetadata(pid, 'last_split_scan', todayStr);
+    }
 
     // Persist any newly detected splits and invalidate stale price cache
     if (detectedSplits.length > savedSplits.length) {
@@ -348,7 +362,11 @@ router.get(
     const transactions = getAllTransactions(pid);
     const tickerMap = getTickerMap(pid);
     const splits = loadSplitsForEngine(pid);
-    const { positions } = await computeOpenPositions(transactions, tickerMap, splits);
+    // skipSplitDetection: ten endpoint nie persystuje wykrytych splitów —
+    // detekcję robi (i zapisuje) /positions w swoim dobowym oknie skanu.
+    const { positions } = await computeOpenPositions(transactions, tickerMap, splits, undefined, {
+      skipSplitDetection: true,
+    });
 
     const today = new Date().toISOString().split('T')[0];
     const upcoming: UpcomingDividend[] = [];
@@ -1118,7 +1136,11 @@ router.get(
         savedSplits,
         baseCurrency,
       ),
-      computeOpenPositions(transactions, tickerMap, savedSplits, fxRatesObj),
+      // skipSplitDetection: /metrics ignoruje detectedSplits — sieciowy skan
+      // robi (i zapisuje) wyłącznie /positions w dobowym oknie.
+      computeOpenPositions(transactions, tickerMap, savedSplits, fxRatesObj, {
+        skipSplitDetection: true,
+      }),
     ]);
 
     // KROK 3: foreignExposures (NATIVE) i exposurePlnByCurrency (z tych samych
