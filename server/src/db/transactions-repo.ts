@@ -1,5 +1,10 @@
 import { getDb } from './connection.js';
+import { bumpPortfolioDataVersion } from './data-version.js';
 import type { Transaction, SkippedRow, OrphanedSell } from 'shared';
+
+// Każda funkcja zapisu bumpuje wersję danych portfela (data-version.ts) —
+// to unieważnia memo computePortfolioHistory dla wszystkich ścieżek zapisu
+// (routes + import-service) bez dotykania callerów.
 
 export function insertTransactions(
   transactions: Transaction[],
@@ -41,7 +46,9 @@ export function insertTransactions(
     return count;
   });
 
-  return insertMany(transactions);
+  const count = insertMany(transactions);
+  if (count > 0) bumpPortfolioDataVersion(portfolioId);
+  return count;
 }
 
 export interface InsertWithDedupResult {
@@ -139,6 +146,7 @@ export function insertTransactionsWithDedup(
     }
   })();
 
+  if (inserted > 0) bumpPortfolioDataVersion(portfolioId);
   return { inserted, duplicates };
 }
 
@@ -168,12 +176,14 @@ export function getTransactionsCount(portfolioId: string = 'default'): number {
 export function clearTransactions(portfolioId: string = 'default'): void {
   const db = getDb(portfolioId);
   db.prepare('DELETE FROM transactions').run();
+  bumpPortfolioDataVersion(portfolioId);
 }
 
 /** Usuwa wyłącznie wiersze z importów (import_batch ustawiony) — ręczne wpisy zostają. */
 export function clearImportedTransactions(portfolioId: string = 'default'): void {
   const db = getDb(portfolioId);
   db.prepare('DELETE FROM transactions WHERE import_batch IS NOT NULL').run();
+  bumpPortfolioDataVersion(portfolioId);
 }
 
 /**
@@ -214,6 +224,7 @@ export function purgeAllData(portfolioId: string = 'default'): void {
     db.prepare('DELETE FROM manual_positions').run();
     db.prepare('DELETE FROM price_cache').run();
   })();
+  bumpPortfolioDataVersion(portfolioId);
 }
 
 export function getTransactionById(
@@ -256,6 +267,7 @@ export function insertTransaction(tx: Transaction, portfolioId: string = 'defaul
       tx.cfdGrossProfit ?? null,
       tx.syntheticOrigin ?? null,
     );
+  bumpPortfolioDataVersion(portfolioId);
   return Number(result.lastInsertRowid);
 }
 
@@ -293,12 +305,14 @@ export function updateTransaction(
       merged.source,
       id,
     );
+  if (result.changes > 0) bumpPortfolioDataVersion(portfolioId);
   return result.changes > 0;
 }
 
 export function deleteTransaction(id: number, portfolioId: string = 'default'): boolean {
   const db = getDb(portfolioId);
   const result = db.prepare('DELETE FROM transactions WHERE id = ?').run(id);
+  if (result.changes > 0) bumpPortfolioDataVersion(portfolioId);
   return result.changes > 0;
 }
 
@@ -316,7 +330,9 @@ export function deleteTransactions(ids: number[], portfolioId: string = 'default
     }
     return count;
   });
-  return deleteMany(ids);
+  const deleted = deleteMany(ids);
+  if (deleted > 0) bumpPortfolioDataVersion(portfolioId);
+  return deleted;
 }
 
 /** Zwraca transakcje po liście ID (używane w smart-delete preview). */

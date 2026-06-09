@@ -31,7 +31,7 @@ import {
   snapToKnownRatio,
 } from './split-detector.js';
 import { getDb } from '../db/connection.js';
-import { DEFAULT_FX_PLN } from 'shared';
+import { BENCHMARKS, DEFAULT_FX_PLN } from 'shared';
 
 // ============ Split Helpers ============
 
@@ -1257,11 +1257,31 @@ export function computeFxImpact(
   };
 }
 
+/** Mapa ticker (Yahoo + Stooq, uppercase) → waluta, zbudowana raz z BENCHMARKS
+ *  config (shared/constants) — jedno źródło prawdy zamiast hardcoded heurystyki. */
+const BENCHMARK_CURRENCY_BY_TICKER: Map<string, string> = (() => {
+  const map = new Map<string, string>();
+  for (const bench of Object.values(BENCHMARKS) as Array<{
+    currency: string;
+    yahooTicker?: string;
+    stooqTicker?: string;
+  }>) {
+    if (bench.yahooTicker) map.set(bench.yahooTicker.toUpperCase(), bench.currency);
+    if (bench.stooqTicker) map.set(bench.stooqTicker.toUpperCase(), bench.currency);
+  }
+  return map;
+})();
+
 /** Benchmark currency lookup — Yahoo nie zawsze dostarcza przy fetchu, a dla
- *  Stooq benchmarków nie mamy metadanych. Konsensualna lista per ticker. */
+ *  Stooq benchmarków nie mamy metadanych. Źródłem prawdy jest pole `currency`
+ *  w BENCHMARKS config; heurystyka per ticker zostaje wyłącznie jako fallback
+ *  dla tickerów spoza configu. */
 function benchmarkCurrencyFromTicker(ticker: string): string {
   if (!ticker) return 'PLN';
   const t = ticker.toUpperCase();
+  const fromConfig = BENCHMARK_CURRENCY_BY_TICKER.get(t);
+  if (fromConfig) return fromConfig;
+  // Fallback dla nieznanych tickerów (np. custom benchmark w przyszłości)
   if (t.endsWith('.WA') || t === 'WIG' || t === 'WIG20' || t === 'MWIG40' || t === 'SWIG80')
     return 'PLN';
   // ^GSPC, ^IXIC, ^DJI etc. — domyślnie USD (nasze obecne benchmark'i zagraniczne)

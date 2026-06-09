@@ -1,6 +1,11 @@
 import { getDb } from './connection.js';
+import { bumpPortfolioDataVersion } from './data-version.js';
 import { TICKER_MAP, NAME_ALIASES } from 'shared';
 import type { TickerMapEntry } from 'shared';
+
+// Zapisy w ticker_map bumpują wersję danych portfela (data-version.ts) —
+// zmiana resolvera (ticker/giełda/waluta/sektor) wpływa na wynik
+// computePortfolioHistory, więc memo musi zostać unieważnione.
 
 export function seedTickerMap(portfolioId: string = 'default'): void {
   const db = getDb(portfolioId);
@@ -186,6 +191,7 @@ export function upsertTickerMapEntry(
     entry.sector || null,
     entry.supersector || null,
   );
+  bumpPortfolioDataVersion(portfolioId);
 }
 
 /** Usuń wpis z ticker_map dla danego ISIN-u. Używane do czyszczenia legacy-stubów
@@ -193,6 +199,7 @@ export function upsertTickerMapEntry(
 export function deleteTickerMapEntry(isin: string, portfolioId: string = 'default'): boolean {
   const db = getDb(portfolioId);
   const res = db.prepare('DELETE FROM ticker_map WHERE isin = ?').run(isin);
+  if (res.changes > 0) bumpPortfolioDataVersion(portfolioId);
   return res.changes > 0;
 }
 
@@ -208,5 +215,6 @@ export function updateTickerSectors(
   const res = db
     .prepare('UPDATE ticker_map SET sector = ?, supersector = ? WHERE isin = ?')
     .run(subsector, supersector, isin);
+  if (res.changes > 0) bumpPortfolioDataVersion(portfolioId);
   return res.changes > 0;
 }
