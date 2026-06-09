@@ -167,16 +167,19 @@ export function parseMbankOperations(
 /**
  * Detect if CSV content looks like mBank eMakler financial history (operations).
  * Header: "Data,Opis,Kwota" or "Data;Opis;Kwota"
+ *
+ * Wymagamy FAKTYCZNYCH nazw kolumn w wierszu nagłówka (split po delimiterze),
+ * nie luźnych substringów — wiersz danych zawierający przypadkiem słowa
+ * "data"/"opis"/"kwota" nie może klasyfikować pliku jako mbank-operations.
  */
 export function isMbankOperationsFormat(csvContent: string): boolean {
   const lines = csvContent.split('\n');
-  for (const line of lines) {
-    const lower = line.toLowerCase();
-    if (lower.includes('data') && lower.includes('opis') && lower.includes('kwota')) {
-      // Make sure it's not a transaction file (those also have "data" but also "papier")
-      if (!lower.includes('papier') && !lower.includes('walor')) {
-        return true;
-      }
+  const { headerIdx, delimiter } = findOperationsHeader(lines);
+  if (headerIdx >= 0) {
+    const cols = lines[headerIdx].split(delimiter).map((c) => c.trim().toLowerCase());
+    // Make sure it's not a transaction file (those also have "Data" but also "Papier"/"Walor")
+    if (!cols.includes('papier') && !cols.includes('walor')) {
+      return true;
     }
   }
   // Metadata-based detection
@@ -184,14 +187,20 @@ export function isMbankOperationsFormat(csvContent: string): boolean {
   return content.includes('emakler') && content.includes('historia finansowa');
 }
 
+/** Realne eksporty eMakler mają ~34 linie metadanych banku przed nagłówkiem. */
+const MAX_HEADER_SCAN_LINES = 100;
+
 /**
  * Find the header row and auto-detect delimiter.
+ * Nagłówek = wiersz, którego kolumny (po splicie delimiterem) zawierają
+ * dokładnie "data", "opis" i "kwota".
  */
 function findOperationsHeader(lines: string[]): { headerIdx: number; delimiter: string } {
-  for (let i = 0; i < lines.length; i++) {
-    const lower = lines[i].toLowerCase();
-    if (lower.includes('data') && lower.includes('opis') && lower.includes('kwota')) {
-      const delimiter = lower.includes(';') ? ';' : ',';
+  const limit = Math.min(lines.length, MAX_HEADER_SCAN_LINES);
+  for (let i = 0; i < limit; i++) {
+    const delimiter = lines[i].includes(';') ? ';' : ',';
+    const cols = lines[i].split(delimiter).map((c) => c.trim().toLowerCase());
+    if (cols.includes('data') && cols.includes('opis') && cols.includes('kwota')) {
       return { headerIdx: i, delimiter };
     }
   }

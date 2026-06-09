@@ -1,6 +1,12 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
-import { parseNumber, roundTo2, parseDottedDate } from './utils.js';
+import {
+  parseNumber,
+  roundTo2,
+  computeTotal,
+  validateTradeFields,
+  parseDottedDate,
+} from './utils.js';
 
 /**
  * Parse mBank eMakler transaction CSV.
@@ -72,37 +78,24 @@ export function parseMbankTransactions(
     const commission = parseNumber(row[colMap.commission]);
     const exchange = row[colMap.exchange]?.trim();
 
-    if (!dateStr) {
-      skipped.push({ row: rowNum, reason: 'missing_date', paperName });
-      continue;
-    }
-    if (!paperName) {
-      skipped.push({ row: rowNum, reason: 'missing_name' });
-      continue;
-    }
-    if (side !== 'K' && side !== 'S') {
-      skipped.push({ row: rowNum, reason: 'invalid_side', paperName });
-      continue;
-    }
-    if (quantity <= 0) {
-      skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName });
-      continue;
-    }
-    if (price <= 0) {
-      skipped.push({ row: rowNum, reason: 'invalid_price', paperName });
+    // Wspólna walidacja pól (utils.validateTradeFields) — mBank wymaga nazwy papieru,
+    // ISIN nie istnieje w eksporcie (resolwowany po imporcie).
+    const check = validateTradeFields({ date: dateStr, paperName, side, quantity, price });
+    if (!check.ok) {
+      skipped.push({ row: rowNum, reason: check.reason, paperName: paperName || undefined });
       continue;
     }
 
-    const isoDate = parseDottedDate(dateStr);
+    const isoDate = parseDottedDate(dateStr!);
     const value = roundTo2(quantity * price);
-    const total = side === 'K' ? roundTo2(value + commission) : roundTo2(value - commission);
+    const total = computeTotal(side as 'K' | 'S', value, commission);
     // Infer currency from exchange column when price currency is empty
     const currency = priceCurrency || EXCHANGE_CURRENCY[exchange || ''] || 'PLN';
 
     transactions.push({
       date: isoDate,
-      paperName,
-      isin: paperName, // Placeholder — resolved after import via ticker name
+      paperName: paperName!, // zwalidowane w validateTradeFields wyżej
+      isin: paperName!, // Placeholder — resolved after import via ticker name
       quantity: Math.round(quantity), // GPW/NC: only whole shares; round removes CSV floating-point noise
       side: side as 'K' | 'S',
       price,

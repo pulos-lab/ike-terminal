@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
-import { parseNumber, roundTo2, parseDegiroDate } from './utils.js';
+import { parseNumber, roundTo2, validateTradeFields, parseDegiroDate } from './utils.js';
 
 /**
  * Parse DEGIRO Transactions CSV.
@@ -87,20 +87,17 @@ export function parseDegiroTransactions(
     const fee = parseNumber(row[colMap.fee]);
     const fxRateRaw = colMap.fxRate >= 0 ? parseNumber(row[colMap.fxRate]) : 0;
 
-    if (!dateStr) {
-      skipped.push({ row: rowNum, reason: 'missing_date', paperName: product });
-      continue;
-    }
-    if (!product) {
-      skipped.push({ row: rowNum, reason: 'missing_name' });
-      continue;
-    }
-    if (!isin) {
-      skipped.push({ row: rowNum, reason: 'missing_isin', paperName: product });
-      continue;
-    }
-    if (liczba === 0) {
-      skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName: product });
+    // Wspólna walidacja pól (utils.validateTradeFields). Strona (K/S) wynika ze znaku
+    // Liczby, więc walidujemy |Liczba| zamiast side; cena sprawdzana niżej, bo
+    // price === 0 może oznaczać corporate action, nie błędny wiersz.
+    const check = validateTradeFields({
+      date: dateStr,
+      paperName: product,
+      isin,
+      quantity: Math.abs(liczba),
+    });
+    if (!check.ok) {
+      skipped.push({ row: rowNum, reason: check.reason, paperName: product || undefined });
       continue;
     }
 
@@ -115,10 +112,6 @@ export function parseDegiroTransactions(
     const quantity = Math.abs(liczba); // keep fractional shares
     const absPrice = Math.abs(price);
 
-    if (quantity <= 0) {
-      skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName: product });
-      continue;
-    }
     if (absPrice <= 0) {
       skipped.push({ row: rowNum, reason: 'invalid_price', paperName: product });
       continue;
@@ -147,7 +140,7 @@ export function parseDegiroTransactions(
 
     transactions.push({
       date: isoDate,
-      paperName: product,
+      paperName: product!, // zwalidowane w validateTradeFields wyżej
       isin,
       quantity,
       side,

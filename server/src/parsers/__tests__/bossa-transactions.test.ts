@@ -1,11 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { parseBossaTransactions } from '../bossa-transactions.js';
+import { parseBossaTransactions, isBossaFormat } from '../bossa-transactions.js';
 
 const CSV_HEADER = 'data;papier;isin;-;ilość;cena;wartość;prowizja;po prowizji;waluta';
 
 function buildCsv(lines: string[]): string {
   return [CSV_HEADER, ...lines].join('\n');
 }
+
+describe('isBossaFormat', () => {
+  it('detects real Bossa header (semicolon-delimited)', () => {
+    expect(isBossaFormat(CSV_HEADER + '\n')).toBe(true);
+  });
+
+  it('NIE klasyfikuje pierwszej linii zawierającej słowa data/papier/isin luzem', () => {
+    // Stary detektor (substring na pierwszej linii) dawał tu false-positive.
+    expect(isBossaFormat('eksport: data papier isin\n')).toBe(false);
+  });
+
+  it('NIE klasyfikuje nagłówka DEGIRO (przecinki, nie średniki)', () => {
+    expect(isBossaFormat('Data,Czas,Produkt,ISIN,Kurs wymiany,Razem\n')).toBe(false);
+  });
+});
 
 describe('parseBossaTransactions', () => {
   it('skips rows with price <= 0 as invalid_price', () => {

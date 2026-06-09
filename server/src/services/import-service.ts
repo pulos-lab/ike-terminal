@@ -28,11 +28,13 @@ import type {
   ParseResult,
 } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
-import { detectBroker, detectBinaryBroker, PARSER_REGISTRY } from '../parsers/registry.js';
 import {
-  parseBossaOperations,
-  type BossaOperationsParseResult,
-} from '../parsers/bossa-operations.js';
+  detectBroker,
+  detectBinaryBroker,
+  PARSER_REGISTRY,
+  type OperationsParseResult,
+} from '../parsers/registry.js';
+import { computeTotal } from '../parsers/utils.js';
 import {
   insertTransactionsWithDedup,
   getAllTransactions,
@@ -87,23 +89,13 @@ export async function classifyFile(file: {
   const content = decodeCSVBuffer(file.buffer);
 
   // Najpierw sprawdź czy to plik operacji — operations detection ma pierwszeństwo
-  // (DEGIRO Account, Bossa operacje_bez_transakcji).
+  // (DEGIRO Account, mBank historia finansowa, Bossa operacje_bez_transakcji).
+  // Kolejność = kolejność w PARSER_REGISTRY (degiro → mbank → bossa).
   const opsParser = PARSER_REGISTRY.find((p) => p.detectOperations?.(content));
   if (opsParser) {
     return {
       role: 'operations',
       broker: opsParser.id,
-      isBinary: false,
-      buffer: file.buffer,
-      originalName: file.originalname,
-    };
-  }
-
-  // Bossa operacje wykrywamy osobno (header check bez dedykowanego detectOperations w registry).
-  if (isBossaOperationsFile(content)) {
-    return {
-      role: 'operations',
-      broker: 'bossa',
       isBinary: false,
       buffer: file.buffer,
       originalName: file.originalname,
@@ -129,15 +121,6 @@ export async function classifyFile(file: {
     buffer: file.buffer,
     originalName: file.originalname,
   };
-}
-
-function isBossaOperationsFile(content: string): boolean {
-  const firstLine = (content.split('\n')[0] || '').toLowerCase();
-  return (
-    firstLine.includes('data') &&
-    firstLine.includes('kwota') &&
-    (firstLine.includes('tytuł operacji') || firstLine.includes('tytu\u0142 operacji'))
-  );
 }
 
 /**
@@ -216,7 +199,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   seedTickerMap(pid);
 
   let parsedTx: ParseResult<Transaction> | null = null;
-  let parsedOps: BossaOperationsParseResult | ParseResult<CashOperation> | null = null;
+  let parsedOps: OperationsParseResult | null = null;
   let txParserId: BrokerType | null = null;
   let opsParserId: BrokerType | null = null;
   let opsContentRaw: string | null = null;
@@ -263,21 +246,14 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     };
   }
 
-  if (opsFile) {
+  // Parser operacji rozwiązywany czysto z registry — markery reconciliation
+  // (redemptions / ipoSubscriptions / capitalReturns) siedzą w OperationsParseResult.
+  const opsParser = opsFile ? PARSER_REGISTRY.find((p) => p.id === opsFile.broker) : undefined;
+  if (opsFile && opsParser?.parseOperations) {
     const content = decodeCSVBuffer(opsFile.buffer);
     opsContentRaw = content;
-
-    // Bossa operations parser ma rozszerzony return (z redemptions)
-    if (opsFile.broker === 'bossa') {
-      parsedOps = parseBossaOperations(content, importBatch);
-      opsParserId = 'bossa';
-    } else {
-      const opsParser = PARSER_REGISTRY.find((p) => p.id === opsFile.broker && p.parseOperations);
-      if (opsParser?.parseOperations) {
-        parsedOps = opsParser.parseOperations(content, importBatch);
-        opsParserId = opsParser.id;
-      }
-    }
+    parsedOps = opsParser.parseOperations(content, importBatch);
+    opsParserId = opsParser.id;
   }
 
   // Atomowe inserty + reconciliation w jednej transakcji SQLite
@@ -309,10 +285,11 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       insertedOpsDuplicates.push(...r.duplicates);
     }
 
-    // 3. Reconciliation per broker
+    // 3. Reconciliation — dispatch po OBECNOŚCI markerów z parsera operacji
+    // (nie po id brokera; markery emituje obecnie tylko parser Bossy).
 
-    // 3a. Bossa — redemption markers (tylko wykupy certyfikatów; tendery idą jako deposit + warning)
-    if (parsedOps && 'redemptions' in parsedOps && parsedOps.redemptions.length > 0) {
+    // 3a. Redemption markers (tylko wykupy certyfikatów; tendery idą jako deposit + warning)
+    if (parsedOps?.redemptions?.length) {
       const r = reconcileBossaRedemptions(
         parsedOps.redemptions,
         pid,
@@ -322,81 +299,71 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       syntheticSells += r;
     }
 
-    // 3a''. Bossa — IPO subscriptions → synthetic K (znana cena emisyjna z mapy)
-    if (parsedOps && 'ipoSubscriptions' in parsedOps && parsedOps.ipoSubscriptions.length > 0) {
+    // 3a''. IPO subscriptions → synthetic K (znana cena emisyjna z mapy)
+    if (parsedOps?.ipoSubscriptions?.length) {
       const r = reconcileBossaIpos(parsedOps.ipoSubscriptions, pid, importBatch, crossFileWarnings);
       syntheticSells += r;
     }
 
-    // 3a'''. Bossa — capital return markers (obniżenie nominału, wyrównanie wykupu).
+    // 3a'''. Capital return markers (obniżenie nominału, wyrównanie wykupu).
     // Wstawiamy jako CashOperation(operation_type='capital_return'); qty pozycji bez zmian.
     // Engine traktuje capital_return jak "dywidendę z kapitału" — wchodzi do totalValue,
     // nie do totalDeposited → MWR/TWR poprawnie.
-    if (parsedOps && 'capitalReturns' in parsedOps && parsedOps.capitalReturns.length > 0) {
+    if (parsedOps?.capitalReturns?.length) {
       reconcileBossaCapitalReturns(parsedOps.capitalReturns, pid, importBatch, crossFileWarnings);
     }
 
     // 3a'. Bossa — nieznane wezwania skupu (corporate_action_pending/unknown_tender);
     // emit warning zachęcający do domknięcia sprzedaży (nie znamy liczby akcji i ceny tendera).
+    // Celowo keyowane na brokerze: skan DB objąłby pending tendery Bossy także przy
+    // imporcie innego brokera, dublując warningi.
     if (opsFile?.broker === 'bossa') {
       warnAboutTenderOffers(pid, crossFileWarnings);
     }
 
-    // 3b. DEGIRO — transaction taxes applied cross-batch (nawet jeśli user wgrał osobno wcześniej)
-    if (opsFile?.broker === 'degiro' && opsContentRaw) {
-      const degiroParser = PARSER_REGISTRY.find((p) => p.id === 'degiro');
-      if (degiroParser?.parseTransactionTaxes) {
-        const taxes = degiroParser.parseTransactionTaxes(opsContentRaw);
-        let applied = 0;
-        // W obrębie batcha każdy (transakcja, opis podatku) dostaje podatek
-        // najwyżej raz — dwa same-day trade'y tego samego ISIN-u dostają po
-        // jednym stamp duty zamiast obu na pierwszym.
-        const usedInBatch = new Set<string>();
-        const usedKey = (txId: number, desc: string) => `${txId}|${desc}`;
-        for (const tax of taxes) {
-          const txs = getTransactionsByIsin(tax.isin, pid);
-          const taxDate = tax.date.split('T')[0];
-          const candidates = txs.filter((t) => t.date.startsWith(taxDate));
-          const match =
-            candidates.find((t) => t.id && !usedInBatch.has(usedKey(t.id, tax.description))) ??
-            candidates[0];
-          if (match?.id) {
-            // recordAppliedTransactionTax zwraca false przy reimporcie tego
-            // samego podatku — wtedy prowizja jest już powiększona, nie doliczamy.
-            const isNew = recordAppliedTransactionTax(
-              {
-                transactionId: match.id,
-                isin: tax.isin,
-                taxDate: tax.date,
-                description: tax.description,
-                amount: tax.amount,
-              },
-              pid,
-            );
-            if (!isNew) continue;
-            usedInBatch.add(usedKey(match.id, tax.description));
-            const newCommission = Math.round((match.commission + tax.amount) * 100) / 100;
-            const newTotal =
-              match.side === 'K'
-                ? Math.round((match.value + newCommission) * 100) / 100
-                : Math.round((match.value - newCommission) * 100) / 100;
-            updateTransaction(match.id, { commission: newCommission, total: newTotal }, pid);
-            applied++;
-          } else {
-            crossFileWarnings.push(
-              `DEGIRO: ${tax.description} dla ISIN ${tax.isin} z ${taxDate} nie znalazł pasującej transakcji`,
-            );
-          }
+    // 3b. Transaction taxes z pliku operacji (hook registry — obecnie tylko DEGIRO).
+    // Applied cross-batch (nawet jeśli user wgrał transakcje osobno wcześniej).
+    if (opsParser?.parseTransactionTaxes && opsContentRaw) {
+      const taxes = opsParser.parseTransactionTaxes(opsContentRaw);
+      let applied = 0;
+      // W obrębie batcha każdy (transakcja, opis podatku) dostaje podatek
+      // najwyżej raz — dwa same-day trade'y tego samego ISIN-u dostają po
+      // jednym stamp duty zamiast obu na pierwszym.
+      const usedInBatch = new Set<string>();
+      const usedKey = (txId: number, desc: string) => `${txId}|${desc}`;
+      for (const tax of taxes) {
+        const txs = getTransactionsByIsin(tax.isin, pid);
+        const taxDate = tax.date.split('T')[0];
+        const candidates = txs.filter((t) => t.date.startsWith(taxDate));
+        const match =
+          candidates.find((t) => t.id && !usedInBatch.has(usedKey(t.id, tax.description))) ??
+          candidates[0];
+        if (match?.id) {
+          // recordAppliedTransactionTax zwraca false przy reimporcie tego
+          // samego podatku — wtedy prowizja jest już powiększona, nie doliczamy.
+          const isNew = recordAppliedTransactionTax(
+            {
+              transactionId: match.id,
+              isin: tax.isin,
+              taxDate: tax.date,
+              description: tax.description,
+              amount: tax.amount,
+            },
+            pid,
+          );
+          if (!isNew) continue;
+          usedInBatch.add(usedKey(match.id, tax.description));
+          const newCommission = Math.round((match.commission + tax.amount) * 100) / 100;
+          const newTotal = computeTotal(match.side, match.value, newCommission);
+          updateTransaction(match.id, { commission: newCommission, total: newTotal }, pid);
+          applied++;
+        } else {
+          crossFileWarnings.push(
+            `${opsParser.label}: ${tax.description} dla ISIN ${tax.isin} z ${taxDate} nie znalazł pasującej transakcji`,
+          );
         }
-        if (applied > 0) result.taxesApplied = applied;
       }
-    }
-
-    // Po reconciliation: tworzymy fallback ticker_map dla nierozwiązanych ISIN-ów z otwartymi pozycjami
-    if (parsedTx) {
-      for (const tx of parsedTx.data) {
-        // (resolver zawoła się poza transakcją — tu tylko upewniamy się że transakcje są w DB)
-      }
+      if (applied > 0) result.taxesApplied = applied;
     }
   });
   runAll();
@@ -407,19 +374,15 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   // Kryterium "stuba": ticker === name i brak kropki (Yahoo/Stooq zawsze mają `.WA` lub podobne
   // dla polskich spółek; gdyby to był prawdziwy ticker jak "AAPL" — name byłoby "Apple Inc.").
   const reconciledIsinsNeedingRealTicker = new Set<string>();
-  if (parsedOps && 'redemptions' in parsedOps) {
-    for (const red of parsedOps.redemptions) {
-      if (red.kind !== 'certificate') {
-        // Znajdź ISIN z transakcji dla tego tickera
-        const tx = parsedTx?.data.find((t) => t.paperName === red.ticker);
-        if (tx) reconciledIsinsNeedingRealTicker.add(tx.isin);
-      }
+  for (const red of parsedOps?.redemptions ?? []) {
+    if (red.kind !== 'certificate') {
+      // Znajdź ISIN z transakcji dla tego tickera
+      const tx = parsedTx?.data.find((t) => t.paperName === red.ticker);
+      if (tx) reconciledIsinsNeedingRealTicker.add(tx.isin);
     }
   }
-  if (parsedOps && 'ipoSubscriptions' in parsedOps) {
-    for (const ipo of parsedOps.ipoSubscriptions) {
-      reconciledIsinsNeedingRealTicker.add(ipo.isin);
-    }
+  for (const ipo of parsedOps?.ipoSubscriptions ?? []) {
+    reconciledIsinsNeedingRealTicker.add(ipo.isin);
   }
   for (const isin of reconciledIsinsNeedingRealTicker) {
     const entry = getTickerByIsin(isin, pid);

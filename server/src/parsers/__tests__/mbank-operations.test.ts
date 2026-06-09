@@ -27,6 +27,25 @@ describe('isMbankOperationsFormat', () => {
   it('rejects empty content', () => {
     expect(isMbankOperationsFormat('')).toBe(false);
   });
+
+  it('detects header preceded by bank metadata lines (real export ~34 lines)', () => {
+    const csv = ['mBank S.A.', 'eMakler', '', 'Historia finansowa', '', 'Data;Opis;Kwota'].join(
+      '\n',
+    );
+    expect(isMbankOperationsFormat(csv)).toBe(true);
+  });
+
+  it('NIE klasyfikuje CSV, w którym data/opis/kwota występują tylko w wierszu danych', () => {
+    // Słowa "data", "opis", "kwota" pojawiają się w treści wiersza, ale NIE są
+    // nazwami kolumn — luźny substring-matching dawał tu false-positive.
+    const csv =
+      'kolumna1;kolumna2;kolumna3\n' + '2024-01-02;przelew z opisem: kwota za data koncertu;100\n';
+    expect(isMbankOperationsFormat(csv)).toBe(false);
+  });
+
+  it('NIE klasyfikuje nagłówka operacji Bossa (data;tytuł operacji;szczegóły;kwota;waluta)', () => {
+    expect(isMbankOperationsFormat('data;tytuł operacji;szczegóły;kwota;waluta\n')).toBe(false);
+  });
 });
 
 describe('parseMbankOperations', () => {
