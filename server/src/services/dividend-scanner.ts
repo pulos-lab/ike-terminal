@@ -17,7 +17,9 @@ import {
   getMetadata,
   setMetadata,
 } from '../db/operations-repo.js';
+import { getSplits } from '../db/splits-repo.js';
 import { getSharesAtDate } from './portfolio-engine.js';
+import { adjustTransactionsForSplits } from './split-detector.js';
 import { fetchYahooDividendEvents, fetchDividendCalendar } from './yahoo-finance.js';
 import { DIVIDEND_TAX_REGULAR, DIVIDEND_TAX_IKE_IKZE } from 'shared';
 import type { CashOperation, PortfolioSettings, TickerMapEntry } from 'shared';
@@ -90,6 +92,19 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
     return { scanned: 0, newDividends: 0, errors: [] };
   }
 
+  // Liczba akcji musi być liczona na transakcjach skorygowanych o splity —
+  // inaczej po splicie 1:10 scanner policzyłby dywidendę od 10x za małej pozycji.
+  const savedSplits = getSplits(portfolioId).map((s) => ({
+    ticker: s.ticker,
+    isin: s.isin,
+    date: s.splitDate,
+    ratio: s.ratio,
+    txPrice: 0,
+    providerPrice: 0,
+    source: s.source,
+  }));
+  const adjustedTxs = adjustTransactionsForSplits(transactions, savedSplits);
+
   // Determine scan start date: from last broker-imported dividend, or 90 days back
   const latestDiv = getLatestDividendDate(portfolioId);
   let startDate: string;
@@ -112,7 +127,8 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
   for (const [isin, entry] of tickerMap) {
     if (entry.exchange === 'NC') continue;
     if (entry.priceSource === 'stooq') continue;
-    const shares = getSharesAtDate(transactions, isin, today);
+    // Stan posiadania "na dziś" — włącznie z dzisiejszymi transakcjami (includeDate=true).
+    const shares = getSharesAtDate(adjustedTxs, isin, today, true);
     if (shares <= 0) continue;
     isinEntries.set(isin, entry);
   }
@@ -155,7 +171,8 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
         }
         // daysSinceEvent >= 30 → payment certainly occurred, no calendar check needed
 
-        const shares = getSharesAtDate(transactions, isin, event.date);
+        // Prawo do dywidendy: akcje posiadane PRZED ex-date (exclusive, domyślne).
+        const shares = getSharesAtDate(adjustedTxs, isin, event.date);
         if (shares <= 0) continue;
 
         const country = getCountryFromExchange(entry.exchange, entry.ticker);
@@ -197,8 +214,11 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
     );
   }
 
-  // Mark scan as done for today
-  setMetadata(portfolioId, 'last_dividend_scan', today);
+  // Mark scan as done for today — ale NIE gdy wszystko się wysypało (np. outage Yahoo)
+  // i nic nie weszło: wtedy zostawiamy flagę, żeby kolejny request spróbował ponownie.
+  if (!(errors.length > 0 && inserted === 0)) {
+    setMetadata(portfolioId, 'last_dividend_scan', today);
+  }
 
   return { scanned, newDividends: inserted, errors };
 }

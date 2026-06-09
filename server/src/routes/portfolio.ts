@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/async-handler.js';
+import { getDb } from '../db/connection.js';
 import {
   getAllTransactions,
   getTransactionById,
@@ -776,14 +777,21 @@ router.post(
     };
     const insertResult = insertTransactionsWithDedup([syntheticSell], pid);
 
-    // Usuwamy operację pending — cash inflow jest teraz reprezentowany przez synthetic SELL
-    // (przez transactionsCashFlow w engine).
-    deleteOperation(id, pid);
+    // Usuwamy operację pending tylko gdy synthetic SELL faktycznie wszedł — inaczej
+    // (dedupe = duplikat) cash inflow nie ma reprezentacji w transakcjach i usunięcie
+    // operacji zgubiłoby go bezpowrotnie. Operacja zostaje, user widzi info o duplikacie.
+    const operationDeleted = insertResult.inserted > 0;
+    if (operationDeleted) {
+      // Cash inflow jest teraz reprezentowany przez synthetic SELL
+      // (przez transactionsCashFlow w engine).
+      deleteOperation(id, pid);
+    }
 
     res.json({
       success: true,
       transactionsInserted: insertResult.inserted,
       duplicates: insertResult.duplicates.length,
+      operationDeleted,
     });
   }),
 );
@@ -1672,27 +1680,30 @@ router.post(
       return res.status(409).json({ error: plan.unsupported });
     }
 
-    // Apply edits (zmiana qty + przeliczenie value/total) ...
-    for (const edit of plan.edits) {
-      const tx = getTransactionById(edit.txId, pid);
-      if (!tx) continue;
-      const newValue = edit.newQuantity * tx.price;
-      const newCommission = tx.commission * (edit.newQuantity / tx.quantity);
-      const newTotal = tx.side === 'K' ? newValue + newCommission : newValue - newCommission;
-      updateTransaction(
-        edit.txId,
-        {
-          quantity: edit.newQuantity,
-          value: newValue,
-          commission: newCommission,
-          total: newTotal,
-        },
-        pid,
-      );
-    }
+    // Apply edits (zmiana qty + przeliczenie value/total) + deletes atomowo —
+    // jedna SQL transakcja, żeby częściowy fail nie zostawił portfela w stanie pośrednim.
+    const deleted = getDb(pid).transaction(() => {
+      for (const edit of plan.edits) {
+        const tx = getTransactionById(edit.txId, pid);
+        if (!tx) continue;
+        const newValue = edit.newQuantity * tx.price;
+        const newCommission = tx.commission * (edit.newQuantity / tx.quantity);
+        const newTotal = tx.side === 'K' ? newValue + newCommission : newValue - newCommission;
+        updateTransaction(
+          edit.txId,
+          {
+            quantity: edit.newQuantity,
+            value: newValue,
+            commission: newCommission,
+            total: newTotal,
+          },
+          pid,
+        );
+      }
 
-    // ...then deletes
-    const deleted = deleteTransactions(plan.deletes, pid);
+      // ...then deletes
+      return deleteTransactions(plan.deletes, pid);
+    })();
 
     res.json({
       success: true,

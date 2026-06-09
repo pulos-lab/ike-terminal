@@ -12,15 +12,25 @@ export function createConcurrencyLimiter(maxConcurrent: number) {
 
   return async function <T>(fn: () => Promise<T>): Promise<T> {
     if (active >= maxConcurrent) {
+      // Wait for a finisher to hand over its slot directly (see finally below).
+      // `active` already counts our slot when we wake up — no increment here.
+      // This avoids the race where a new caller slips in between a finisher's
+      // decrement and the waiter waking up, exceeding the limit.
       await new Promise<void>((resolve) => queue.push(resolve));
+    } else {
+      active++;
     }
-    active++;
     try {
       return await fn();
     } finally {
-      active--;
       const next = queue.shift();
-      if (next) next();
+      if (next) {
+        // Hand the slot over directly — `active` stays unchanged, so no other
+        // caller can sneak in before the waiter resumes.
+        next();
+      } else {
+        active--;
+      }
     }
   };
 }
