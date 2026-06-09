@@ -397,11 +397,6 @@ export interface LivePrice {
   timestamp?: string;
 }
 
-export interface HistoricalPrice {
-  date: string;
-  close: number;
-}
-
 // ============ Ticker Search Types ============
 
 export interface TickerSearchResult {

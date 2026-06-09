@@ -38,6 +38,7 @@ import {
   getAllTransactions,
   getTransactionsByIsin,
   updateTransaction,
+  recordAppliedTransactionTax,
   detectOrphanedSells,
 } from '../db/transactions-repo.js';
 import {
@@ -220,11 +221,15 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   let opsParserId: BrokerType | null = null;
   let opsContentRaw: string | null = null;
 
+  // Wyniki per plik — inserty idą osobno per plik, żeby dedup zliczeniowy
+  // (porównanie z licznikiem w DB) wyłapywał nakładające się zakresy dat
+  // MIĘDZY plikami w jednej paczce, zachowując legalne duplikaty wewnątrz
+  // pojedynczego pliku.
+  const parsedTxFiles: ParseResult<Transaction>[] = [];
+
   if (txFiles.length > 0) {
-    // Parsuj każdy plik osobno, łącz wyniki. Pierwszy wykryty broker dyktuje
+    // Parsuj każdy plik osobno. Pierwszy wykryty broker dyktuje
     // parser dla całej paczki (już zwalidowaliśmy że wszystkie są tego samego).
-    const mergedData: Transaction[] = [];
-    const mergedSkipped: SkippedRow[] = [];
     for (const file of txFiles) {
       const content = decodeCSVBuffer(file.buffer);
       const parser = detectBroker(content);
@@ -249,10 +254,13 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
         }
       }
 
-      mergedData.push(...parsed.data);
-      mergedSkipped.push(...parsed.skipped);
+      parsedTxFiles.push(parsed);
     }
-    parsedTx = { data: mergedData, skipped: mergedSkipped };
+    // Scalony widok dla reconciliation / ISIN-resolvera poniżej
+    parsedTx = {
+      data: parsedTxFiles.flatMap((p) => p.data),
+      skipped: parsedTxFiles.flatMap((p) => p.skipped),
+    };
   }
 
   if (opsFile) {
@@ -284,10 +292,13 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   const crossFileWarnings: string[] = [];
 
   const runAll = db.transaction(() => {
-    // 1. Transakcje
-    if (parsedTx && parsedTx.data.length > 0) {
-      const r = insertTransactionsWithDedup(parsedTx.data, pid);
-      result.transactionsImported = r.inserted;
+    // 1. Transakcje — insert PER PLIK: licznik w DB rośnie po każdym pliku,
+    // więc kopia tej samej transakcji w drugim pliku (nakładające się eksporty,
+    // np. hisPW 2022-24 + hisPW 2023-25) zostaje wykryta jako duplikat.
+    for (const pf of parsedTxFiles) {
+      if (pf.data.length === 0) continue;
+      const r = insertTransactionsWithDedup(pf.data, pid);
+      result.transactionsImported += r.inserted;
       insertedTxDuplicates.push(...r.duplicates);
     }
 
@@ -337,11 +348,33 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       if (degiroParser?.parseTransactionTaxes) {
         const taxes = degiroParser.parseTransactionTaxes(opsContentRaw);
         let applied = 0;
+        // W obrębie batcha każdy (transakcja, opis podatku) dostaje podatek
+        // najwyżej raz — dwa same-day trade'y tego samego ISIN-u dostają po
+        // jednym stamp duty zamiast obu na pierwszym.
+        const usedInBatch = new Set<string>();
+        const usedKey = (txId: number, desc: string) => `${txId}|${desc}`;
         for (const tax of taxes) {
           const txs = getTransactionsByIsin(tax.isin, pid);
           const taxDate = tax.date.split('T')[0];
-          const match = txs.find((t) => t.date.startsWith(taxDate));
+          const candidates = txs.filter((t) => t.date.startsWith(taxDate));
+          const match =
+            candidates.find((t) => t.id && !usedInBatch.has(usedKey(t.id, tax.description))) ??
+            candidates[0];
           if (match?.id) {
+            // recordAppliedTransactionTax zwraca false przy reimporcie tego
+            // samego podatku — wtedy prowizja jest już powiększona, nie doliczamy.
+            const isNew = recordAppliedTransactionTax(
+              {
+                transactionId: match.id,
+                isin: tax.isin,
+                taxDate: tax.date,
+                description: tax.description,
+                amount: tax.amount,
+              },
+              pid,
+            );
+            if (!isNew) continue;
+            usedInBatch.add(usedKey(match.id, tax.description));
             const newCommission = Math.round((match.commission + tax.amount) * 100) / 100;
             const newTotal =
               match.side === 'K'
@@ -535,7 +568,12 @@ async function importBinary(
     return Math.abs(net) > 0.001;
   });
 
-  const allSkipped = [...txResult.skipped, ...insertedTxDuplicates, ...insertedOpsDuplicates];
+  const allSkipped = [
+    ...txResult.skipped,
+    ...opsResult.skipped,
+    ...insertedTxDuplicates,
+    ...insertedOpsDuplicates,
+  ];
   const orphanedSells = detectOrphanedSells(pid);
 
   return {

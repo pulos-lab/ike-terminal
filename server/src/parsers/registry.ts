@@ -86,10 +86,6 @@ export function detectBroker(content: string): BrokerParser | null {
 /**
  * Get parser by broker ID. Returns undefined for 'auto'.
  */
-export function getParserById(id: BrokerType): BrokerParser | undefined {
-  return PARSER_REGISTRY.find((p) => p.id === id);
-}
-
 // ── Binary (XLSX) parser registry ──────────────────────────────────────────
 
 export interface BinaryBrokerParser {
@@ -108,7 +104,7 @@ export interface BinaryBrokerParser {
   needsNameResolution: boolean;
 }
 
-export const BINARY_PARSER_REGISTRY: BinaryBrokerParser[] = [
+const BINARY_PARSER_REGISTRY: BinaryBrokerParser[] = [
   {
     id: 'xtb',
     label: 'XTB',
@@ -123,8 +119,4 @@ export async function detectBinaryBroker(buffer: Buffer): Promise<BinaryBrokerPa
     if (await parser.detect(buffer)) return parser;
   }
   return null;
-}
-
-export function getBinaryParserById(id: BrokerType): BinaryBrokerParser | undefined {
-  return BINARY_PARSER_REGISTRY.find((p) => p.id === id);
 }

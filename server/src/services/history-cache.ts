@@ -105,15 +105,3 @@ export function invalidateCachedPrices(ticker: string): void {
   const db = getHistoryDb();
   db.prepare('DELETE FROM price_history WHERE ticker = ?').run(ticker);
 }
-
-/**
- * Check if we have sufficient cached data for a ticker in a date range.
- * "Sufficient" means at least some data points exist.
- */
-export function hasCachedData(ticker: string, startDate: string): boolean {
-  const db = getHistoryDb();
-  const row = db
-    .prepare('SELECT COUNT(*) as cnt FROM price_history WHERE ticker = ? AND date >= ?')
-    .get(ticker, startDate) as { cnt: number };
-  return row.cnt > 10;
-}

@@ -6,8 +6,8 @@ W przyszłości ma umożliwić łatwe stworzenie pełnej aplikacji mobilnej.
 Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i stosować najlepsze praktyki architektoniczne.
 
 ## Architektura
-- **Client**: React 19 + Vite + Tailwind CSS + shadcn/ui + Zustand + TanStack Query + Recharts/Lightweight Charts + @tanstack/react-virtual (wirtualizacja list)
-- **Server**: Express + better-sqlite3 + PapaParse + ExcelJS + yahoo-finance2
+- **Client**: React 19 + Vite + Tailwind CSS + shadcn/ui + TanStack Query + Recharts/Lightweight Charts + @tanstack/react-virtual (wirtualizacja list)
+- **Server**: Express + better-sqlite3 + PapaParse + ExcelJS (Yahoo Finance przez bezpośrednie API HTTP)
 - **Auth**: better-auth (email + OTP) — strony Landing/Login/VerifyOTP/ForgotPassword, ochrona ścieżek `/app/*`
 - **Shared**: Typy TypeScript współdzielone między client/server
 - **Baza**: SQLite (osobna DB per portfel) + price_history.db (cache cen) + auth.db

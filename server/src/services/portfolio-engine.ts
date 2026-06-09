@@ -19,6 +19,7 @@ import {
   fetchFxRate,
   fetchYahooHistory,
   fetchYahooHistoryDirect,
+  fetchYahooSplitEvents,
 } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
 import {
@@ -30,17 +31,99 @@ import {
   snapToKnownRatio,
 } from './split-detector.js';
 import { getDb } from '../db/connection.js';
+import { DEFAULT_FX_PLN } from 'shared';
 
 // ============ Split Helpers ============
 
-/** Merge saved splits with newly detected ones, deduplicating by (isin, date). */
+/**
+ * Merge saved splits with newly detected ones.
+ * Zapisane splity (z realnymi datami) mają pierwszeństwo: dla ISIN-u, który ma
+ * już JAKIKOLWIEK zapisany split, świeżo wykryte heurystyczne splity są
+ * odrzucane (inaczej heurystyczny duplikat z inną datą podwójnie korygowałby
+ * transakcje). ISIN może mieć wiele splitów o różnych datach.
+ */
 function mergeDetectedSplits(saved: DetectedSplit[], detected: DetectedSplit[]): DetectedSplit[] {
-  const map = new Map<string, DetectedSplit>();
-  for (const s of saved) map.set(s.isin, s);
+  const savedIsins = new Set(saved.map((s) => s.isin));
+  const seen = new Set(saved.map((s) => `${s.isin}|${s.date}`));
+  const merged = [...saved];
   for (const s of detected) {
-    if (!map.has(s.isin)) map.set(s.isin, s);
+    if (savedIsins.has(s.isin)) continue;
+    const key = `${s.isin}|${s.date}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(s);
+    }
   }
-  return [...map.values()];
+  return merged;
+}
+
+/** Dodaje N dni do daty YYYY-MM-DD (UTC, bez przesunięć strefowych). */
+function addDaysIso(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().split('T')[0];
+}
+
+/**
+ * Nadaje heurystycznie wykrytym splitom REALNE daty z Yahoo (events: 'split').
+ *
+ * Heurystyka cenowa zna tylko ratio i dolne ograniczenie daty (datę transakcji,
+ * po której split na pewno zaszedł). Bez realnej daty nie da się poprawnie
+ * skorygować portfela z zakupami przed I po splicie — reguła strict '>' w
+ * adjustTransactionsForSplits wymaga faktycznego ex-date.
+ *
+ * Eventy są akceptowane tylko, gdy iloczyn ich ratio zgadza się (±5%) z
+ * heurystycznym ratio. Fallback (brak eventów — np. NewConnect/Stooq):
+ * data heurystyczna +1 dzień, żeby transakcja-marker z dnia obserwacji
+ * też została skorygowana.
+ */
+async function resolveSplitEventDates(
+  detected: DetectedSplit[],
+  tickerMap: Map<string, TickerMapEntry>,
+): Promise<DetectedSplit[]> {
+  if (detected.length === 0) return detected;
+
+  const byTicker = new Map<string, DetectedSplit[]>();
+  for (const s of detected) {
+    const arr = byTicker.get(s.ticker) || [];
+    arr.push(s);
+    byTicker.set(s.ticker, arr);
+  }
+
+  const resolved: DetectedSplit[] = [];
+  await Promise.all(
+    [...byTicker.entries()].map(async ([ticker, splits]) => {
+      const sorted = [...splits].sort((a, b) => a.date.localeCompare(b.date));
+      const heuristicProduct = sorted.reduce((acc, s) => acc * s.ratio, 1);
+      const entry = tickerMap.get(sorted[0].isin);
+
+      let events: Array<{ date: string; ratio: number }> = [];
+      if (entry?.exchange !== 'NC') {
+        events = await fetchYahooSplitEvents(ticker, sorted[0].date);
+      }
+
+      const eventsProduct = events.reduce((acc, e) => acc * e.ratio, 1);
+      if (events.length > 0 && Math.abs(eventsProduct / heuristicProduct - 1) < 0.05) {
+        for (const e of events) {
+          resolved.push({
+            ticker,
+            isin: sorted[0].isin,
+            date: e.date,
+            ratio: e.ratio,
+            txPrice: sorted[0].txPrice,
+            providerPrice: sorted[0].providerPrice,
+            source: 'auto',
+          });
+        }
+        return;
+      }
+
+      for (const s of sorted) {
+        resolved.push({ ...s, date: addDaysIso(s.date, 1) });
+      }
+    }),
+  );
+  return resolved;
 }
 
 /**
@@ -111,7 +194,10 @@ async function detectSplitsFromTransactions(
         detected.push({
           ticker: entry.ticker,
           isin,
-          date: new Date().toISOString().split('T')[0], // FIX: use today, not transaction date
+          // Data transakcji = dolne ograniczenie; realny ex-date nadaje
+          // resolveSplitEventDates poniżej (Yahoo split events). Data "dzisiaj"
+          // korygowałaby też zakupy zrobione już PO splicie (10× zawyżenie).
+          date: dateKey,
           ratio: snapToKnownRatio(rawRatio),
           txPrice: tx.price,
           providerPrice: freshPrice,
@@ -124,7 +210,7 @@ async function detectSplitsFromTransactions(
   });
 
   await Promise.all(checks);
-  return detected;
+  return resolveSplitEventDates(detected, tickerMap);
 }
 
 // ============ Position Metrics (FIFO) ============
@@ -230,11 +316,22 @@ export async function computeOpenPositions(
   tickerMap: Map<string, TickerMapEntry>,
   splits: DetectedSplit[] = [],
   fxRatesOverride?: Record<string, number>,
+  opts?: {
+    /**
+     * Pomija sieciową (cache-bypass) detekcję splitów po cenach. Ustawiane przez
+     * endpointy, które i tak nie persystują wykryć (/metrics, /dividends/upcoming)
+     * oraz przez /positions poza dobowym oknem skanu — bez tego każdy request
+     * dashboardu odpalał ~1 niecache'owany strzał do Yahoo per otwarta pozycja.
+     */
+    skipSplitDetection?: boolean;
+  },
 ): Promise<{ positions: Position[]; totalValuePln: number; detectedSplits: DetectedSplit[] }> {
   // Lightweight split detection: for each ISIN, fetch the provider price on the
   // earliest transaction date and compare. This catches splits even if the user
   // hasn't visited the dashboard yet (which runs the full history-based detection).
-  const priceSplits = await detectSplitsFromTransactions(transactions, tickerMap, splits);
+  const priceSplits = opts?.skipSplitDetection
+    ? []
+    : await detectSplitsFromTransactions(transactions, tickerMap, splits);
 
   // Additional detection: sell quantity exceeding accumulated buys
   const qtySplits = detectSplitFromQuantityMismatch(transactions);
@@ -280,22 +377,7 @@ export async function computeOpenPositions(
   }
   liveCurrencies.delete('PLN');
   const fxRates: Record<string, number> = { PLN: 1 };
-  const defaultFx: Record<string, number> = {
-    USD: 4.0,
-    CAD: 2.95,
-    EUR: 4.3,
-    GBP: 5.1,
-    NOK: 0.38,
-    HKD: 0.52,
-    JPY: 0.028,
-    CHF: 4.5,
-    SEK: 0.39,
-    DKK: 0.58,
-    AUD: 2.65,
-    SGD: 3.0,
-    CZK: 0.17,
-    MXN: 0.22,
-  };
+  const defaultFx = DEFAULT_FX_PLN;
   if (fxRatesOverride) {
     // Caller (np. /metrics endpoint) pre-fetchuje FX raz dla wszystkich obliczeń
     // (positions + cash + fxImpact), żeby zapewnić spójność wartości na ekranie.
@@ -944,14 +1026,21 @@ function newtonXirr(cashflows: Array<{ date: Date; amount: number }>, guess = 0.
     const f = npv(rate);
     const df = dnpv(rate);
     if (Math.abs(df) < 1e-12) break;
-    const newRate = rate - f / df;
+    let newRate = rate - f / df;
+    // Clamp: rate ≤ −1 daje NaN w Math.pow(1+rate, t) dla ułamkowych t,
+    // a rozbieżne iteracje potrafią uciec do absurdalnych wartości.
+    if (newRate <= -0.999) newRate = -0.999;
+    if (newRate > 10) newRate = 10;
+    if (!Number.isFinite(newRate)) return 0;
     if (Math.abs(newRate - rate) < 1e-9) {
       return newRate;
     }
     rate = newRate;
   }
 
-  return rate;
+  // Brak konwergencji / NaN → 0 zamiast śmieciowej wartości (NaN nie rzuca,
+  // więc try/catch callera by go nie złapał — serializowałby się do null).
+  return Number.isFinite(rate) ? rate : 0;
 }
 
 // ============ Portfolio History ============
@@ -1361,7 +1450,13 @@ export async function computePortfolioHistory(
 
   // Detect stock splits by comparing transaction prices with provider prices.
   // Merge with any previously saved/manual splits passed in.
-  const newlyDetected = detectSplits(transactions, historicalPrices, tickerMap);
+  // Detekcję pomijamy dla ISIN-ów z zapisanymi splitami (realne daty z bazy
+  // mają pierwszeństwo), a heurystycznym wykryciom nadajemy realne daty z Yahoo.
+  const savedSplitIsins = new Set(splits.map((s) => s.isin));
+  const heuristicSplits = detectSplits(transactions, historicalPrices, tickerMap).filter(
+    (s) => !savedSplitIsins.has(s.isin),
+  );
+  const newlyDetected = await resolveSplitEventDates(heuristicSplits, tickerMap);
   const allSplits = mergeDetectedSplits(splits, newlyDetected);
 
   // Adjust transactions for splits: convert pre-split transactions to post-split scale
@@ -1540,22 +1635,6 @@ export async function computePortfolioHistory(
     //
     // Dla baseCurrency='PLN': fxBaseToPln=1, fxRates jest standard cur→PLN.
     // Dla baseCurrency='USD': fxRates to cur→USD; np. PLN→USD = 1/USDPLN.
-    const defaultFxRates: Record<string, number> = {
-      USD: 4.0,
-      CAD: 2.95,
-      EUR: 4.3,
-      GBP: 5.1,
-      NOK: 0.38,
-      HKD: 0.52,
-      JPY: 0.028,
-      CHF: 4.5,
-      SEK: 0.39,
-      DKK: 0.58,
-      AUD: 2.65,
-      SGD: 3.0,
-      CZK: 0.17,
-      MXN: 0.22,
-    };
 
     const fxToPln = new Map<string, number>();
     fxToPln.set('PLN', 1);
@@ -1565,7 +1644,7 @@ export async function computePortfolioHistory(
     if (benchCurrency !== 'PLN') currenciesToFetch.add(benchCurrency); // dla konwersji benchmark price
     for (const cur of currenciesToFetch) {
       const fxTicker = `${cur}PLN=X`;
-      const rate = getPrice(fxTicker, date, prevPrices.get(fxTicker) || defaultFxRates[cur] || 1);
+      const rate = getPrice(fxTicker, date, prevPrices.get(fxTicker) || DEFAULT_FX_PLN[cur] || 1);
       prevPrices.set(fxTicker, rate);
       fxToPln.set(cur, rate);
     }
@@ -1753,22 +1832,7 @@ export async function computePortfolioHistory(
 
   // Helper: konwertuj kwotę operacji do baseCurrency używając FX z daty operacji.
   // Fallback: domyślne rate PLN-based, skorygowane przez fxBaseToPln (dla baseCurrency='PLN' → 1).
-  const defaultFxToPln: Record<string, number> = {
-    USD: 4.0,
-    CAD: 2.95,
-    EUR: 4.3,
-    GBP: 5.1,
-    NOK: 0.38,
-    HKD: 0.52,
-    JPY: 0.028,
-    CHF: 4.5,
-    SEK: 0.39,
-    DKK: 0.58,
-    AUD: 2.65,
-    SGD: 3.0,
-    CZK: 0.17,
-    MXN: 0.22,
-  };
+  const defaultFxToPln = DEFAULT_FX_PLN;
   const defaultBaseToPln = baseCur === 'PLN' ? 1 : (defaultFxToPln[baseCur] ?? 1);
   const opAmountBase = (op: CashOperation): number => {
     const d = op.date.split('T')[0];

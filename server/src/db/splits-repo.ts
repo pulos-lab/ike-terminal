@@ -37,28 +37,12 @@ export function getSplits(portfolioId: string, isin?: string): StockSplit[] {
   return rows.map(rowToSplit);
 }
 
-export function upsertSplit(portfolioId: string, split: StockSplit): void {
-  const db = getDb(portfolioId);
-  db.prepare(
-    `
-    INSERT INTO stock_splits (isin, ticker, split_date, ratio, source)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(isin) DO UPDATE SET
-      split_date = excluded.split_date,
-      ratio = excluded.ratio,
-      ticker = excluded.ticker,
-      source = excluded.source
-  `,
-  ).run(split.isin, split.ticker, split.splitDate, split.ratio, split.source);
-}
-
 export function upsertSplits(portfolioId: string, splits: StockSplit[]): void {
   const db = getDb(portfolioId);
   const stmt = db.prepare(`
     INSERT INTO stock_splits (isin, ticker, split_date, ratio, source)
     VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(isin) DO UPDATE SET
-      split_date = excluded.split_date,
+    ON CONFLICT(isin, split_date) DO UPDATE SET
       ratio = excluded.ratio,
       ticker = excluded.ticker,
       source = excluded.source

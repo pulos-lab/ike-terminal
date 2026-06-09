@@ -128,8 +128,11 @@ export function parseDegiroTransactions(
     const currency = normalizeCurrency(priceCurrency || 'EUR');
     const isGbx = (priceCurrency || '').toUpperCase().trim() === 'GBX';
 
-    // GBX prices are in pence — convert to GBP (÷100) for consistent cash balances
-    const effectivePrice = isGbx ? roundTo2(absPrice / 100) : absPrice;
+    // GBX prices are in pence — convert to GBP (÷100) for consistent cash balances.
+    // Cena per-share zostaje w pełnej precyzji — zaokrąglenie jej przed mnożeniem
+    // przenosiłoby błąd na value/total (np. 1234.5 GBX × 1000 szt. → £5 różnicy);
+    // zaokrąglamy dopiero kwotę wynikową.
+    const effectivePrice = isGbx ? absPrice / 100 : absPrice;
     const value = roundTo2(quantity * effectivePrice);
 
     // DEGIRO charges commission separately in EUR (via "DEGIRO Opłata Transakcyjna"
