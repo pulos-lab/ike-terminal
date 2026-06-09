@@ -1,5 +1,10 @@
 import { getCached, setCached } from './price-cache.js';
-import { storeHistoricalPrices, loadHistoricalPrices, getLastCachedDate } from './history-cache.js';
+import {
+  storeHistoricalPrices,
+  loadHistoricalPrices,
+  getLastCachedDate,
+  getFirstCachedDate,
+} from './history-cache.js';
 import { config } from '../config.js';
 import {
   STOOQ_USER_AGENT,
@@ -49,6 +54,7 @@ export async function fetchStooqPrice(ticker: string): Promise<number | null> {
         headers: { 'User-Agent': STOOQ_USER_AGENT },
         signal: AbortSignal.timeout(FETCH_TIMEOUT),
       });
+      if (!response.ok) throw new Error(`Stooq HTTP ${response.status}`);
       const text = await response.text();
       const result = parseStooqLiveCsv(text);
       if (!result) return null;
@@ -84,6 +90,7 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
         headers: { 'User-Agent': STOOQ_USER_AGENT },
         signal: AbortSignal.timeout(FETCH_TIMEOUT),
       });
+      if (!response.ok) throw new Error(`Stooq HTTP ${response.status}`);
       const text = await response.text();
       if (isStooqBlocked(text)) {
         // Fallback to SQLite cache
@@ -156,6 +163,7 @@ async function fetchLiveClose(
       headers: { 'User-Agent': STOOQ_USER_AGENT },
       signal: AbortSignal.timeout(FETCH_TIMEOUT),
     });
+    if (!response.ok) throw new Error(`Stooq HTTP ${response.status}`);
     const text = await response.text();
     const result = parseStooqLiveCsv(text);
     if (result) return result;
@@ -173,6 +181,7 @@ async function fetchLiveClose(
       headers: { 'User-Agent': STOOQ_USER_AGENT },
       signal: AbortSignal.timeout(FETCH_TIMEOUT),
     });
+    if (!response.ok) return null;
     const json = (await response.json()) as any;
     const chartResult = json.chart?.result?.[0];
     if (!chartResult?.timestamp?.length) return null;
@@ -203,88 +212,120 @@ export async function fetchStooqHistory(
   // Check persistent SQLite cache first
   const cachedData = loadHistoricalPrices(stooqTicker, startDate);
   const lastCached = getLastCachedDate(stooqTicker);
+  const firstCached = getFirstCachedDate(stooqTicker);
   const today = new Date().toISOString().split('T')[0];
 
-  // If we have cached data and it's recent (within 3 days — covers weekends), use it
+  // Czy cache pokrywa żądany początek zakresu? (jak w yahoo-finance.ts — bez tego
+  // dane sprzed pierwszej zakeszowanej daty nigdy nie byłyby dociągnięte)
+  const cacheCoversStart = !startDate || (firstCached != null && firstCached <= startDate);
+
+  // If we have cached data covering the start and it's recent (within 3 days — covers weekends), use it
   const daysDiff = lastCached
     ? Math.floor((new Date(today).getTime() - new Date(lastCached).getTime()) / 86_400_000)
     : Infinity;
-  if (cachedData.length > 10 && daysDiff <= 3) {
+  if (cachedData.length > 10 && daysDiff <= 3 && cacheCoversStart) {
     setCached(cacheKey, cachedData, 12 * 3600);
     return cachedData;
   }
 
-  // Fetch only missing data (from last cached date or startDate)
-  const fetchFrom =
-    lastCached && lastCached > (startDate || '2000-01-01')
-      ? lastCached // fetch from last cached date onwards
-      : startDate;
+  // Determine what ranges to fetch:
+  // 1. Backfill: cache zaczyna się później niż żądany startDate → dociągnij wcześniejszą lukę
+  // 2. Forward: cache nie pokrywa ostatnich dni → dociągnij od lastCached do dziś
+  // `from === undefined` oznacza fetch pełnej historii (bez parametrów d1/d2).
+  const fetchRanges: Array<{ from?: string; to: string }> = [];
+
+  if (!cacheCoversStart && startDate) {
+    const backfillEnd = firstCached && firstCached > startDate ? firstCached : today;
+    fetchRanges.push({ from: startDate, to: backfillEnd });
+  }
+
+  if (!lastCached || lastCached < today) {
+    const forwardFrom =
+      lastCached && lastCached > (startDate || '2000-01-01')
+        ? lastCached // fetch from last cached date onwards
+        : startDate;
+    // Avoid duplicate range if backfill already covers this
+    if (fetchRanges.length === 0 || (forwardFrom && forwardFrom > fetchRanges[0].to)) {
+      fetchRanges.push({ from: forwardFrom, to: today });
+    }
+  }
+
+  if (fetchRanges.length === 0) {
+    // Cache jest kompletny — zwróć go
+    setCached(cacheKey, cachedData, 12 * 3600);
+    return cachedData;
+  }
 
   return withStooqLimit(async () => {
     try {
-      let url = `https://stooq.pl/q/d/l/?s=${stooqTicker}&i=d`;
-      if (fetchFrom) {
-        const d1 = fetchFrom.replace(/-/g, '');
-        const d2 = today.replace(/-/g, '');
-        url += `&d1=${d1}&d2=${d2}`;
+      const freshData: Array<{ date: string; close: number }> = [];
+
+      for (const range of fetchRanges) {
+        let url = `https://stooq.pl/q/d/l/?s=${stooqTicker}&i=d`;
+        if (range.from) {
+          const d1 = range.from.replace(/-/g, '');
+          const d2 = range.to.replace(/-/g, '');
+          url += `&d1=${d1}&d2=${d2}`;
+        }
+
+        const response = await fetch(url, {
+          headers: { 'User-Agent': STOOQ_USER_AGENT },
+          signal: AbortSignal.timeout(FETCH_TIMEOUT),
+        });
+        if (!response.ok) throw new Error(`Stooq HTTP ${response.status}`);
+        const text = await response.text();
+        if (isStooqBlocked(text)) {
+          console.warn(`Stooq historical API blocked for ${stooqTicker}, trying live fallback`);
+          // Try to supplement cache with today's live data point
+          const liveData = await fetchLiveClose(stooqTicker);
+          if (liveData && (!lastCached || liveData.date > lastCached)) {
+            storeHistoricalPrices(stooqTicker, [liveData], 'stooq-live');
+            console.log(
+              `[stooq] ${stooqTicker}: added live data point (${liveData.date}, close=${liveData.close})`,
+            );
+            // Reload merged data from cache
+            const mergedData = loadHistoricalPrices(stooqTicker, startDate);
+            mergedData.sort((a, b) => a.date.localeCompare(b.date));
+            setCached(cacheKey, mergedData, 12 * 3600);
+            return mergedData;
+          }
+          // Fall back to whatever we have in persistent cache
+          if (cachedData.length > 0) {
+            setCached(cacheKey, cachedData, 12 * 3600);
+            return cachedData;
+          }
+          return [];
+        }
+        const lines = text.trim().split('\n');
+        if (lines.length < 2) {
+          // No data from Stooq for this range — try remaining ranges
+          continue;
+        }
+
+        const { dateIdx, closeIdx } = parseStooqCsvHeaders(lines[0]);
+        if (dateIdx === -1 || closeIdx === -1) {
+          continue;
+        }
+
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(',');
+          if (values.length <= Math.max(dateIdx, closeIdx)) continue;
+          const date = values[dateIdx];
+          const close = parseFloat(values[closeIdx]);
+          if (date && !isNaN(close)) {
+            freshData.push({ date, close });
+          }
+        }
       }
 
-      const response = await fetch(url, {
-        headers: { 'User-Agent': STOOQ_USER_AGENT },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT),
-      });
-      const text = await response.text();
-      if (isStooqBlocked(text)) {
-        console.warn(`Stooq historical API blocked for ${stooqTicker}, trying live fallback`);
-        // Try to supplement cache with today's live data point
-        const liveData = await fetchLiveClose(stooqTicker);
-        if (liveData && (!lastCached || liveData.date > lastCached)) {
-          storeHistoricalPrices(stooqTicker, [liveData], 'stooq-live');
-          console.log(
-            `[stooq] ${stooqTicker}: added live data point (${liveData.date}, close=${liveData.close})`,
-          );
-          // Reload merged data from cache
-          const mergedData = loadHistoricalPrices(stooqTicker, startDate);
-          mergedData.sort((a, b) => a.date.localeCompare(b.date));
-          setCached(cacheKey, mergedData, 12 * 3600);
-          return mergedData;
-        }
-        // Fall back to whatever we have in persistent cache
-        if (cachedData.length > 0) {
-          setCached(cacheKey, cachedData, 12 * 3600);
-          return cachedData;
-        }
-        return [];
-      }
-      const lines = text.trim().split('\n');
-      if (lines.length < 2) {
+      if (freshData.length === 0) {
         // No data from Stooq, use persistent cache
         if (cachedData.length > 0) return cachedData;
         return [];
       }
 
-      const { dateIdx, closeIdx } = parseStooqCsvHeaders(lines[0]);
-
-      if (dateIdx === -1 || closeIdx === -1) {
-        if (cachedData.length > 0) return cachedData;
-        return [];
-      }
-
-      const freshData: Array<{ date: string; close: number }> = [];
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',');
-        if (values.length <= Math.max(dateIdx, closeIdx)) continue;
-        const date = values[dateIdx];
-        const close = parseFloat(values[closeIdx]);
-        if (date && !isNaN(close)) {
-          freshData.push({ date, close });
-        }
-      }
-
       // Store fresh data in persistent cache
-      if (freshData.length > 0) {
-        storeHistoricalPrices(stooqTicker, freshData, 'stooq');
-      }
+      storeHistoricalPrices(stooqTicker, freshData, 'stooq');
 
       // Merge in-memory instead of reloading full history from SQLite
       const existingDates = new Set(cachedData.map((d) => d.date));
@@ -292,6 +333,7 @@ export async function fetchStooqHistory(
       for (const point of freshData) {
         if (!existingDates.has(point.date)) {
           mergedData.push(point);
+          existingDates.add(point.date);
         }
       }
       mergedData.sort((a, b) => a.date.localeCompare(b.date));

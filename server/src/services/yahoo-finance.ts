@@ -198,6 +198,11 @@ export async function fetchYahooPrice(ticker: string): Promise<YahooPriceResult>
   return promise;
 }
 
+// In-flight request deduplication for history — two concurrent dashboard requests
+// for the same ticker/range share one fetch instead of double-fetching Yahoo and
+// double-writing the SQLite cache.
+const inFlightHistory = new Map<string, Promise<Array<{ date: string; close: number }>>>();
+
 /**
  * Fetch historical daily data from Yahoo Finance (v8 chart API)
  */
@@ -211,6 +216,23 @@ export async function fetchYahooHistory(
   const cached = getCached<Array<{ date: string; close: number }>>(cacheKey);
   if (cached) return cached;
 
+  const inFlightKey = `${ticker}_${startDate}_${end}`;
+  const existing = inFlightHistory.get(inFlightKey);
+  if (existing) return existing;
+
+  const promise = fetchYahooHistoryUncached(ticker, startDate, end, cacheKey).finally(() => {
+    inFlightHistory.delete(inFlightKey);
+  });
+  inFlightHistory.set(inFlightKey, promise);
+  return promise;
+}
+
+async function fetchYahooHistoryUncached(
+  ticker: string,
+  startDate: string,
+  end: string,
+  cacheKey: string,
+): Promise<Array<{ date: string; close: number }>> {
   // Check persistent SQLite cache first
   const cachedData = loadHistoricalPrices(ticker, startDate);
   const lastCached = getLastCachedDate(ticker);

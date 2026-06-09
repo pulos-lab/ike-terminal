@@ -933,9 +933,22 @@ function extractTickerFromDescription(desc: string): string {
  * Calculate the number of shares held for a given ISIN at a specific date.
  * Processes K (buy) and S (sell) transactions chronologically up to and including the date.
  */
-export function getSharesAtDate(transactions: Transaction[], isin: string, date: string): number {
+/**
+ * Liczba akcji na zadaną datę.
+ *
+ * Domyślnie EXCLUSIVE (`t.date < date`) — semantyka ex-date: prawo do dywidendy
+ * mają akcje posiadane PRZED dniem ex-date (kupno w dniu ex-date nie łapie się).
+ * Dla pytań typu "ile mam dziś" (stan posiadania włącznie z transakcjami z `date`)
+ * przekaż `includeDate = true`.
+ */
+export function getSharesAtDate(
+  transactions: Transaction[],
+  isin: string,
+  date: string,
+  includeDate = false,
+): number {
   return transactions
-    .filter((t) => t.isin === isin && t.date <= date)
+    .filter((t) => t.isin === isin && (includeDate ? t.date <= date : t.date < date))
     .sort((a, b) => a.date.localeCompare(b.date))
     .reduce((shares, t) => {
       return t.side === 'K' ? shares + t.quantity : shares - t.quantity;
@@ -958,26 +971,44 @@ export function extractFxExchanges(operations: CashOperation[]): FxExchangeRecor
   }
 
   for (const [date, ops] of byDate) {
-    // Sort by id so paired inserts stay together
+    // Sort by id for deterministic pairing (paired inserts stay adjacent)
     ops.sort((a, b) => (a.id || 0) - (b.id || 0));
-    for (let i = 0; i < ops.length - 1; i += 2) {
-      const [first, second] = [ops[i], ops[i + 1]];
-      const fromOp = first.amount < 0 ? first : second;
-      const toOp = first.amount < 0 ? second : first;
-      if (fromOp.amount < 0 && toOp.amount > 0) {
-        records.push({
-          date,
-          pair: fromOp.fxPair || `${fromOp.currency}/${toOp.currency}`,
-          rate: fromOp.fxRate || Math.abs(fromOp.amount) / toOp.amount,
-          amountFrom: Math.abs(fromOp.amount),
-          currencyFrom: fromOp.currency,
-          amountTo: toOp.amount,
-          currencyTo: toOp.currency,
-          fromOperationId: fromOp.id,
-          toOperationId: toOp.id,
-          source: fromOp.source,
-        });
+
+    // Parujemy nogę ujemną (from) z nogą dodatnią (to) w INNEJ walucie —
+    // nie pozycyjnie (i, i+1), bo przeplecione wymiany albo nieparzysta liczba
+    // nóg na jednej dacie po cichu rozjeżdżały pary. Preferujemy zgodny fxPair,
+    // każdą nogę konsumujemy raz; nogi bez pary pomijamy (jak dotychczas).
+    const fromLegs = ops.filter((op) => op.amount < 0);
+    const toLegs = ops.filter((op) => op.amount > 0);
+    const usedTo = new Set<number>();
+
+    for (const fromOp of fromLegs) {
+      let matchIdx = -1;
+      if (fromOp.fxPair) {
+        matchIdx = toLegs.findIndex(
+          (to, i) =>
+            !usedTo.has(i) && to.currency !== fromOp.currency && to.fxPair === fromOp.fxPair,
+        );
       }
+      if (matchIdx === -1) {
+        matchIdx = toLegs.findIndex((to, i) => !usedTo.has(i) && to.currency !== fromOp.currency);
+      }
+      if (matchIdx === -1) continue; // noga bez pary — pomijamy po cichu
+      usedTo.add(matchIdx);
+      const toOp = toLegs[matchIdx];
+
+      records.push({
+        date,
+        pair: fromOp.fxPair || `${fromOp.currency}/${toOp.currency}`,
+        rate: fromOp.fxRate || Math.abs(fromOp.amount) / toOp.amount,
+        amountFrom: Math.abs(fromOp.amount),
+        currencyFrom: fromOp.currency,
+        amountTo: toOp.amount,
+        currencyTo: toOp.currency,
+        fromOperationId: fromOp.id,
+        toOperationId: toOp.id,
+        source: fromOp.source,
+      });
     }
   }
 
