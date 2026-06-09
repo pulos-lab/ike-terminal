@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseBossaOperations } from '../bossa-operations.js';
+import { parseBossaOperations, isBossaOperationsFormat } from '../bossa-operations.js';
 
 /**
  * Testy klasyfikacji zdarzeń korporacyjnych przez parser Bossa po P17.
@@ -20,6 +20,25 @@ const CSV_HEADER = 'data;tytuł operacji;szczegóły;kwota;waluta';
 function buildCsv(lines: string[]): string {
   return [CSV_HEADER, ...lines].join('\n');
 }
+
+describe('isBossaOperationsFormat', () => {
+  it('detects real Bossa operations header', () => {
+    expect(isBossaOperationsFormat(CSV_HEADER + '\n')).toBe(true);
+  });
+
+  it('NIE klasyfikuje pierwszej linii zawierającej słowa data/kwota/tytuł operacji luzem', () => {
+    // Stary detektor (substring na pierwszej linii w import-service) dawał tu false-positive.
+    expect(isBossaOperationsFormat('raport: data i kwota oraz tytuł operacji\n')).toBe(false);
+  });
+
+  it('NIE klasyfikuje nagłówka operacji mBank (Data,Opis,Kwota)', () => {
+    expect(isBossaOperationsFormat('Data,Opis,Kwota\n')).toBe(false);
+  });
+
+  it('rejects empty content', () => {
+    expect(isBossaOperationsFormat('')).toBe(false);
+  });
+});
 
 describe('parseBossaOperations — P17 corporate actions', () => {
   it('Obniżenie wartości nominalnej → CapitalReturnMarker(nominal_reduction), NIE deposit', () => {

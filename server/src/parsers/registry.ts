@@ -1,6 +1,15 @@
-import type { Transaction, CashOperation, BrokerType, ParseResult } from 'shared';
+import type {
+  Transaction,
+  CashOperation,
+  BrokerType,
+  ParseResult,
+  RedemptionMarker,
+  IpoSubscriptionMarker,
+  CapitalReturnMarker,
+} from 'shared';
 import type { TransactionTax } from './degiro-operations.js';
 import { parseBossaTransactions, isBossaFormat } from './bossa-transactions.js';
+import { parseBossaOperations, isBossaOperationsFormat } from './bossa-operations.js';
 import { parseMbankTransactions, isMbankFormat } from './mbank-transactions.js';
 import { parseMbankOperations, isMbankOperationsFormat } from './mbank-operations.js';
 import { parseDegiroTransactions, isDegiroFormat } from './degiro-transactions.js';
@@ -21,6 +30,20 @@ import { parseXtbFile, isXtbFormat } from './xtb-transactions.js';
  * detection function.
  */
 
+/**
+ * Wynik parsera operacji gotówkowych. Brokerzy z reconciliation międzyplikowym
+ * (obecnie Bossa) zwracają dodatkowo markery — import-service dispatchuje po ich
+ * OBECNOŚCI, nie po id brokera. Typy markerów mieszkają w shared/src/types.ts.
+ */
+export type OperationsParseResult = ParseResult<CashOperation> & {
+  /** Wykupy certyfikatów / znane wezwania skupu → syntetyczna S w reconciliation */
+  redemptions?: RedemptionMarker[];
+  /** Pary "Zapisy na akcje" + "Zwrot nadpłaty" (IPO) → syntetyczna K w reconciliation */
+  ipoSubscriptions?: IpoSubscriptionMarker[];
+  /** Zwroty kapitału (obniżenie nominału, wyrównanie wykupu) → CashOperation capital_return */
+  capitalReturns?: CapitalReturnMarker[];
+};
+
 export interface BrokerParser {
   id: BrokerType;
   label: string;
@@ -30,8 +53,8 @@ export interface BrokerParser {
   supportsOperations: boolean;
   /** Detect if CSV is an operations file (not transactions) for this broker */
   detectOperations?: (content: string) => boolean;
-  /** Parse cash operations CSV */
-  parseOperations?: (content: string, importBatch: string) => ParseResult<CashOperation>;
+  /** Parse cash operations CSV (z opcjonalnymi markerami reconciliation) */
+  parseOperations?: (content: string, importBatch: string) => OperationsParseResult;
   /** Extract transaction-specific taxes to add to transaction commissions */
   parseTransactionTaxes?: (content: string) => TransactionTax[];
   /** Whether the parser needs post-import ISIN resolution by name (mBank) */
@@ -66,6 +89,8 @@ export const PARSER_REGISTRY: BrokerParser[] = [
     detect: isBossaFormat,
     parse: parseBossaTransactions,
     supportsOperations: true,
+    detectOperations: isBossaOperationsFormat,
+    parseOperations: parseBossaOperations,
     needsNameResolution: false,
   },
 ];

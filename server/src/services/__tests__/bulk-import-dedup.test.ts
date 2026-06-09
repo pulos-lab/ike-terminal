@@ -87,4 +87,35 @@ describe('bulkImport — dedup między plikami w jednej paczce', () => {
     expect(result.success).toBe(true);
     expect(result.transactionsImported).toBe(2);
   });
+
+  it('plik operacji Bossa idzie czystą pętlą registry (klasyfikacja + parsowanie + markery)', async () => {
+    // Transakcje: zakup certyfikatu INTLGOLD; operacje: wykup certyfikatów →
+    // RedemptionMarker → reconciliation tworzy syntetyczną S zamykającą pozycję.
+    // Test pilnuje, że po przeniesieniu detekcji/parsowania operacji Bossy do
+    // PARSER_REGISTRY cały flow (classifyFile → parseOperations → markery) działa.
+    const txFile = bossaCsv([
+      '01.02.2023 10:00:00;INTLGOLD;PLINTL000017;10;K;100,00;1000,00;0,00;1000,00;PLN',
+    ]);
+    const opsFile = Buffer.from(
+      [
+        'data;tytuł operacji;szczegóły;kwota;waluta',
+        '2023-01-20;Przelew do DM BO;;1000.00;PLN',
+        '2023-06-30;Wykup certyfikatów INTLGOLD;;1200.00;PLN',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await bulkImport({
+      transactionsFiles: [{ buffer: txFile, originalname: 'hisPW-intl.csv' }],
+      operationsFile: { buffer: opsFile, originalname: 'operacje_bez_transakcji.csv' },
+      portfolioId: PID,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.detectedSource).toBe('bossa');
+    expect(result.detectedOperationsSource).toBe('bossa');
+    expect(result.transactionsImported).toBe(1); // zakup INTLGOLD
+    expect(result.operationsImported).toBe(1); // deposit (wykup poszedł jako marker, nie operacja)
+    expect(result.syntheticSells).toBe(1); // syntetyczna S z reconciliation wykupu
+  });
 });

@@ -19,6 +19,23 @@ import { parseNumber } from './utils.js';
 /** Valid date format: YYYY-MM-DD */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * Detect Bossa cash operations CSV (operacje_bez_transakcji.csv).
+ * Nagłówek w pierwszej linii: data;tytuł operacji;szczegóły;kwota;waluta —
+ * wymagamy FAKTYCZNYCH nazw kolumn po splicie średnikiem (delimiter Bossy),
+ * nie luźnych substringów.
+ */
+export function isBossaOperationsFormat(csvContent: string): boolean {
+  const headerCols = (csvContent.split('\n')[0] || '')
+    .split(';')
+    .map((c) => c.trim().toLowerCase());
+  return (
+    headerCols.includes('data') &&
+    headerCols.includes('kwota') &&
+    headerCols.includes('tytuł operacji')
+  );
+}
+
 export interface BossaOperationsParseResult {
   data: CashOperation[];
   skipped: SkippedRow[];

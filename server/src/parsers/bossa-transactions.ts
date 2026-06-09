@@ -1,7 +1,7 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
 import { applyIsinAlias } from 'shared';
-import { parseNumber, parseDottedDate } from './utils.js';
+import { parseNumber, validateTradeFields, parseDottedDate } from './utils.js';
 
 /**
  * Bossa sufiksuje tickery instrumentów nietypowych:
@@ -24,13 +24,18 @@ import { parseNumber, parseDottedDate } from './utils.js';
  * Date format: DD.MM.YYYY HH:MM:SS
  */
 /**
- * Detect Bossa CSV format by checking for characteristic headers: data, papier, isin
- * Uses semicolon delimiter and has 'papier' column (unique to Bossa)
+ * Detect Bossa CSV format by checking for characteristic headers: data, papier, isin.
+ * Pierwsza linia splitowana średnikiem (delimiter Bossy) — wymagamy FAKTYCZNYCH nazw
+ * kolumn, nie luźnych substringów (żeby np. linia metadanych zawierająca te słowa
+ * nie klasyfikowała pliku jako Bossa).
  */
 export function isBossaFormat(csvContent: string): boolean {
-  const firstLine = csvContent.split('\n')[0] || '';
-  const lower = firstLine.toLowerCase();
-  return lower.includes('data') && lower.includes('papier') && lower.includes('isin');
+  const headerCols = (csvContent.split('\n')[0] || '')
+    .split(';')
+    .map((c) => c.trim().toLowerCase());
+  return (
+    headerCols.includes('data') && headerCols.includes('papier') && headerCols.includes('isin')
+  );
 }
 
 export function parseBossaTransactions(
@@ -66,27 +71,15 @@ export function parseBossaTransactions(
     const price = parseNumber(row['cena']);
     const value = parseNumber(row['wartość']);
     const commission = parseNumber(row['prowizja']);
+    // Bossa podaje total wprost w kolumnie 'po prowizji' — ufamy CSV zamiast
+    // przeliczać computeTotal() (broker jest źródłem prawdy dla rozliczenia).
     const total = parseNumber(row['po prowizji']);
     const currency = row['waluta']?.trim();
 
-    if (!dateStr) {
-      skipped.push({ row: rowNum, reason: 'missing_date', paperName });
-      continue;
-    }
-    if (!isin) {
-      skipped.push({ row: rowNum, reason: 'missing_isin', paperName });
-      continue;
-    }
-    if (side !== 'K' && side !== 'S') {
-      skipped.push({ row: rowNum, reason: 'invalid_side', paperName });
-      continue;
-    }
-    if (quantity <= 0) {
-      skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName });
-      continue;
-    }
-    if (price <= 0) {
-      skipped.push({ row: rowNum, reason: 'invalid_price', paperName });
+    // Wspólna walidacja pól (utils.validateTradeFields) — Bossa wymaga ISIN-u z CSV.
+    const check = validateTradeFields({ date: dateStr, isin, side, quantity, price });
+    if (!check.ok) {
+      skipped.push({ row: rowNum, reason: check.reason, paperName });
       continue;
     }
 
