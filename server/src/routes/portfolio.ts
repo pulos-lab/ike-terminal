@@ -40,6 +40,7 @@ import type {
   DetectedSplit,
   UpcomingDividend,
 } from 'shared';
+import { DEFAULT_FX_PLN } from 'shared';
 import { invalidateCachedPrices } from '../services/history-cache.js';
 import {
   fetchYahooPrice,
@@ -153,18 +154,25 @@ router.get(
       }
     }
 
-    // Compute cash balances per currency
+    // Compute cash balances per currency — kursy pobierane dla KAŻDEJ waluty
+    // obecnej w saldach (nie tylko USD/CAD/EUR), fallback do DEFAULT_FX_PLN
     const balances = computeCashBalances(transactions, operations);
-    const usdPln = (await fetchFxRate('USDPLN')) || 4.0;
-    const cadPln = (await fetchFxRate('CADPLN')) || 2.95;
-    const eurPln = (await fetchFxRate('EURPLN')) || 4.3;
-    const fxRates: Record<string, number> = { PLN: 1, USD: usdPln, CAD: cadPln, EUR: eurPln };
+    const fxRates: Record<string, number> = { PLN: 1 };
+    await Promise.all(
+      Object.keys(balances)
+        .map((cur) => cur.toUpperCase())
+        .filter((cur) => cur !== 'PLN')
+        .map(async (cur) => {
+          const rate = await fetchFxRate(`${cur}PLN`);
+          fxRates[cur] = rate || DEFAULT_FX_PLN[cur] || 1;
+        }),
+    );
 
     let cashValuePln = 0;
     const cashPositions = Object.entries(balances)
       .filter(([, balance]) => balance > 0.01) // only positive cash
       .map(([currency, balance]) => {
-        const rate = fxRates[currency] || 1;
+        const rate = fxRates[currency.toUpperCase()] ?? 1;
         const valuePln = balance * rate;
         cashValuePln += valuePln;
         return { currency, balance, valuePln, weight: 0 };
@@ -1477,8 +1485,12 @@ router.put(
     if (price !== undefined) updates.price = price;
     if (commission !== undefined) updates.commission = commission;
 
-    // If ticker changed, resolve to ISIN
-    if (ticker && ticker !== existing.isin) {
+    // If ticker changed, resolve to ISIN. Porównujemy z aktualnym tickerem
+    // zamapowanym na existing.isin — NIE z samym ISIN-em (ticker nigdy nie równa się
+    // ISIN-owi, więc tamto porównanie wymuszało re-resolve i potrafiło po cichu
+    // nadpisać ISIN wpisem AUTO_<TICKER> przy każdej edycji).
+    const currentTicker = getTickerMap(pid).get(existing.isin)?.ticker?.toUpperCase();
+    if (ticker && ticker.toUpperCase() !== currentTicker) {
       let entry = getTickerBySymbol(ticker, pid);
       if (!entry) {
         const [yahooData, yahooName] = await Promise.all([

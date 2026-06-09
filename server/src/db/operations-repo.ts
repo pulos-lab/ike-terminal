@@ -151,6 +151,12 @@ export function clearOperations(portfolioId: string = 'default'): void {
   db.prepare('DELETE FROM cash_operations').run();
 }
 
+/** Usuwa wyłącznie wiersze z importów (import_batch ustawiony) — ręczne wpisy zostają. */
+export function clearImportedOperations(portfolioId: string = 'default'): void {
+  const db = getDb(portfolioId);
+  db.prepare('DELETE FROM cash_operations WHERE import_batch IS NOT NULL').run();
+}
+
 export function getOperationById(
   id: number,
   portfolioId: string = 'default',

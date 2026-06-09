@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPercent, formatNumber } from '@/lib/formatters';
+import { chainLinkPct } from '@/lib/returns';
 import { cn } from '@/lib/utils';
 
 interface ChartDataPoint {
@@ -46,9 +47,11 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   const first = data[0];
   const last = data[data.length - 1];
 
-  // Total return (already rebased in filtered data)
-  const totalReturn = last.returnPct - first.returnPct;
-  const benchmarkReturn = last.benchmarkReturnPct - first.benchmarkReturnPct;
+  // Total return za widoczny okres — chain-linking (dzielenie indeksów),
+  // bo skumulowane procenty nie odejmują się wprost. Dla danych już
+  // zrebase'owanych (first = 0%) wynik jest identyczny jak last.returnPct.
+  const totalReturn = chainLinkPct(last.returnPct, first.returnPct);
+  const benchmarkReturn = chainLinkPct(last.benchmarkReturnPct, first.benchmarkReturnPct);
 
   // Daily returns from portfolio values, adjusted for cash flows (deposits)
   // On deposit days, portfolioValue jumps by the deposit amount — that's not
@@ -79,7 +82,7 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   // portfeli — działa tak samo dla PLN i walutowych, bo twrPct jest już
   // PLN-znormalizowany w engine). Dla rzeczywistej stopy zwrotu inwestora
   // (money-weighted) porównaj z XIRR pokazywanym osobno.
-  const twrTotalGrowth = 1 + (last.twrPct - first.twrPct) / 100;
+  const twrTotalGrowth = 1 + chainLinkPct(last.twrPct, first.twrPct) / 100;
   const cagr =
     years > 0 && twrTotalGrowth > 0 ? (Math.pow(twrTotalGrowth, 1 / years) - 1) * 100 : 0;
 

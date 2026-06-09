@@ -103,6 +103,11 @@ export const DIVIDEND_TAX_IKE_IKZE: Record<string, number> = {
   NO: 0.15, // 15% WHT + 0%
 };
 
+/**
+ * Awaryjne kursy walut → PLN, używane WYŁĄCZNIE gdy fetch z Yahoo zawiedzie.
+ * Jedno źródło prawdy dla server (portfolio-engine, routes) — wartości orientacyjne,
+ * lepsze niż 1:1, ale UI powinien docelowo sygnalizować że kurs jest awaryjny.
+ */
 export const OPERATION_TYPES = {
   deposit: 'Wpłata',
   withdrawal: 'Wypłata',
@@ -112,3 +117,21 @@ export const OPERATION_TYPES = {
   commission_refund: 'Zwrot prowizji',
   other: 'Inne',
 } as const;
+
+export const DEFAULT_FX_PLN: Record<string, number> = {
+  PLN: 1,
+  USD: 4.0,
+  CAD: 2.95,
+  EUR: 4.3,
+  GBP: 5.1,
+  NOK: 0.38,
+  HKD: 0.52,
+  JPY: 0.028,
+  CHF: 4.5,
+  SEK: 0.39,
+  DKK: 0.58,
+  AUD: 2.65,
+  SGD: 3.0,
+  CZK: 0.17,
+  MXN: 0.22,
+};
