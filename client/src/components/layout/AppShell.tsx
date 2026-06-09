@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useLocalStorage } from '@/lib/use-local-storage';
+import { useTheme } from '@/lib/use-theme';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -142,7 +143,7 @@ function NavContent({
 export function AppShell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const { data: session } = useSession();
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
+  const { isDark: dark, toggleTheme } = useTheme();
   const [importOpen, setImportOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [bugReportOpen, setBugReportOpen] = useState(false);
@@ -161,12 +162,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const lastImport = importStatus?.lastImportDate
     ? new Date(importStatus.lastImportDate + 'Z').toLocaleDateString('pl-PL')
     : null;
-
-  const toggleTheme = () => {
-    const next = !dark;
-    setDark(next);
-    document.documentElement.classList.toggle('dark', next);
-  };
 
   return (
     <div className="flex h-screen overflow-hidden">

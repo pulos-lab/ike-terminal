@@ -1,6 +1,8 @@
 import type { QueryClient } from '@tanstack/react-query';
 
 export const QUERY_KEYS = {
+  /** Lista portfeli użytkownika (PortfolioProvider) — niezależna od aktywnego portfela. */
+  portfolios: ['portfolios'] as const,
   positions: ['portfolio', 'positions'] as const,
   transactions: ['portfolio', 'transactions'] as const,
   closedTrades: ['portfolio', 'closed-trades'] as const,

@@ -1,6 +1,15 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { api, setActivePortfolioId, getActivePortfolioId } from './api-client';
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  type ReactNode,
+} from 'react';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { api, ApiError, setActivePortfolioId, getActivePortfolioId } from './api-client';
+import { QUERY_KEYS } from './query-keys';
 import type { Portfolio, PortfolioSettings } from 'shared';
 import { DEFAULT_PORTFOLIO_SETTINGS } from 'shared';
 
@@ -20,39 +29,62 @@ interface PortfolioContextValue {
 
 const PortfolioContext = createContext<PortfolioContextValue | null>(null);
 
+/**
+ * Reset wszystkich zapytań scope'owanych do aktywnego portfela.
+ * Pomijamy listę portfeli — jest per-user (nie per-portfel), a pełny reset
+ * zerowałby ją na moment (data=undefined → flash "Moje IKE" w selektorze).
+ */
+function resetPortfolioScopedQueries(queryClient: QueryClient) {
+  queryClient.resetQueries({
+    predicate: (query) => query.queryKey[0] !== QUERY_KEYS.portfolios[0],
+  });
+}
+
 export function PortfolioProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [activeId, setActiveId] = useState(getActivePortfolioId);
 
-  const refreshPortfolios = useCallback(async () => {
-    const list = await api.getPortfolios();
-    setPortfolios(list);
-    // Ghost activeId detection: jesli stan localStorage wskazuje na portfel
-    // ktorego juz nie ma w API (bo zostal usuniety — albo on-device-only stale),
-    // trzeba awaryjnie przestawic na pierwszy dostepny i zresetowac zapytania.
-    // Bez tego kazde DELETE /portfolios/<ghost-id> wraca z 403 i user nie wie
-    // dlaczego "Usun portfel" nie reaguje.
+  // Lista portfeli przez useQuery zamiast useState+useEffect — błąd pierwszego
+  // fetcha dostaje retry (defaultOptions: retry 2) i jest widoczny w devtools,
+  // a cache współdzieli wynik z refreshPortfolios (fetchQuery poniżej).
+  const { data: portfoliosData } = useQuery({
+    queryKey: QUERY_KEYS.portfolios,
+    queryFn: api.getPortfolios,
+  });
+  const portfolios = useMemo(() => portfoliosData ?? [], [portfoliosData]);
+
+  // Ghost activeId detection: jesli stan localStorage wskazuje na portfel
+  // ktorego juz nie ma w API (bo zostal usuniety — albo on-device-only stale),
+  // trzeba awaryjnie przestawic na pierwszy dostepny i zresetowac zapytania.
+  // Bez tego kazde DELETE /portfolios/<ghost-id> wraca z 403 i user nie wie
+  // dlaczego "Usun portfel" nie reaguje.
+  useEffect(() => {
+    if (!portfoliosData) return;
     const currentActive = getActivePortfolioId();
-    if (list.length > 0 && !list.some((p) => p.id === currentActive)) {
-      const fallbackId = list[0].id;
+    if (portfoliosData.length > 0 && !portfoliosData.some((p) => p.id === currentActive)) {
+      const fallbackId = portfoliosData[0].id;
       setActivePortfolioId(fallbackId);
       setActiveId(fallbackId);
-      queryClient.resetQueries();
+      resetPortfolioScopedQueries(queryClient);
     }
-    return list;
-  }, [queryClient]);
+  }, [portfoliosData, queryClient]);
 
-  useEffect(() => {
-    refreshPortfolios();
-  }, [refreshPortfolios]);
+  const refreshPortfolios = useCallback(async () => {
+    // fetchQuery z staleTime: 0 wymusza świeży fetch i aktualizuje cache —
+    // ghost detection w efekcie powyżej zareaguje na nowe dane.
+    return queryClient.fetchQuery({
+      queryKey: QUERY_KEYS.portfolios,
+      queryFn: api.getPortfolios,
+      staleTime: 0,
+    });
+  }, [queryClient]);
 
   const switchPortfolio = useCallback(
     (id: string) => {
       setActivePortfolioId(id);
       setActiveId(id);
       // resetQueries clears old portfolio data AND triggers refetch for all active queries
-      queryClient.resetQueries();
+      resetPortfolioScopedQueries(queryClient);
     },
     [queryClient],
   );
@@ -71,23 +103,18 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     async (id: string) => {
       try {
         await api.deletePortfolio(id);
-      } catch (err: any) {
+      } catch (err) {
         // Backend zwraca 403 (Access denied) gdy portfel nie istnieje w registry
         // (ownership check szuka portfolio i zwraca null -> isPortfolioOwnedBy=false).
         // Dla usera to znaczy "portfel juz usuniety" -> traktujemy jako success,
         // refreshujemy stan. Pozostale bledy propagujemy do UI.
-        const msg = String(err?.message || '');
-        const alreadyGone =
-          msg.includes('Access denied') ||
-          msg.includes('HTTP 403') ||
-          msg.includes('HTTP 404') ||
-          msg.includes('not found');
+        const alreadyGone = err instanceof ApiError && (err.status === 403 || err.status === 404);
         if (!alreadyGone) throw err;
       }
       const list = await refreshPortfolios();
       if (activeId === id) {
-        // Switch na pierwszy dostepny z odswiezonej listy (refreshPortfolios
-        // moze juz to zrobil, ale jawny switch jest bezpieczniejszy).
+        // Switch na pierwszy dostepny z odswiezonej listy (ghost-detection
+        // w efekcie moze juz to zrobic, ale jawny switch jest bezpieczniejszy).
         if (list.length > 0) switchPortfolio(list[0].id);
       }
     },
@@ -98,11 +125,10 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     async (id: string) => {
       try {
         await api.purgePortfolioData(id);
-        queryClient.resetQueries();
-      } catch (err: any) {
-        const msg = String(err?.message || '');
+        resetPortfolioScopedQueries(queryClient);
+      } catch (err) {
         // 403/404 dla purgeData = portfel nie istnieje; odswiez state i zglos uzytkownikowi.
-        if (msg.includes('Access denied') || msg.includes('HTTP 403') || msg.includes('HTTP 404')) {
+        if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
           await refreshPortfolios();
           throw new Error('Portfel nie istnieje — odswiezono liste');
         }
@@ -128,29 +154,34 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     [activeId, refreshPortfolios],
   );
 
-  const activePortfolio = portfolios.find((p) => p.id === activeId);
-  const activeName = activePortfolio?.name || 'Moje IKE';
-  const activeSettings = activePortfolio?.settings || DEFAULT_PORTFOLIO_SETTINGS;
+  const value = useMemo<PortfolioContextValue>(() => {
+    const activePortfolio = portfolios.find((p) => p.id === activeId);
+    return {
+      portfolios,
+      activeId,
+      activeName: activePortfolio?.name || 'Moje IKE',
+      activeSettings: activePortfolio?.settings || DEFAULT_PORTFOLIO_SETTINGS,
+      switchPortfolio,
+      createPortfolio: createPortfolioFn,
+      deletePortfolio: deletePortfolioFn,
+      purgeData: purgeDataFn,
+      updateSettings: updateSettingsFn,
+      updateName: updateNameFn,
+      refreshPortfolios,
+    };
+  }, [
+    portfolios,
+    activeId,
+    switchPortfolio,
+    createPortfolioFn,
+    deletePortfolioFn,
+    purgeDataFn,
+    updateSettingsFn,
+    updateNameFn,
+    refreshPortfolios,
+  ]);
 
-  return (
-    <PortfolioContext.Provider
-      value={{
-        portfolios,
-        activeId,
-        activeName,
-        activeSettings,
-        switchPortfolio,
-        createPortfolio: createPortfolioFn,
-        deletePortfolio: deletePortfolioFn,
-        purgeData: purgeDataFn,
-        updateSettings: updateSettingsFn,
-        updateName: updateNameFn,
-        refreshPortfolios,
-      }}
-    >
-      {children}
-    </PortfolioContext.Provider>
-  );
+  return <PortfolioContext.Provider value={value}>{children}</PortfolioContext.Provider>;
 }
 
 export function usePortfolio() {

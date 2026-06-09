@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { createChart, LineSeries, type IChartApi } from 'lightweight-charts';
+import { useTheme } from '@/lib/use-theme';
 
 interface ChartDataPoint {
   date: string;
@@ -27,6 +28,9 @@ export function PortfolioChart({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  // Reaktywny motyw — wykres przebudowuje się przy toggle dark/light
+  // (isDark jest w deps efektu), zamiast czytać klasę DOM raz przy montowaniu.
+  const { isDark } = useTheme();
 
   useEffect(() => {
     if (!containerRef.current || !data.length) return;
@@ -34,8 +38,6 @@ export function PortfolioChart({
     if (chartRef.current) {
       chartRef.current.remove();
     }
-
-    const isDark = document.documentElement.classList.contains('dark');
 
     const chart = createChart(containerRef.current, {
       height: 400,
@@ -125,7 +127,7 @@ export function PortfolioChart({
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, benchmarkLabel, mode, showBenchmark]);
+  }, [data, benchmarkLabel, mode, showBenchmark, isDark]);
 
   return <div ref={containerRef} className="w-full" />;
 }
