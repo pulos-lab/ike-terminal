@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
-import { invalidatePortfolio } from '@/lib/query-keys';
+import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -53,14 +53,14 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
   }, [target?.id]);
 
   const { data: fifoData, isLoading: fifoLoading } = useQuery({
-    queryKey: ['fifo-matching', target?.isin],
+    queryKey: QUERY_KEYS.fifoMatching(target?.isin ?? ''),
     queryFn: () => api.getFifoMatching(target!.isin),
     enabled: !!target,
     staleTime: 30_000,
   });
 
   const { data: smartPreview, isLoading: smartLoading } = useQuery({
-    queryKey: ['smart-delete-preview', target?.id],
+    queryKey: QUERY_KEYS.smartDeletePreview(target?.id ?? -1),
     queryFn: () => api.smartDeletePreview(target!.id),
     enabled: !!target,
     staleTime: 30_000,

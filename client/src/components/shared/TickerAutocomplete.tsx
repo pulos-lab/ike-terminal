@@ -29,6 +29,10 @@ export function TickerAutocomplete({
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Guard na out-of-order responses: każde wyszukiwanie dostaje rosnący numer,
+  // odpowiedzi starsze niż ostatnie zapytanie są ignorowane (wolny response
+  // dla "AP" nie nadpisze wyników dla "APPL").
+  const searchSeqRef = useRef(0);
 
   // Sync external value
   useEffect(() => {
@@ -47,22 +51,25 @@ export function TickerAutocomplete({
   }, []);
 
   const search = useCallback(async (q: string) => {
+    const seq = ++searchSeqRef.current;
     if (q.length < 1) {
       setResults([]);
       setIsOpen(false);
+      setIsLoading(false);
       return;
     }
     setIsLoading(true);
     try {
       const data = await api.searchTickers(q);
+      if (seq !== searchSeqRef.current) return; // stale response — ignoruj
       const list = Array.isArray(data) ? data : [];
       setResults(list);
       setIsOpen(list.length > 0);
       setHighlightIndex(-1);
     } catch {
-      setResults([]);
+      if (seq === searchSeqRef.current) setResults([]);
     } finally {
-      setIsLoading(false);
+      if (seq === searchSeqRef.current) setIsLoading(false);
     }
   }, []);
 

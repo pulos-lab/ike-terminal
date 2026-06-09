@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS, invalidateDividends } from '@/lib/query-keys';
@@ -23,7 +23,8 @@ import {
   formatQuantity,
   formatCurrency,
 } from '@/lib/formatters';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { groupDividendsByYearAndCurrency } from '@/lib/dividends-yearly';
 import {
   Loader2,
   Coins,
@@ -260,18 +261,12 @@ export function DividendsPage() {
   const dividends: DividendRecord[] = data?.dividends || [];
   const [expandedHistory, toggleHistory] = useToggleSet<number>();
 
-  const yearlyData = dividends
-    .reduce((acc: any[], d) => {
-      const year = new Date(d.date).getFullYear().toString();
-      const existing = acc.find((a: any) => a.year === year);
-      if (existing) {
-        existing.amount += d.amount;
-      } else {
-        acc.push({ year, amount: d.amount });
-      }
-      return acc;
-    }, [])
-    .sort((a: any, b: any) => a.year.localeCompare(b.year));
+  // Roczne sumy per waluta (stacked bars) — backend nie zwraca przeliczenia PLN
+  // per rekord, więc nie wolno sumować różnych walut do jednego słupka "PLN".
+  const { rows: yearlyData, currencies: yearlyCurrencies } = useMemo(
+    () => groupDividendsByYearAndCurrency(dividends),
+    [dividends],
+  );
 
   return (
     <div className="space-y-4">
@@ -333,15 +328,24 @@ export function DividendsPage() {
                         fontSize: 12,
                       }}
                       labelStyle={{ color: 'var(--popover-foreground)', fontWeight: 600 }}
-                      itemStyle={{ color: 'var(--primary)' }}
-                      formatter={(v) => [formatPLN(Number(v) || 0), 'Dywidendy']}
+                      formatter={(v, name) => [
+                        formatCurrency(Number(v) || 0, String(name)),
+                        String(name),
+                      ]}
                     />
-                    <Bar
-                      dataKey="amount"
-                      fill="var(--primary)"
-                      radius={[4, 4, 0, 0]}
-                      maxBarSize={80}
-                    />
+                    {yearlyCurrencies.length > 1 && (
+                      <Legend wrapperStyle={{ fontSize: 11 }} iconSize={8} />
+                    )}
+                    {yearlyCurrencies.map((currency, i) => (
+                      <Bar
+                        key={currency}
+                        dataKey={currency}
+                        stackId="dividends"
+                        fill={`var(--chart-${(i % 5) + 1})`}
+                        radius={i === yearlyCurrencies.length - 1 ? [4, 4, 0, 0] : undefined}
+                        maxBarSize={80}
+                      />
+                    ))}
                   </BarChart>
                 </ResponsiveContainer>
               )}

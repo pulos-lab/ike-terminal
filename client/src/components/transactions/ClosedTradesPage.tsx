@@ -23,33 +23,23 @@ import {
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
+import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { formatNumber, formatDate, formatCurrency, formatQuantity } from '@/lib/formatters';
+import { groupClosedTrades } from '@/lib/closed-trades-grouping';
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { ChevronRight, ChevronDown, Trash2, SlidersHorizontal } from 'lucide-react';
+import { toast } from 'sonner';
 import type { ClosedTrade } from 'shared';
 import { ClosedPositionCardMobile } from './ClosedPositionCardMobile';
 import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 
-interface TradeGroup {
-  key: string;
+/** Sprzedaż wskazana do usunięcia — dane do opisu w ConfirmDeleteDialog. */
+interface DeleteSellTarget {
+  id: number;
   ticker: string;
-  paperName: string;
   sellDate: string;
-  sellPrice: number;
-  currency: string;
-  totalQuantity: number;
-  totalProfitLoss: number;
-  totalCost: number;
-  weightedProfitLossPct: number;
-  minBuyDate: string;
-  maxBuyDate: string;
-  minBuyPrice: number;
-  maxBuyPrice: number;
-  avgHoldingDays: number;
-  sellTransactionId: number;
-  sellSource: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
-  trades: ClosedTrade[];
+  quantity: number;
 }
 
 function CostCell({ trade, muted }: { trade: ClosedTrade; muted?: boolean }) {
@@ -133,9 +123,24 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
     else setInternalCustomTo(v);
   };
 
+  // Potwierdzenie usunięcia — wspólny wzorzec ConfirmDeleteDialog (jak Dywidendy/Waluty).
+  const [deleteTarget, setDeleteTarget] = useState<DeleteSellTarget | null>(null);
+
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.deleteTransaction(id),
-    onSuccess: () => invalidatePortfolio(queryClient),
+    onSuccess: (_, id) => {
+      invalidatePortfolio(queryClient);
+      const t = deleteTarget;
+      if (t && t.id === id) {
+        toast.success(
+          `Usunięto transakcję sprzedaży ${t.ticker} — ${formatQuantity(t.quantity)} szt z ${formatDate(t.sellDate)}`,
+        );
+      } else {
+        toast.success('Usunięto transakcję sprzedaży.');
+      }
+      setDeleteTarget(null);
+    },
+    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
   });
 
   const availableCurrencies = useMemo(() => {
@@ -179,63 +184,9 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
     return trades;
   }, [data, plFilter, currencyFilter, dateRange, customFrom, customTo]);
 
-  const groups = useMemo(() => {
-    if (!filteredTrades.length) return [];
-
-    const map = new Map<string, ClosedTrade[]>();
-    for (const trade of filteredTrades) {
-      const sellDay = trade.sellDate.slice(0, 10);
-      const key = `${trade.ticker}|${sellDay}`;
-      const arr = map.get(key) || [];
-      arr.push(trade);
-      map.set(key, arr);
-    }
-
-    const result: TradeGroup[] = [];
-    for (const [key, trades] of map) {
-      const first = trades[0];
-      const totalQuantity = trades.reduce((s, t) => s + t.quantity, 0);
-      const totalProfitLoss = trades.reduce((s, t) => s + t.profitLoss, 0);
-      // Use quantity-weighted average of individual P/L% (correct for both stocks and CFD)
-      const weightedProfitLossPct =
-        totalQuantity > 0
-          ? trades.reduce((s, t) => s + t.profitLossPct * t.quantity, 0) / totalQuantity
-          : 0;
-
-      const buyDates = trades.map((t) => t.buyDate).sort();
-      const buyPrices = trades.map((t) => t.buyPrice);
-      const totalHoldingDaysWeighted = trades.reduce((s, t) => s + t.holdingDays * t.quantity, 0);
-
-      const totalCost = trades.reduce(
-        (s, t) => s + (t.totalCost || t.buyCommission + t.sellCommission),
-        0,
-      );
-
-      result.push({
-        key,
-        ticker: first.ticker,
-        paperName: first.paperName,
-        sellDate: first.sellDate,
-        sellPrice: first.sellPrice,
-        currency: first.currency,
-        totalQuantity,
-        totalProfitLoss,
-        totalCost,
-        weightedProfitLossPct,
-        minBuyDate: buyDates[0],
-        maxBuyDate: buyDates[buyDates.length - 1],
-        minBuyPrice: Math.min(...buyPrices),
-        maxBuyPrice: Math.max(...buyPrices),
-        avgHoldingDays: Math.round(totalHoldingDaysWeighted / totalQuantity),
-        sellTransactionId: first.sellTransactionId,
-        sellSource: first.sellSource,
-        trades,
-      });
-    }
-
-    result.sort((a, b) => b.sellDate.localeCompare(a.sellDate));
-    return result;
-  }, [filteredTrades]);
+  // Grupowanie per sprzedaż (klucz zawiera sellTransactionId) + P/L % ważony kosztem
+  // nabycia — czysta funkcja z testami w client/src/lib/closed-trades-grouping.ts.
+  const groups = useMemo(() => groupClosedTrades(filteredTrades), [filteredTrades]);
 
   const plSummary = useMemo(() => {
     const map = new Map<
@@ -535,7 +486,14 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                     group={group}
                     isExpanded={expandedGroups.has(group.key)}
                     onToggle={() => toggleGroup(group.key)}
-                    onDelete={() => deleteMutation.mutate(group.sellTransactionId)}
+                    onDelete={() =>
+                      setDeleteTarget({
+                        id: group.sellTransactionId,
+                        ticker: group.ticker,
+                        sellDate: group.sellDate,
+                        quantity: group.totalQuantity,
+                      })
+                    }
                     isDeleting={deleteMutation.isPending}
                   />
                 ))}
@@ -608,7 +566,14 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                 <Button
                                   size="icon-xs"
                                   variant="ghost"
-                                  onClick={() => deleteMutation.mutate(trade.sellTransactionId)}
+                                  onClick={() =>
+                                    setDeleteTarget({
+                                      id: trade.sellTransactionId,
+                                      ticker: trade.ticker,
+                                      sellDate: trade.sellDate,
+                                      quantity: trade.quantity,
+                                    })
+                                  }
                                   disabled={deleteMutation.isPending}
                                   className="text-muted-foreground hover:text-destructive"
                                   title="Usuń transakcję sprzedaży"
@@ -702,7 +667,12 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                   variant="ghost"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    deleteMutation.mutate(group.sellTransactionId);
+                                    setDeleteTarget({
+                                      id: group.sellTransactionId,
+                                      ticker: group.ticker,
+                                      sellDate: group.sellDate,
+                                      quantity: group.totalQuantity,
+                                    });
                                   }}
                                   disabled={deleteMutation.isPending}
                                   className="text-muted-foreground hover:text-destructive"
@@ -790,6 +760,18 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
           )}
         </CardContent>
       </Card>
+
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+        description={
+          deleteTarget
+            ? `Usunąć transakcję sprzedaży ${deleteTarget.ticker} — ${formatQuantity(deleteTarget.quantity)} szt z ${formatDate(deleteTarget.sellDate)}? Pozycja wróci do otwartych.`
+            : ''
+        }
+        loading={deleteMutation.isPending}
+      />
     </div>
   );
 }

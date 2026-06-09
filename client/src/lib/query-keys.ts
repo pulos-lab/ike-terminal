@@ -17,6 +17,14 @@ export const QUERY_KEYS = {
   additionalCosts: ['portfolio', 'additional-costs'] as const,
   livePrices: ['prices', 'live'] as const,
   importStatus: ['import', 'status'] as const,
+  /** Prefix wszystkich analiz FIFO — do invalidacji po mutacjach transakcji. */
+  fifoMatchingAll: ['portfolio', 'fifo-matching'] as const,
+  /** Analiza dopasowań FIFO per ISIN (DeleteTransactionDialog). */
+  fifoMatching: (isin: string) => ['portfolio', 'fifo-matching', isin] as const,
+  /** Prefix wszystkich smart-delete preview — do invalidacji po mutacjach transakcji. */
+  smartDeletePreviewAll: ['portfolio', 'smart-delete-preview'] as const,
+  /** Plan kaskadowego usunięcia per transakcja (DeleteTransactionDialog). */
+  smartDeletePreview: (id: number) => ['portfolio', 'smart-delete-preview', id] as const,
 };
 
 /** Invalidate all portfolio-related data (positions, transactions, closed trades, metrics, history) */
@@ -26,6 +34,10 @@ export function invalidatePortfolio(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: QUERY_KEYS.closedTrades });
   qc.invalidateQueries({ queryKey: QUERY_KEYS.metrics });
   qc.invalidateQueries({ queryKey: QUERY_KEYS.history });
+  // Pochodne analizy FIFO — bez invalidacji DeleteTransactionDialog pokazywałby
+  // stale dane (staleTime 30s) po edycji/usunięciu transakcji.
+  qc.invalidateQueries({ queryKey: QUERY_KEYS.fifoMatchingAll });
+  qc.invalidateQueries({ queryKey: QUERY_KEYS.smartDeletePreviewAll });
 }
 
 /** Invalidate cash flow related data */
