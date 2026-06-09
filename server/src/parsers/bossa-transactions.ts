@@ -17,12 +17,6 @@ import { parseNumber, parseDottedDate } from './utils.js';
  *
  * UWAGA: NIE stripujemy dla zwykłych tickerów (nie mają tych sufiksów) — regex musi być ścisły.
  */
-const SUFFIX_RE = /(-NC-FIX|-NC|-C|_IPO)$/;
-
-export function canonicalizeBossaTicker(paperName: string): string {
-  return paperName.replace(SUFFIX_RE, '');
-}
-
 /**
  * Parse Bossa transaction CSV (hisPW.csv / hisPW-2.csv format)
  * Format: semicolon delimited, windows-1250 encoding (pre-decoded), comma decimals

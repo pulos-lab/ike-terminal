@@ -196,18 +196,6 @@ export function deleteTickerMapEntry(isin: string, portfolioId: string = 'defaul
   return res.changes > 0;
 }
 
-/** Update tylko pola `sector` dla danego ISIN-u.
- *  Używane przez endpoint backfillu sektorów — nie dotykamy innych pól. */
-export function updateTickerSector(
-  isin: string,
-  sector: string | null,
-  portfolioId: string = 'default',
-): boolean {
-  const db = getDb(portfolioId);
-  const res = db.prepare('UPDATE ticker_map SET sector = ? WHERE isin = ?').run(sector, isin);
-  return res.changes > 0;
-}
-
 /** Update obu pól `sector` (podsektor) i `supersector` dla danego ISIN-u.
  *  Preferowana metoda po wprowadzeniu hybrydy nadsektor+podsektor ze stockwatch/GICS. */
 export function updateTickerSectors(

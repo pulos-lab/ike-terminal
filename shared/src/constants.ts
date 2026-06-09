@@ -34,19 +34,6 @@ export const BENCHMARKS = {
 
 export type BenchmarkKey = keyof typeof BENCHMARKS;
 
-export const TIME_RANGES = {
-  '1M': 30,
-  '3M': 90,
-  '6M': 180,
-  YTD: -1, // special: from Jan 1 of current year
-  '1Y': 365,
-  '3Y': 1095,
-  '5Y': 1825,
-  ALL: 0,
-} as const;
-
-export type TimeRangeKey = keyof typeof TIME_RANGES;
-
 /**
  * Map of old trading names to current ISINs.
  * Used during mBank import when paper name is a former company name.
@@ -108,16 +95,6 @@ export const DIVIDEND_TAX_IKE_IKZE: Record<string, number> = {
  * Jedno źródło prawdy dla server (portfolio-engine, routes) — wartości orientacyjne,
  * lepsze niż 1:1, ale UI powinien docelowo sygnalizować że kurs jest awaryjny.
  */
-export const OPERATION_TYPES = {
-  deposit: 'Wpłata',
-  withdrawal: 'Wypłata',
-  dividend: 'Dywidenda',
-  fx_exchange: 'Wymiana walut',
-  fee: 'Opłata',
-  commission_refund: 'Zwrot prowizji',
-  other: 'Inne',
-} as const;
-
 export const DEFAULT_FX_PLN: Record<string, number> = {
   PLN: 1,
   USD: 4.0,
