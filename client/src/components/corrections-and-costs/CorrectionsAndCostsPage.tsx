@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { errorToast } from '@/lib/error-toast';
 import { QUERY_KEYS, invalidateCorporateActions } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -259,7 +260,7 @@ function ResolveDialog({
       onSuccess();
       onClose();
     },
-    onError: (e: Error) => toast.error(`Nie udało się domknąć: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się domknąć', e),
   });
 
   if (!action) return null;
@@ -451,7 +452,7 @@ function AddCostDialog({
       setDescription('');
       setCategoryValue('fee');
     },
-    onError: (e: Error) => toast.error(`Nie udało się dodać: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się dodać', e),
   });
 
   const previewAmount =
@@ -644,7 +645,7 @@ export function CorrectionsAndCostsPage() {
       invalidateCorporateActions(qc);
       toast.success('Usunięto zdarzenie korporacyjne.');
     },
-    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się usunąć', e),
   });
 
   const deleteCostMut = useMutation({
@@ -655,7 +656,7 @@ export function CorrectionsAndCostsPage() {
       qc.invalidateQueries({ queryKey: QUERY_KEYS.history });
       toast.success('Usunięto operację.');
     },
-    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się usunąć', e),
   });
 
   const actions = corpData?.actions ?? [];

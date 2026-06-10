@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Dialog,
@@ -17,8 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { FieldError } from '@/components/ui/field-error';
 import { api } from '@/lib/api-client';
+import { errorToast } from '@/lib/error-toast';
 import { invalidateDividends } from '@/lib/query-keys';
+import { useFormValidation, type FieldErrors } from '@/lib/use-form-validation';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -57,6 +60,15 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
   const [currency, setCurrency] = useState(defaultValues?.currency ?? 'PLN');
   const [description, setDescription] = useState(defaultValues?.description ?? '');
 
+  const formErrors = useMemo(() => {
+    const e: FieldErrors<'date' | 'ticker' | 'amount'> = {};
+    if (!date) e.date = 'Podaj datę';
+    if (!ticker.trim()) e.ticker = 'Podaj ticker';
+    if (!amount || parseFloat(amount) <= 0) e.amount = 'Kwota musi być większa od 0';
+    return e;
+  }, [date, ticker, amount]);
+  const { submitGuard, fieldError, reset: resetValidation } = useFormValidation(formErrors);
+
   useEffect(() => {
     if (!open) return;
     setDate(defaultValues?.date?.split('T')[0] ?? today);
@@ -64,6 +76,7 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
     setAmount(defaultValues?.amount ? String(defaultValues.amount) : '');
     setCurrency(defaultValues?.currency ?? 'PLN');
     setDescription(defaultValues?.description ?? '');
+    resetValidation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultValues?.id]);
 
@@ -74,7 +87,7 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
       toast.success(`Dodano dywidendę ${ticker} — ${amount} ${currency}`);
       onClose();
     },
-    onError: (e: Error) => toast.error(`Nie udało się dodać: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się dodać', e),
   });
 
   const updateMut = useMutation({
@@ -93,11 +106,10 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
       toast.success('Zaktualizowano dywidendę.');
       onClose();
     },
-    onError: (e: Error) => toast.error(`Nie udało się zapisać: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się zapisać', e),
   });
 
   const submitMut = isEdit ? updateMut : createMut;
-  const valid = date && ticker.trim() && amount && parseFloat(amount) > 0;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !submitMut.isPending && onClose()}>
@@ -114,7 +126,13 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground">Data *</label>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <Input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                aria-invalid={!!fieldError('date')}
+              />
+              <FieldError error={fieldError('date')} />
             </div>
             <div>
               <label className="text-xs text-muted-foreground">Ticker *</label>
@@ -123,7 +141,9 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
                 onChange={(e) => setTicker(e.target.value.toUpperCase())}
                 placeholder="np. AAPL"
                 className="font-mono"
+                aria-invalid={!!fieldError('ticker')}
               />
+              <FieldError error={fieldError('ticker')} />
             </div>
           </div>
 
@@ -137,7 +157,9 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="0.00"
+                aria-invalid={!!fieldError('amount')}
               />
+              <FieldError error={fieldError('amount')} />
             </div>
             <div>
               <label className="text-xs text-muted-foreground">Waluta</label>
@@ -178,7 +200,7 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
           <Button variant="outline" onClick={onClose} disabled={submitMut.isPending}>
             Anuluj
           </Button>
-          <Button onClick={() => submitMut.mutate()} disabled={!valid || submitMut.isPending}>
+          <Button onClick={submitGuard(() => submitMut.mutate())} disabled={submitMut.isPending}>
             {submitMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {isEdit ? 'Zapisz' : 'Dodaj'}
           </Button>

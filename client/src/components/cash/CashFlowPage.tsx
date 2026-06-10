@@ -1,6 +1,7 @@
 import { useState, useMemo, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { errorToast } from '@/lib/error-toast';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { QUERY_KEYS, invalidateCashFlow } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -156,7 +157,7 @@ export function CashFlowPage() {
       }
       setDeleting(null);
     },
-    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się usunąć', e),
   });
 
   // Server zawsze ustawia `type` ('deposit' | 'withdrawal') — żadna normalizacja

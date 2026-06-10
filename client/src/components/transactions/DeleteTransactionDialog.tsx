@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { describeError } from '@/lib/error-toast';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { Button } from '@/components/ui/button';
 import {
@@ -72,7 +73,7 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
       invalidatePortfolio(queryClient);
       onClose();
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(describeError(err)),
   });
 
   const bulkMutation = useMutation({
@@ -81,7 +82,7 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
       invalidatePortfolio(queryClient);
       onClose();
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(describeError(err)),
   });
 
   const smartMutation = useMutation({
@@ -90,7 +91,7 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
       invalidatePortfolio(queryClient);
       onClose();
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(describeError(err)),
   });
 
   const isPending = singleMutation.isPending || bulkMutation.isPending || smartMutation.isPending;
@@ -459,7 +460,10 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
           </Tabs>
 
           {error && (
-            <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
+            <div
+              className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive"
+              role="alert"
+            >
               {error}
             </div>
           )}

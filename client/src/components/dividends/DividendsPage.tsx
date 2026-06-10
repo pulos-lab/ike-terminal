@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { errorToast } from '@/lib/error-toast';
 import { QUERY_KEYS, invalidateDividends } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -235,7 +236,7 @@ export function DividendsPage() {
       }
       setDeleting(null);
     },
-    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się usunąć', e),
   });
 
   const scanMutation = useMutation({
@@ -251,7 +252,7 @@ export function DividendsPage() {
         toast.info(`Brak nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
       }
     },
-    onError: (e: Error) => toast.error(`Skan nie powiódł się: ${e.message}`),
+    onError: (e: Error) => errorToast('Skan nie powiódł się', e),
   });
 
   const dividends: DividendRecord[] = data?.dividends || [];

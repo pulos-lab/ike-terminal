@@ -10,6 +10,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from '@/lib/api-client';
+import { describeError } from '@/lib/error-toast';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { formatNumber, formatDate, formatQuantity } from '@/lib/formatters';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
@@ -170,7 +171,7 @@ export const TradesFeed = memo(function TradesFeed() {
       setEditingId(null);
       setError(null);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(describeError(err)),
   });
 
   // useTransition — state update wrzucany do low-priority queue. React robi reconciliation
@@ -271,7 +272,10 @@ export const TradesFeed = memo(function TradesFeed() {
       </div>
 
       {error && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">
+        <div
+          className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive"
+          role="alert"
+        >
           {error}
         </div>
       )}
