@@ -18,7 +18,7 @@ Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i st
 - `client/src/components/` — strony i komponenty React (`dashboard`, `portfolio`, `transactions`, `dividends`, `currency`, `cash`, `corrections-and-costs`, `admin`, `auth`, `landing`, `layout`, `shared`, `ui`)
 - `server/src/routes/` — endpointy API: `portfolios`, `portfolio`, `prices`, `import`, `bug-reports`
 - `server/src/parsers/` — parsery brokerów: `bossa-transactions`, `bossa-operations`, `mbank-transactions`, `degiro-transactions`, `degiro-operations`, `xtb-transactions` (XLSX) + `registry`, `encoding`, `utils`, `__tests__/`
-- `server/src/services/` — logika biznesowa: `portfolio-engine`, `price-cache`, `history-cache`, `isin-resolver`, `sector-resolver`, `ticker-search`, `dividend-scanner`, `split-detector`, `payment-currency-reconciler`, `benchmark-updater`, `import-service`, `yahoo-finance`, `stooq` + `__tests__/`
+- `server/src/services/` — logika biznesowa: `portfolio-engine`, `history-memo` (cache computePortfolioHistory, wersjonowanie w `db/data-version`), `price-cache`, `history-cache`, `isin-resolver`, `sector-resolver`, `ticker-search`, `dividend-scanner`, `dividend-estimate`, `gpw-dividend-calendar` (kalendarz dywidend GPW/NC ze stockwatch+biznesradar, lazy refresh 24h), `split-detector`, `payment-currency-reconciler`, `benchmark-updater`, `import-service`, `yahoo-finance`, `yahoo-auth`, `stooq` + `__tests__/`
 - `shared/src/` — typy, stałe, mapy: `ticker-map`, `nc-ticker-map`, `cfd-ticker-map`, `gpw-sector-map`, `gics-to-stockwatch`, `isin-aliases-map`, `ipo-subscriptions-map`, `tender-offers-map`, `ike-ikze-limits`
 - `data/` — bazy SQLite (per portfel + `price_history.db` + `auth.db`)
 - `Import/` — pliki CSV/XLSX użytkownika (IKE/, IKZE/, Degiro/)
@@ -53,7 +53,12 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
 - **NewConnect (NC)**: Stooq (jedyne źródło — Yahoo nie listuje NC)
 - **Zagraniczne (NYSE, NASDAQ, XETRA, TSX)**: Yahoo Finance
 - **CFD (surowce, indeksy, forex, krypto)**: Yahoo Finance (statyczna mapa instrument → ticker w `shared/src/cfd-ticker-map.ts`, np. GOLD → GC=F)
-- **FX (kursy walut)**: Yahoo Finance (USDPLN=X, EURPLN=X, CADPLN=X)
+- **FX (kursy walut)**: Yahoo Finance (USDPLN=X, EURPLN=X, CADPLN=X, GBPPLN=X)
+
+### Nadchodzące dywidendy
+- **GPW / NewConnect**: kalendarz z polskich źródeł (stockwatch.pl + biznesradar.pl) — `gpw-dividend-calendar.ts`, persystencja w price_history.db, odświeżanie ≤1×/24h (3 żądania stron/dobę), merge po skrócie spółki; fallback Yahoo dla GPW, NC bez fallbacku
+- **Zagraniczne**: Yahoo v10 quoteSummary (calendarEvents) + estymata z ostatniego eventu lub annualRate (roczna dla .WA, /4 dla pozostałych)
+- **UWAGA**: nowa zależność runtime serwera MUSI iść do `dependencies` (prod robi `npm ci --omit=dev`); pilnuje tego prod-deps smoke test w deploy.yml
 
 ### Ceny historyczne (dashboard/benchmark)
 - **GPW (.WA)**: Yahoo Finance (priorytet) → Stooq (fallback gdy Yahoo < 10 punktów)

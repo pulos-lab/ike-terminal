@@ -10,10 +10,12 @@ Aplikacja do zarządzania portfelem inwestycyjnym IKE/IKZE. Import transakcji z 
 - **MWR / TWR** — przełączanie między Money-Weighted Return i Time-Weighted Return
 - **Portfel** — otwarte pozycje z bieżącymi kursami, P/L, udziałami + wolna gotówka z podziałem na waluty
 - **Transakcje zamknięte** — historia zamkniętych pozycji (FIFO) z P/L w walucie transakcji i PLN
-- **Dywidendy** — przegląd otrzymanych dywidend, netting z WHT, tabele podatkowe (reg + IKE/IKZE)
-- **Waluty** — historia przewalutowań FX + saldo w każdej walucie
+- **Dywidendy** — przegląd otrzymanych dywidend (auto-skan z Yahoo co 12h), netting z WHT, tabele podatkowe (reg + IKE/IKZE)
+- **Nadchodzące dywidendy** — dla spółek GPW/NewConnect kalendarz z polskich źródeł (stockwatch.pl + biznesradar.pl: dokładne kwoty PLN, daty wypłat, status uchwalona/proponowana; odświeżanie raz na dobę), dla zagranicznych Yahoo Finance
+- **Waluty** — historia przewalutowań FX + saldo w każdej walucie + wpływ walut na wynik portfela
 - **Gotówka** — historia wpłat/wypłat z automatycznym egzekwowaniem limitów IKE / IKZE / IKZE-JDG (dane 2012–2026)
-- **Inne koszty** — panel opłat/prowizji/odsetek, gdy występują w portfelu
+- **Korekty i koszty** — corporate actions (wezwania, wykupy, spin-offy) z półautomatycznym domykaniem + panel opłat/prowizji/odsetek
+- **Dywersyfikacja** — podział portfela na sektory (taksonomia stockwatch.pl, mapowanie GICS dla spółek zagranicznych)
 - **Statystyki** — XIRR, CAGR, Sharpe Ratio, Sortino Ratio, Max Drawdown, Volatility
 
 ### Import i dane rynkowe
@@ -24,7 +26,7 @@ Aplikacja do zarządzania portfelem inwestycyjnym IKE/IKZE. Import transakcji z 
 - **Orphaned sells** — wykrywanie sprzedaży bez odpowiadającego kupna (spin-offy, wezwania, IPO) + automatyczne sugestie uzupełnienia
 - **Instrumenty** — akcje GPW, NewConnect, NYSE, NASDAQ, XETRA, TSX, LSE; ETF; CFD (akcje / surowce / indeksy / forex / krypto)
 - **Ceny live i historyczne** — 3-warstwowy cache: in-memory → SQLite → sieć; fallback Yahoo ↔ Stooq
-- **Auto-split detection** — wykrywanie splitów (min. 2:1) z automatyczną retro-korektą transakcji i inwalidacją cache
+- **Auto-split detection** — wykrywanie splitów (min. 2:1) z realnymi datami z Yahoo (events API), obsługą wielu splitów per spółka, retro-korektą transakcji i inwalidacją cache; skan raz na dobę per portfel
 
 ### Benchmarki
 - Polskie: **WIG**, **WIG20**, **mWIG40**, **sWIG80** (Stooq + seed z CSV, auto-update co 6h)
@@ -143,10 +145,10 @@ npm run seed-benchmarks -w server  # seed historycznych benchmarków WIG*
 
 - **Frontend:** React 19, Vite 7, TailwindCSS 4, shadcn/ui + Radix UI, TanStack Query 5, React Router 7, lightweight-charts 5, Recharts 3, lucide-react
 - **Backend:** Express 4, TypeScript, better-sqlite3 12, Better Auth 1.5, Resend 6 (email), express-rate-limit, Helmet
-- **Parsery:** PapaParse (CSV), ExcelJS (XLSX)
-- **Dane rynkowe:** Yahoo Finance (bezpośrednie API HTTP), Stooq API
+- **Parsery:** PapaParse (CSV), ExcelJS (XLSX), cheerio (kalendarz dywidend GPW, mapa sektorów)
+- **Dane rynkowe:** Yahoo Finance (bezpośrednie API HTTP), Stooq API, stockwatch.pl + biznesradar.pl (kalendarz dywidend GPW/NC)
 - **Monorepo:** npm workspaces (`shared`, `server`, `client`)
-- **CI/CD:** GitHub Actions (deploy via SSH + rsync)
+- **CI/CD:** GitHub Actions — format-check, prod-deps smoke test (start serwera na `npm ci --omit=dev` przed wysyłką), deploy via SSH + rsync z serializacją (`concurrency`); workflowy diagnostyczne (diagnose-prod, audit-data-scan)
 
 ## Import danych
 
@@ -156,10 +158,9 @@ npm run seed-benchmarks -w server  # seed historycznych benchmarków WIG*
    - **DEGIRO** — CSV: historia transakcji multi-currency (przecinek, UTF-8)
    - **XTB** — XLSX: pełny eksport konta z arkuszami `CASH OPERATION HISTORY` i `Closed Positions` (transakcje, wpłaty, wypłaty, dywidendy, CFD)
 2. Kliknij **Import** w aplikacji
-3. Wybierz dom maklerski (lub zostaw "Auto-detekcja")
-4. Wybierz plik(i) — można dodać wiele plików z różnych brokerów naraz
-5. Aplikacja automatycznie rozpozna papiery (ISIN resolver), pobierze kursy i sprawdzi duplikaty
-6. Przy niejednoznacznościach (nieznane ISIN-y, sprzedaż bez kupna, nieznane CFD) pokaże ostrzeżenia i umożliwi korektę
+3. Wybierz plik(i) — broker rozpoznawany jest automatycznie po nagłówkach, per plik; można dodać wiele plików naraz (np. eksporty Bossy per waluta), a nakładające się zakresy dat są deduplikowane
+4. Aplikacja automatycznie rozpozna papiery (ISIN resolver), pobierze kursy i sprawdzi duplikaty
+5. Przy niejednoznacznościach (nieznane ISIN-y, sprzedaż bez kupna, nieznane CFD, pominięte wiersze) pokaże ostrzeżenia z powodami i umożliwi korektę
 
 ## Struktura projektu
 
@@ -167,12 +168,14 @@ npm run seed-benchmarks -w server  # seed historycznych benchmarków WIG*
 ike-terminal/
   shared/              # Typy i stałe wspólne dla server/client
     src/
-      types.ts                  # Transaction, Position, Portfolio, ImportResult
-      constants.ts              # BENCHMARKS, tabele podatkowe
+      types.ts                  # Transaction, Position, Portfolio, ImportResult + typy odpowiedzi API
+      constants.ts              # BENCHMARKS, tabele podatkowe, awaryjne kursy FX
       ike-ikze-limits.ts        # Historia limitów 2012–2026
       ticker-map.ts             # Statyczny seed tickerów
-      nc-ticker-map.ts          # NewConnect offline fallback (~800 spółek)
+      nc-ticker-map.ts          # NewConnect offline fallback (~380 spółek)
       cfd-ticker-map.ts         # Mapa CFD → Yahoo futures
+      gpw-sector-map.ts         # Sektory GPW/NC (generowany scraperem ze stockwatch.pl)
+      gics-to-stockwatch.ts     # Mapowanie GICS → taksonomia stockwatch (spółki zagraniczne)
       isin-aliases-map.ts       # Aliasy ISIN (splity emitenta itp.)
       tender-offers-map.ts      # Wezwania do sprzedaży
       ipo-subscriptions-map.ts  # IPO (Bossa reconciliation)
@@ -183,22 +186,24 @@ ike-terminal/
       db/                       # Repozytoria (transactions, operations, splits, ticker_map)
       middleware/               # Auth guard, rate-limit, error handler
       parsers/                  # Bossa, mBank, DEGIRO, XTB + registry auto-detekcji
-      routes/                   # portfolio, import, prices, bug-reports
-      services/                 # portfolio-engine, isin-resolver, yahoo, stooq, split-detector, import-service
+      routes/                   # portfolio, portfolios, import, prices, bug-reports
+      services/                 # portfolio-engine, history-memo, isin-resolver, sector-resolver,
+                                # yahoo-finance, stooq, split-detector, dividend-scanner,
+                                # gpw-dividend-calendar, import-service, payment-currency-reconciler
   client/              # React SPA
     src/
       components/
         auth/                   # Login, OTP, forgot password, change password
-        dashboard/              # Wykres, metryki, porównanie benchmark
-        portfolio/              # Otwarte pozycje + diversification
-        transactions/           # Trades feed, closed trades, dividend scanner
-        dividends/ cash/ currency/ costs/
+        dashboard/              # Wykres, metryki, porównanie benchmark, wpływ walut
+        portfolio/              # Otwarte pozycje + dywersyfikacja sektorowa
+        transactions/           # Trades feed (wirtualizacja), closed trades
+        dividends/ cash/ currency/ corrections-and-costs/
         import/                 # ImportDialog z obsługą wielu plików
         landing/                # Publiczna strona + demo
         admin/                  # Panel zgłoszeń błędów
         layout/                 # AppShell, BottomTabBar, PortfolioSelector
         ui/                     # Design system (Button, Card, Logo, itp.)
-      lib/                      # API client, local storage, formattery
+      lib/                      # API client (typowany), query keys, theme, formattery, helpery
   data/                # Bazy SQLite per-portfolio + price_history.db + auth.db (gitignored)
   benchmark/           # CSV z historycznymi wartościami WIG*
   start.command start.bat  # Skrypty uruchomieniowe
@@ -213,7 +218,10 @@ ike-terminal/
 | `npm run build` | Build wszystkich workspace'ów |
 | `npm run seed -w server` | Seed bazy (początkowy ticker map) |
 | `npm run seed-benchmarks -w server` | Seed historycznych benchmarków WIG z CSV |
-| `npm test -w server` | Testy jednostkowe (Vitest) |
+| `npm test -w server` | Testy jednostkowe serwera (Vitest) |
+| `npm test -w client` | Testy jednostkowe klienta (Vitest + jsdom) |
+| `npm run format` / `format:check` | Prettier na całym repo |
+| `npm run scrape:gpw-sectors -w server` | Regeneracja `gpw-sector-map.ts` ze stockwatch.pl |
 
 ## Licencja
 
