@@ -12,6 +12,11 @@ import type {
   PortfolioMetricsResponse,
   PortfolioPositionsResponse,
   PortfolioSettings,
+  PortfolioShare,
+  PublicHistoryResponse,
+  PublicPositionsResponse,
+  PublicShareMeta,
+  ShareSettingsInput,
   SplitsResponse,
   TransactionsResponse,
 } from 'shared';
@@ -444,6 +449,23 @@ export const api = {
     return uploadFile('/import/bulk', formData);
   },
 
+  // Public share (CRUD właściciela — wymaga sesji + X-Portfolio-Id)
+  getShare: () => request<{ share: PortfolioShare | null }>('/share'),
+  createShare: (body: ShareSettingsInput) =>
+    request<{ share: PortfolioShare }>('/share', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateShare: (body: ShareSettingsInput) =>
+    request<{ share: PortfolioShare }>('/share', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  deleteShare: () =>
+    request<{ success: boolean }>('/share', {
+      method: 'DELETE',
+    }),
+
   // Bug reports
   submitBugReport: (data: { category: string; description: string }) =>
     request<{ success: boolean; id: string }>('/bug-reports', {
@@ -464,4 +486,27 @@ export const api = {
         createdAt: string;
       }>
     >('/bug-reports'),
+};
+
+/**
+ * Minimalny fetch dla publicznej strony share — bez X-Portfolio-Id (portfel
+ * wynika z tokenu) i bez redirectu na /login przy 401 (endpointy publiczne
+ * zwracają 404, a anonimowy widz nie ma się gdzie logować).
+ */
+async function publicRequest<T>(url: string): Promise<T> {
+  const response = await fetch(`${API_BASE}${url}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+    throw new ApiError(error.error || `HTTP ${response.status}`, response.status);
+  }
+  return response.json();
+}
+
+export const publicApi = {
+  getShareMeta: (token: string) =>
+    publicRequest<PublicShareMeta>(`/public/share/${encodeURIComponent(token)}/meta`),
+  getShareHistory: (token: string) =>
+    publicRequest<PublicHistoryResponse>(`/public/share/${encodeURIComponent(token)}/history`),
+  getSharePositions: (token: string) =>
+    publicRequest<PublicPositionsResponse>(`/public/share/${encodeURIComponent(token)}/positions`),
 };

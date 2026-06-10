@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Info, Settings } from 'lucide-react';
 import { api } from '@/lib/api-client';
-import { chainLinkPct } from '@/lib/returns';
+import { filterAndRebaseHistory, getPresetStartDate } from '@/lib/returns';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -20,6 +20,7 @@ import { PortfolioChart } from './PortfolioChart';
 import { PerformanceStats } from './PerformanceStats';
 import { HeroKPI } from './HeroKPI';
 import { MonthlyReturnsChart } from './MonthlyReturnsChart';
+import { ShareDialog } from './ShareDialog';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 
 const BENCHMARKS = [
@@ -69,15 +70,6 @@ function ChartLegend({
   );
 }
 
-function getPresetStartDate(range: string): string | undefined {
-  const now = new Date();
-  if (range === 'ALL') return undefined;
-  if (range === 'YTD') return `${now.getFullYear()}-01-01`;
-  const days: Record<string, number> = { '1M': 30, '3M': 90, '6M': 180, '1Y': 365, '3Y': 1095 };
-  const d = new Date(now.getTime() - (days[range] || 0) * 86400000);
-  return d.toISOString().split('T')[0];
-}
-
 export function DashboardPage() {
   const { activeName } = usePortfolio();
   const [benchmark, setBenchmark] = useState('sp500');
@@ -99,36 +91,10 @@ export function DashboardPage() {
   });
 
   // Filter by date range and rebase so first visible point = 0%
-  const filteredHistory = useMemo(() => {
-    if (!data?.history?.length) return [];
-    const history = data.history;
-
-    // Filter to requested date range
-    let filtered = history;
-    if (startDate) {
-      filtered = filtered.filter((p) => p.date >= startDate);
-    }
-    if (endDate) {
-      filtered = filtered.filter((p) => p.date <= endDate);
-    }
-
-    if (!filtered.length) return [];
-    if (!startDate && !endDate) return filtered; // ALL — no rebase needed
-
-    // Rebase: chain-linking, żeby wykres startował od 0%. Skumulowane procenty
-    // nie składają się addytywnie — dzielimy indeksy (1 + pct/100) zamiast
-    // odejmować punkty procentowe (odejmowanie zawyża/zaniża wynik tym bardziej,
-    // im wyższy zwrot bazowy na początku zakresu).
-    const base = filtered[0];
-
-    return filtered.map((p) => ({
-      ...p,
-      returnPct: chainLinkPct(p.returnPct, base.returnPct),
-      benchmarkReturnPct: chainLinkPct(p.benchmarkReturnPct, base.benchmarkReturnPct),
-      twrPct: chainLinkPct(p.twrPct, base.twrPct),
-      benchmarkTwrPct: chainLinkPct(p.benchmarkTwrPct, base.benchmarkTwrPct),
-    }));
-  }, [data, startDate, endDate]);
+  const filteredHistory = useMemo(
+    () => filterAndRebaseHistory(data?.history ?? [], startDate, endDate),
+    [data, startDate, endDate],
+  );
 
   function selectPreset(range: string) {
     setTimeRange(range);
@@ -184,76 +150,81 @@ export function DashboardPage() {
                   )}
                 </div>
 
-                {/* Mobile-only: ⚙ Ustawienia (MWR/TWR + benchmark) */}
-                <Sheet>
-                  <SheetTrigger asChild>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      className="md:hidden text-muted-foreground shrink-0"
-                      aria-label="Ustawienia wykresu"
-                    >
-                      <Settings className="h-4 w-4" />
-                    </Button>
-                  </SheetTrigger>
-                  <SheetContent side="bottom" className="rounded-t-xl max-h-[85vh] overflow-auto">
-                    <SheetHeader className="pb-2">
-                      <SheetTitle>Ustawienia wykresu</SheetTitle>
-                    </SheetHeader>
-                    <div className="flex flex-col gap-4 px-4 pb-6">
-                      <div className="flex flex-col gap-1.5">
-                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
-                          Sposób liczenia
-                        </span>
-                        <div className="grid grid-cols-2 rounded-md border overflow-hidden">
-                          <Button
-                            size="sm"
-                            variant={chartMode === 'mwr' ? 'secondary' : 'ghost'}
-                            className="h-9 text-xs rounded-none"
-                            onClick={() => setChartMode('mwr')}
-                          >
-                            MWR
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant={chartMode === 'twr' ? 'secondary' : 'ghost'}
-                            className="h-9 text-xs rounded-none border-l"
-                            onClick={() => setChartMode('twr')}
-                          >
-                            TWR
-                          </Button>
-                        </div>
-                        <p className="text-[11px] text-muted-foreground">
-                          {chartMode === 'mwr'
-                            ? 'Money-Weighted Return — uwzględnia wpłaty/wypłaty, pokazuje realną stopę zwrotu inwestora.'
-                            : 'Time-Weighted Return — eliminuje wpływ wpłat/wypłat, pokazuje czystą efektywność strategii.'}
-                        </p>
-                      </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* Udostępnij portfel — oba breakpointy */}
+                  <ShareDialog currentBenchmark={benchmark} />
 
-                      <div className="flex flex-col gap-1.5">
-                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
-                          Benchmark
-                        </span>
-                        <Select value={benchmark} onValueChange={setBenchmark}>
-                          <SelectTrigger className="h-9 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {BENCHMARKS.map((b) => (
-                              <SelectItem key={b.value} value={b.value}>
-                                {b.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <p className="text-[11px] text-muted-foreground">
-                          Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy
-                          przy tych samych wpłatach/wypłatach (DCA).
-                        </p>
+                  {/* Mobile-only: ⚙ Ustawienia (MWR/TWR + benchmark) */}
+                  <Sheet>
+                    <SheetTrigger asChild>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        className="md:hidden text-muted-foreground shrink-0"
+                        aria-label="Ustawienia wykresu"
+                      >
+                        <Settings className="h-4 w-4" />
+                      </Button>
+                    </SheetTrigger>
+                    <SheetContent side="bottom" className="rounded-t-xl max-h-[85vh] overflow-auto">
+                      <SheetHeader className="pb-2">
+                        <SheetTitle>Ustawienia wykresu</SheetTitle>
+                      </SheetHeader>
+                      <div className="flex flex-col gap-4 px-4 pb-6">
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                            Sposób liczenia
+                          </span>
+                          <div className="grid grid-cols-2 rounded-md border overflow-hidden">
+                            <Button
+                              size="sm"
+                              variant={chartMode === 'mwr' ? 'secondary' : 'ghost'}
+                              className="h-9 text-xs rounded-none"
+                              onClick={() => setChartMode('mwr')}
+                            >
+                              MWR
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant={chartMode === 'twr' ? 'secondary' : 'ghost'}
+                              className="h-9 text-xs rounded-none border-l"
+                              onClick={() => setChartMode('twr')}
+                            >
+                              TWR
+                            </Button>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            {chartMode === 'mwr'
+                              ? 'Money-Weighted Return — uwzględnia wpłaty/wypłaty, pokazuje realną stopę zwrotu inwestora.'
+                              : 'Time-Weighted Return — eliminuje wpływ wpłat/wypłat, pokazuje czystą efektywność strategii.'}
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                            Benchmark
+                          </span>
+                          <Select value={benchmark} onValueChange={setBenchmark}>
+                            <SelectTrigger className="h-9 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {BENCHMARKS.map((b) => (
+                                <SelectItem key={b.value} value={b.value}>
+                                  {b.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-[11px] text-muted-foreground">
+                            Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy
+                            przy tych samych wpłatach/wypłatach (DCA).
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  </SheetContent>
-                </Sheet>
+                    </SheetContent>
+                  </Sheet>
+                </div>
               </div>
 
               {/* Zakres czasu — desktop obok tytułu, mobile w osobnym rzędzie z scroll */}
