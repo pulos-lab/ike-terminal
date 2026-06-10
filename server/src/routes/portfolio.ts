@@ -52,7 +52,7 @@ import {
   fetchYahooDividendEvents,
   fetchYahooHistory,
 } from '../services/yahoo-finance.js';
-import { estimateDividendPerShare } from '../services/dividend-estimate.js';
+import { estimateDividendPerShare, assumedPayoutsPerYear } from '../services/dividend-estimate.js';
 import {
   computeOpenPositions,
   computeClosedTrades,
@@ -404,7 +404,11 @@ router.get(
           pos.ticker,
           yearAgo.toISOString().split('T')[0],
         );
-        const perShare = estimateDividendPerShare(events, annualRate);
+        const perShare = estimateDividendPerShare(
+          events,
+          annualRate,
+          assumedPayoutsPerYear(pos.ticker),
+        );
 
         upcoming.push({
           ticker: pos.ticker,

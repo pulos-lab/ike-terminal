@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateDividendPerShare } from '../dividend-estimate.js';
+import { estimateDividendPerShare, assumedPayoutsPerYear } from '../dividend-estimate.js';
 
 describe('estimateDividendPerShare', () => {
   it('zwraca kwotę ostatniej realnej dywidendy gdy są zdarzenia', () => {
@@ -41,5 +41,23 @@ describe('estimateDividendPerShare', () => {
       { date: '2025-09-10', amount: 0.24 },
     ];
     expect(estimateDividendPerShare(events, 0.8)).toBe(0.28);
+  });
+
+  it('GPW (wypłata roczna): fallback = pełna roczna stawka, nie /4', () => {
+    // PEO.WA bez eventów Yahoo, rate=19.77 → estymata 19.77 zł, nie 4.94
+    expect(estimateDividendPerShare([], 19.77, 1)).toBe(19.77);
+  });
+
+  it('payoutsPerYear <= 0 → null (defensywnie)', () => {
+    expect(estimateDividendPerShare([], 2.0, 0)).toBeNull();
+  });
+});
+
+describe('assumedPayoutsPerYear', () => {
+  it('.WA → 1 (roczna), reszta → 4 (kwartalna)', () => {
+    expect(assumedPayoutsPerYear('PEO.WA')).toBe(1);
+    expect(assumedPayoutsPerYear('kgh.wa')).toBe(1);
+    expect(assumedPayoutsPerYear('AAPL')).toBe(4);
+    expect(assumedPayoutsPerYear('SAP.DE')).toBe(4);
   });
 });
