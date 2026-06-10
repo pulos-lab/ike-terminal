@@ -517,7 +517,7 @@ function SideChip({ side }: { side: 'K' | 'S' }) {
 function StatusBadge({ status }: { status: 'fully-matched' | 'partial' | 'open' | 'orphan' }) {
   const labels: Record<typeof status, { label: string; cls: string }> = {
     'fully-matched': { label: 'zamknięta', cls: 'bg-muted text-muted-foreground' },
-    partial: { label: 'częściowa', cls: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
+    partial: { label: 'częściowa', cls: 'bg-warning/15 text-warning' },
     open: { label: 'otwarta', cls: 'bg-gain/15 text-gain' },
     orphan: { label: 'oversold', cls: 'bg-loss/15 text-loss' },
   };

@@ -194,7 +194,14 @@ function DonutChart({ data, size = 160, onHoverChange, onSliceClick }: DonutChar
   });
 
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="mx-auto">
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      className="mx-auto"
+      role="img"
+      aria-label="Wykres kołowy dywersyfikacji portfela"
+    >
       {arcs.map(({ d, lx, ly, slice, idx, angle, isFullCircle }) => (
         <g key={idx}>
           <path

@@ -498,7 +498,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                   />
                 ))}
               </div>
-              <div className="hidden md:block overflow-x-auto">
+              <div className="hidden md:block overflow-x-auto scroll-shadow-x">
                 <Table>
                   <TableHeader>
                     <TableRow>

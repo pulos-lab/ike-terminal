@@ -135,6 +135,10 @@ export function CashFlowPage() {
     queryFn: api.getDeposits,
   });
 
+  // Jeden wspólny stan ładowania dla wykresu i tabeli — osobne spinnery powodowały
+  // "mruganie" strony (raz gotowa jedna karta, raz druga).
+  const isLoading = cashFlowLoading || depositsLoading;
+
   const [expandedYears, toggleYear] = useToggleSet<number>();
   const [showPortfolio, setShowPortfolio] = useState(true);
   const [showCashFlow, setShowCashFlow] = useState(true);
@@ -315,7 +319,7 @@ export function CashFlowPage() {
                 Wpłaty netto
               </button>
             </div>
-            {cashFlowLoading ? (
+            {isLoading ? (
               <LoadingSpinner />
             ) : cashFlowData?.chartData?.length ? (
               <CashFlowChart
@@ -352,7 +356,7 @@ export function CashFlowPage() {
             <CardTitle className="text-base">{cardTitle}</CardTitle>
           </CardHeader>
           <CardContent>
-            {depositsLoading ? (
+            {isLoading ? (
               <LoadingSpinner />
             ) : yearGroups.length === 0 ? (
               <EmptyState
@@ -543,7 +547,7 @@ export function CashFlowPage() {
                     </div>
                   )}
                 </div>
-                <div className="hidden md:block overflow-x-auto">
+                <div className="hidden md:block overflow-x-auto scroll-shadow-x">
                   <Table>
                     <TableHeader>
                       <TableRow>
