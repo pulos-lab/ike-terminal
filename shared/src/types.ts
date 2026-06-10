@@ -456,6 +456,7 @@ export type SkipReason =
   | 'redemption_reconciled' // Wykup certyfikatów / Rozliczenie oferty — obsłużone przez reconciliation jako synthetic sell
   | 'capital_return_reconciled' // Obniżenie nominału / wyrównanie — obsłużone przez reconciliation jako CashOperation(capital_return)
   | 'unknown_operation_type' // Nierozpoznany tytuł operacji — wrzucone jako 'other', ale raportowane w warnings
+  | 'unknown_type' // XTB — typ operacji spoza znanych typów parsera, wiersz pominięty (paperName zawiera nazwę typu)
   | 'unparseable_fx_comment' // XTB Transfer — brak pary walutowej + kursu w Comment
   | 'invalid_fx_rate' // XTB Transfer — Exchange rate ≤ 0 w Comment
   | 'fx_currency_mismatch'; // XTB Transfer — ani fromCur ani toCur nie zgadza się z walutą konta

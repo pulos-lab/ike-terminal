@@ -42,13 +42,21 @@ export type OperationsParseResult = ParseResult<CashOperation> & {
   ipoSubscriptions?: IpoSubscriptionMarker[];
   /** Zwroty kapitału (obniżenie nominału, wyrównanie wykupu) → CashOperation capital_return */
   capitalReturns?: CapitalReturnMarker[];
+  /** Ostrzeżenia parsera (PL) — import-service dokleja do crossFileWarnings */
+  warnings?: string[];
+};
+
+/** Wynik parsera transakcji CSV — opcjonalne ostrzeżenia (np. mBank: brak kolumny w nagłówku). */
+export type TransactionsParseResult = ParseResult<Transaction> & {
+  /** Ostrzeżenia parsera (PL) — import-service dokleja do crossFileWarnings */
+  warnings?: string[];
 };
 
 export interface BrokerParser {
   id: BrokerType;
   label: string;
   detect: (content: string) => boolean;
-  parse: (content: string, importBatch: string) => ParseResult<Transaction>;
+  parse: (content: string, importBatch: string) => TransactionsParseResult;
   /** Whether this broker supports cash operations import */
   supportsOperations: boolean;
   /** Detect if CSV is an operations file (not transactions) for this broker */

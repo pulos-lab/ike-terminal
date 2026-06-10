@@ -209,6 +209,8 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   // MIĘDZY plikami w jednej paczce, zachowując legalne duplikaty wewnątrz
   // pojedynczego pliku.
   const parsedTxFiles: ParseResult<Transaction>[] = [];
+  // Ostrzeżenia z parserów (PL) — doklejane do crossFileWarnings po jego deklaracji.
+  const parserWarnings: string[] = [];
 
   if (txFiles.length > 0) {
     // Parsuj każdy plik osobno. Pierwszy wykryty broker dyktuje
@@ -228,6 +230,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       }
       const parsed = parser.parse(content, importBatch);
       txParserId = parser.id;
+      if (parsed.warnings?.length) parserWarnings.push(...parsed.warnings);
 
       // Name resolution (mBank: paperName → ISIN z ticker_map)
       if (parser.needsNameResolution) {
@@ -254,6 +257,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     opsContentRaw = content;
     parsedOps = opsParser.parseOperations(content, importBatch);
     opsParserId = opsParser.id;
+    if (parsedOps.warnings?.length) parserWarnings.push(...parsedOps.warnings);
   }
 
   // Atomowe inserty + reconciliation w jednej transakcji SQLite
@@ -265,7 +269,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   const insertedTxDuplicates: SkippedRow[] = [];
   const insertedOpsDuplicates: SkippedRow[] = [];
   let syntheticSells = 0;
-  const crossFileWarnings: string[] = [];
+  const crossFileWarnings: string[] = [...parserWarnings];
 
   const runAll = db.transaction(() => {
     // 1. Transakcje — insert PER PLIK: licznik w DB rośnie po każdym pliku,

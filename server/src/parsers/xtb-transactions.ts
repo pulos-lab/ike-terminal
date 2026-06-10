@@ -515,8 +515,15 @@ export async function parseXtbFile(
   const txSkipped: SkippedRow[] = [];
   const opsSkipped: SkippedRow[] = [];
 
-  // Track transactions by key for commission matching: "SYMBOL|ISO_TIME" → index in transactions[]
-  const txBySymbolTime = new Map<string, number>();
+  // Track transactions by key for commission matching: "SYMBOL|ISO_TIME" → indeksy w transactions[].
+  // Tablica (nie pojedynczy indeks): dwa trade'y w tej samej sekundzie (np. partial fills)
+  // mają ten sam klucz — każda prowizja konsumuje kolejny niezużyty indeks (FIFO).
+  const txBySymbolTime = new Map<string, number[]>();
+  const pushTxKey = (key: string, idx: number) => {
+    const list = txBySymbolTime.get(key);
+    if (list) list.push(idx);
+    else txBySymbolTime.set(key, [idx]);
+  };
   // Track sell transactions by "SYMBOL|DATE" for Sec Fee matching
   const sellBySymbolDate = new Map<string, number>();
   // Track buy qty per symbol for old-format sale fallback
@@ -550,11 +557,11 @@ export async function parseXtbFile(
         }
       }
 
-      if (qty <= 0) {
+      if (!Number.isFinite(qty) || qty <= 0) {
         txSkipped.push({ row: raw.rowNum, reason: 'invalid_quantity', paperName: raw.symbol });
         continue;
       }
-      if (price <= 0) {
+      if (!Number.isFinite(price) || price <= 0) {
         txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol });
         continue;
       }
@@ -587,7 +594,7 @@ export async function parseXtbFile(
         source: 'xtb',
         importBatch,
       });
-      txBySymbolTime.set(`${raw.symbol}|${isoTime}`, idx);
+      pushTxKey(`${raw.symbol}|${isoTime}`, idx);
       lastBuyQty.set(raw.symbol, qty);
     } else if (raw.type === 'Stock sale') {
       const isoTime = parseXtbTime(raw.time);
@@ -610,23 +617,37 @@ export async function parseXtbFile(
         const plKey = `${raw.symbol}|${isoTime}`;
         const pl = closeTradePL.get(plKey);
         if (buyQty && buyQty > 0 && pl !== undefined) {
+          // Guards: cena wyprowadzana z (|Amount| + P/L) / qty — każdy składnik
+          // musi być policzalny, inaczej NaN/Infinity trafiłoby do outputu.
+          if (!Number.isFinite(pl) || !Number.isFinite(raw.amount)) {
+            txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol });
+            continue;
+          }
           qty = buyQty;
           // Stock sale Amount = original purchase value (returned)
           // close trade Amount = P/L
           // Actual sale value = Amount + P/L
           const saleValue = Math.abs(raw.amount) + pl;
+          if (!(saleValue > 0)) {
+            txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol });
+            continue;
+          }
           price = roundTo2(saleValue / qty);
+          if (!Number.isFinite(price) || price <= 0) {
+            txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol });
+            continue;
+          }
         } else {
           txSkipped.push({ row: raw.rowNum, reason: 'unparseable_comment', paperName: raw.symbol });
           continue;
         }
       }
 
-      if (qty <= 0) {
+      if (!Number.isFinite(qty) || qty <= 0) {
         txSkipped.push({ row: raw.rowNum, reason: 'invalid_quantity', paperName: raw.symbol });
         continue;
       }
-      if (price <= 0) {
+      if (!Number.isFinite(price) || price <= 0) {
         txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol });
         continue;
       }
@@ -654,13 +675,17 @@ export async function parseXtbFile(
         source: 'xtb',
         importBatch,
       });
-      txBySymbolTime.set(`${raw.symbol}|${isoTime}`, idx);
+      pushTxKey(`${raw.symbol}|${isoTime}`, idx);
       sellBySymbolDate.set(`${raw.symbol}|${isoTime.slice(0, 10)}`, idx);
     }
   }
 
   // ── Pass 2: Match commissions and Sec Fees to transactions ──
   const unmatchedFees: RawRow[] = [];
+  // FIFO cursor per klucz — n-ta prowizja pod tym samym kluczem trafia do n-tego
+  // trade'a. Nadmiarowe prowizje (więcej prowizji niż trade'ów) kumulują się na
+  // ostatnim trade'dzie (zachowanie sprzed zmiany dla pojedynczego trade'a).
+  const commissionCursor = new Map<string, number>();
 
   for (const raw of rawRows) {
     if (raw.type === 'commission') {
@@ -671,8 +696,13 @@ export async function parseXtbFile(
       }
 
       const key = `${raw.symbol}|${isoTime}`;
-      const idx = txBySymbolTime.get(key);
+      const indexes = txBySymbolTime.get(key);
+      const idx =
+        indexes && indexes.length > 0
+          ? indexes[Math.min(commissionCursor.get(key) ?? 0, indexes.length - 1)]
+          : undefined;
       if (idx !== undefined) {
+        commissionCursor.set(key, (commissionCursor.get(key) ?? 0) + 1);
         const fee = Math.abs(raw.amount);
         transactions[idx].commission = roundTo2(transactions[idx].commission + fee);
         transactions[idx].total = roundTo2(
@@ -977,12 +1007,18 @@ export async function parseXtbFile(
     );
   }
 
-  // Aggregated warning for raw rows whose `type` matched no dispatch branch.
-  // Until now these rows silently disappeared (no skipped entry, no operation).
+  // Raw rows whose `type` matched no dispatch branch: per-row skipped entry
+  // (reason 'unknown_type', paperName niesie nazwę typu + symbol, żeby user mógł
+  // odnaleźć wiersze w pliku) + jeden zagregowany warning z listą typów.
   const unknownTypes = new Map<string, number>();
   for (const raw of rawRows) {
     if (!KNOWN_XTB_TYPES.has(raw.type)) {
       unknownTypes.set(raw.type, (unknownTypes.get(raw.type) ?? 0) + 1);
+      opsSkipped.push({
+        row: raw.rowNum,
+        reason: 'unknown_type',
+        paperName: raw.symbol ? `${raw.type} (${raw.symbol})` : raw.type,
+      });
     }
   }
   if (unknownTypes.size > 0) {
@@ -991,8 +1027,8 @@ export async function parseXtbFile(
       .sort()
       .join(', ');
     warnings.push(
-      `Nierozpoznane typy operacji XTB — pominięte cicho: ${list}. ` +
-        `Sprawdź czy któryś nie powinien być zaimportowany.`,
+      `Nierozpoznane typy operacji XTB — pominięte: ${list}. ` +
+        `Wiersze wylistowane w pominiętych. Sprawdź czy któryś nie powinien być zaimportowany.`,
     );
   }
 

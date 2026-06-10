@@ -63,6 +63,12 @@ export interface BossaOperationsParseResult {
    *     to jak zrealizowany zwrot z trzymania pozycji.
    */
   capitalReturns: CapitalReturnMarker[];
+  /**
+   * Ostrzeżenia parsera (po polsku) — np. niesparowany leg subskrypcji IPO
+   * (Zapisy na akcje bez Zwrotu nadpłaty lub odwrotnie), nieznana emisja spoza
+   * `ipo-subscriptions-map`. Import-service dokleja je do crossFileWarnings.
+   */
+  warnings?: string[];
 }
 
 export function parseBossaOperations(
@@ -185,15 +191,37 @@ export function parseBossaOperations(
   const redemptions: RedemptionMarker[] = [];
   const ipoSubscriptions: IpoSubscriptionMarker[] = [];
   const capitalReturns: CapitalReturnMarker[] = [];
+  const warnings: string[] = [];
   const ipoConsumedRows = new Set<number>(); // rowNum wierszy Zapisy/Zwrot skonsumowanych przez marker IPO
 
   // Budowanie markerów IPO: dla każdej pary (Zapisy ↔ Zwrot) po normalizowanym tickerze
   // sprawdź mapę. Jeśli znana — emituj marker i oznacz oba wiersze jako skonsumowane.
+  // Niesparowane legi (Zapisy bez Zwrotu lub odwrotnie) oraz pary spoza mapy NIE giną —
+  // wpadają niżej jako zwykły withdrawal/deposit, ale dostają warning: cashflow jest
+  // zachowany, natomiast pozycja z przydziału akcji NIE powstanie automatycznie.
   for (const [normTicker, sub] of ipoSubRows) {
     const refund = ipoRefundRows.get(normTicker);
-    if (!refund) continue;
+    if (!refund) {
+      warnings.push(
+        `Wiersz ${sub.rowNum}: znaleziono zapis IPO "${sub.rawTitle}" (${sub.dateStr}), ale bez ` +
+          `pasującego wiersza "Zwrot nadpłaty ${normTicker}" — nie udało się go rozliczyć. ` +
+          `Kwota została zaksięgowana jako wypłata gotówki; pozycję z przydziału akcji ` +
+          `może być konieczne dodać ręcznie w panelu Transakcje.`,
+      );
+      continue;
+    }
     const entry = lookupIpoSubscription(normTicker, sub.dateStr);
-    if (!entry) continue; // Nieznane IPO — oba wiersze wpadną jako zwykły withdrawal/deposit
+    if (!entry) {
+      // Nieznane IPO (brak w ipo-subscriptions-map) — oba wiersze wpadną jako zwykły
+      // withdrawal/deposit; warning, bo akcje z przydziału nie pojawią się w portfelu.
+      warnings.push(
+        `Subskrypcja IPO "${sub.rawTitle}" (${sub.dateStr}) ze zwrotem nadpłaty ` +
+          `(${refund.dateStr}) nie figuruje w mapie znanych emisji — nie udało się jej ` +
+          `rozliczyć automatycznie. Przepływy gotówkowe zostały zaimportowane, ale pozycję ` +
+          `z przydziału akcji może być konieczne dodać ręcznie w panelu Transakcje.`,
+      );
+      continue;
+    }
     ipoSubscriptions.push({
       subscriptionDate: sub.dateStr,
       allocationDate: refund.dateStr,
@@ -208,6 +236,18 @@ export function parseBossaOperations(
     });
     ipoConsumedRows.add(sub.rowNum);
     ipoConsumedRows.add(refund.rowNum);
+  }
+
+  // Osierocony leg zwrotu: "Zwrot nadpłaty X" bez wcześniejszego "Zapisy na akcje X".
+  // Wpadnie niżej jako deposit (cashflow zachowany), ale subskrypcji nie da się rozliczyć.
+  for (const [normTicker, refund] of ipoRefundRows) {
+    if (ipoSubRows.has(normTicker)) continue;
+    warnings.push(
+      `Wiersz ${refund.rowNum}: znaleziono zwrot nadpłaty IPO "${refund.rawTitle}" ` +
+        `(${refund.dateStr}), ale bez pasującego wiersza "Zapisy na akcje ${normTicker}" — ` +
+        `nie udało się go rozliczyć. Kwota została zaksięgowana jako wpłata gotówki; ` +
+        `zweryfikuj, czy pozycja z przydziału akcji nie wymaga ręcznego dodania w panelu Transakcje.`,
+    );
   }
 
   for (const pr of parsedRows) {
@@ -374,7 +414,14 @@ export function parseBossaOperations(
     });
   }
 
-  return { data: operations, skipped, redemptions, ipoSubscriptions, capitalReturns };
+  return {
+    data: operations,
+    skipped,
+    redemptions,
+    ipoSubscriptions,
+    capitalReturns,
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
 }
 
 /**
