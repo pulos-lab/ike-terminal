@@ -9,6 +9,7 @@ import {
 import { getDb, closeDb } from '../db/connection.js';
 import { seedTickerMap } from '../db/ticker-map-repo.js';
 import { purgeAllData } from '../db/transactions-repo.js';
+import { deleteShareForPortfolio } from '../db/share-repo.js';
 
 const router = Router();
 
@@ -65,6 +66,7 @@ router.delete('/:id', (req, res) => {
 
   closeDb(id);
   deletePortfolio(id);
+  deleteShareForPortfolio(id); // publiczny link nie może przeżyć portfela
   res.json({ success: true });
 });
 

@@ -17,6 +17,8 @@ import pricesRouter from './routes/prices.js';
 import portfolioRouter from './routes/portfolio.js';
 import importRouter from './routes/import.js';
 import bugReportsRouter from './routes/bug-reports.js';
+import shareRouter from './routes/share.js';
+import publicShareRouter from './routes/public-share.js';
 import { updateBenchmarkPrices } from './services/benchmark-updater.js';
 import { backfillTickerNamesForPortfolio } from './services/ticker-name-backfill.js';
 import { scanAllPortfolios } from './services/dividend-scanner.js';
@@ -162,12 +164,29 @@ app.use('/api/prices', requireAuth, portfolioMiddleware, pricesRouter);
 app.use('/api/portfolio', requireAuth, portfolioMiddleware, portfolioRouter);
 app.use('/api/import', requireAuth, portfolioMiddleware, importRouter);
 app.use('/api/bug-reports', requireAuth, bugReportsRouter);
+app.use('/api/share', requireAuth, portfolioMiddleware, shareRouter);
+
+// ── Public share endpoints (NO auth — dostęp przez kryptograficzny token) ────
+// Ciaśniejszy rate limit niż globalny: anonimowy ruch, tylko 3 GET-y.
+app.use(
+  '/api/public',
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+  publicShareRouter,
+);
 
 // ── SPA fallback (after API routes — serves index.html for client routing) ──
 if (isProduction) {
   const clientDist = path.resolve(__dirname, '../../client/dist');
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) {
+      if (req.path.startsWith('/share/')) {
+        res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      }
       res.sendFile(path.join(clientDist, 'index.html'));
     }
   });

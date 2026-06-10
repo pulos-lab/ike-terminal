@@ -72,6 +72,17 @@ db.exec(`
     url TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS "portfolio_shares" (
+    token TEXT PRIMARY KEY,
+    portfolioId TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL DEFAULT 'chart' CHECK (scope IN ('chart','chart_positions')),
+    showAmounts INTEGER NOT NULL DEFAULT 0,
+    benchmark TEXT NOT NULL DEFAULT 'sp500',
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    expiresAt TEXT
+  );
 `);
 
 /** Get the auth database instance (for bug reports, admin queries) */

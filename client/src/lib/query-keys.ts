@@ -17,6 +17,9 @@ export const QUERY_KEYS = {
   splits: ['portfolio', 'splits'] as const,
   corporateActions: ['portfolio', 'corporate-actions'] as const,
   additionalCosts: ['portfolio', 'additional-costs'] as const,
+  /** Aktywny publiczny link portfela (ShareDialog) — prefix 'portfolio' =
+   *  auto-reset przy zmianie portfela (resetPortfolioScopedQueries). */
+  share: ['portfolio', 'share'] as const,
   livePrices: ['prices', 'live'] as const,
   importStatus: ['import', 'status'] as const,
   /** Prefix wszystkich analiz FIFO — do invalidacji po mutacjach transakcji. */

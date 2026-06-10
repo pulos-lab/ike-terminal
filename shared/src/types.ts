@@ -794,3 +794,108 @@ export interface Portfolio {
   settings: PortfolioSettings;
   userId?: string; // owner (multi-tenancy)
 }
+
+// ============ Public Portfolio Share ============
+
+/** Zakres publicznego widoku: sam wykres zwrotu vs wykres + otwarte pozycje. */
+export type ShareScope = 'chart' | 'chart_positions';
+
+/** Preset ważności linku — expiresAt liczone serwerowo, nigdy z daty od klienta. */
+export type ShareValidity = 'indefinite' | '7d' | '30d' | '90d';
+
+/** Ustawienia przekazywane przy tworzeniu/edycji linku (POST/PUT /api/share). */
+export interface ShareSettingsInput {
+  scope: ShareScope;
+  showAmounts: boolean;
+  /** BenchmarkKey — walidowany serwerowo przeciw BENCHMARKS. */
+  benchmark: string;
+  validity: ShareValidity;
+}
+
+/** Wiersz share widziany przez właściciela (GET /api/share). */
+export interface PortfolioShare {
+  token: string;
+  portfolioId: string;
+  scope: ShareScope;
+  showAmounts: boolean;
+  benchmark: string;
+  createdAt: string;
+  updatedAt: string;
+  /** null = bezterminowy. */
+  expiresAt: string | null;
+}
+
+/** GET /api/public/share/:token/meta — dane do nagłówka publicznej strony. */
+export interface PublicShareMeta {
+  portfolioName: string;
+  scope: ShareScope;
+  showAmounts: boolean;
+  benchmark: string;
+  createdAt: string;
+  expiresAt: string | null;
+}
+
+/** Metryki publiczne — pola kwotowe null gdy showAmounts=false. */
+export interface PublicShareMetrics {
+  xirr: number;
+  totalReturnPct: number;
+  currentValue: number | null;
+  totalInvested: number | null;
+  totalReturn: number | null;
+  totalDividends: number | null;
+}
+
+/**
+ * GET /api/public/share/:token/history — kształt jak PortfolioHistoryResponse,
+ * ale przy showAmounts=false pola absolutne w history są znormalizowane
+ * (przemnożone przez stałą k), więc realne kwoty są nieodtwarzalne, a pola %
+ * pozostają nietknięte.
+ */
+export interface PublicHistoryResponse {
+  history: PortfolioHistoryPoint[];
+  metrics: PublicShareMetrics;
+  baseCurrency: string;
+}
+
+/** Pozycja w widoku publicznym — pola kwotowe obecne tylko gdy showAmounts=true. */
+export interface PublicPosition {
+  isin: string;
+  ticker: string;
+  paperName: string;
+  currency: string;
+  currentPrice: number | null;
+  dailyChangePct: number | null;
+  profitLossPct: number;
+  weight: number;
+  exchange?: string;
+  sector?: string;
+  supersector?: string;
+  category?: InstrumentCategory;
+  priceManual?: boolean;
+  // tylko gdy showAmounts === true:
+  shares?: number;
+  avgBuyPrice?: number;
+  currentValue?: number;
+  currentValuePln?: number;
+  profitLoss?: number;
+  profitLossPln?: number;
+}
+
+/** Cash w widoku publicznym — salda tylko gdy showAmounts=true. */
+export interface PublicCashPosition {
+  currency: string;
+  weight: number;
+  balance?: number;
+  valuePln?: number;
+}
+
+/** GET /api/public/share/:token/positions. */
+export interface PublicPositionsResponse {
+  positions: PublicPosition[];
+  cashPositions: PublicCashPosition[];
+  baseCurrency: string;
+  // tylko gdy showAmounts === true:
+  totalValuePln?: number;
+  stocksValuePln?: number;
+  cashValuePln?: number;
+}
