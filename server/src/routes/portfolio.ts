@@ -49,8 +49,10 @@ import {
   fetchYahooPrice,
   fetchFxRate,
   fetchDividendCalendar,
+  fetchYahooDividendEvents,
   fetchYahooHistory,
 } from '../services/yahoo-finance.js';
+import { estimateDividendPerShare } from '../services/dividend-estimate.js';
 import {
   computeOpenPositions,
   computeClosedTrades,
@@ -392,12 +394,17 @@ router.get(
 
         if (!isUpcoming && !isPendingPayment) continue;
 
-        // Estimate per-share amount from annual rate and frequency
-        // Most stocks pay quarterly (4x/year), some semi-annual (2x), some annual (1x)
+        // Estymata per-share: kwota ostatniej realnej dywidendy z ~roku wstecz
+        // (fetch cache'owany 12h, więc per-pozycja w pętli jest akceptowalny);
+        // fallback annualRate / 4 (kwartalnie — najczęstszy schemat w US).
         const annualRate = cal.dividendRate ?? 0;
-        // Heuristic: use rate/2 for semi-annual, rate/4 for quarterly
-        // Without frequency info, approximate as the latest single payment
-        const perShare = annualRate > 0 ? annualRate / 2 : null;
+        const yearAgo = new Date();
+        yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+        const events = await fetchYahooDividendEvents(
+          pos.ticker,
+          yearAgo.toISOString().split('T')[0],
+        );
+        const perShare = estimateDividendPerShare(events, annualRate);
 
         upcoming.push({
           ticker: pos.ticker,
@@ -765,6 +772,8 @@ router.post(
 
     // Synthetic SELL na dacie zdarzenia pending. Kwota brutto z operacji jest użyta jako `value`
     // i `total` (brak prowizji — user może potem edytować ręcznie jeśli trzeba).
+    // paymentCurrency = waluta operacji: rozliczenie nastąpiło w tej samej walucie co zdarzenie
+    // (hardkod 'PLN' fabrykowałby fantomowe rozliczenie FX dla operacji np. w USD).
     const syntheticSell = {
       date: existing.date,
       paperName: targetTicker,
@@ -776,7 +785,7 @@ router.post(
       commission: 0,
       total: existing.amount,
       currency: existing.currency,
-      paymentCurrency: 'PLN',
+      paymentCurrency: existing.currency,
       source: 'bossa' as const,
       syntheticOrigin: `Domknięcie: ${existing.description} — ${quantity} szt @ ${price.toFixed(2)} ${existing.currency} (ręczne domknięcie przez user)`,
     };

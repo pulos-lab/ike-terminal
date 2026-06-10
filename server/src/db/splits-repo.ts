@@ -1,6 +1,13 @@
 import { getDb } from './connection.js';
 import type { StockSplit } from 'shared';
 
+// UWAGA: to repo CELOWO nie woła bumpPortfolioDataVersion. Endpoint /history
+// persystuje zmergowane splity przy każdym requeście — bump na poziomie repo
+// unieważniałby memo historii permanentnie (każdy request = nowa wersja danych).
+// Wersję podbijają routes: routes/portfolio.ts robi to tylko gdy detekcja
+// znalazła faktycznie NOWE splity oraz przy ręcznych mutacjach splitów.
+// Nie "naprawiaj" tego dodając bump tutaj.
+
 interface SplitRow {
   id: number;
   isin: string;
