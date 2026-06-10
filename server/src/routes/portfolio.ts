@@ -72,6 +72,11 @@ import { computePortfolioHistoryMemoized } from '../services/history-memo.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { searchTickers, fetchYahooTickerName } from '../services/ticker-search.js';
 import { scanDividends } from '../services/dividend-scanner.js';
+import {
+  getGpwDividendCalendarService,
+  upcomingFromCalendarEntry,
+  type GpwCalendarMaps,
+} from '../services/gpw-dividend-calendar.js';
 
 const router = Router();
 
@@ -362,7 +367,9 @@ router.post(
   }),
 );
 
-// GET /api/portfolio/dividends/upcoming — upcoming dividends from v10 calendar
+// GET /api/portfolio/dividends/upcoming — nadchodzące dywidendy.
+// GPW/NC: scrape'owany kalendarz stockwatch+biznesradar (lazy ≤1×/24h, bez requestów
+// per-ticker); GPW bez trafienia w kalendarz oraz giełdy zagraniczne: Yahoo Finance.
 router.get(
   '/dividends/upcoming',
   asyncHandler(async (req, res) => {
@@ -379,9 +386,29 @@ router.get(
     const today = new Date().toISOString().split('T')[0];
     const upcoming: UpcomingDividend[] = [];
 
+    // Kalendarz GPW/NC (stockwatch+biznesradar) — jedno wywołanie per request; awaria
+    // serwisu degraduje do pustych map, czyli pozycje GPW idą starą ścieżką Yahoo.
+    let gpwCalendar: GpwCalendarMaps = { byTicker: new Map(), byShortName: new Map() };
+    try {
+      gpwCalendar = await getGpwDividendCalendarService().getCalendar();
+    } catch (err) {
+      console.warn('[dividends/upcoming] Kalendarz GPW niedostępny — fallback Yahoo:', err);
+    }
+
     for (const pos of positions) {
       if (pos.shares <= 0) continue;
-      if (pos.exchange === 'NC') continue;
+
+      if (pos.exchange === 'GPW' || pos.exchange === 'NC') {
+        const base = pos.ticker.replace(/\.WA$/i, '').toUpperCase();
+        const entry = gpwCalendar.byTicker.get(base) ?? gpwCalendar.byShortName.get(base);
+        if (entry) {
+          const fromCalendar = upcomingFromCalendarEntry(entry, pos, today);
+          if (fromCalendar) upcoming.push(fromCalendar);
+          continue; // trafienie w kalendarz — bez Yahoo
+        }
+        // NewConnect nie istnieje w Yahoo — miss kalendarza kończy temat.
+        if (pos.exchange === 'NC') continue;
+      }
 
       try {
         const cal = await fetchDividendCalendar(pos.ticker);
@@ -420,6 +447,7 @@ router.get(
           shares: pos.shares,
           dividendPerShare: perShare,
           dividendYield: cal.dividendYield,
+          source: 'yahoo',
         });
       } catch (err) {
         // Skip ticker on error

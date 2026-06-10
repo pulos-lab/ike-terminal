@@ -73,6 +73,24 @@ function StatusBadge({ exDate, payDate }: { exDate: string; payDate: string | nu
   return null;
 }
 
+// Status uchwały z kalendarza GPW (stockwatch/biznesradar) — tylko dla wpisów,
+// które go mają (źródło 'gpw-calendar'); Yahoo nie dostarcza statusu.
+const CALENDAR_STATUS_STYLES: Record<string, string> = {
+  proponowana: 'bg-muted text-muted-foreground',
+  uchwalona: 'bg-emerald-500/15 text-emerald-500',
+};
+
+function CalendarStatusPill({ status }: { status?: string }) {
+  if (!status || !CALENDAR_STATUS_STYLES[status]) return null;
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${CALENDAR_STATUS_STYLES[status]}`}
+    >
+      {status}
+    </span>
+  );
+}
+
 // ============ Upcoming Dividends Panel ============
 
 function UpcomingDividendCardMobile({ d }: { d: UpcomingDividend }) {
@@ -98,7 +116,10 @@ function UpcomingDividendCardMobile({ d }: { d: UpcomingDividend }) {
           <span className="text-muted-foreground tabular-nums truncate">
             ex: {formatDate(d.exDividendDate)} · {formatQuantity(d.shares)} szt.
           </span>
-          <StatusBadge exDate={d.exDividendDate} payDate={d.paymentDate} />
+          <span className="inline-flex items-center gap-1">
+            <CalendarStatusPill status={d.status} />
+            <StatusBadge exDate={d.exDividendDate} payDate={d.paymentDate} />
+          </span>
         </ExpandableCardSubRow>
       }
     >
@@ -172,7 +193,10 @@ function UpcomingDividendsPanel() {
                     <CcyChip ccy={d.currency} />
                   </TableCell>
                   <TableCell>
-                    <StatusBadge exDate={d.exDividendDate} payDate={d.paymentDate} />
+                    <span className="inline-flex items-center gap-1">
+                      <CalendarStatusPill status={d.status} />
+                      <StatusBadge exDate={d.exDividendDate} payDate={d.paymentDate} />
+                    </span>
                   </TableCell>
                 </TableRow>
               ))}
