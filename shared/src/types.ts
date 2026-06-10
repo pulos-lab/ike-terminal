@@ -206,6 +206,10 @@ export interface UpcomingDividend {
   shares: number;
   dividendPerShare: number | null;
   dividendYield: number | null;
+  /** Status z kalendarza GPW (stockwatch/biznesradar); brak dla źródła Yahoo. */
+  status?: 'proponowana' | 'uchwalona' | 'wypłacona';
+  /** Skąd pochodzi wpis: scrape'owany kalendarz GPW/NC czy Yahoo Finance. */
+  source?: 'gpw-calendar' | 'yahoo';
 }
 
 export interface DividendInput {
