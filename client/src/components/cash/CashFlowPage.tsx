@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { AddDepositDialog } from './AddDepositDialog';
 import { CashFlowChart } from './CashFlowChart';
@@ -325,8 +325,11 @@ export function CashFlowPage() {
                 showCashFlow={showCashFlow}
               />
             ) : (
-              <div className="flex items-center justify-center h-80 text-muted-foreground">
-                Brak danych.
+              <div className="flex items-center justify-center h-80">
+                <EmptyState
+                  className="py-0"
+                  message="Brak danych do wykresu. Zaimportuj historię transakcji lub dodaj operację."
+                />
               </div>
             )}
           </CardContent>
@@ -352,9 +355,10 @@ export function CashFlowPage() {
             {depositsLoading ? (
               <LoadingSpinner />
             ) : yearGroups.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground text-sm">
-                Brak operacji gotówkowych. Kliknij &quot;Dodaj operację&quot; aby dodać pierwszą.
-              </div>
+              <EmptyState
+                message="Brak operacji gotówkowych. Zaimportuj historię transakcji lub dodaj ręcznie."
+                action={{ label: 'Dodaj operację', onClick: () => setAddOpen(true) }}
+              />
             ) : (
               <>
                 <div className="md:hidden flex flex-col gap-2">
@@ -556,12 +560,11 @@ export function CashFlowPage() {
                     <TableBody>
                       {yearGroups.length === 0 ? (
                         <TableRow>
-                          <TableCell
-                            colSpan={totalCols}
-                            className="text-center py-12 text-muted-foreground"
-                          >
-                            Brak operacji gotówkowych. Kliknij &quot;Dodaj operację&quot; aby dodać
-                            pierwszą.
+                          <TableCell colSpan={totalCols}>
+                            <EmptyState
+                              message="Brak operacji gotówkowych. Zaimportuj historię transakcji lub dodaj ręcznie."
+                              action={{ label: 'Dodaj operację', onClick: () => setAddOpen(true) }}
+                            />
                           </TableCell>
                         </TableRow>
                       ) : (

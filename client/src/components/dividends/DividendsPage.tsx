@@ -13,7 +13,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { AddDividendDialog } from './AddDividendDialog';
@@ -367,9 +367,10 @@ export function DividendsPage() {
           {isLoading ? (
             <LoadingSpinner />
           ) : dividends.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground text-sm">
-              Brak danych. Kliknij &quot;Dodaj dywidende&quot; aby dodac pierwsza.
-            </div>
+            <EmptyState
+              message="Brak dywidend. Zaimportuj historię transakcji lub dodaj ręcznie."
+              action={{ label: 'Dodaj dywidendę', onClick: () => setAddOpen(true) }}
+            />
           ) : (
             <>
               <div className="md:hidden flex flex-col gap-2">

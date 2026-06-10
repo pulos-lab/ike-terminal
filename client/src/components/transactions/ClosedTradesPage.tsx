@@ -754,9 +754,19 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
               )}
             </>
           ) : data?.trades?.length ? (
-            <EmptyState message="Brak transakcji dla wybranych filtrów." />
+            <EmptyState
+              message="Brak transakcji dla wybranych filtrów."
+              action={{
+                label: 'Wyczyść filtry',
+                onClick: () => {
+                  setPlFilter('all');
+                  setCurrencyFilter('ALL');
+                  setDateRange('ALL');
+                },
+              }}
+            />
           ) : (
-            <EmptyState message="Brak danych." />
+            <EmptyState message="Brak zamkniętych transakcji. Zaimportuj historię transakcji lub dodaj ręcznie." />
           )}
         </CardContent>
       </Card>

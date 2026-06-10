@@ -26,6 +26,9 @@ export function TickerAutocomplete({
   const [results, setResults] = useState<TickerResult[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // Wyszukiwarka padła (błąd sieci/serwera) — pokazujemy nieblokującą podpowiedź
+  // zamiast cicho udawać, że ticker nie istnieje. Bez toasta: odpala się per keystroke.
+  const [searchFailed, setSearchFailed] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -66,8 +69,12 @@ export function TickerAutocomplete({
       setResults(list);
       setIsOpen(list.length > 0);
       setHighlightIndex(-1);
+      setSearchFailed(false);
     } catch {
-      if (seq === searchSeqRef.current) setResults([]);
+      if (seq === searchSeqRef.current) {
+        setResults([]);
+        setSearchFailed(true);
+      }
     } finally {
       if (seq === searchSeqRef.current) setIsLoading(false);
     }
@@ -122,6 +129,11 @@ export function TickerAutocomplete({
         <div className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
           ...
         </div>
+      )}
+      {searchFailed && !isLoading && (
+        <p className="text-xs text-muted-foreground mt-1">
+          Wyszukiwanie niedostępne — wpisz ticker ręcznie
+        </p>
       )}
       {isOpen && results.length > 0 && (
         <div className="absolute z-50 mt-1 w-full max-h-60 overflow-auto rounded-md border bg-popover shadow-lg">

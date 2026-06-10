@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CcyChip } from '@/components/ui/ccy-chip';
-import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import {
   Dialog,
   DialogContent,
@@ -894,9 +894,10 @@ export function CorrectionsAndCostsPage() {
               Zwroty kapitałowe ({resolved.length})
             </div>
             {resolved.length === 0 ? (
-              <p className="text-center text-sm text-muted-foreground py-6">
-                Brak zrealizowanych zwrotów kapitału w tym portfelu.
-              </p>
+              <EmptyState
+                className="py-6"
+                message="Brak zrealizowanych zwrotów kapitału. Pojawią się tu po imporcie historii z taką operacją."
+              />
             ) : (
               <>
                 <div className="md:hidden flex flex-col gap-2">
@@ -1113,9 +1114,10 @@ export function CorrectionsAndCostsPage() {
 
           {/* Historia */}
           {costs.length === 0 ? (
-            <p className="text-center text-sm text-muted-foreground py-6">
-              Brak operacji kosztowych w tym portfelu.
-            </p>
+            <EmptyState
+              className="py-6"
+              message="Brak operacji kosztowych. Zaimportuj historię transakcji lub dodaj ręcznie."
+            />
           ) : (
             <>
               <div className="md:hidden flex flex-col gap-2">

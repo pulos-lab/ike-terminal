@@ -9,6 +9,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/loading-spinner';
 
 const CATEGORY_LABELS: Record<string, string> = {
   import: 'Import',
@@ -52,7 +53,7 @@ export function BugReportsPage() {
       </div>
 
       {!reports?.length ? (
-        <p className="text-sm text-muted-foreground">Brak zgłoszeń.</p>
+        <EmptyState message="Brak zgłoszeń. Użytkownicy mogą je wysyłać z menu „Zgłoś błąd”." />
       ) : (
         <div className="rounded-md border">
           <Table>
