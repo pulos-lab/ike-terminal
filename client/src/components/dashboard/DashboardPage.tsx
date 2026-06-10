@@ -120,11 +120,11 @@ export function DashboardPage() {
         <HeroKPI history={filteredHistory} />
       </div>
 
-      <Card>
-        <CardHeader className="pb-2">
+      <Card className="gap-3">
+        <CardHeader className="gap-0 pb-0">
           <TooltipProvider>
             {/* Toolbar: tytuł+benchmark (lewo) | MWR/TWR + zakres + akcje (desktop: jedna linia) */}
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b pb-2.5 md:flex-nowrap">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b pb-2.5">
               {/* Co oglądam: tytuł z wbudowanym wyborem benchmarku */}
               <div className="flex min-w-0 items-center gap-1.5">
                 <CardTitle className="truncate text-sm font-semibold">{activeName} vs</CardTitle>
@@ -154,6 +154,25 @@ export function DashboardPage() {
                   </TooltipContent>
                 </Tooltip>
               </div>
+
+              {/* Custom (desktop): pola dat inline po lewej — presety zostają klikalne */}
+              {isCustom && (
+                <div className="hidden items-center gap-1.5 md:flex">
+                  <Input
+                    type="date"
+                    value={customFrom}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className="h-7 w-[130px] text-xs"
+                  />
+                  <span className="text-xs text-muted-foreground">—</span>
+                  <Input
+                    type="date"
+                    value={customTo}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className="h-7 w-[130px] text-xs"
+                  />
+                </div>
+              )}
 
               {/* Akcje: share + mobilne ustawienia (desktop: koniec paska) */}
               <div className="ml-auto flex shrink-0 items-center gap-1 md:order-6 md:ml-0">
@@ -311,21 +330,21 @@ export function DashboardPage() {
               <span className="hidden h-4 w-px bg-border md:order-5 md:block" />
             </div>
 
-            {/* Custom: pola zakresu dat (oba breakpointy, pod paskiem) */}
+            {/* Custom (mobile): pola dat pod paskiem */}
             {isCustom && (
-              <div className="flex items-center gap-1.5 md:justify-end">
+              <div className="mt-2 flex items-center gap-1.5 md:hidden">
                 <Input
                   type="date"
                   value={customFrom}
                   onChange={(e) => setCustomFrom(e.target.value)}
-                  className="h-7 flex-1 text-xs md:w-[130px] md:flex-none"
+                  className="h-7 flex-1 text-xs"
                 />
                 <span className="text-xs text-muted-foreground">—</span>
                 <Input
                   type="date"
                   value={customTo}
                   onChange={(e) => setCustomTo(e.target.value)}
-                  className="h-7 flex-1 text-xs md:w-[130px] md:flex-none"
+                  className="h-7 flex-1 text-xs"
                 />
               </div>
             )}
