@@ -55,6 +55,36 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Prod-deps smoke test
+        # Symulacja produkcyjnej instalacji PRZED rsync: prod robi
+        # `npm ci --omit=dev`, więc zależność runtime omyłkowo wpisana do
+        # devDependencies (incydent cheerio, PR #77/#78 — crash loop i 502)
+        # wywala serwer dopiero po restarcie na VPS. Tutaj: kopia plików
+        # dokładnie w układzie produkcyjnym, instalacja bez devDeps i start
+        # serwera — jeśli proces nie przeżyje 8 s (ERR_MODULE_NOT_FOUND
+        # zabija go natychmiast), deploy nie rusza.
+        run: |
+          SMOKE=$(mktemp -d)
+          mkdir -p "$SMOKE/server" "$SMOKE/shared" "$SMOKE/client"
+          cp package.json package-lock.json "$SMOKE/"
+          cp server/package.json "$SMOKE/server/"
+          cp shared/package.json "$SMOKE/shared/"
+          cp client/package.json "$SMOKE/client/"
+          cp -r server/dist "$SMOKE/server/dist"
+          cp -r shared/dist "$SMOKE/shared/dist"
+          cd "$SMOKE"
+          npm ci --omit=dev
+          DATA_DIR=$(mktemp -d) node server/dist/index.js > smoke.log 2>&1 &
+          SERVER_PID=$!
+          sleep 8
+          if ! kill -0 $SERVER_PID 2>/dev/null; then
+            echo "::error::Serwer padł przy starcie na produkcyjnym zestawie zależności (npm ci --omit=dev). Log:"
+            cat smoke.log
+            exit 1
+          fi
+          kill $SERVER_PID
+          echo "OK — serwer wstał na samych dependencies (bez devDependencies)"
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
