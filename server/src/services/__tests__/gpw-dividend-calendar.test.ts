@@ -238,6 +238,16 @@ describe('mergeCalendars', () => {
     expect(merged[0].payDate).toBe('2026-07-01');
   });
 
+  it('zerowa kwota stockwatch NIE wygrywa z dodatnią biznesradar (przypadek MOL)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const merged = mergeCalendars(
+      [entry({ shortName: 'MOLX', source: 'stockwatch', amountPln: 0, ticker: null })],
+      [entry({ shortName: 'MOLX', source: 'biznesradar', amountPln: 3.27 })],
+    );
+    expect(merged[0].amountPln).toBe(3.27);
+    expect(warn).not.toHaveBeenCalled(); // zero = brak danych, nie konflikt
+  });
+
   it('rozbieżność kwot: zostaje stockwatch + console.warn', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const merged = mergeCalendars(

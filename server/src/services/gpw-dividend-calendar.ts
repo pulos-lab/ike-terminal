@@ -241,7 +241,10 @@ export function mergeCalendars(
       continue;
     }
     bySkrot.delete(sw.shortName);
-    if (Math.abs(sw.amountPln - br.amountPln) > 0.001) {
+    // Preferencja stockwatch — ale zerowa/ujemna kwota to brak danych, nie
+    // autorytatywna wartość (realny przypadek: MOL — stockwatch 0, biznesradar 3.27).
+    const amountPln = sw.amountPln > 0 ? sw.amountPln : br.amountPln;
+    if (sw.amountPln > 0 && Math.abs(sw.amountPln - br.amountPln) > 0.001) {
       console.warn(
         `[gpw-dividend-calendar] Rozbieżność kwoty dla ${sw.shortName}: ` +
           `stockwatch ${sw.amountPln} vs biznesradar ${br.amountPln} — zostaje stockwatch`,
@@ -250,7 +253,7 @@ export function mergeCalendars(
     merged.push({
       ticker: br.ticker,
       shortName: sw.shortName,
-      amountPln: sw.amountPln,
+      amountPln,
       exDate: sw.exDate,
       payDate: sw.payDate ?? br.payDate,
       status: sw.status,
