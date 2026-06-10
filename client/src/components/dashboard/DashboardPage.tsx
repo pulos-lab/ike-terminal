@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Info, Settings } from 'lucide-react';
+import { Calendar, Info, Settings } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import { filterAndRebaseHistory, getPresetStartDate } from '@/lib/returns';
 import { usePortfolio } from '@/lib/portfolio-context';
@@ -46,10 +46,11 @@ function ChartLegend({
 }) {
   const pfmt = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
   return (
-    <div className="flex items-center gap-3 text-xs tabular-nums">
+    <div className="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-3 rounded-md border bg-background/80 px-2.5 py-1 text-xs tabular-nums">
       <span className="flex items-center gap-1.5">
         <span className="inline-block w-3 h-0.5 rounded-full bg-primary" />
-        <span className="text-muted-foreground">{pfmt(portfolioPct)} portfel</span>
+        <span className="text-muted-foreground">portfel</span>
+        <span className="font-medium text-primary">{pfmt(portfolioPct)}</span>
       </span>
       {benchmarkPct !== null && (
         <span className="flex items-center gap-1.5">
@@ -61,9 +62,8 @@ function ChartLegend({
               color: 'var(--muted-foreground)',
             }}
           />
-          <span className="text-muted-foreground">
-            {pfmt(benchmarkPct)} {benchmarkLabel}
-          </span>
+          <span className="text-muted-foreground">{benchmarkLabel}</span>
+          <span className="font-medium">{pfmt(benchmarkPct)}</span>
         </span>
       )}
     </div>
@@ -123,160 +123,117 @@ export function DashboardPage() {
       <Card>
         <CardHeader className="pb-2">
           <TooltipProvider>
-            {/* Tytuł + legend (mobile: pełna szerokość; desktop: tytuł-lewo, range-prawo) */}
-            <div className="flex flex-col md:flex-row md:flex-wrap md:items-center md:justify-between gap-x-4 gap-y-2">
-              <div className="flex items-center justify-between gap-2 md:flex-1 md:min-w-0 md:justify-start">
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
-                  <CardTitle className="text-sm font-semibold">
-                    {activeName}
-                    {showBenchmark ? ` vs ${benchmarkLabel}` : ''}
-                  </CardTitle>
-                  {filteredHistory.length > 1 && (
-                    <ChartLegend
-                      portfolioPct={
-                        chartMode === 'twr'
-                          ? filteredHistory[filteredHistory.length - 1].twrPct
-                          : filteredHistory[filteredHistory.length - 1].returnPct
-                      }
-                      benchmarkPct={
-                        showBenchmark
-                          ? chartMode === 'twr'
-                            ? filteredHistory[filteredHistory.length - 1].benchmarkTwrPct
-                            : filteredHistory[filteredHistory.length - 1].benchmarkReturnPct
-                          : null
-                      }
-                      benchmarkLabel={benchmarkLabel}
-                    />
-                  )}
-                </div>
-
-                <div className="flex items-center gap-1 shrink-0">
-                  {/* Udostępnij portfel — oba breakpointy */}
-                  <ShareDialog currentBenchmark={benchmark} />
-
-                  {/* Mobile-only: ⚙ Ustawienia (MWR/TWR + benchmark) */}
-                  <Sheet>
-                    <SheetTrigger asChild>
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        className="md:hidden text-muted-foreground shrink-0"
-                        aria-label="Ustawienia wykresu"
-                      >
-                        <Settings className="h-4 w-4" />
-                      </Button>
-                    </SheetTrigger>
-                    <SheetContent side="bottom" className="rounded-t-xl max-h-[85vh] overflow-auto">
-                      <SheetHeader className="pb-2">
-                        <SheetTitle>Ustawienia wykresu</SheetTitle>
-                      </SheetHeader>
-                      <div className="flex flex-col gap-4 px-4 pb-6">
-                        <div className="flex flex-col gap-1.5">
-                          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
-                            Sposób liczenia
-                          </span>
-                          <div className="grid grid-cols-2 rounded-md border overflow-hidden">
-                            <Button
-                              size="sm"
-                              variant={chartMode === 'mwr' ? 'secondary' : 'ghost'}
-                              className="h-9 text-xs rounded-none"
-                              onClick={() => setChartMode('mwr')}
-                            >
-                              MWR
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant={chartMode === 'twr' ? 'secondary' : 'ghost'}
-                              className="h-9 text-xs rounded-none border-l"
-                              onClick={() => setChartMode('twr')}
-                            >
-                              TWR
-                            </Button>
-                          </div>
-                          <p className="text-[11px] text-muted-foreground">
-                            {chartMode === 'mwr'
-                              ? 'Money-Weighted Return — uwzględnia wpłaty/wypłaty, pokazuje realną stopę zwrotu inwestora.'
-                              : 'Time-Weighted Return — eliminuje wpływ wpłat/wypłat, pokazuje czystą efektywność strategii.'}
-                          </p>
-                        </div>
-
-                        <div className="flex flex-col gap-1.5">
-                          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
-                            Benchmark
-                          </span>
-                          <Select value={benchmark} onValueChange={setBenchmark}>
-                            <SelectTrigger className="h-9 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {BENCHMARKS.map((b) => (
-                                <SelectItem key={b.value} value={b.value}>
-                                  {b.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <p className="text-[11px] text-muted-foreground">
-                            Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy
-                            przy tych samych wpłatach/wypłatach (DCA).
-                          </p>
-                        </div>
-                      </div>
-                    </SheetContent>
-                  </Sheet>
-                </div>
-              </div>
-
-              {/* Zakres czasu — desktop obok tytułu, mobile w osobnym rzędzie z scroll */}
-              <div className="flex items-center gap-1 overflow-x-auto md:overflow-visible -mx-6 px-6 md:mx-0 md:px-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                {PRESET_RANGES.map((r) => (
-                  <button
-                    key={r}
-                    className={`shrink-0 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
-                      timeRange === r
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:text-foreground'
+            {/* Toolbar: tytuł+benchmark (lewo) | MWR/TWR + zakres + akcje (desktop: jedna linia) */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b pb-2.5 md:flex-nowrap">
+              {/* Co oglądam: tytuł z wbudowanym wyborem benchmarku */}
+              <div className="flex min-w-0 items-center gap-1.5">
+                <CardTitle className="truncate text-sm font-semibold">{activeName} vs</CardTitle>
+                <Select value={benchmark} onValueChange={setBenchmark}>
+                  <SelectTrigger
+                    className={`h-auto gap-1 rounded-none border-0 border-b border-dotted border-muted-foreground/40 bg-transparent p-0 pb-0.5 text-sm font-semibold whitespace-nowrap shadow-none transition-colors hover:border-muted-foreground focus-visible:ring-0 dark:bg-transparent dark:hover:bg-transparent data-[size=default]:h-auto [&_svg:not([class*='size-'])]:size-3.5 ${
+                      showBenchmark ? '' : 'text-muted-foreground'
                     }`}
-                    onClick={() => selectPreset(r)}
                   >
-                    {r}
-                  </button>
-                ))}
-                <button
-                  className={`shrink-0 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
-                    isCustom
-                      ? 'bg-primary/10 text-primary'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                  onClick={selectCustom}
-                >
-                  Custom
-                </button>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BENCHMARKS.map((b) => (
+                      <SelectItem key={b.value} value={b.value}>
+                        {b.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="hidden h-3.5 w-3.5 cursor-help text-muted-foreground/60 transition-colors hover:text-muted-foreground md:block" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[280px] text-xs">
+                    Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy przy
+                    tych samych wpłatach/wypłatach (strategia DCA)
+                  </TooltipContent>
+                </Tooltip>
               </div>
-            </div>
 
-            {/* Mobile-only: custom date inputs poniżej range gdy isCustom */}
-            {isCustom && (
-              <div className="md:hidden flex items-center gap-1.5 mt-2">
-                <Input
-                  type="date"
-                  value={customFrom}
-                  onChange={(e) => setCustomFrom(e.target.value)}
-                  className="h-7 text-xs flex-1"
-                />
-                <span className="text-xs text-muted-foreground">—</span>
-                <Input
-                  type="date"
-                  value={customTo}
-                  onChange={(e) => setCustomTo(e.target.value)}
-                  className="h-7 text-xs flex-1"
-                />
+              {/* Akcje: share + mobilne ustawienia (desktop: koniec paska) */}
+              <div className="ml-auto flex shrink-0 items-center gap-1 md:order-6 md:ml-0">
+                {/* Udostępnij portfel — oba breakpointy */}
+                <ShareDialog currentBenchmark={benchmark} />
+
+                {/* Mobile-only: ⚙ Ustawienia (MWR/TWR + benchmark) */}
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="md:hidden text-muted-foreground shrink-0"
+                      aria-label="Ustawienia wykresu"
+                    >
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="bottom" className="rounded-t-xl max-h-[85vh] overflow-auto">
+                    <SheetHeader className="pb-2">
+                      <SheetTitle>Ustawienia wykresu</SheetTitle>
+                    </SheetHeader>
+                    <div className="flex flex-col gap-4 px-4 pb-6">
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                          Sposób liczenia
+                        </span>
+                        <div className="grid grid-cols-2 rounded-md border overflow-hidden">
+                          <Button
+                            size="sm"
+                            variant={chartMode === 'mwr' ? 'secondary' : 'ghost'}
+                            className="h-9 text-xs rounded-none"
+                            onClick={() => setChartMode('mwr')}
+                          >
+                            MWR
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={chartMode === 'twr' ? 'secondary' : 'ghost'}
+                            className="h-9 text-xs rounded-none border-l"
+                            onClick={() => setChartMode('twr')}
+                          >
+                            TWR
+                          </Button>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          {chartMode === 'mwr'
+                            ? 'Money-Weighted Return — uwzględnia wpłaty/wypłaty, pokazuje realną stopę zwrotu inwestora.'
+                            : 'Time-Weighted Return — eliminuje wpływ wpłat/wypłat, pokazuje czystą efektywność strategii.'}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                          Benchmark
+                        </span>
+                        <Select value={benchmark} onValueChange={setBenchmark}>
+                          <SelectTrigger className="h-9 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {BENCHMARKS.map((b) => (
+                              <SelectItem key={b.value} value={b.value}>
+                                {b.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[11px] text-muted-foreground">
+                          Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy
+                          przy tych samych wpłatach/wypłatach (DCA).
+                        </p>
+                      </div>
+                    </div>
+                  </SheetContent>
+                </Sheet>
               </div>
-            )}
 
-            {/* MWR/TWR + benchmark + info — DESKTOP ONLY */}
-            <div className="hidden md:flex flex-wrap items-center gap-2 mt-2">
-              <div className="flex items-center bg-muted rounded-md p-0.5">
+              {/* Sposób liczenia: MWR/TWR — desktop (mobile w arkuszu ustawień) */}
+              <div className="hidden items-center rounded-md bg-muted p-0.5 md:order-3 md:ml-auto md:flex">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -314,57 +271,96 @@ export function DashboardPage() {
                   </TooltipContent>
                 </Tooltip>
               </div>
-              <Select value={benchmark} onValueChange={setBenchmark}>
-                <SelectTrigger className="h-7 text-xs w-32 bg-muted border-transparent">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {BENCHMARKS.map((b) => (
-                    <SelectItem key={b.value} value={b.value}>
-                      {b.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/60 hover:text-muted-foreground transition-colors" />
-                </TooltipTrigger>
-                <TooltipContent className="max-w-[280px] text-xs">
-                  Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy przy tych
-                  samych wpłatach/wypłatach (strategia DCA)
-                </TooltipContent>
-              </Tooltip>
-              {isCustom && (
-                <div className="flex items-center gap-1.5 ml-auto">
-                  <Input
-                    type="date"
-                    value={customFrom}
-                    onChange={(e) => setCustomFrom(e.target.value)}
-                    className="h-7 w-[130px] text-xs"
-                  />
-                  <span className="text-xs text-muted-foreground">—</span>
-                  <Input
-                    type="date"
-                    value={customTo}
-                    onChange={(e) => setCustomTo(e.target.value)}
-                    className="h-7 w-[130px] text-xs"
-                  />
-                </div>
-              )}
+
+              {/* Zakres czasu — mobile: rząd ze scrollem; desktop: segment w pasku */}
+              <div className="order-4 -mx-6 flex w-full items-center gap-1 overflow-x-auto px-6 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] md:mx-0 md:w-auto md:gap-0.5 md:overflow-visible md:rounded-md md:bg-muted md:p-0.5 md:px-0.5">
+                {PRESET_RANGES.map((r) => (
+                  <button
+                    key={r}
+                    className={`shrink-0 px-2 py-1 rounded-md text-xs font-medium transition-colors md:py-0.5 ${
+                      timeRange === r
+                        ? 'bg-primary/15 text-primary'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                    onClick={() => selectPreset(r)}
+                  >
+                    {r}
+                  </button>
+                ))}
+                <span className="mx-0.5 hidden h-3.5 w-px bg-border md:block" />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      className={`shrink-0 px-2 py-1 rounded-md text-xs font-medium transition-colors md:py-0.5 ${
+                        isCustom
+                          ? 'bg-primary/15 text-primary'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                      onClick={selectCustom}
+                      aria-label="Własny zakres dat"
+                    >
+                      <span className="md:hidden">Custom</span>
+                      <Calendar className="hidden h-3.5 w-3.5 md:block" aria-hidden="true" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="text-xs">Własny zakres dat</TooltipContent>
+                </Tooltip>
+              </div>
+
+              {/* Separator przed akcjami — desktop */}
+              <span className="hidden h-4 w-px bg-border md:order-5 md:block" />
             </div>
+
+            {/* Custom: pola zakresu dat (oba breakpointy, pod paskiem) */}
+            {isCustom && (
+              <div className="flex items-center gap-1.5 md:justify-end">
+                <Input
+                  type="date"
+                  value={customFrom}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                  className="h-7 flex-1 text-xs md:w-[130px] md:flex-none"
+                />
+                <span className="text-xs text-muted-foreground">—</span>
+                <Input
+                  type="date"
+                  value={customTo}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                  className="h-7 flex-1 text-xs md:w-[130px] md:flex-none"
+                />
+              </div>
+            )}
           </TooltipProvider>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <LoadingSpinner />
           ) : filteredHistory.length ? (
-            <PortfolioChart
-              data={filteredHistory}
-              benchmarkLabel={benchmarkLabel}
-              mode={chartMode}
-              showBenchmark={showBenchmark}
-            />
+            <div className="relative">
+              {/* Legenda na płótnie wykresu (jak w TradingView) — nie blokuje crosshaira */}
+              {filteredHistory.length > 1 && (
+                <ChartLegend
+                  portfolioPct={
+                    chartMode === 'twr'
+                      ? filteredHistory[filteredHistory.length - 1].twrPct
+                      : filteredHistory[filteredHistory.length - 1].returnPct
+                  }
+                  benchmarkPct={
+                    showBenchmark
+                      ? chartMode === 'twr'
+                        ? filteredHistory[filteredHistory.length - 1].benchmarkTwrPct
+                        : filteredHistory[filteredHistory.length - 1].benchmarkReturnPct
+                      : null
+                  }
+                  benchmarkLabel={benchmarkLabel}
+                />
+              )}
+              <PortfolioChart
+                data={filteredHistory}
+                benchmarkLabel={benchmarkLabel}
+                mode={chartMode}
+                showBenchmark={showBenchmark}
+              />
+            </div>
           ) : (
             <div className="flex items-center justify-center h-80 text-muted-foreground">
               Brak danych. Zaimportuj historię transakcji lub dodaj ręcznie transakcje.
