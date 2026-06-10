@@ -16,7 +16,7 @@ Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i st
 
 ## Struktura katalogów
 - `client/src/components/` — strony i komponenty React (`dashboard`, `portfolio`, `transactions`, `dividends`, `currency`, `cash`, `corrections-and-costs`, `admin`, `auth`, `landing`, `layout`, `shared`, `ui`)
-- `server/src/routes/` — endpointy API: `portfolios`, `portfolio`, `prices`, `import`, `bug-reports`
+- `server/src/routes/` — endpointy API: `portfolios`, `portfolio`, `prices`, `import`, `bug-reports`, `share` (CRUD publicznego linku), `public-share` (widok publiczny bez auth)
 - `server/src/parsers/` — parsery brokerów: `bossa-transactions`, `bossa-operations`, `mbank-transactions`, `degiro-transactions`, `degiro-operations`, `xtb-transactions` (XLSX) + `registry`, `encoding`, `utils`, `__tests__/`
 - `server/src/services/` — logika biznesowa: `portfolio-engine`, `history-memo` (cache computePortfolioHistory, wersjonowanie w `db/data-version`), `price-cache`, `history-cache`, `isin-resolver`, `sector-resolver`, `ticker-search`, `dividend-scanner`, `dividend-estimate`, `gpw-dividend-calendar` (kalendarz dywidend GPW/NC ze stockwatch+biznesradar, lazy refresh 24h), `split-detector`, `payment-currency-reconciler`, `benchmark-updater`, `import-service`, `yahoo-finance`, `yahoo-auth`, `stooq` + `__tests__/`
 - `shared/src/` — typy, stałe, mapy: `ticker-map`, `nc-ticker-map`, `cfd-ticker-map`, `gpw-sector-map`, `gics-to-stockwatch`, `isin-aliases-map`, `ipo-subscriptions-map`, `tender-offers-map`, `ike-ikze-limits`
@@ -33,7 +33,14 @@ Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i st
 7. **Korekty i koszty** (`/corrections-and-costs`) — corporate actions, korekty, koszty (zastąpiło dawne Corporate Actions)
 8. **Bug reports** (`/admin/bugs`) — panel admina dla zgłoszeń (kategorie: import, wykres, portfel, transakcje, dywidendy, waluty, inne)
 
-Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPassword.
+Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPassword, Udostępniony portfel (`/share/:token`).
+
+## Udostępnianie portfela (publiczny link)
+- Ikona Share2 na dashboardzie → `ShareDialog`: zakres (wykres / wykres+pozycje), widoczność kwot (tylko % / pełne kwoty), ważność (bezterminowo/7/30/90 dni), benchmark (zablokowany w widoku publicznym)
+- Jeden aktywny link per portfel (UNIQUE w `portfolio_shares` w auth.db); token 192-bit base64url; unieważnienie = hard delete, natychmiastowe
+- API: `/api/share` (CRUD właściciela, authed) + `/api/public/share/:token/{meta,history,positions}` (3 GET-y bez auth, jednolite 404, rate limit 120/15min, X-Robots-Tag noindex)
+- Redakcja kwot po stronie serwera (`share-redaction.ts`): historia normalizowana wspólną stałą k (ostatnia wartość = 1000) — statystyki klienta są scale-invariant; pozycje przez whitelist mapper
+- Reużycie logiki: `portfolio-views.ts` (`buildHistoryView`/`buildPositionsView`) — wspólne dla `/api/portfolio` i `/api/public`; świeżość danych z memo per dzień kalendarzowy (bez crona)
 
 ## Import danych — obsługiwane domy maklerskie
 1. **Bossa** — transakcje + operacje (średnik, Windows-1250, CSV)
