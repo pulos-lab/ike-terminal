@@ -1178,7 +1178,10 @@ export function computeFxImpact(
     let totalAcquiredNative = 0;
     let sumAcquiredTimesPlnPerX = 0;
     for (const op of operations) {
-      if (op.currency?.toUpperCase() !== currency.toUpperCase()) continue;
+      // Klucze foreignExposures są znormalizowane do GBP — operacja wpisana
+      // ręcznie jako GBX (pensy) musi trafić do tego samego kubełka.
+      const opCur = op.currency?.toUpperCase() === 'GBX' ? 'GBP' : op.currency?.toUpperCase();
+      if (opCur !== currency.toUpperCase()) continue;
       const isAcquisitionFx = op.operationType === 'fx_exchange' && op.amount > 0;
       const isDepositWithFx = op.operationType === 'deposit' && op.fxRate !== undefined;
       if (!isAcquisitionFx && !isDepositWithFx) continue;

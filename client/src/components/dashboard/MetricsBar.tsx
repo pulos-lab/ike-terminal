@@ -95,8 +95,8 @@ function FxImpactTooltipBody({ fxImpact }: { fxImpact: FxImpact }) {
   const absPln = Math.abs(fxImpact.fxImpactPln);
 
   const interpretation = positive
-    ? `Od czasu wpłat PLN osłabł w stosunku do walut obcych w portfelu. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} więcej (+${absPctPortfolio.toFixed(2)}% wartości portfela) niż przy średnich kursach zakupu.`
-    : `Od czasu wpłat PLN wzmocnił się w stosunku do walut obcych w portfelu. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} mniej (−${absPctPortfolio.toFixed(2)}% wartości portfela) niż przy średnich kursach zakupu.`;
+    ? `Od czasu wpłat i wymian walut PLN osłabł w stosunku do walut obcych w portfelu. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} więcej (+${absPctPortfolio.toFixed(2)}% wartości portfela) niż przy średnich kursach zakupu.`
+    : `Od czasu wpłat i wymian walut PLN wzmocnił się w stosunku do walut obcych w portfelu. Gdybyś dziś sprzedał cały portfel i przewalutował na PLN, dostałbyś ~${formatPLN(absPln)} mniej (−${absPctPortfolio.toFixed(2)}% wartości portfela) niż przy średnich kursach zakupu.`;
 
   return (
     <div className="text-xs space-y-2">
