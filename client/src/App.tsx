@@ -10,6 +10,7 @@ import { LoginPage } from '@/components/auth/LoginPage';
 import { VerifyOTPPage } from '@/components/auth/VerifyOTPPage';
 import { ForgotPasswordPage } from '@/components/auth/ForgotPasswordPage';
 import { LandingPage } from '@/components/landing/LandingPage';
+import { SharePublicPage } from '@/components/share/SharePublicPage';
 import { AppShell } from '@/components/layout/AppShell';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { PortfolioPage } from '@/components/portfolio/PortfolioPage';
@@ -46,6 +47,8 @@ function App() {
               <Route path="/login" element={<LoginPage />} />
               <Route path="/verify-email" element={<VerifyOTPPage />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              {/* Publiczny widok udostępnionego portfela — bez AuthGuard */}
+              <Route path="/share/:token" element={<SharePublicPage />} />
 
               {/* Protected routes */}
               <Route
