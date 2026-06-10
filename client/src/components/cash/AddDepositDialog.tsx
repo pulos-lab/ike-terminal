@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Dialog,
@@ -17,9 +17,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { FieldError } from '@/components/ui/field-error';
 import { api } from '@/lib/api-client';
+import { errorToast } from '@/lib/error-toast';
 import { invalidateCashFlow } from '@/lib/query-keys';
 import { formatCurrency } from '@/lib/formatters';
+import { useFormValidation, type FieldErrors } from '@/lib/use-form-validation';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -55,12 +58,21 @@ export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDia
   );
   const [type, setType] = useState<'deposit' | 'withdrawal'>(defaultValues?.type ?? 'deposit');
 
+  const formErrors = useMemo(() => {
+    const e: FieldErrors<'date' | 'amount'> = {};
+    if (!date) e.date = 'Podaj datę';
+    if (!amount || parseFloat(amount) <= 0) e.amount = 'Kwota musi być większa od 0';
+    return e;
+  }, [date, amount]);
+  const { submitGuard, fieldError, reset: resetValidation } = useFormValidation(formErrors);
+
   // Re-sync state gdy user wybierze inny wiersz do edycji
   useEffect(() => {
     if (!open) return;
     setDate(defaultValues?.date?.split('T')[0] ?? today);
     setAmount(defaultValues?.amount ? String(Math.abs(defaultValues.amount)) : '');
     setType(defaultValues?.type ?? 'deposit');
+    resetValidation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultValues?.id]);
 
@@ -73,7 +85,7 @@ export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDia
       );
       onClose();
     },
-    onError: (e: Error) => toast.error(`Nie udało się dodać: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się dodać', e),
   });
 
   const updateMut = useMutation({
@@ -86,11 +98,10 @@ export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDia
       toast.success('Zaktualizowano operację.');
       onClose();
     },
-    onError: (e: Error) => toast.error(`Nie udało się zapisać: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się zapisać', e),
   });
 
   const submitMut = isEdit ? updateMut : createMut;
-  const valid = date && amount && parseFloat(amount) > 0;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !submitMut.isPending && onClose()}>
@@ -125,7 +136,13 @@ export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDia
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground">Data *</label>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <Input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                aria-invalid={!!fieldError('date')}
+              />
+              <FieldError error={fieldError('date')} />
             </div>
             <div>
               <label className="text-xs text-muted-foreground">Kwota (PLN) *</label>
@@ -136,7 +153,9 @@ export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDia
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="np. 10000"
+                aria-invalid={!!fieldError('amount')}
               />
+              <FieldError error={fieldError('amount')} />
             </div>
           </div>
         </div>
@@ -145,7 +164,7 @@ export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDia
           <Button variant="outline" onClick={onClose} disabled={submitMut.isPending}>
             Anuluj
           </Button>
-          <Button onClick={() => submitMut.mutate()} disabled={!valid || submitMut.isPending}>
+          <Button onClick={submitGuard(() => submitMut.mutate())} disabled={submitMut.isPending}>
             {submitMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {isEdit ? 'Zapisz' : 'Dodaj'}
           </Button>

@@ -295,7 +295,12 @@ export function MonthlyReturnsChart({ history, benchmarkLabel, showBenchmark = f
       <CardContent>
         {hasAnyData ? (
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={monthly} margin={{ top: 16, right: 8, bottom: 0, left: 0 }}>
+            <BarChart
+              data={monthly}
+              margin={{ top: 16, right: 8, bottom: 0, left: 0 }}
+              accessibilityLayer
+              aria-label="Miesięczne stopy zwrotu portfela"
+            >
               <XAxis
                 dataKey="label"
                 tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}

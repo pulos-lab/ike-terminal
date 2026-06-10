@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Dialog,
@@ -10,9 +10,13 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { FieldError } from '@/components/ui/field-error';
 import { api } from '@/lib/api-client';
+import { errorToast } from '@/lib/error-toast';
 import { invalidatePortfolio } from '@/lib/query-keys';
 import { usePortfolio } from '@/lib/portfolio-context';
+import { formatQuantity } from '@/lib/formatters';
+import { useFormValidation, type FieldErrors } from '@/lib/use-form-validation';
 import { Loader2, TrendingDown } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Position } from 'shared';
@@ -39,6 +43,17 @@ export function SellPositionDialog({ position, onClose }: Props) {
   const [price, setPrice] = useState('');
   const [commission, setCommission] = useState('0');
   const [commissionTouched, setCommissionTouched] = useState(false);
+
+  const formErrors = useMemo(() => {
+    const e: FieldErrors<'date' | 'quantity' | 'price'> = {};
+    if (!date) e.date = 'Podaj datę';
+    if (!quantity || parseFloat(quantity) <= 0) e.quantity = 'Ilość musi być większa od 0';
+    else if (position && parseFloat(quantity) > position.shares)
+      e.quantity = `Maksymalnie ${formatQuantity(position.shares)} szt.`;
+    if (!price || parseFloat(price) <= 0) e.price = 'Cena musi być większa od 0';
+    return e;
+  }, [date, quantity, price, position]);
+  const { submitGuard, fieldError, reset: resetValidation } = useFormValidation(formErrors);
 
   const calcCommission = (ticker: string, qty: string, prc: string): string => {
     const q = parseFloat(qty);
@@ -67,6 +82,7 @@ export function SellPositionDialog({ position, onClose }: Props) {
     setPrice(prc);
     setCommission(calcCommission(position.ticker, qty, prc));
     setCommissionTouched(false);
+    resetValidation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [position?.ticker]);
 
@@ -98,17 +114,8 @@ export function SellPositionDialog({ position, onClose }: Props) {
       toast.success(`Sprzedano ${quantity} szt ${position?.ticker} @ ${price}`);
       onClose();
     },
-    onError: (err: Error) => toast.error(`Nie udało się sprzedać: ${err.message}`),
+    onError: (err: Error) => errorToast('Nie udało się sprzedać', err),
   });
-
-  const isValid =
-    !!date &&
-    !!quantity &&
-    parseFloat(quantity) > 0 &&
-    !!price &&
-    parseFloat(price) > 0 &&
-    !!position &&
-    parseFloat(quantity) <= position.shares;
 
   const open = position !== null;
 
@@ -140,7 +147,9 @@ export function SellPositionDialog({ position, onClose }: Props) {
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               className="text-right"
+              aria-invalid={!!fieldError('quantity')}
             />
+            <FieldError error={fieldError('quantity')} />
           </div>
           <div>
             <label className="text-xs text-muted-foreground">Cena *</label>
@@ -151,11 +160,19 @@ export function SellPositionDialog({ position, onClose }: Props) {
               value={price}
               onChange={(e) => setPrice(e.target.value)}
               className="text-right"
+              aria-invalid={!!fieldError('price')}
             />
+            <FieldError error={fieldError('price')} />
           </div>
           <div>
             <label className="text-xs text-muted-foreground">Data *</label>
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <Input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              aria-invalid={!!fieldError('date')}
+            />
+            <FieldError error={fieldError('date')} />
           </div>
           <div>
             <label className="text-xs text-muted-foreground">
@@ -181,8 +198,8 @@ export function SellPositionDialog({ position, onClose }: Props) {
             Anuluj
           </Button>
           <Button
-            onClick={() => sellMutation.mutate()}
-            disabled={!isValid || sellMutation.isPending}
+            onClick={submitGuard(() => sellMutation.mutate())}
+            disabled={sellMutation.isPending}
           >
             {sellMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Sprzedaj

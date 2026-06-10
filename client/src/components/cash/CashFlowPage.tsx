@@ -1,6 +1,7 @@
 import { useState, useMemo, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { errorToast } from '@/lib/error-toast';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { QUERY_KEYS, invalidateCashFlow } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,7 +15,7 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { AddDepositDialog } from './AddDepositDialog';
 import { CashFlowChart } from './CashFlowChart';
@@ -134,6 +135,10 @@ export function CashFlowPage() {
     queryFn: api.getDeposits,
   });
 
+  // Jeden wspólny stan ładowania dla wykresu i tabeli — osobne spinnery powodowały
+  // "mruganie" strony (raz gotowa jedna karta, raz druga).
+  const isLoading = cashFlowLoading || depositsLoading;
+
   const [expandedYears, toggleYear] = useToggleSet<number>();
   const [showPortfolio, setShowPortfolio] = useState(true);
   const [showCashFlow, setShowCashFlow] = useState(true);
@@ -156,7 +161,7 @@ export function CashFlowPage() {
       }
       setDeleting(null);
     },
-    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się usunąć', e),
   });
 
   // Server zawsze ustawia `type` ('deposit' | 'withdrawal') — żadna normalizacja
@@ -314,7 +319,7 @@ export function CashFlowPage() {
                 Wpłaty netto
               </button>
             </div>
-            {cashFlowLoading ? (
+            {isLoading ? (
               <LoadingSpinner />
             ) : cashFlowData?.chartData?.length ? (
               <CashFlowChart
@@ -324,8 +329,11 @@ export function CashFlowPage() {
                 showCashFlow={showCashFlow}
               />
             ) : (
-              <div className="flex items-center justify-center h-80 text-muted-foreground">
-                Brak danych.
+              <div className="flex items-center justify-center h-80">
+                <EmptyState
+                  className="py-0"
+                  message="Brak danych do wykresu. Zaimportuj historię transakcji lub dodaj operację."
+                />
               </div>
             )}
           </CardContent>
@@ -348,12 +356,13 @@ export function CashFlowPage() {
             <CardTitle className="text-base">{cardTitle}</CardTitle>
           </CardHeader>
           <CardContent>
-            {depositsLoading ? (
+            {isLoading ? (
               <LoadingSpinner />
             ) : yearGroups.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground text-sm">
-                Brak operacji gotówkowych. Kliknij &quot;Dodaj operację&quot; aby dodać pierwszą.
-              </div>
+              <EmptyState
+                message="Brak operacji gotówkowych. Zaimportuj historię transakcji lub dodaj ręcznie."
+                action={{ label: 'Dodaj operację', onClick: () => setAddOpen(true) }}
+              />
             ) : (
               <>
                 <div className="md:hidden flex flex-col gap-2">
@@ -538,7 +547,7 @@ export function CashFlowPage() {
                     </div>
                   )}
                 </div>
-                <div className="hidden md:block overflow-x-auto">
+                <div className="hidden md:block overflow-x-auto scroll-shadow-x">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -555,12 +564,11 @@ export function CashFlowPage() {
                     <TableBody>
                       {yearGroups.length === 0 ? (
                         <TableRow>
-                          <TableCell
-                            colSpan={totalCols}
-                            className="text-center py-12 text-muted-foreground"
-                          >
-                            Brak operacji gotówkowych. Kliknij &quot;Dodaj operację&quot; aby dodać
-                            pierwszą.
+                          <TableCell colSpan={totalCols}>
+                            <EmptyState
+                              message="Brak operacji gotówkowych. Zaimportuj historię transakcji lub dodaj ręcznie."
+                              action={{ label: 'Dodaj operację', onClick: () => setAddOpen(true) }}
+                            />
                           </TableCell>
                         </TableRow>
                       ) : (

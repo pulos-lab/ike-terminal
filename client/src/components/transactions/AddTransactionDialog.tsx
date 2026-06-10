@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Dialog,
@@ -18,10 +18,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { TickerAutocomplete } from '@/components/shared/TickerAutocomplete';
+import { FieldError } from '@/components/ui/field-error';
 import { api } from '@/lib/api-client';
+import { errorToast } from '@/lib/error-toast';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { formatNumber } from '@/lib/formatters';
+import { useFormValidation, type FieldErrors } from '@/lib/use-form-validation';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -37,6 +40,13 @@ import { toast } from 'sonner';
  * Auto-calc prowizji + pre-fill kursu FX live z pricesData.fx.
  */
 const PAYMENT_CURRENCIES = ['auto', 'PLN', 'USD', 'EUR', 'GBP'] as const;
+
+/** Heurystyka dla quoteCurrency gdy user wpisuje ticker ręcznie (bez wyboru z autocomplete). */
+function inferQuoteFromTicker(t: string): string {
+  const up = t.toUpperCase();
+  if (up.endsWith('.WA') || up.endsWith('.NC')) return 'PLN';
+  return '';
+}
 
 interface AddTransactionDialogProps {
   open: boolean;
@@ -68,6 +78,25 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     staleTime: 5 * 60 * 1000,
   });
 
+  // Efektywna waluta notowania: explicit (z autocomplete / auto-fetch) lub heurystyka z suffixu.
+  const effectiveQuote = quoteCurrency || inferQuoteFromTicker(ticker);
+  // Efektywna waluta zakupu: 'auto' fallback = waluta notowania (brak przewalutowania).
+  const effectivePayment = paymentCurrency !== 'auto' ? paymentCurrency : effectiveQuote;
+  const showFxRate = Boolean(
+    effectiveQuote && effectivePayment && effectivePayment !== effectiveQuote,
+  );
+
+  const formErrors = useMemo(() => {
+    const e: FieldErrors<'date' | 'ticker' | 'quantity' | 'price' | 'fxRate'> = {};
+    if (!date) e.date = 'Podaj datę';
+    if (!ticker.trim()) e.ticker = 'Podaj ticker';
+    if (!quantity || parseFloat(quantity) <= 0) e.quantity = 'Ilość musi być większa od 0';
+    if (!price || parseFloat(price) <= 0) e.price = 'Cena musi być większa od 0';
+    if (showFxRate && (!fxRate || parseFloat(fxRate) <= 0)) e.fxRate = 'Podaj kurs przeliczenia';
+    return e;
+  }, [date, ticker, quantity, price, showFxRate, fxRate]);
+  const { submitGuard, fieldError, reset: resetValidation } = useFormValidation(formErrors);
+
   // Reset state przy otwarciu dialogu
   useEffect(() => {
     if (!open) return;
@@ -82,6 +111,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     setPaymentCurrency('auto');
     setFxRate('');
     setCategory('stock');
+    resetValidation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -94,13 +124,6 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     if (quote === 'USD' && fx.USDPLN) return fx.USDPLN.toFixed(4);
     if (quote === 'EUR' && fx.EURPLN) return fx.EURPLN.toFixed(4);
     if (quote === 'GBP' && fx.GBPPLN) return fx.GBPPLN.toFixed(4);
-    return '';
-  };
-
-  /** Heurystyka dla quoteCurrency gdy user wpisuje ticker ręcznie (bez wyboru z autocomplete). */
-  const inferQuoteFromTicker = (t: string): string => {
-    const up = t.toUpperCase();
-    if (up.endsWith('.WA') || up.endsWith('.NC')) return 'PLN';
     return '';
   };
 
@@ -124,14 +147,6 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     }, 400);
     return () => clearTimeout(timer);
   }, [ticker, quoteCurrency]);
-
-  // Efektywna waluta notowania: explicit (z autocomplete / auto-fetch) lub heurystyka z suffixu.
-  const effectiveQuote = quoteCurrency || inferQuoteFromTicker(ticker);
-  // Efektywna waluta zakupu: 'auto' fallback = waluta notowania (brak przewalutowania).
-  const effectivePayment = paymentCurrency !== 'auto' ? paymentCurrency : effectiveQuote;
-  const showFxRate = Boolean(
-    effectiveQuote && effectivePayment && effectivePayment !== effectiveQuote,
-  );
 
   // Auto-calc prowizji. Settings są wyrażone w walucie notowania (PL → PLN, FOREIGN → quote).
   // Gdy paymentCurrency ≠ quote, wynik konwertujemy przez fxRate na paymentCurrency, żeby pole
@@ -211,11 +226,8 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
       );
       onClose();
     },
-    onError: (e: Error) => toast.error(`Nie udało się dodać: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się dodać', e),
   });
-
-  const valid =
-    date && ticker.trim() && quantity && parseFloat(quantity) > 0 && price && parseFloat(price) > 0;
 
   // Podgląd wartości transakcji w paymentCurrency (z uwzględnieniem prowizji).
   // Prowizja jest już w paymentCurrency (input pola), więc dodajemy/odejmujemy bezpośrednio.
@@ -240,7 +252,13 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
             <label className="text-xs text-muted-foreground">Data *</label>
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <Input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              aria-invalid={!!fieldError('date')}
+            />
+            <FieldError error={fieldError('date')} />
           </div>
           <div>
             <label className="text-xs text-muted-foreground">Ticker *</label>
@@ -256,6 +274,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
               }}
               placeholder="np. AAPL, CDR.WA"
             />
+            <FieldError error={fieldError('ticker')} />
           </div>
 
           <div>
@@ -296,7 +315,9 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               placeholder="0"
+              aria-invalid={!!fieldError('quantity')}
             />
+            <FieldError error={fieldError('quantity')} />
           </div>
           <div>
             <label className="text-xs text-muted-foreground">
@@ -309,7 +330,9 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
               value={price}
               onChange={(e) => setPrice(e.target.value)}
               placeholder="0.00"
+              aria-invalid={!!fieldError('price')}
             />
+            <FieldError error={fieldError('price')} />
           </div>
 
           <div>
@@ -369,7 +392,9 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
                 value={fxRate}
                 onChange={(e) => setFxRate(e.target.value)}
                 placeholder={getLiveFxRate(effectiveQuote, effectivePayment) || '0.0000'}
+                aria-invalid={!!fieldError('fxRate')}
               />
+              <FieldError error={fieldError('fxRate')} />
               {plnPreview && (
                 <p className="text-xs text-muted-foreground mt-1 tabular-nums">
                   Wartość w {effectivePayment}: <strong>{formatNumber(plnPreview)}</strong>
@@ -383,7 +408,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
           <Button variant="outline" onClick={onClose} disabled={createMut.isPending}>
             Anuluj
           </Button>
-          <Button onClick={() => createMut.mutate()} disabled={!valid || createMut.isPending}>
+          <Button onClick={submitGuard(() => createMut.mutate())} disabled={createMut.isPending}>
             {createMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Dodaj
           </Button>

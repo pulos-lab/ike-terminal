@@ -5,6 +5,7 @@ import { api } from '@/lib/api-client';
 import { filterAndRebaseHistory, getPresetStartDate } from '@/lib/returns';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { FieldError } from '@/components/ui/field-error';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -80,8 +81,19 @@ export function DashboardPage() {
 
   const isCustom = timeRange === 'CUSTOM';
 
-  const startDate = isCustom ? customFrom || undefined : getPresetStartDate(timeRange);
-  const endDate = isCustom ? customTo || undefined : undefined;
+  // Odwrócony zakres (koniec przed początkiem) dawałby pusty wykres bez wyjaśnienia —
+  // pokazujemy komunikat i nie filtrujemy do czasu poprawienia dat.
+  const customRangeError =
+    isCustom && customFrom && customTo && customTo < customFrom
+      ? 'Data końcowa przed początkową'
+      : undefined;
+
+  const startDate = isCustom
+    ? customRangeError
+      ? undefined
+      : customFrom || undefined
+    : getPresetStartDate(timeRange);
+  const endDate = isCustom && !customRangeError ? customTo || undefined : undefined;
 
   // Always fetch full history (server ignores startDate), cache per benchmark only
   const { data, isLoading } = useQuery({
@@ -157,20 +169,25 @@ export function DashboardPage() {
 
               {/* Custom (desktop): pola dat inline po lewej — presety zostają klikalne */}
               {isCustom && (
-                <div className="hidden items-center gap-1.5 md:flex">
-                  <Input
-                    type="date"
-                    value={customFrom}
-                    onChange={(e) => setCustomFrom(e.target.value)}
-                    className="h-7 w-[130px] text-xs"
-                  />
-                  <span className="text-xs text-muted-foreground">—</span>
-                  <Input
-                    type="date"
-                    value={customTo}
-                    onChange={(e) => setCustomTo(e.target.value)}
-                    className="h-7 w-[130px] text-xs"
-                  />
+                <div className="hidden md:block">
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      type="date"
+                      value={customFrom}
+                      onChange={(e) => setCustomFrom(e.target.value)}
+                      className="h-7 w-[130px] text-xs"
+                      aria-invalid={!!customRangeError}
+                    />
+                    <span className="text-xs text-muted-foreground">—</span>
+                    <Input
+                      type="date"
+                      value={customTo}
+                      onChange={(e) => setCustomTo(e.target.value)}
+                      className="h-7 w-[130px] text-xs"
+                      aria-invalid={!!customRangeError}
+                    />
+                  </div>
+                  <FieldError error={customRangeError} />
                 </div>
               )}
 
@@ -332,20 +349,25 @@ export function DashboardPage() {
 
             {/* Custom (mobile): pola dat pod paskiem */}
             {isCustom && (
-              <div className="mt-2 flex items-center gap-1.5 md:hidden">
-                <Input
-                  type="date"
-                  value={customFrom}
-                  onChange={(e) => setCustomFrom(e.target.value)}
-                  className="h-7 flex-1 text-xs"
-                />
-                <span className="text-xs text-muted-foreground">—</span>
-                <Input
-                  type="date"
-                  value={customTo}
-                  onChange={(e) => setCustomTo(e.target.value)}
-                  className="h-7 flex-1 text-xs"
-                />
+              <div className="mt-2 md:hidden">
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    type="date"
+                    value={customFrom}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className="h-7 flex-1 text-xs"
+                    aria-invalid={!!customRangeError}
+                  />
+                  <span className="text-xs text-muted-foreground">—</span>
+                  <Input
+                    type="date"
+                    value={customTo}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className="h-7 flex-1 text-xs"
+                    aria-invalid={!!customRangeError}
+                  />
+                </div>
+                <FieldError error={customRangeError} />
               </div>
             )}
           </TooltipProvider>

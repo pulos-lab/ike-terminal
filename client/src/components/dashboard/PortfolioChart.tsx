@@ -129,5 +129,14 @@ export function PortfolioChart({
     };
   }, [data, benchmarkLabel, mode, showBenchmark, isDark]);
 
-  return <div ref={containerRef} className="w-full" />;
+  // Canvas lightweight-charts jest niewidoczny dla czytników ekranu — rola img
+  // z opisem to jedyna sensowna reprezentacja.
+  return (
+    <div
+      ref={containerRef}
+      className="w-full"
+      role="img"
+      aria-label={`Wykres ${mode === 'twr' ? 'TWR' : 'MWR'} portfela${showBenchmark ? ` vs ${benchmarkLabel}` : ''}`}
+    />
+  );
 }

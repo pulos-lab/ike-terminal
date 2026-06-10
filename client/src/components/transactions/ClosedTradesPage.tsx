@@ -1,6 +1,7 @@
 import { useMemo, useState, Fragment } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { errorToast } from '@/lib/error-toast';
 import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -140,7 +141,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
       }
       setDeleteTarget(null);
     },
-    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się usunąć', e),
   });
 
   const availableCurrencies = useMemo(() => {
@@ -497,7 +498,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                   />
                 ))}
               </div>
-              <div className="hidden md:block overflow-x-auto">
+              <div className="hidden md:block overflow-x-auto scroll-shadow-x">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -753,9 +754,19 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
               )}
             </>
           ) : data?.trades?.length ? (
-            <EmptyState message="Brak transakcji dla wybranych filtrów." />
+            <EmptyState
+              message="Brak transakcji dla wybranych filtrów."
+              action={{
+                label: 'Wyczyść filtry',
+                onClick: () => {
+                  setPlFilter('all');
+                  setCurrencyFilter('ALL');
+                  setDateRange('ALL');
+                },
+              }}
+            />
           ) : (
-            <EmptyState message="Brak danych." />
+            <EmptyState message="Brak zamkniętych transakcji. Zaimportuj historię transakcji lub dodaj ręcznie." />
           )}
         </CardContent>
       </Card>

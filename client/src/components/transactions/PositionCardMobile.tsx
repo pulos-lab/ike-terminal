@@ -75,7 +75,7 @@ export function PositionCardMobile({ position, onSell, isExpanded, onToggle }: P
               {formatPLN(position.currentValuePln)}
             </span>
             <Button
-              size="icon-sm"
+              size="icon"
               variant="ghost"
               onClick={(e) => {
                 e.stopPropagation();

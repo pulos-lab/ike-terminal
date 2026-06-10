@@ -17,9 +17,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { FieldError } from '@/components/ui/field-error';
 import { api } from '@/lib/api-client';
+import { errorToast } from '@/lib/error-toast';
 import { QUERY_KEYS, invalidateFx } from '@/lib/query-keys';
 import { formatNumber } from '@/lib/formatters';
+import { useFormValidation, type FieldErrors } from '@/lib/use-form-validation';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -44,6 +47,16 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
   const [currencyTo, setCurrencyTo] = useState('USD');
   const [amountFrom, setAmountFrom] = useState('');
   const [rate, setRate] = useState('');
+
+  // currencyFrom === currencyTo niemożliwe (auto-swap w handleCurrencyChange).
+  const formErrors = useMemo(() => {
+    const e: FieldErrors<'date' | 'amountFrom' | 'rate'> = {};
+    if (!date) e.date = 'Podaj datę';
+    if (!amountFrom || parseFloat(amountFrom) <= 0) e.amountFrom = 'Kwota musi być większa od 0';
+    if (!rate || parseFloat(rate) <= 0) e.rate = 'Podaj kurs wymiany';
+    return e;
+  }, [date, amountFrom, rate]);
+  const { submitGuard, fieldError, reset: resetValidation } = useFormValidation(formErrors);
 
   // Live FX rates — do pre-fill rate gdy para walut się zmienia.
   const { data: pricesData } = useQuery({
@@ -83,6 +96,7 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
     setCurrencyFrom('PLN');
     setCurrencyTo('USD');
     setAmountFrom('');
+    resetValidation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -124,11 +138,8 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
       toast.success(`Dodano wymianę ${currencyFrom} → ${currencyTo}: ${amountFrom} @ ${rate}`);
       onClose();
     },
-    onError: (e: Error) => toast.error(`Nie udało się dodać: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się dodać', e),
   });
-
-  const valid =
-    date && currencyFrom !== currencyTo && parseFloat(amountFrom) > 0 && parseFloat(rate) > 0;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !createMut.isPending && onClose()}>
@@ -144,7 +155,13 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
         <div className="space-y-3">
           <div>
             <label className="text-xs text-muted-foreground">Data *</label>
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <Input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              aria-invalid={!!fieldError('date')}
+            />
+            <FieldError error={fieldError('date')} />
           </div>
 
           <div>
@@ -188,7 +205,9 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
                 value={amountFrom}
                 onChange={(e) => setAmountFrom(e.target.value)}
                 placeholder="0.00"
+                aria-invalid={!!fieldError('amountFrom')}
               />
+              <FieldError error={fieldError('amountFrom')} />
             </div>
             <div>
               <label className="text-xs text-muted-foreground">
@@ -206,7 +225,9 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
                 value={rate}
                 onChange={(e) => setRate(e.target.value)}
                 placeholder="0.0000"
+                aria-invalid={!!fieldError('rate')}
               />
+              <FieldError error={fieldError('rate')} />
             </div>
           </div>
 
@@ -224,7 +245,7 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
           <Button variant="outline" onClick={onClose} disabled={createMut.isPending}>
             Anuluj
           </Button>
-          <Button onClick={() => createMut.mutate()} disabled={!valid || createMut.isPending}>
+          <Button onClick={submitGuard(() => createMut.mutate())} disabled={createMut.isPending}>
             {createMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Dodaj
           </Button>

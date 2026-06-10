@@ -193,7 +193,12 @@ export function CashFlowChart({ data, currency, showPortfolio, showCashFlow }: C
   }, [showPortfolio, showCashFlow]);
 
   return (
-    <div style={{ position: 'relative' }} ref={containerRef}>
+    <div
+      style={{ position: 'relative' }}
+      ref={containerRef}
+      role="img"
+      aria-label="Wykres skumulowanych wpłat i wartości portfela w czasie"
+    >
       {zoomed && (
         <button
           onClick={() => {

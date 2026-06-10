@@ -51,6 +51,8 @@
   --color-gain-foreground: var(--gain-foreground);
   --color-loss: var(--loss);
   --color-loss-foreground: var(--loss-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
 }
 
 :root {
@@ -95,6 +97,8 @@
   --gain-foreground: oklch(0.995 0.001 60);
   --loss: oklch(0.52 0.2 25); /* #c0392b ciepły czerwony */
   --loss-foreground: oklch(0.995 0.001 60);
+  --info: oklch(0.55 0.12 245); /* stonowany niebieski — badge informacyjne */
+  --info-foreground: oklch(0.995 0.001 60);
 }
 
 .dark {
@@ -138,6 +142,8 @@
   --gain-foreground: oklch(0.145 0.005 60);
   --loss: oklch(0.65 0.15 20); /* softer warm-red */
   --loss-foreground: oklch(0.145 0.005 60);
+  --info: oklch(0.7 0.12 245); /* jaśniejszy niebieski na ciemnym tle */
+  --info-foreground: oklch(0.145 0.005 60);
 }
 
 @layer base {
@@ -180,5 +186,21 @@
   }
   *::-webkit-scrollbar-corner {
     background: transparent;
+  }
+}
+
+@layer utilities {
+  /* Affordance przewijania szerokich tabel: cień przy krawędzi widoczny tylko gdy
+     treść faktycznie wystaje poza kontener (covery z attachment:local przyklejają
+     się do treści i zasłaniają cienie na krańcach). Tło coverów = --card, bo
+     tabele renderują się wewnątrz CardContent. */
+  .scroll-shadow-x {
+    background:
+      linear-gradient(90deg, var(--card) 30%, transparent) left / 40px 100% no-repeat local,
+      linear-gradient(270deg, var(--card) 30%, transparent) right / 40px 100% no-repeat local,
+      radial-gradient(farthest-side at 0 50%, rgb(0 0 0 / 0.18), transparent) left / 14px 100%
+        no-repeat scroll,
+      radial-gradient(farthest-side at 100% 50%, rgb(0 0 0 / 0.18), transparent) right / 14px 100%
+        no-repeat scroll;
   }
 }

@@ -17,6 +17,12 @@ const badgeVariants = cva(
           'border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
         ghost: '[a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
         link: 'text-primary underline-offset-4 [a&]:hover:underline',
+        // Statusowe warianty na tokenach motywu — czytelne w obu trybach
+        // (zamiast surowych text-blue-500/text-gray-400 rozsianych po stronach).
+        success: 'bg-success/15 text-success',
+        warning: 'bg-warning/15 text-warning',
+        info: 'bg-info/15 text-info',
+        muted: 'bg-muted text-muted-foreground',
       },
     },
     defaultVariants: {

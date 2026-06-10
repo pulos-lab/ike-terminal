@@ -224,12 +224,16 @@ export function ImportDialog({ open, onOpenChange }: Props) {
           //  - redemption_reconciled (wykup/wezwanie wchodzi jako syntetyczna sprzedaż —
           //    użytkownik widzi je w info "Utworzono N syntetycznych sprzedaży", duplikowanie
           //    w liście "pominięto" jest mylące)
-          const hiddenReasons = new Set(['close_trade_entry', 'duplicate', 'redemption_reconciled']);
-          const visible = result.skipped.filter((s: any) => !hiddenReasons.has(s.reason));
+          const hiddenReasons = new Set<SkipReason>([
+            'close_trade_entry',
+            'duplicate',
+            'redemption_reconciled',
+          ]);
+          const visible = result.skipped.filter((s) => !hiddenReasons.has(s.reason));
           if (visible.length > 0) {
-            const lines = visible.map((s: { paperName?: string; reason: string; row: number }) => {
+            const lines = visible.map((s) => {
               const name = s.paperName ? `${s.paperName} ` : '';
-              const reason = SKIP_REASON_LABELS[s.reason as SkipReason] || s.reason;
+              const reason = SKIP_REASON_LABELS[s.reason] || s.reason;
               return `${name}(wiersz ${s.row}) — ${reason}`;
             });
             addMessage({ kind: 'warn', text: `Pominięto ${visible.length} wierszy:\n${lines.join('\n')}` });
@@ -237,11 +241,10 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         }
 
         if (result.orphanedSells && result.orphanedSells.length > 0) {
+          const incoming = result.orphanedSells;
           setOrphanedSells(prev => [
             ...prev,
-            ...(result.orphanedSells as OrphanedSell[]).filter(
-              (o: OrphanedSell) => !prev.some(p => p.isin === o.isin),
-            ),
+            ...incoming.filter(o => !prev.some(p => p.isin === o.isin)),
           ]);
         }
 

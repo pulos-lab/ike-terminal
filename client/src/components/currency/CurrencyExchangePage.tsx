@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { errorToast } from '@/lib/error-toast';
 import { QUERY_KEYS, invalidateFx } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -12,7 +13,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { AddFxExchangeDialog } from './AddFxExchangeDialog';
@@ -59,7 +60,7 @@ export function CurrencyExchangePage() {
       }
       setDeleting(null);
     },
-    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się usunąć', e),
   });
 
   return (
@@ -108,7 +109,10 @@ export function CurrencyExchangePage() {
           {isLoading ? (
             <LoadingSpinner />
           ) : !data?.exchanges?.length ? (
-            <div className="text-center py-12 text-muted-foreground text-sm">Brak danych.</div>
+            <EmptyState
+              message="Brak operacji walutowych. Zaimportuj historię transakcji lub dodaj wymianę ręcznie."
+              action={{ label: 'Dodaj wymianę', onClick: () => setAddOpen(true) }}
+            />
           ) : (
             <>
               <div className="md:hidden flex flex-col gap-2">

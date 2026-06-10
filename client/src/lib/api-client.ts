@@ -92,16 +92,30 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json();
 }
 
-async function uploadFile(endpoint: string, formData: FormData) {
+/**
+ * Upload multipart. W przeciwieństwie do `request()` NIE rzuca na błędy HTTP —
+ * zwraca `{ success: false, error, skipped }`, bo ImportDialog renderuje błędy
+ * i pominięte wiersze w dialogu zamiast w toaście. 401 obsługujemy identycznie
+ * jak w `request()` (wygasła sesja → redirect na /login).
+ */
+async function uploadFile<T>(endpoint: string, formData: FormData): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {
     method: 'POST',
     headers: { 'X-Portfolio-Id': activePortfolioId },
     credentials: 'include',
     body: formData,
   });
+  if (response.status === 401) {
+    window.location.href = '/login';
+    throw new ApiError('Session expired', 401);
+  }
   if (!response.ok) {
     const err = await response.json().catch(() => ({ error: 'Unknown error' }));
-    return { success: false, error: err.error || `HTTP ${response.status}`, skipped: err.skipped };
+    return {
+      success: false,
+      error: err.error || `HTTP ${response.status}`,
+      skipped: err.skipped,
+    } as unknown as T;
   }
   return response.json();
 }
@@ -431,7 +445,7 @@ export const api = {
   detectImportFile: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    return uploadFile('/import/detect', formData) as Promise<import('shared').DetectResult>;
+    return uploadFile<import('shared').DetectResult>('/import/detect', formData);
   },
 
   /**
@@ -446,7 +460,8 @@ export const api = {
       formData.append('transactions', file);
     }
     if (operationsFile) formData.append('operations', operationsFile);
-    return uploadFile('/import/bulk', formData);
+    // `error` (singular) pochodzi z gałęzi !response.ok w uploadFile.
+    return uploadFile<import('shared').ImportResult & { error?: string }>('/import/bulk', formData);
   },
 
   // Public share (CRUD właściciela — wymaga sesji + X-Portfolio-Id)

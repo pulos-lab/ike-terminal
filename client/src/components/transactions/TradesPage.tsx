@@ -15,6 +15,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
+import { FieldError } from '@/components/ui/field-error';
+import { errorToast } from '@/lib/error-toast';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { formatNumber, formatCurrency, formatQuantity, formatDate } from '@/lib/formatters';
@@ -133,7 +135,7 @@ export function TradesPage() {
       toast.success(`Sprzedano ${vars.form.quantity} szt ${vars.ticker} @ ${vars.form.price}`);
       setSellingTicker(null);
     },
-    onError: (err: Error) => toast.error(`Nie udało się sprzedać: ${err.message}`),
+    onError: (err: Error) => errorToast('Nie udało się sprzedać', err),
   });
 
   function startSell(pos: Position) {
@@ -167,11 +169,18 @@ export function TradesPage() {
   // posiadanych akcji (backend i tak by odrzucił/oversold, ale walidujemy od razu w UI).
   const sellingPos = sellingTicker ? positions.find((p) => p.ticker === sellingTicker) : undefined;
 
+  // Jedyny nieoczywisty powód blokady — przekroczenie posiadanej ilości. Pokazujemy
+  // go od razu (bez gate'owania submitem), bo formularz startuje prefillowany/poprawny.
+  const sellQtyError =
+    sellingPos && parseFloat(sellForm.quantity) > sellingPos.shares
+      ? `Maksymalnie ${formatQuantity(sellingPos.shares)} szt.`
+      : undefined;
+
   const isSellValid =
     sellForm.date &&
     sellForm.quantity &&
     parseFloat(sellForm.quantity) > 0 &&
-    (!sellingPos || parseFloat(sellForm.quantity) <= sellingPos.shares) &&
+    !sellQtyError &&
     sellForm.price &&
     parseFloat(sellForm.price) > 0;
 
@@ -441,7 +450,9 @@ export function TradesPage() {
                                             setSellForm({ ...sellForm, quantity: e.target.value })
                                           }
                                           className="h-8 w-[90px] text-right"
+                                          aria-invalid={!!sellQtyError}
                                         />
+                                        <FieldError error={sellQtyError} />
                                       </div>
                                       <div className="flex flex-col gap-2">
                                         <label className="text-xs text-muted-foreground">

@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { api } from '@/lib/api-client';
+import { describeError, errorToast } from '@/lib/error-toast';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import {
   Select,
@@ -102,8 +103,8 @@ export function PortfolioSelector() {
       await createPortfolio(newName.trim());
       setNewName('');
       setCreateDialogOpen(false);
-    } catch (err: any) {
-      setCreateError(err?.message || 'Nie udało się utworzyć portfela');
+    } catch (err) {
+      setCreateError(describeError(err));
     } finally {
       setCreating(false);
     }
@@ -131,8 +132,8 @@ export function PortfolioSelector() {
       setDeleteConfirmOpen(false);
       setSettingsDialogOpen(false);
       toast.success(`Portfel „${nameSnapshot}" usunięty`);
-    } catch (err: any) {
-      toast.error(`Nie udało się usunąć portfela: ${err?.message || 'nieznany błąd'}`);
+    } catch (err) {
+      errorToast('Nie udało się usunąć portfela', err);
     } finally {
       setDeleting(false);
     }
@@ -146,8 +147,8 @@ export function PortfolioSelector() {
       setPurgeConfirmOpen(false);
       setSettingsDialogOpen(false);
       toast.success(`Dane portfela „${nameSnapshot}" wyczyszczone`);
-    } catch (err: any) {
-      toast.error(`Nie udało się wyczyścić danych: ${err?.message || 'nieznany błąd'}`);
+    } catch (err) {
+      errorToast('Nie udało się wyczyścić danych', err);
     } finally {
       setPurging(false);
     }

@@ -1,6 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ComponentProps } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { Badge } from '@/components/ui/badge';
+import { errorToast } from '@/lib/error-toast';
 import { QUERY_KEYS, invalidateDividends } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -12,7 +14,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { AddDividendDialog } from './AddDividendDialog';
@@ -29,66 +32,46 @@ import { Loader2, Coins, Plus, Pencil, Trash2, RefreshCw, Calendar, Clock } from
 import { toast } from 'sonner';
 import { ExpandableCard, ExpandableCardSubRow } from '@/components/ui/expandable-card';
 import { useToggleSet } from '@/hooks/useToggleSet';
+import { useSortableData } from '@/hooks/useSortableData';
 import type { DividendRecord, UpcomingDividend } from 'shared';
 
-const SOURCE_LABELS: Record<string, { label: string; className: string }> = {
-  'auto-yahoo': { label: 'Auto', className: 'bg-blue-500/15 text-blue-500' },
-  manual: { label: 'Ręczne', className: 'bg-gray-500/15 text-gray-400' },
-  bossa: { label: 'Bossa', className: 'bg-amber-500/15 text-amber-500' },
-  mbank: { label: 'mBank', className: 'bg-amber-500/15 text-amber-500' },
-  degiro: { label: 'DEGIRO', className: 'bg-amber-500/15 text-amber-500' },
-  xtb: { label: 'XTB', className: 'bg-amber-500/15 text-amber-500' },
+type BadgeVariant = ComponentProps<typeof Badge>['variant'];
+
+const SOURCE_LABELS: Record<string, { label: string; variant: BadgeVariant }> = {
+  'auto-yahoo': { label: 'Auto', variant: 'info' },
+  manual: { label: 'Ręczne', variant: 'muted' },
+  bossa: { label: 'Bossa', variant: 'warning' },
+  mbank: { label: 'mBank', variant: 'warning' },
+  degiro: { label: 'DEGIRO', variant: 'warning' },
+  xtb: { label: 'XTB', variant: 'warning' },
 };
 
 function SourceBadge({ source }: { source: string }) {
-  const info = SOURCE_LABELS[source] || {
-    label: source,
-    className: 'bg-gray-500/15 text-gray-400',
-  };
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${info.className}`}
-    >
-      {info.label}
-    </span>
-  );
+  const info = SOURCE_LABELS[source] || { label: source, variant: 'muted' as BadgeVariant };
+  return <Badge variant={info.variant}>{info.label}</Badge>;
 }
 
 function StatusBadge({ exDate, payDate }: { exDate: string; payDate: string | null }) {
   const today = new Date().toISOString().split('T')[0];
   if (exDate > today) {
-    return (
-      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-yellow-500/15 text-yellow-500">
-        Nadchodzi
-      </span>
-    );
+    return <Badge variant="warning">Nadchodzi</Badge>;
   }
   if (payDate && payDate >= today) {
-    return (
-      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-blue-500/15 text-blue-500">
-        Oczekuje wypłaty
-      </span>
-    );
+    return <Badge variant="info">Oczekuje wypłaty</Badge>;
   }
   return null;
 }
 
 // Status uchwały z kalendarza GPW (stockwatch/biznesradar) — tylko dla wpisów,
 // które go mają (źródło 'gpw-calendar'); Yahoo nie dostarcza statusu.
-const CALENDAR_STATUS_STYLES: Record<string, string> = {
-  proponowana: 'bg-muted text-muted-foreground',
-  uchwalona: 'bg-emerald-500/15 text-emerald-500',
+const CALENDAR_STATUS_VARIANTS: Record<string, BadgeVariant> = {
+  proponowana: 'muted',
+  uchwalona: 'success',
 };
 
 function CalendarStatusPill({ status }: { status?: string }) {
-  if (!status || !CALENDAR_STATUS_STYLES[status]) return null;
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${CALENDAR_STATUS_STYLES[status]}`}
-    >
-      {status}
-    </span>
-  );
+  if (!status || !CALENDAR_STATUS_VARIANTS[status]) return null;
+  return <Badge variant={CALENDAR_STATUS_VARIANTS[status]}>{status}</Badge>;
 }
 
 // ============ Upcoming Dividends Panel ============
@@ -145,6 +128,12 @@ function UpcomingDividendsPanel() {
   });
 
   const upcoming = data?.upcoming || [];
+  const {
+    sorted: sortedUpcoming,
+    sortKey: upcomingSortKey,
+    dir: upcomingDir,
+    toggle: toggleUpcomingSort,
+  } = useSortableData(upcoming);
 
   if (isLoading) return <LoadingSpinner />;
   if (upcoming.length === 0) return null;
@@ -164,22 +153,38 @@ function UpcomingDividendsPanel() {
             <UpcomingDividendCardMobile key={d.ticker} d={d} />
           ))}
         </div>
-        <div className="hidden md:block overflow-x-auto">
+        <div className="hidden md:block overflow-x-auto scroll-shadow-x">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Ticker</TableHead>
+                <SortableTableHead
+                  label="Ticker"
+                  active={upcomingSortKey === 'ticker'}
+                  dir={upcomingDir}
+                  onToggle={() => toggleUpcomingSort('ticker')}
+                />
                 <TableHead>Nazwa</TableHead>
-                <TableHead>Ex-date</TableHead>
+                <SortableTableHead
+                  label="Ex-date"
+                  active={upcomingSortKey === 'exDividendDate'}
+                  dir={upcomingDir}
+                  onToggle={() => toggleUpcomingSort('exDividendDate')}
+                />
                 <TableHead>Data wypłaty</TableHead>
                 <TableHead>Akcje</TableHead>
-                <TableHead className="text-right">Szac. kwota</TableHead>
+                <SortableTableHead
+                  label="Szac. kwota"
+                  align="right"
+                  active={upcomingSortKey === 'estimatedAmount'}
+                  dir={upcomingDir}
+                  onToggle={() => toggleUpcomingSort('estimatedAmount')}
+                />
                 <TableHead>Waluta</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {upcoming.map((d: UpcomingDividend) => (
+              {sortedUpcoming.map((d: UpcomingDividend) => (
                 <TableRow key={d.ticker}>
                   <TableCell className="font-mono font-medium">{d.ticker}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{d.name}</TableCell>
@@ -235,7 +240,7 @@ export function DividendsPage() {
       }
       setDeleting(null);
     },
-    onError: (e: Error) => toast.error(`Nie udało się usunąć: ${e.message}`),
+    onError: (e: Error) => errorToast('Nie udało się usunąć', e),
   });
 
   const scanMutation = useMutation({
@@ -251,11 +256,17 @@ export function DividendsPage() {
         toast.info(`Brak nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
       }
     },
-    onError: (e: Error) => toast.error(`Skan nie powiódł się: ${e.message}`),
+    onError: (e: Error) => errorToast('Skan nie powiódł się', e),
   });
 
   const dividends: DividendRecord[] = data?.dividends || [];
   const [expandedHistory, toggleHistory] = useToggleSet<number>();
+  const {
+    sorted: sortedDividends,
+    sortKey: histSortKey,
+    dir: histDir,
+    toggle: toggleHistSort,
+  } = useSortableData(dividends);
 
   // Roczne sumy per waluta (stacked bars) — backend nie zwraca przeliczenia PLN
   // per rekord, więc nie wolno sumować różnych walut do jednego słupka "PLN".
@@ -312,7 +323,7 @@ export function DividendsPage() {
             <CardContent>
               {yearlyData.length > 0 && (
                 <ResponsiveContainer width="100%" height={120}>
-                  <BarChart data={yearlyData}>
+                  <BarChart data={yearlyData} accessibilityLayer aria-label="Suma dywidend per rok">
                     <XAxis dataKey="year" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} />
                     <Tooltip
@@ -366,9 +377,10 @@ export function DividendsPage() {
           {isLoading ? (
             <LoadingSpinner />
           ) : dividends.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground text-sm">
-              Brak danych. Kliknij &quot;Dodaj dywidende&quot; aby dodac pierwsza.
-            </div>
+            <EmptyState
+              message="Brak dywidend. Zaimportuj historię transakcji lub dodaj ręcznie."
+              action={{ label: 'Dodaj dywidendę', onClick: () => setAddOpen(true) }}
+            />
           ) : (
             <>
               <div className="md:hidden flex flex-col gap-2">
@@ -435,21 +447,37 @@ export function DividendsPage() {
                   );
                 })}
               </div>
-              <div className="hidden md:block overflow-x-auto">
+              <div className="hidden md:block overflow-x-auto scroll-shadow-x">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Data</TableHead>
-                      <TableHead>Ticker</TableHead>
+                      <SortableTableHead
+                        label="Data"
+                        active={histSortKey === 'date'}
+                        dir={histDir}
+                        onToggle={() => toggleHistSort('date')}
+                      />
+                      <SortableTableHead
+                        label="Ticker"
+                        active={histSortKey === 'ticker'}
+                        dir={histDir}
+                        onToggle={() => toggleHistSort('ticker')}
+                      />
                       <TableHead>Opis</TableHead>
-                      <TableHead className="text-right">Kwota</TableHead>
+                      <SortableTableHead
+                        label="Kwota"
+                        align="right"
+                        active={histSortKey === 'amount'}
+                        dir={histDir}
+                        onToggle={() => toggleHistSort('amount')}
+                      />
                       <TableHead>Waluta</TableHead>
                       <TableHead>Źródło</TableHead>
                       <TableHead className="w-[80px]"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {dividends.map((d: DividendRecord) => (
+                    {sortedDividends.map((d: DividendRecord) => (
                       <TableRow key={d.id}>
                         <TableCell>{formatDate(d.date)}</TableCell>
                         <TableCell className="font-mono font-medium">{d.ticker}</TableCell>
