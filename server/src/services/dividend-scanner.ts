@@ -121,12 +121,14 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
     startDate = earliestTx > lookbackStr ? lookbackStr : earliestTx;
   }
 
-  // Collect unique ISINs with their ticker map entries (exclude NC — Stooq only, no dividend data)
+  // Collect unique ISINs with their ticker map entries.
+  // Exclude only NC (NewConnect) — Yahoo nie listuje NC, więc brak danych o dywidendach.
+  // NIE filtrujemy po priceSource === 'stooq': spółki GPW mogą mieć Stooq jako fallback
+  // cenowy, ale dywidendy i tak pobieramy z Yahoo po tickerze .WA.
   // Only include tickers with currently open positions (shares > 0)
   const isinEntries = new Map<string, TickerMapEntry>();
   for (const [isin, entry] of tickerMap) {
     if (entry.exchange === 'NC') continue;
-    if (entry.priceSource === 'stooq') continue;
     // Stan posiadania "na dziś" — włącznie z dzisiejszymi transakcjami (includeDate=true).
     const shares = getSharesAtDate(adjustedTxs, isin, today, true);
     if (shares <= 0) continue;

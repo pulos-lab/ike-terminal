@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# Serializacja deployów: równoległe merge'e do main powodowały wyścig —
+# health check jednego runa trafiał w restart serwera z drugiego runa.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
 jobs:
   format-check:
     runs-on: ubuntu-latest
