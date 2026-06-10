@@ -156,3 +156,67 @@ describe('parseBossaOperations — P17 corporate actions', () => {
     expect(result.ipoSubscriptions).toHaveLength(0);
   });
 });
+
+describe('parseBossaOperations — osierocone legi subskrypcji IPO', () => {
+  it('Zapisy na akcje bez Zwrotu nadpłaty → warning, brak markera, cashflow zachowany', () => {
+    const csv = buildCsv(['2021-03-15;Zapisy na akcje BIOCELTIX S.A. SERIA G;;-10000.00;PLN']);
+    const result = parseBossaOperations(csv, 'batch-test');
+
+    // Brak markera (para niekompletna)
+    expect(result.ipoSubscriptions).toHaveLength(0);
+
+    // Cashflow NIE ginie — leci jako withdrawal
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].operationType).toBe('withdrawal');
+    expect(result.data[0].amount).toBe(-10000);
+
+    // Warning po polsku z prośbą o ręczną weryfikację pozycji
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings![0]).toContain('Zapisy na akcje BIOCELTIX S.A. SERIA G');
+    expect(result.warnings![0]).toContain('Zwrot nadpłaty');
+    expect(result.warnings![0]).toContain('ręcznie');
+  });
+
+  it('Zwrot nadpłaty bez Zapisów na akcje → warning, brak markera, deposit zachowany', () => {
+    const csv = buildCsv(['2021-04-10;Zwrot nadpłaty BIOCELTIX;;8000.00;PLN']);
+    const result = parseBossaOperations(csv, 'batch-test');
+
+    expect(result.ipoSubscriptions).toHaveLength(0);
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].operationType).toBe('deposit');
+
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings![0]).toContain('Zwrot nadpłaty BIOCELTIX');
+    expect(result.warnings![0]).toContain('Zapisy na akcje');
+  });
+
+  it('kompletna para ze znanej emisji → marker, bez warningów', () => {
+    // BIOCELTIX 2021-03-15 jest w ipo-subscriptions-map
+    const csv = buildCsv([
+      '2021-03-15;Zapisy na akcje BIOCELTIX S.A. SERIA G;;-10000.00;PLN',
+      '2021-04-10;Zwrot nadpłaty BIOCELTIX;;8000.00;PLN',
+    ]);
+    const result = parseBossaOperations(csv, 'batch-test');
+
+    expect(result.ipoSubscriptions).toHaveLength(1);
+    expect(result.ipoSubscriptions[0].ticker).toBe('BIOCELTIX');
+    expect(result.warnings).toBeUndefined();
+  });
+
+  it('kompletna para spoza mapy emisji → warning o nierozliczonej subskrypcji, cashflow zachowany', () => {
+    const csv = buildCsv([
+      '2023-05-01;Zapisy na akcje FOOCORP S.A.;;-5000.00;PLN',
+      '2023-05-20;Zwrot nadpłaty FOOCORP;;3000.00;PLN',
+    ]);
+    const result = parseBossaOperations(csv, 'batch-test');
+
+    expect(result.ipoSubscriptions).toHaveLength(0);
+    // Oba legi wpadają jako zwykłe operacje (withdrawal + deposit)
+    expect(result.data.map((o) => o.operationType).sort()).toEqual(['deposit', 'withdrawal']);
+
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings![0]).toContain('FOOCORP');
+    expect(result.warnings![0]).toContain('mapie znanych emisji');
+  });
+});

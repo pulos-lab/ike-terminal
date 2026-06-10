@@ -74,6 +74,40 @@ describe('parseMbankTransactions', () => {
     expect(result.skipped).toHaveLength(0);
   });
 
+  it('brak kolumny Prowizja/Waluta w nagłówku → pole nieobecne (0/inferencja), nie odczyt złej kolumny', () => {
+    // Nagłówek bez Prowizja i Waluta; wiersz danych ma w indeksach 6/7 śmieci,
+    // które stary kod (fallback waluta→6, prowizja→7) odczytałby jako walutę 'JUNK'
+    // i prowizję 999.
+    const csv = [
+      'Czas transakcji;Papier;Giełda;K/S;Liczba;Kurs',
+      '01.01.2026 10:00:00;KGHM;WWA-GPW;K;10;150;JUNK;999',
+    ].join('\n');
+
+    const result = parseMbankTransactions(csv, 'batch-test');
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].commission).toBe(0); // nie 999
+    expect(result.data[0].currency).toBe('PLN'); // z giełdy WWA-GPW, nie 'JUNK'
+    expect(result.data[0].total).toBe(1500);
+
+    // Jedno zagregowane ostrzeżenie o brakujących kolumnach
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings![0]).toContain('Prowizja');
+    expect(result.warnings![0]).toContain('Waluta');
+  });
+
+  it('pełny nagłówek (wszystkie kolumny nazwane) → bez warningów', () => {
+    const csv = [
+      'Czas transakcji;Papier;Giełda;K/S;Liczba;Kurs;Waluta;Prowizja;Waluta;Wartość;Waluta',
+      '25.02.2026 09:00:00;KGHM;WWA-GPW;K;10;150.50;PLN;5.00;PLN;1505.00;PLN',
+    ].join('\n');
+
+    const result = parseMbankTransactions(csv, 'batch-test');
+    expect(result.data).toHaveLength(1);
+    expect(result.warnings).toBeUndefined();
+  });
+
   it('skips rows with price <= 0', () => {
     const csv = [
       'Czas transakcji,Papier,Gie\u0142da,K/S,Liczba,Kurs,Waluta,Prowizja,Waluta,Warto\u015b\u0107,Waluta',

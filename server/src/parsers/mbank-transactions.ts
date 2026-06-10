@@ -41,12 +41,12 @@ const EXCHANGE_CURRENCY: Record<string, string> = {
 export function parseMbankTransactions(
   csvContent: string,
   importBatch: string,
-): ParseResult<Transaction> {
+): ParseResult<Transaction> & { warnings?: string[] } {
   const lines = csvContent.split('\n');
 
   // Find header row — look for line containing "Czas" and "Papier" (or legacy "Walor")
   const { headerIdx, colMap, delimiter } = findHeaderRow(lines);
-  if (headerIdx < 0) return { data: [], skipped: [] };
+  if (headerIdx < 0 || !colMap) return { data: [], skipped: [] };
 
   // Join only data rows (after header) and parse with Papa
   const dataSection = lines.slice(headerIdx + 1).join('\n');
@@ -70,13 +70,16 @@ export function parseMbankTransactions(
       continue;
     }
 
-    const dateStr = row[colMap.date]?.trim();
-    const side = row[colMap.side]?.trim();
-    const quantity = parseNumber(row[colMap.quantity]);
-    const price = parseNumber(row[colMap.price]);
-    const priceCurrency = row[colMap.priceCurrency]?.trim();
-    const commission = parseNumber(row[colMap.commission]);
-    const exchange = row[colMap.exchange]?.trim();
+    // Kolumny z indeksem −1 = nieobecne w nagłówku → pole traktowane jako puste
+    // (prowizja 0, waluta z giełdy / PLN) zamiast czytania zgadywanego indeksu.
+    const at = (idx: number): string | undefined => (idx >= 0 ? row[idx] : undefined);
+    const dateStr = at(colMap.date)?.trim();
+    const side = at(colMap.side)?.trim();
+    const quantity = parseNumber(at(colMap.quantity));
+    const price = parseNumber(at(colMap.price));
+    const priceCurrency = at(colMap.priceCurrency)?.trim();
+    const commission = parseNumber(at(colMap.commission));
+    const exchange = at(colMap.exchange)?.trim();
 
     // Wspólna walidacja pól (utils.validateTradeFields) — mBank wymaga nazwy papieru,
     // ISIN nie istnieje w eksporcie (resolwowany po imporcie).
@@ -109,7 +112,22 @@ export function parseMbankTransactions(
     });
   }
 
-  return { data: transactions, skipped };
+  // Jedno zagregowane ostrzeżenie gdy w nagłówku brakuje opcjonalnych kolumn —
+  // wcześniej kod zgadywał stałe indeksy (prowizja→7, waluta→6, giełda→2) i mógł
+  // cicho czytać złe kolumny. Teraz pole jest nieobecne + user dostaje informację.
+  const missingCols: string[] = [];
+  if (colMap.commission < 0) missingCols.push('Prowizja (przyjęto 0)');
+  if (colMap.priceCurrency < 0) missingCols.push('Waluta kursu (inferowana z giełdy lub PLN)');
+  if (colMap.exchange < 0) missingCols.push('Giełda (waluta domyślnie PLN)');
+  const warnings =
+    missingCols.length > 0 && transactions.length > 0
+      ? [
+          `mBank: w nagłówku pliku brakuje kolumn: ${missingCols.join('; ')} — ` +
+            `zweryfikuj prowizje i waluty zaimportowanych transakcji.`,
+        ]
+      : undefined;
+
+  return { data: transactions, skipped, warnings };
 }
 
 /**
@@ -142,7 +160,7 @@ export function isMbankFormat(csvContent: string): boolean {
  */
 function findHeaderRow(lines: string[]): {
   headerIdx: number;
-  colMap: ColumnMap;
+  colMap: ColumnMap | null;
   delimiter: string;
 } {
   for (let i = 0; i < lines.length; i++) {
@@ -172,44 +190,42 @@ function findHeaderRow(lines: string[]): {
       // Price currency is the first Waluta after Kurs
       const priceCurrencyIdx = priceIdx >= 0 ? cols.indexOf('waluta', priceIdx + 1) : -1;
 
+      // Indeksy pozycyjne TYLKO tam, gdzie są niezbędne dla znanego formatu legacy
+      // ("Czas;Walor;Giełda;Rodzaj;Liczba;Kurs;..."): liczba→4 i kurs→5 — bez nich
+      // legacy nie sparsowałby się wcale (pola obowiązkowe walidacji). Pozostałe
+      // kolumny (giełda/waluta/prowizja) przy braku nagłówka dostają −1 = pole
+      // NIEOBECNE: prowizja = 0, waluta z giełdy lub PLN. Zgadywanie stałych
+      // indeksów (2/6/7) potrafiło cicho czytać złe kolumny w wariantach layoutu.
       return {
         headerIdx: i,
         delimiter,
         colMap: {
-          date: dateIdx >= 0 ? dateIdx : 0,
-          paper: paperIdx >= 0 ? paperIdx : 1,
-          exchange: exchangeIdx >= 0 ? exchangeIdx : 2,
-          side: sideIdx >= 0 ? sideIdx : 3,
+          date: dateIdx,
+          paper: paperIdx,
+          exchange: exchangeIdx,
+          side: sideIdx,
           quantity: quantityIdx >= 0 ? quantityIdx : 4,
           price: priceIdx >= 0 ? priceIdx : 5,
-          priceCurrency: priceCurrencyIdx >= 0 ? priceCurrencyIdx : 6,
-          commission: prowizjaIdx >= 0 ? prowizjaIdx : 7,
+          priceCurrency: priceCurrencyIdx,
+          commission: prowizjaIdx,
         },
       };
     }
   }
 
-  return { headerIdx: -1, colMap: DEFAULT_COL_MAP, delimiter: ',' };
+  return { headerIdx: -1, colMap: null, delimiter: ',' };
 }
 
 interface ColumnMap {
   date: number;
   paper: number;
+  /** −1 = kolumna nieobecna w nagłówku — brak inferencji waluty z giełdy */
   exchange: number;
   side: number;
   quantity: number;
   price: number;
+  /** −1 = kolumna nieobecna w nagłówku — waluta inferowana z giełdy / PLN */
   priceCurrency: number;
+  /** −1 = kolumna nieobecna w nagłówku — prowizja przyjęta jako 0 */
   commission: number;
 }
-
-const DEFAULT_COL_MAP: ColumnMap = {
-  date: 0,
-  paper: 1,
-  exchange: 2,
-  side: 3,
-  quantity: 4,
-  price: 5,
-  priceCurrency: 6,
-  commission: 7,
-};
