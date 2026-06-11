@@ -261,6 +261,9 @@ export function DividendsPage() {
       } else {
         toast.info(`Brak nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
       }
+      for (const w of (result.warnings ?? []).slice(0, 3)) {
+        toast.warning(w, { duration: 10000 });
+      }
     },
     onError: (e: Error) => errorToast('Skan nie powiódł się', e),
   });
@@ -313,10 +316,31 @@ export function DividendsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-gain">{formatPLN(data.totalPln)}</div>
-              {data.totalUsd > 0 && (
-                <div className="text-sm text-muted-foreground mt-1">
-                  + {formatNumber(data.totalUsd)} USD
+              <div className="text-2xl font-bold text-gain tabular-nums">
+                {data.totalPlnApprox ? '≈ ' : ''}
+                {formatPLN(data.totalPln)}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Łącznie w PLN · kurs z dnia wypłaty
+              </p>
+              {(data.byCurrency?.length ?? 0) > 1 && (
+                <div className="mt-3 space-y-1.5 border-t pt-3">
+                  {data.byCurrency.map((c) => (
+                    <div
+                      key={c.currency}
+                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-sm"
+                    >
+                      <span className="flex items-center gap-2">
+                        <CcyChip ccy={c.currency} />
+                        <span className="tabular-nums">{formatNumber(c.amount)}</span>
+                      </span>
+                      {c.currency !== 'PLN' && (
+                        <span className="text-muted-foreground tabular-nums whitespace-nowrap">
+                          {c.pln != null ? `≈ ${formatPLN(c.pln)}` : 'brak kursu'}
+                        </span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>
