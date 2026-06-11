@@ -43,7 +43,9 @@ export function buildXtbCashOperationsProfile(
   options: { hasTickerColumn?: boolean } = {},
 ): ImportProfile {
   const TYPE = { name: 'Type' } as const;
-  const SYMBOL = options.hasTickerColumn ? ({ name: 'Ticker' } as const) : ({ name: 'Instrument' } as const);
+  const SYMBOL = options.hasTickerColumn
+    ? ({ name: 'Ticker' } as const)
+    : ({ name: 'Instrument' } as const);
   const cash = {
     date: { source: { kind: 'column', col: { name: 'Time' } }, formats: ['YYYY-MM-DD'] },
     amount: { kind: 'column', col: { name: 'Amount' } },

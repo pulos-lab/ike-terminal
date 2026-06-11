@@ -28,10 +28,7 @@ import { decodeCSVBuffer } from '../src/parsers/encoding.js';
 import { isBossaFormat, parseBossaTransactions } from '../src/parsers/bossa-transactions.js';
 import { isBossaOperationsFormat, parseBossaOperations } from '../src/parsers/bossa-operations.js';
 import { isDegiroFormat, parseDegiroTransactions } from '../src/parsers/degiro-transactions.js';
-import {
-  isDegiroAccountFormat,
-  parseDegiroOperations,
-} from '../src/parsers/degiro-operations.js';
+import { isDegiroAccountFormat, parseDegiroOperations } from '../src/parsers/degiro-operations.js';
 import { isXtbFormat, parseXtbFile } from '../src/parsers/xtb-transactions.js';
 import { parseWithProfile } from '../src/parsers/generic/engine.js';
 import { GenericParseError } from '../src/parsers/generic/value-parsers.js';
@@ -45,8 +42,7 @@ const BATCH = 'parity-harness';
 const RESOLVER_LIVE = process.argv.includes('--resolver-live');
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const IMPORT_DIR =
-  process.env.IMPORT_DIR ?? path.resolve(scriptDir, '..', '..', 'import');
+const IMPORT_DIR = process.env.IMPORT_DIR ?? path.resolve(scriptDir, '..', '..', 'import');
 
 // Wzorce tytułów obsługiwanych przez rekoncyliację parsera wbudowanego (markery) —
 // w imporcie generycznym lądują jako 'other'/skip i są różnicą OCZEKIWANĄ.
@@ -137,8 +133,19 @@ async function xtbSheetToCsv(buffer: Buffer): Promise<string | null> {
  * brakująca zdolność (reszta pól musi być wtedy identyczna).
  */
 const XTB_SUFFIX_TO_YAHOO: Record<string, string> = {
-  PL: '.WA', US: '', NL: '.AS', DE: '.DE', UK: '.L', FR: '.PA',
-  ES: '.MC', IT: '.MI', SE: '.ST', NO: '.OL', DK: '.CO', CH: '.SW', HK: '.HK',
+  PL: '.WA',
+  US: '',
+  NL: '.AS',
+  DE: '.DE',
+  UK: '.L',
+  FR: '.PA',
+  ES: '.MC',
+  IT: '.MI',
+  SE: '.ST',
+  NO: '.OL',
+  DK: '.CO',
+  CH: '.SW',
+  HK: '.HK',
 };
 
 function xtbTickerToYahoo(symbol: string): string {
@@ -319,7 +326,9 @@ function compareTransactions(
     );
   } else {
     hardFailures++;
-    console.log(`  ❌ RESOLVER: trójki różne — brak w generycznym: ${missing.length}, nadmiar: ${extra.length}`);
+    console.log(
+      `  ❌ RESOLVER: trójki różne — brak w generycznym: ${missing.length}, nadmiar: ${extra.length}`,
+    );
     missing.slice(0, 5).forEach((t) => console.log(`    [brak ] ${t}`));
     extra.slice(0, 5).forEach((t) => console.log(`    [extra] ${t}`));
   }
@@ -399,9 +408,7 @@ function compareOperations(label: string, builtin: CashOperation[], generic: Cas
       `  ℹ️  Różnice OCZEKIWANE (markery rekoncyliacji — zostają w parserze wbudowanym): ` +
         `wbudowany ${a.expected.length}, generyczny ${b.expected.length}`,
     );
-    [...a.expected.slice(0, 4), ...b.expected.slice(0, 4)].forEach((k) =>
-      console.log(`    ${k}`),
-    );
+    [...a.expected.slice(0, 4), ...b.expected.slice(0, 4)].forEach((k) => console.log(`    ${k}`));
   }
 
   // Opisy — miękka różnica (nie wpływa na dedup ani metryki) — tylko statystyka.

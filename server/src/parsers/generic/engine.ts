@@ -139,7 +139,10 @@ export function parseWithProfile(
   const pendingFxLegs: PendingCashRow[] = [];
 
   const currencyAliases = new Map(
-    Object.entries(profile.file.currencyAliases).map(([k, v]) => [k.toUpperCase(), v.toUpperCase()]),
+    Object.entries(profile.file.currencyAliases).map(([k, v]) => [
+      k.toUpperCase(),
+      v.toUpperCase(),
+    ]),
   );
   const normalizeCurrency = (raw: string | undefined): string => {
     const upper = (raw ?? '').trim().toUpperCase();
@@ -156,7 +159,12 @@ export function parseWithProfile(
     }
     if (profile.file.skipRows.some((cond) => evalCondition(cond, row, resolver))) {
       skippedOps.push({ row: rowNum, reason: 'summary_row' });
-      rowTraces.push({ row: rowNum, matchedRuleId: null, emitted: 'skip', skipReason: 'summary_row' });
+      rowTraces.push({
+        row: rowNum,
+        matchedRuleId: null,
+        emitted: 'skip',
+        skipReason: 'summary_row',
+      });
       continue;
     }
 
@@ -168,12 +176,24 @@ export function parseWithProfile(
       const reason: SkipReason =
         cls.ruleId !== null ? (cls.skipReason ?? 'summary_row') : 'unknown_operation_type';
       skippedOps.push({ row: rowNum, reason, paperName: row[0]?.slice(0, 60) || undefined });
-      rowTraces.push({ row: rowNum, matchedRuleId: cls.ruleId, emitted: 'skip', skipReason: reason });
+      rowTraces.push({
+        row: rowNum,
+        matchedRuleId: cls.ruleId,
+        emitted: 'skip',
+        skipReason: reason,
+      });
       continue;
     }
 
     if (cls.emit === 'trade') {
-      const outcome = buildTransaction(row, rowNum, profile, resolver, normalizeCurrency, importBatch);
+      const outcome = buildTransaction(
+        row,
+        rowNum,
+        profile,
+        resolver,
+        normalizeCurrency,
+        importBatch,
+      );
       if (outcome.ok) {
         transactions.push(outcome.transaction);
         rowTraces.push({
@@ -219,7 +239,15 @@ export function parseWithProfile(
       continue;
     }
 
-    const cash = buildPendingCash(row, rowNum, cls.emit, mapping, profile, resolver, normalizeCurrency);
+    const cash = buildPendingCash(
+      row,
+      rowNum,
+      cls.emit,
+      mapping,
+      profile,
+      resolver,
+      normalizeCurrency,
+    );
     if (!cash.ok) {
       skippedOps.push(cash.skipped);
       rowTraces.push({
@@ -258,9 +286,7 @@ export function parseWithProfile(
     }
     // fx_leg bez pairing.fxLegs = jednowierszowa wymiana FX (kurs/para z mapowania).
 
-    operations.push(
-      finalizeCashOperation(cls.emit, cash.pending, importBatch, warnings),
-    );
+    operations.push(finalizeCashOperation(cls.emit, cash.pending, importBatch, warnings));
   }
 
   // ── Parowanie ──
@@ -467,7 +493,10 @@ function resolveCategory(
     for (const rule of trade.category.rules) {
       const w = rule.when;
       if (w.by === 'matcher' && evalCondition(w.condition, row, resolver)) return rule.category;
-      if (w.by === 'isinPrefix' && w.prefixes.some((p) => isin.toUpperCase().startsWith(p.toUpperCase()))) {
+      if (
+        w.by === 'isinPrefix' &&
+        w.prefixes.some((p) => isin.toUpperCase().startsWith(p.toUpperCase()))
+      ) {
         return rule.category;
       }
       if (w.by === 'nameRegex' && new RegExp(w.pattern, 'i').test(paperName)) return rule.category;
@@ -544,9 +573,7 @@ function buildPendingCash(
       ticker: mapping.ticker
         ? resolveValueSource(mapping.ticker, row, resolver) || undefined
         : undefined,
-      isin: mapping.isin
-        ? resolveValueSource(mapping.isin, row, resolver) || undefined
-        : undefined,
+      isin: mapping.isin ? resolveValueSource(mapping.isin, row, resolver) || undefined : undefined,
       pairKeyValue,
       rate: rate > 0 ? rate : undefined,
       fxPair,

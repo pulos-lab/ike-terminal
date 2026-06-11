@@ -29,15 +29,17 @@ export interface HeaderCandidate {
 
 /** Normalizacja nazwy nagłówka: BOM, trim, lowercase, pojedyncze spacje, bez diakrytyków. */
 export function normalizeHeaderForFingerprint(name: string): string {
-  return name
-    .replace(/^﻿/, '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    // NFKD nie rozkłada ł/Ł — ręcznie, żeby "papier wartościowy" == "papier wartosciowy"
-    .replace(/ł/g, 'l');
+  return (
+    name
+      .replace(/^﻿/, '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .normalize('NFKD')
+      .replace(/[̀-ͯ]/g, '')
+      // NFKD nie rozkłada ł/Ł — ręcznie, żeby "papier wartościowy" == "papier wartosciowy"
+      .replace(/ł/g, 'l')
+  );
 }
 
 export function computeFingerprint(headers: string[], delimiter: string): string {

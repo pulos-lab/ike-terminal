@@ -228,7 +228,13 @@ function opsProfile(
 describe('parseWithProfile — operacje gotówkowe', () => {
   it('deposit z ujemną kwotą → withdrawal + warning (znak nigdy nie jest odwracany)', () => {
     const profile = opsProfile(
-      [{ id: 'dep', when: [{ col: { name: 'tytul' }, op: 'contains', values: ['Przelew'] }], emit: 'deposit' }],
+      [
+        {
+          id: 'dep',
+          when: [{ col: { name: 'tytul' }, op: 'contains', values: ['Przelew'] }],
+          emit: 'deposit',
+        },
+      ],
       { deposit: true },
     );
     const csv = `${OPS_HEADER}\n2026-01-10;Przelew zwrotny;-200,00;PLN\n2026-01-11;Przelew do DM;500,00;PLN`;
@@ -243,8 +249,16 @@ describe('parseWithProfile — operacje gotówkowe', () => {
   it('coupon → dividend + subkind coupon; interest → other + subkind interest', () => {
     const profile = opsProfile(
       [
-        { id: 'kupon', when: [{ col: { name: 'tytul' }, op: 'startsWith', values: ['Wypłata kuponu'] }], emit: 'coupon' },
-        { id: 'odsetki', when: [{ col: { name: 'tytul' }, op: 'startsWith', values: ['Odsetki'] }], emit: 'interest' },
+        {
+          id: 'kupon',
+          when: [{ col: { name: 'tytul' }, op: 'startsWith', values: ['Wypłata kuponu'] }],
+          emit: 'coupon',
+        },
+        {
+          id: 'odsetki',
+          when: [{ col: { name: 'tytul' }, op: 'startsWith', values: ['Odsetki'] }],
+          emit: 'interest',
+        },
       ],
       { coupon: true, interest: true },
     );
@@ -272,7 +286,13 @@ describe('parseWithProfile — operacje gotówkowe', () => {
 
   it('defaultClass=skip → unknown_operation_type (wiersz widoczny w podglądzie)', () => {
     const profile = opsProfile(
-      [{ id: 'dep', when: [{ col: { name: 'tytul' }, op: 'equals', values: ['Przelew'] }], emit: 'deposit' }],
+      [
+        {
+          id: 'dep',
+          when: [{ col: { name: 'tytul' }, op: 'equals', values: ['Przelew'] }],
+          emit: 'deposit',
+        },
+      ],
       { deposit: true },
     );
     const csv = `${OPS_HEADER}\n2026-01-10;Egzotyczna operacja;10,00;PLN`;
@@ -283,8 +303,16 @@ describe('parseWithProfile — operacje gotówkowe', () => {
 
 describe('parseWithProfile — parowanie dywidenda ↔ WHT', () => {
   const classify = [
-    { id: 'div', when: [{ col: { name: 'tytul' }, op: 'equals', values: ['Dywidenda'] }], emit: 'dividend' },
-    { id: 'wht', when: [{ col: { name: 'tytul' }, op: 'equals', values: ['Podatek'] }], emit: 'withholding_tax' },
+    {
+      id: 'div',
+      when: [{ col: { name: 'tytul' }, op: 'equals', values: ['Dywidenda'] }],
+      emit: 'dividend',
+    },
+    {
+      id: 'wht',
+      when: [{ col: { name: 'tytul' }, op: 'equals', values: ['Podatek'] }],
+      emit: 'withholding_tax',
+    },
   ];
   const HEADER = 'data;tytul;ticker;kwota;waluta';
   const cashWithTicker = {
@@ -296,9 +324,15 @@ describe('parseWithProfile — parowanie dywidenda ↔ WHT', () => {
   };
 
   it('subtract: netto + dopisek "(podatek X%)"', () => {
-    const profile = opsProfile(classify, { dividend: cashWithTicker, withholdingTax: cashWithTicker }, {
-      pairing: { dividendWht: { matchBy: ['ticker', 'date'], windowDays: 0, handling: 'subtract' } },
-    });
+    const profile = opsProfile(
+      classify,
+      { dividend: cashWithTicker, withholdingTax: cashWithTicker },
+      {
+        pairing: {
+          dividendWht: { matchBy: ['ticker', 'date'], windowDays: 0, handling: 'subtract' },
+        },
+      },
+    );
     const csv = `${HEADER}\n2026-01-10;Dywidenda;AAPL;10,00;USD\n2026-01-10;Podatek;AAPL;-1,50;USD`;
     const out = parseWithProfile(csv, profile, BATCH);
 
@@ -312,9 +346,15 @@ describe('parseWithProfile — parowanie dywidenda ↔ WHT', () => {
   });
 
   it('fee_row: dywidenda brutto + podatek jako osobny fee', () => {
-    const profile = opsProfile(classify, { dividend: cashWithTicker, withholdingTax: cashWithTicker }, {
-      pairing: { dividendWht: { matchBy: ['ticker', 'date'], windowDays: 0, handling: 'fee_row' } },
-    });
+    const profile = opsProfile(
+      classify,
+      { dividend: cashWithTicker, withholdingTax: cashWithTicker },
+      {
+        pairing: {
+          dividendWht: { matchBy: ['ticker', 'date'], windowDays: 0, handling: 'fee_row' },
+        },
+      },
+    );
     const csv = `${HEADER}\n2026-01-10;Dywidenda;AAPL;10,00;USD\n2026-01-10;Podatek;AAPL;-1,50;USD`;
     const out = parseWithProfile(csv, profile, BATCH);
 
@@ -324,9 +364,15 @@ describe('parseWithProfile — parowanie dywidenda ↔ WHT', () => {
   });
 
   it('niesparowany WHT → fee + warning (nic nie ginie)', () => {
-    const profile = opsProfile(classify, { dividend: cashWithTicker, withholdingTax: cashWithTicker }, {
-      pairing: { dividendWht: { matchBy: ['ticker', 'date'], windowDays: 0, handling: 'subtract' } },
-    });
+    const profile = opsProfile(
+      classify,
+      { dividend: cashWithTicker, withholdingTax: cashWithTicker },
+      {
+        pairing: {
+          dividendWht: { matchBy: ['ticker', 'date'], windowDays: 0, handling: 'subtract' },
+        },
+      },
+    );
     const csv = `${HEADER}\n2026-01-10;Podatek;MSFT;-2,00;USD`;
     const out = parseWithProfile(csv, profile, BATCH);
 
@@ -335,9 +381,15 @@ describe('parseWithProfile — parowanie dywidenda ↔ WHT', () => {
   });
 
   it('okno dni: podatek dzień później paruje przy windowDays=2', () => {
-    const profile = opsProfile(classify, { dividend: cashWithTicker, withholdingTax: cashWithTicker }, {
-      pairing: { dividendWht: { matchBy: ['ticker', 'date'], windowDays: 2, handling: 'subtract' } },
-    });
+    const profile = opsProfile(
+      classify,
+      { dividend: cashWithTicker, withholdingTax: cashWithTicker },
+      {
+        pairing: {
+          dividendWht: { matchBy: ['ticker', 'date'], windowDays: 2, handling: 'subtract' },
+        },
+      },
+    );
     const csv = `${HEADER}\n2026-01-10;Dywidenda;AAPL;10,00;USD\n2026-01-11;Podatek;AAPL;-1,50;USD`;
     const out = parseWithProfile(csv, profile, BATCH);
     expect(out.operations.data).toHaveLength(1);
@@ -358,18 +410,26 @@ describe('parseWithProfile — wymiany walutowe', () => {
     description: { kind: 'column', col: { name: 'opis' } },
   };
   const classify = [
-    { id: 'fx', when: [{ col: { name: 'opis' }, op: 'startsWith', values: ['FX'] }], emit: 'fx_leg' },
+    {
+      id: 'fx',
+      when: [{ col: { name: 'opis' }, op: 'startsWith', values: ['FX'] }],
+      emit: 'fx_leg',
+    },
   ];
 
   it('parowanie po kolumnie klucza: 2 operacje fx_exchange z kursem i parą', () => {
-    const profile = opsProfile(classify, { fxLeg: fxCash }, {
-      pairing: {
-        fxLegs: {
-          pairKey: { by: 'column', col: { name: 'orderid' } },
-          rateSource: { kind: 'column', col: { name: 'kurs' } },
+    const profile = opsProfile(
+      classify,
+      { fxLeg: fxCash },
+      {
+        pairing: {
+          fxLegs: {
+            pairKey: { by: 'column', col: { name: 'orderid' } },
+            rateSource: { kind: 'column', col: { name: 'kurs' } },
+          },
         },
       },
-    });
+    );
     const csv = `${HEADER}\n2026-01-10;10:00;FX Withdrawal;4,3127;PLN;-431,27;ord-1\n2026-01-10;10:00;FX Credit;4,3127;EUR;100,00;ord-1`;
     const out = parseWithProfile(csv, profile, BATCH);
 
@@ -386,9 +446,13 @@ describe('parseWithProfile — wymiany walutowe', () => {
   });
 
   it('niesparowana noga → import samodzielny + warning', () => {
-    const profile = opsProfile(classify, { fxLeg: fxCash }, {
-      pairing: { fxLegs: { pairKey: { by: 'datetime' } } },
-    });
+    const profile = opsProfile(
+      classify,
+      { fxLeg: fxCash },
+      {
+        pairing: { fxLegs: { pairKey: { by: 'datetime' } } },
+      },
+    );
     const csv = `${HEADER}\n2026-01-10;10:00;FX Credit;;USD;355,00;`;
     const out = parseWithProfile(csv, profile, BATCH);
 
@@ -404,15 +468,31 @@ describe('parseWithProfile — wymiany walutowe', () => {
   it('jednowierszowe FX (bez pairing): kurs i para z regexExtract — wzorzec Bossa', () => {
     const HEADER_BOSSA = 'data;tytul;kwota;waluta';
     const profile = opsProfile(
-      [{ id: 'fx', when: [{ col: { name: 'tytul' }, op: 'startsWith', values: ['Wymiana waluty'] }], emit: 'fx_leg' }],
+      [
+        {
+          id: 'fx',
+          when: [{ col: { name: 'tytul' }, op: 'startsWith', values: ['Wymiana waluty'] }],
+          emit: 'fx_leg',
+        },
+      ],
       {
         fxLeg: {
           date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['YYYY-MM-DD'] },
           amount: { kind: 'column', col: { name: 'kwota' } },
           currency: { kind: 'column', col: { name: 'waluta' }, fallback: 'PLN' },
           description: { kind: 'column', col: { name: 'tytul' } },
-          fxRate: { kind: 'regexExtract', col: { name: 'tytul' }, pattern: 'Wymiana waluty \\w+/\\w+ ([\\d.]+)', group: 1 },
-          fxPair: { kind: 'regexExtract', col: { name: 'tytul' }, pattern: 'Wymiana waluty (\\w+/\\w+)', group: 1 },
+          fxRate: {
+            kind: 'regexExtract',
+            col: { name: 'tytul' },
+            pattern: 'Wymiana waluty \\w+/\\w+ ([\\d.]+)',
+            group: 1,
+          },
+          fxPair: {
+            kind: 'regexExtract',
+            col: { name: 'tytul' },
+            pattern: 'Wymiana waluty (\\w+/\\w+)',
+            group: 1,
+          },
         },
       },
     );

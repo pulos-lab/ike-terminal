@@ -64,7 +64,7 @@ export class ColumnResolver {
       seen === 0
         ? `W nagłówku pliku brakuje kolumny "${ref.name}" wymaganej przez profil.`
         : `Profil oczekuje ${occurrence + 1}. wystąpienia kolumny "${ref.name}", ` +
-          `ale w nagłówku jest ich tylko ${seen}.`,
+            `ale w nagłówku jest ich tylko ${seen}.`,
     );
   }
 
@@ -118,11 +118,7 @@ export function resolveValueSource(
 }
 
 /** Jak resolveValueSource, ale przez parseNumber (formaty europejskie). */
-export function resolveNumber(
-  vs: ValueSource,
-  row: string[],
-  resolver: ColumnResolver,
-): number {
+export function resolveNumber(vs: ValueSource, row: string[], resolver: ColumnResolver): number {
   return parseNumber(resolveValueSource(vs, row, resolver));
 }
 
@@ -133,13 +129,34 @@ export function resolveNumber(
  * czasu HH:MM(:SS) w tej samej komórce (Bossa: "25.02.2026 09:47:27").
  */
 const DATE_PATTERNS: Record<DateFormat, { re: RegExp; order: 'YMD' | 'DMY' | 'MDY' }> = {
-  'YYYY-MM-DD': { re: /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/, order: 'YMD' },
-  'YYYY.MM.DD': { re: /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/, order: 'YMD' },
-  'YYYY/MM/DD': { re: /^(\d{4})\/(\d{1,2})\/(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/, order: 'YMD' },
-  'DD.MM.YYYY': { re: /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/, order: 'DMY' },
-  'DD-MM-YYYY': { re: /^(\d{1,2})-(\d{1,2})-(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/, order: 'DMY' },
-  'DD/MM/YYYY': { re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/, order: 'DMY' },
-  'MM/DD/YYYY': { re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/, order: 'MDY' },
+  'YYYY-MM-DD': {
+    re: /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    order: 'YMD',
+  },
+  'YYYY.MM.DD': {
+    re: /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    order: 'YMD',
+  },
+  'YYYY/MM/DD': {
+    re: /^(\d{4})\/(\d{1,2})\/(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    order: 'YMD',
+  },
+  'DD.MM.YYYY': {
+    re: /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    order: 'DMY',
+  },
+  'DD-MM-YYYY': {
+    re: /^(\d{1,2})-(\d{1,2})-(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    order: 'DMY',
+  },
+  'DD/MM/YYYY': {
+    re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    order: 'DMY',
+  },
+  'MM/DD/YYYY': {
+    re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    order: 'MDY',
+  },
 };
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -187,8 +204,6 @@ export function resolveDate(
   resolver: ColumnResolver,
 ): string | null {
   const raw = resolveValueSource(spec.source, row, resolver);
-  const timeRaw = spec.timeSource
-    ? resolveValueSource(spec.timeSource, row, resolver)
-    : undefined;
+  const timeRaw = spec.timeSource ? resolveValueSource(spec.timeSource, row, resolver) : undefined;
   return parseDateWithFormats(raw, spec.formats, timeRaw);
 }
