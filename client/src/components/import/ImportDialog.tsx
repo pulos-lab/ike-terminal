@@ -1,10 +1,16 @@
 import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api-client';
-import { CheckCircle, AlertCircle, AlertTriangle, Loader2, Info } from 'lucide-react';
+import { CheckCircle, AlertCircle, AlertTriangle, Loader2, Info, ChevronLeft } from 'lucide-react';
 import { formatDate, formatQuantity } from '@/lib/formatters';
 import {
   type BrokerType,
@@ -14,8 +20,15 @@ import {
   BROKER_LABELS,
 } from 'shared';
 import { GenericImportWizard } from './generic/GenericImportWizard';
-
 import { SKIP_REASON_LABELS } from '@/lib/import-labels';
+import {
+  BROKER_IMPORT_CONFIG,
+  BROKER_TILES,
+  GENERIC_TILE_LABEL,
+  isKnownBroker,
+  type FileRole,
+  type KnownBroker,
+} from './broker-import-config';
 
 interface Props {
   open: boolean;
@@ -27,131 +40,105 @@ interface Message {
   text: string;
 }
 
+/** Wybrany ekran: null = siatka kafelków; broker | 'generic' = ekran uploadu. */
+type Screen = BrokerType | 'generic' | null;
+
 export function ImportDialog({ open, onOpenChange }: Props) {
   const queryClient = useQueryClient();
 
-  const [transactionsFiles, setTransactionsFiles] = useState<File[]>([]);
-  const [operationsFile, setOperationsFile] = useState<File | null>(null);
-  const [detectedBroker, setDetectedBroker] = useState<BrokerType | null>(null);
-  const [requiresOps, setRequiresOps] = useState(false);
+  const [screen, setScreen] = useState<Screen>(null);
+  /** Pliki per rola (transactions/operations) dla wybranego brokera. */
+  const [filesByRole, setFilesByRole] = useState<Record<FileRole, File[]>>({
+    transactions: [],
+    operations: [],
+  });
   const [uploading, setUploading] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [orphanedSells, setOrphanedSells] = useState<OrphanedSell[]>([]);
   const [resolving, setResolving] = useState<string | null>(null);
-  /** Plik nierozpoznany przez parsery wbudowane — kandydat do importu uniwersalnego. */
+  /** Plik dla importu uniwersalnego (ekran „Inny broker"). */
   const [genericCandidate, setGenericCandidate] = useState<File | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
 
   const addMessage = useCallback((m: Message) => {
-    setMessages(prev => [...prev, m]);
+    setMessages((prev) => [...prev, m]);
   }, []);
 
-  const resetState = useCallback(() => {
-    setTransactionsFiles([]);
-    setOperationsFile(null);
-    setDetectedBroker(null);
-    setRequiresOps(false);
+  const clearUploadState = useCallback(() => {
+    setFilesByRole({ transactions: [], operations: [] });
     setMessages([]);
     setOrphanedSells([]);
     setGenericCandidate(null);
     setWizardOpen(false);
   }, []);
 
-  /** Obsługuje N plików naraz — wykrywa brokera dla KAŻDEGO pliku, akceptuje
-   *  tylko pliki roli "transactions" z tego samego brokera. Pozwala dodawać
-   *  pliki stopniowo (każdy wybór powiększa listę). */
-  const handleTransactionsSelected = useCallback(async (fileList: FileList | null) => {
-    if (!fileList || fileList.length === 0) return;
-    const files = Array.from(fileList);
+  const resetState = useCallback(() => {
+    setScreen(null);
+    clearUploadState();
+  }, [clearUploadState]);
 
-    setDetecting(true);
-    try {
-      const accepted: File[] = [];
-      let brokerForBatch: BrokerType | null = detectedBroker;
-      let newRequiresOps = requiresOps;
+  const goBack = useCallback(() => {
+    setScreen(null);
+    clearUploadState();
+  }, [clearUploadState]);
 
-      for (const file of files) {
-        const detect: DetectResult = await api.detectImportFile(file);
+  /**
+   * Wybór plików dla slotu danego brokera. Dla slotu transakcji uruchamia
+   * detekcję pierwszego pliku i ostrzega (bez blokowania), gdy format nie pasuje
+   * do wybranego brokera — łapie pomyłkę „wybrałem XTB, wgrałem DEGIRO".
+   */
+  const handleSlotFiles = useCallback(
+    async (role: FileRole, fileList: FileList | null, multiple: boolean) => {
+      if (!fileList || fileList.length === 0) return;
+      const incoming = Array.from(fileList);
+      setFilesByRole((prev) => ({
+        ...prev,
+        [role]: multiple ? [...prev[role], ...incoming] : incoming.slice(0, 1),
+      }));
 
-        if (detect.fileRole === 'operations') {
+      // Walidacja-ostrzeżenie tylko dla znanego brokera i pliku transakcji.
+      if (role !== 'transactions' || !isKnownBroker(screen)) return;
+      setDetecting(true);
+      try {
+        const detect: DetectResult = await api.detectImportFile(incoming[0]);
+        if (detect.broker && detect.broker !== screen) {
           addMessage({
             kind: 'warn',
-            text: `Plik "${file.name}" wygląda na eksport operacji gotówkowych, nie transakcji — przełóż go do pola poniżej.`,
+            text: `Plik „${incoming[0].name}" wygląda na format ${BROKER_LABELS[detect.broker]}, a wybrałeś ${BROKER_LABELS[screen]}. Możesz kontynuować, ale sprawdź czy to właściwy plik.`,
           });
-          continue;
         }
-        if (detect.fileRole === 'unknown' || !detect.broker) {
-          addMessage({
-            kind: 'warn',
-            text: `Nie udało się rozpoznać formatu pliku ${file.name}. Sprawdź czy to poprawny eksport z brokera — albo użyj importu uniwersalnego poniżej.`,
-          });
-          setGenericCandidate(file);
-          continue;
-        }
-        if (brokerForBatch && detect.broker !== brokerForBatch) {
-          addMessage({
-            kind: 'warn',
-            text: `Plik "${file.name}" to ${detect.broker}, ale poprzednie pliki to ${brokerForBatch}. Wgraj osobno.`,
-          });
-          continue;
-        }
-
-        brokerForBatch = detect.broker;
-        newRequiresOps = detect.requiresOperationsFile;
-        accepted.push(file);
+      } catch {
+        // Detekcja to tylko podpowiedź — błąd ignorujemy, import i tak zwaliduje plik.
+      } finally {
+        setDetecting(false);
       }
+    },
+    [screen, addMessage],
+  );
 
-      if (accepted.length > 0) {
-        setTransactionsFiles(prev => [...prev, ...accepted]);
-        setDetectedBroker(brokerForBatch);
-        setRequiresOps(newRequiresOps);
-      }
-    } catch (err) {
-      addMessage({ kind: 'error', text: `Błąd klasyfikacji pliku: ${(err as Error).message}` });
-    } finally {
-      setDetecting(false);
-    }
-  }, [addMessage, detectedBroker, requiresOps]);
-
-  const removeTransactionFile = useCallback((idx: number) => {
-    setTransactionsFiles(prev => {
-      const next = prev.filter((_, i) => i !== idx);
-      if (next.length === 0) {
-        setDetectedBroker(null);
-        setRequiresOps(false);
-      }
-      return next;
-    });
+  const removeSlotFile = useCallback((role: FileRole, idx: number) => {
+    setFilesByRole((prev) => ({ ...prev, [role]: prev[role].filter((_, i) => i !== idx) }));
   }, []);
 
-  const handleOperationsSelected = useCallback(async (file: File | null) => {
-    setOperationsFile(file);
-    if (!file) return;
-    // Lekka walidacja: sprawdź że to faktycznie operacje, nie transakcje
-    try {
-      const detect: DetectResult = await api.detectImportFile(file);
-      if (detect.fileRole === 'transactions') {
-        addMessage({ kind: 'warn', text: `Plik "${file.name}" wygląda na eksport transakcji, nie operacji gotówkowych — przełóż go do pola wyżej.` });
-        setOperationsFile(null);
-      }
-    } catch {
-      // Ignoruj błąd detekcji — bulk endpoint i tak to zwaliduje, plik zostaje
-    }
-  }, [addMessage]);
+  const knownConfig = isKnownBroker(screen) ? BROKER_IMPORT_CONFIG[screen as KnownBroker] : null;
 
   const canSubmit = (() => {
-    if (uploading) return false;
-    if (transactionsFiles.length === 0) return false;
-    if (requiresOps && !operationsFile) return false;
-    return true;
+    if (uploading || !knownConfig) return false;
+    return knownConfig.files.every((slot) => !slot.required || filesByRole[slot.role].length > 0);
   })();
 
   const handleSubmit = useCallback(async () => {
-    if (!canSubmit) return;
+    if (uploading || !knownConfig) return;
+    if (!knownConfig.files.every((slot) => !slot.required || filesByRole[slot.role].length > 0)) {
+      return;
+    }
     setUploading(true);
     try {
-      const result = await api.bulkImport(transactionsFiles, operationsFile);
+      const result = await api.bulkImport(
+        filesByRole.transactions,
+        filesByRole.operations[0] ?? null,
+      );
 
       if (result.success) {
         const txCount = result.transactionsImported || 0;
@@ -168,11 +155,17 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         }
 
         if (result.syntheticSells && result.syntheticSells > 0) {
-          addMessage({ kind: 'info', text: `Utworzono ${result.syntheticSells} syntetycznych sprzedaży (wykupy certyfikatów / wezwania skupu akcji)` });
+          addMessage({
+            kind: 'info',
+            text: `Utworzono ${result.syntheticSells} syntetycznych sprzedaży (wykupy certyfikatów / wezwania skupu akcji)`,
+          });
         }
 
         if (result.taxesApplied && result.taxesApplied > 0) {
-          addMessage({ kind: 'info', text: `Zaaplikowano ${result.taxesApplied} opłat transakcyjnych (DEGIRO Stamp Duty / podatek francuski)` });
+          addMessage({
+            kind: 'info',
+            text: `Zaaplikowano ${result.taxesApplied} opłat transakcyjnych (DEGIRO Stamp Duty / podatek francuski)`,
+          });
         }
 
         if (result.tickersResolved && result.tickersResolved > 0) {
@@ -187,25 +180,14 @@ export function ImportDialog({ open, onOpenChange }: Props) {
           addMessage({ kind: 'warn', text: `Pominięto ${result.duplicatesSkipped} duplikatów` });
         }
 
-        if (result.crossFileWarnings && result.crossFileWarnings.length > 0) {
-          for (const w of result.crossFileWarnings) {
-            addMessage({ kind: 'warn', text: w });
-          }
-        }
-
-        if (result.warnings && result.warnings.length > 0) {
-          for (const w of result.warnings) {
-            addMessage({ kind: 'warn', text: w });
-          }
-        }
+        for (const w of result.crossFileWarnings ?? []) addMessage({ kind: 'warn', text: w });
+        for (const w of result.warnings ?? []) addMessage({ kind: 'warn', text: w });
 
         if (result.skipped && result.skipped.length > 0) {
-          // Ukrywamy rows, które użytkownik nie traktuje jako „pominięte":
+          // Ukrywamy rows, których użytkownik nie traktuje jako „pominięte":
           //  - close_trade_entry (XTB P/L — użyte w parze K+S)
           //  - duplicate (już liczone osobno powyżej)
-          //  - redemption_reconciled (wykup/wezwanie wchodzi jako syntetyczna sprzedaż —
-          //    użytkownik widzi je w info "Utworzono N syntetycznych sprzedaży", duplikowanie
-          //    w liście "pominięto" jest mylące)
+          //  - redemption_reconciled (wykup/wezwanie wchodzi jako syntetyczna sprzedaż)
           const hiddenReasons = new Set<SkipReason>([
             'close_trade_entry',
             'duplicate',
@@ -218,254 +200,259 @@ export function ImportDialog({ open, onOpenChange }: Props) {
               const reason = SKIP_REASON_LABELS[s.reason] || s.reason;
               return `${name}(wiersz ${s.row}) — ${reason}`;
             });
-            addMessage({ kind: 'warn', text: `Pominięto ${visible.length} wierszy:\n${lines.join('\n')}` });
+            addMessage({
+              kind: 'warn',
+              text: `Pominięto ${visible.length} wierszy:\n${lines.join('\n')}`,
+            });
           }
         }
 
         if (result.orphanedSells && result.orphanedSells.length > 0) {
           const incoming = result.orphanedSells;
-          setOrphanedSells(prev => [
+          setOrphanedSells((prev) => [
             ...prev,
-            ...incoming.filter(o => !prev.some(p => p.isin === o.isin)),
+            ...incoming.filter((o) => !prev.some((p) => p.isin === o.isin)),
           ]);
         }
 
+        // Pola plików czyścimy po sukcesie — komunikaty zostają na ekranie.
+        setFilesByRole({ transactions: [], operations: [] });
         queryClient.invalidateQueries();
       } else {
-        addMessage({ kind: 'error', text: `Błąd: ${result.errors?.join('; ') || result.error || 'nieznany błąd'}` });
+        addMessage({
+          kind: 'error',
+          text: `Błąd: ${result.errors?.join('; ') || result.error || 'nieznany błąd'}`,
+        });
       }
     } catch (err) {
       addMessage({ kind: 'error', text: `Błąd: ${(err as Error).message}` });
     } finally {
       setUploading(false);
     }
-  }, [canSubmit, transactionsFiles, operationsFile, queryClient, addMessage]);
+  }, [uploading, knownConfig, filesByRole, queryClient, addMessage]);
 
-  const handleAddSpinoffBuy = useCallback(async (orphan: OrphanedSell) => {
-    setResolving(orphan.isin);
-    try {
-      const buyDate = new Date(orphan.firstSellDate);
-      buyDate.setDate(buyDate.getDate() - 1);
-      const dateStr = buyDate.toISOString().split('T')[0] + 'T00:00:00';
+  const handleAddSpinoffBuy = useCallback(
+    async (orphan: OrphanedSell) => {
+      setResolving(orphan.isin);
+      try {
+        const buyDate = new Date(orphan.firstSellDate);
+        buyDate.setDate(buyDate.getDate() - 1);
+        const dateStr = buyDate.toISOString().split('T')[0] + 'T00:00:00';
 
-      await api.createTransaction({
-        date: dateStr,
-        ticker: orphan.ticker,
-        side: 'K',
-        quantity: orphan.missingQuantity,
-        price: 0,
-        commission: 0,
-        currency: orphan.currency,
-      });
+        await api.createTransaction({
+          date: dateStr,
+          ticker: orphan.ticker,
+          side: 'K',
+          quantity: orphan.missingQuantity,
+          price: 0,
+          commission: 0,
+          currency: orphan.currency,
+        });
 
-      setOrphanedSells(prev => prev.filter(o => o.isin !== orphan.isin));
-      addMessage({ kind: 'success', text: `Dodano kupno spin-off: ${orphan.paperName} (${orphan.missingQuantity} szt. @ 0)` });
-      queryClient.invalidateQueries();
-    } catch (err) {
-      addMessage({ kind: 'error', text: `Nie udało się dodać kupna dla ${orphan.paperName}: ${(err as Error).message}` });
-    } finally {
-      setResolving(null);
-    }
-  }, [queryClient, addMessage]);
+        setOrphanedSells((prev) => prev.filter((o) => o.isin !== orphan.isin));
+        addMessage({
+          kind: 'success',
+          text: `Dodano kupno spin-off: ${orphan.paperName} (${orphan.missingQuantity} szt. @ 0)`,
+        });
+        queryClient.invalidateQueries();
+      } catch (err) {
+        addMessage({
+          kind: 'error',
+          text: `Nie udało się dodać kupna dla ${orphan.paperName}: ${(err as Error).message}`,
+        });
+      } finally {
+        setResolving(null);
+      }
+    },
+    [queryClient, addMessage],
+  );
 
-  const detectedLabel = detectedBroker ? BROKER_LABELS[detectedBroker] : null;
+  const fileInputClass =
+    'file:bg-muted file:border-0 file:mr-3 file:py-1.5 file:px-3 file:rounded file:text-xs file:font-semibold file:text-foreground hover:file:bg-accent file:cursor-pointer text-xs text-muted-foreground';
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) resetState(); onOpenChange(v); }}>
-      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) resetState();
+        onOpenChange(v);
+      }}
+    >
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Import danych</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {screen !== null && (
+              <button
+                type="button"
+                onClick={goBack}
+                className="text-muted-foreground hover:text-foreground transition-colors -ml-1"
+                aria-label="Wróć do wyboru brokera"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+            )}
+            {screen === null
+              ? 'Import danych'
+              : screen === 'generic'
+                ? 'Import uniwersalny'
+                : `Import z ${BROKER_LABELS[screen as BrokerType]}`}
+          </DialogTitle>
           <DialogDescription>
-            Prześlij pliki CSV/XLSX. Dla Bossy i DEGIRO wymagane są oba pliki — import uruchomi się dopiero gdy oba są wybrane.
+            {screen === null
+              ? 'Wybierz swojego brokera, a powiemy dokładnie jaki plik wgrać.'
+              : screen === 'generic'
+                ? 'Wgraj plik CSV z dowolnego brokera — sami rozpoznamy kolumny.'
+                : 'Wgraj plik(i) wymienione poniżej i kliknij Importuj.'}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-              Transakcje (hisPW.csv, Transactions.csv, XTB .xlsx, mBank CSV)
-            </label>
-            <span className="text-xs text-muted-foreground -mt-0.5">
-              Bossa eksportuje historię osobno per waluta — wgraj wszystkie pliki naraz (np. hisPW-PLN.csv, hisPW-USD.csv, hisPW-EUR.csv).
-            </span>
-            <Input
-              type="file"
-              accept=".csv,.xlsx"
-              multiple
-              disabled={uploading}
-              className="file:bg-muted file:border-0 file:mr-3 file:py-1.5 file:px-3 file:rounded file:text-xs file:font-semibold file:text-foreground hover:file:bg-accent file:cursor-pointer text-xs text-muted-foreground"
-              onChange={(e) => {
-                handleTransactionsSelected(e.target.files);
-                // Pozwól wybrać ten sam plik ponownie po usunięciu z listy
-                e.target.value = '';
-              }}
-            />
+        {/* ── Ekran 1: wybór brokera ── */}
+        {screen === null && (
+          <div className="grid grid-cols-2 gap-2.5">
+            {BROKER_TILES.map((tile) => {
+              const isGeneric = tile.id === 'generic';
+              const label = isGeneric ? GENERIC_TILE_LABEL : BROKER_LABELS[tile.id as BrokerType];
+              return (
+                <button
+                  key={tile.id}
+                  type="button"
+                  onClick={() => setScreen(tile.id)}
+                  className={[
+                    'flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors',
+                    'hover:border-primary/60 hover:bg-accent/50',
+                    isGeneric ? 'border-dashed border-info/40 bg-info/5 col-span-2' : 'border-border',
+                  ].join(' ')}
+                >
+                  <span className="font-semibold text-sm">{label}</span>
+                  <span className="text-xs text-muted-foreground">{tile.tagline}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── Ekran 2A: znany broker ── */}
+        {knownConfig && (
+          <div className="space-y-4">
+            <ol className="space-y-1.5 text-sm list-decimal list-inside marker:text-muted-foreground">
+              {knownConfig.exportSteps.map((step, i) => (
+                <li key={i} className="text-foreground/90">
+                  {step}
+                </li>
+              ))}
+            </ol>
+
+            {knownConfig.files.map((slot) => (
+              <div key={slot.role} className="flex flex-col gap-1.5">
+                <label className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                  {slot.label}{' '}
+                  {slot.required ? (
+                    <span className="text-destructive">(wymagane)</span>
+                  ) : (
+                    <span className="text-muted-foreground/70">(opcjonalne)</span>
+                  )}
+                </label>
+                <span className="text-xs text-muted-foreground -mt-0.5">{slot.hint}</span>
+                <Input
+                  type="file"
+                  accept={slot.accept}
+                  multiple={slot.multiple}
+                  disabled={uploading}
+                  className={fileInputClass}
+                  onChange={(e) => {
+                    handleSlotFiles(slot.role, e.target.files, slot.multiple);
+                    e.target.value = '';
+                  }}
+                />
+                {filesByRole[slot.role].length > 0 && (
+                  <ul className="flex flex-col gap-1 mt-0.5">
+                    {filesByRole[slot.role].map((f, idx) => (
+                      <li
+                        key={idx}
+                        className="flex items-center justify-between text-xs bg-muted/50 rounded px-2 py-1"
+                      >
+                        <span className="truncate flex-1" title={f.name}>
+                          {f.name}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={uploading}
+                          onClick={() => removeSlotFile(slot.role, idx)}
+                          className="ml-2 text-muted-foreground hover:text-destructive transition-colors"
+                          aria-label={`Usuń ${f.name}`}
+                        >
+                          ×
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+
+            {knownConfig.formatNote && (
+              <p className="text-[11px] text-muted-foreground/80">{knownConfig.formatNote}</p>
+            )}
+
             {detecting && (
               <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                <Loader2 className="h-3 w-3 animate-spin" /> Rozpoznawanie formatu...
+                <Loader2 className="h-3 w-3 animate-spin" /> Sprawdzanie pliku…
               </span>
             )}
-            {detectedLabel && !detecting && transactionsFiles.length > 0 && (
-              <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                <Info className="h-3 w-3" /> Wykryto: <span className="font-medium">{detectedLabel}</span>
-                <span className="text-muted-foreground/80">· {transactionsFiles.length} {transactionsFiles.length === 1 ? 'plik' : 'pliki'}</span>
-              </span>
-            )}
-            {transactionsFiles.length > 0 && (
-              <ul className="flex flex-col gap-1 mt-0.5">
-                {transactionsFiles.map((f, idx) => (
-                  <li key={idx} className="flex items-center justify-between text-xs bg-muted/50 rounded px-2 py-1">
-                    <span className="truncate flex-1" title={f.name}>{f.name}</span>
-                    <button
-                      type="button"
-                      disabled={uploading}
-                      onClick={() => removeTransactionFile(idx)}
-                      className="ml-2 text-muted-foreground hover:text-destructive transition-colors"
-                      aria-label={`Usuń ${f.name}`}
-                    >
-                      ×
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-              Operacje gotówkowe {requiresOps && <span className="text-destructive">(wymagane)</span>}
-            </label>
-            {detectedBroker && !requiresOps && (
-              <span className="text-xs text-muted-foreground -mt-0.5">
-                {detectedLabel} dostarcza wszystko w jednym pliku — to pole opcjonalne.
-              </span>
-            )}
-            {requiresOps && !operationsFile && (
-              <span className="text-xs text-muted-foreground -mt-0.5">
-                Dla {detectedLabel} dodaj eksport operacji gotówkowych (Bossa: <code>...operacje_bez_transakcji...csv</code>, DEGIRO: <code>Account.csv</code>).
-              </span>
-            )}
-            <Input
-              type="file"
-              accept=".csv"
-              disabled={uploading || transactionsFiles.length === 0}
-              className="file:bg-muted file:border-0 file:mr-3 file:py-1.5 file:px-3 file:rounded file:text-xs file:font-semibold file:text-foreground hover:file:bg-accent file:cursor-pointer text-xs text-muted-foreground"
-              onChange={(e) => handleOperationsSelected(e.target.files?.[0] ?? null)}
+            <Button onClick={handleSubmit} disabled={!canSubmit} className="w-full">
+              {uploading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" /> Importowanie…
+                </>
+              ) : (
+                'Importuj'
+              )}
+            </Button>
+
+            <FeedbackBlock
+              messages={messages}
+              orphanedSells={orphanedSells}
+              resolving={resolving}
+              onAddSpinoff={handleAddSpinoffBuy}
+              onDismissOrphan={(isin) =>
+                setOrphanedSells((prev) => prev.filter((x) => x.isin !== isin))
+              }
             />
           </div>
+        )}
 
-          <Button
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-            className="w-full"
-          >
-            {uploading ? (
-              <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Importowanie...</>
-            ) : 'Importuj'}
-          </Button>
-
-          {messages.map((m, i) => {
-            // Długie wiadomości (lista pominiętych/warningi cross-file) mogą mieć wiele linii —
-            // cap wysokości + wewnętrzny scroll żeby dialog nie rósł w nieskończoność.
-            const isLong = m.text.split('\n').length > 10;
-            return (
-              <div key={i} className="flex items-start gap-2 text-sm">
-                {m.kind === 'error' ? (
-                  <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-                ) : m.kind === 'warn' ? (
-                  <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
-                ) : m.kind === 'info' ? (
-                  <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
-                ) : (
-                  <CheckCircle className="h-4 w-4 text-success shrink-0 mt-0.5" />
-                )}
-                <span className={[
-                  'whitespace-pre-line min-w-0',
-                  isLong ? 'max-h-60 overflow-y-auto pr-2 block' : '',
-                  m.kind === 'warn' ? 'text-yellow-600 dark:text-yellow-400' : '',
-                  m.kind === 'info' ? 'text-blue-600 dark:text-blue-400' : '',
-                  m.kind === 'error' ? 'text-destructive' : '',
-                ].filter(Boolean).join(' ')}>{m.text}</span>
-              </div>
-            );
-          })}
-
-          {genericCandidate && (
-            <div className="rounded-md border border-info/30 bg-info/5 p-3 space-y-2">
-              <div className="flex items-start gap-2">
-                <Info className="h-4 w-4 text-info shrink-0 mt-0.5" />
-                <span className="text-sm">
-                  Plik <span className="font-medium">{genericCandidate.name}</span> nie pasuje do
-                  żadnego wspieranego brokera. Możesz zmapować jego kolumny ręcznie w imporcie
-                  uniwersalnym.
-                </span>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="ml-6 h-7 text-xs"
+        {/* ── Ekran 2B: inny broker → import uniwersalny ── */}
+        {screen === 'generic' && (
+          <div className="space-y-4">
+            <div className="rounded-md border border-info/30 bg-info/5 p-3 text-sm">
+              Import uniwersalny sam rozpozna układ kolumn Twojego pliku. Jeśli to nowy format —
+              poprowadzimy Cię przez szybkie mapowanie i pokażemy podgląd przed zapisem.
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                Plik CSV
+              </label>
+              <span className="text-xs text-muted-foreground -mt-0.5">
+                Eksport historii transakcji z dowolnego brokera w formacie CSV.
+              </span>
+              <Input
+                type="file"
+                accept=".csv"
                 disabled={uploading}
-                onClick={() => setWizardOpen(true)}
-              >
-                Spróbuj importu uniwersalnego
-              </Button>
+                className={fileInputClass}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (file) {
+                    setGenericCandidate(file);
+                    setWizardOpen(true);
+                  }
+                }}
+              />
             </div>
-          )}
-
-          {orphanedSells.length > 0 && (
-            <div className="rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3 space-y-3">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
-                <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
-                  Wykryto sprzedaż bez kupna
-                </span>
-              </div>
-              {orphanedSells.map(o => (
-                <div key={o.isin} className="ml-6 space-y-1.5">
-                  <div className="text-sm">
-                    <span className="font-medium">{o.paperName}</span>
-                    <span className="text-muted-foreground"> ({o.ticker})</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Brak kupna dla {formatQuantity(o.missingQuantity)} szt. ({o.currency}) · Pierwsza sprzedaż: {formatDate(o.firstSellDate)}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-xs"
-                      disabled={resolving === o.isin}
-                      onClick={() => handleAddSpinoffBuy(o)}
-                    >
-                      {resolving === o.isin ? (
-                        <><Loader2 className="h-3 w-3 animate-spin mr-1" />Dodawanie...</>
-                      ) : 'Dodaj kupno — spin-off (cena 0)'}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 text-xs"
-                      onClick={() => setOrphanedSells(prev => prev.filter(x => x.isin !== o.isin))}
-                    >
-                      Pomiń
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={() => {
-              resetState();
-              onOpenChange(false);
-            }}
-          >
-            Zamknij
-          </Button>
-        </div>
+          </div>
+        )}
 
         {wizardOpen && genericCandidate && (
           <GenericImportWizard
@@ -473,8 +460,6 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             open
             onOpenChange={(v) => {
               if (!v) {
-                // Zamknięcie = odmontowanie kreatora (świeży stan przy następnym
-                // otwarciu); kandydat znika — plik został obsłużony albo porzucony.
                 setWizardOpen(false);
                 setGenericCandidate(null);
               }
@@ -483,5 +468,104 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Komunikaty importu + sekcja „sprzedaż bez kupna" (spin-off). */
+function FeedbackBlock({
+  messages,
+  orphanedSells,
+  resolving,
+  onAddSpinoff,
+  onDismissOrphan,
+}: {
+  messages: Message[];
+  orphanedSells: OrphanedSell[];
+  resolving: string | null;
+  onAddSpinoff: (o: OrphanedSell) => void;
+  onDismissOrphan: (isin: string) => void;
+}) {
+  if (messages.length === 0 && orphanedSells.length === 0) return null;
+  return (
+    <>
+      {messages.map((m, i) => {
+        const isLong = m.text.split('\n').length > 10;
+        return (
+          <div key={i} className="flex items-start gap-2 text-sm">
+            {m.kind === 'error' ? (
+              <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+            ) : m.kind === 'warn' ? (
+              <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+            ) : m.kind === 'info' ? (
+              <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
+            ) : (
+              <CheckCircle className="h-4 w-4 text-success shrink-0 mt-0.5" />
+            )}
+            <span
+              className={[
+                'whitespace-pre-line min-w-0',
+                isLong ? 'max-h-60 overflow-y-auto pr-2 block' : '',
+                m.kind === 'warn' ? 'text-yellow-600 dark:text-yellow-400' : '',
+                m.kind === 'info' ? 'text-blue-600 dark:text-blue-400' : '',
+                m.kind === 'error' ? 'text-destructive' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              {m.text}
+            </span>
+          </div>
+        );
+      })}
+
+      {orphanedSells.length > 0 && (
+        <div className="rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3 space-y-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+            <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
+              Wykryto sprzedaż bez kupna
+            </span>
+          </div>
+          {orphanedSells.map((o) => (
+            <div key={o.isin} className="ml-6 space-y-1.5">
+              <div className="text-sm">
+                <span className="font-medium">{o.paperName}</span>
+                <span className="text-muted-foreground"> ({o.ticker})</span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Brak kupna dla {formatQuantity(o.missingQuantity)} szt. ({o.currency}) · Pierwsza
+                sprzedaż: {formatDate(o.firstSellDate)}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={resolving === o.isin}
+                  onClick={() => onAddSpinoff(o)}
+                >
+                  {resolving === o.isin ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      Dodawanie…
+                    </>
+                  ) : (
+                    'Dodaj kupno — spin-off (cena 0)'
+                  )}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs"
+                  onClick={() => onDismissOrphan(o.isin)}
+                >
+                  Pomiń
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
