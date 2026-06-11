@@ -1,0 +1,132 @@
+/**
+ * Import uniwersalny (profile-driven) — /api/import/generic/*.
+ * Montowany wewnątrz routera /api/import (auth + portfolio middleware
+ * dziedziczone z index.ts). Parsery wbudowane mają zawsze pierwszeństwo —
+ * analyze odsyła znane formaty do /api/import/bulk.
+ */
+import { Router } from 'express';
+import multer from 'multer';
+import {
+  analyzeGenericFile,
+  commitGeneric,
+  listGenericBatches,
+  previewGeneric,
+  reimportGenericBatch,
+} from '../services/generic-import-service.js';
+import { asyncHandler } from '../middleware/async-handler.js';
+
+const router = Router();
+
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB — spójnie z /api/import/bulk
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE },
+  fileFilter: (_req, file, cb) => {
+    const name = file.originalname.toLowerCase();
+    // Generic v1 = CSV; XLSX przyjmujemy, żeby analyze mogło odesłać XTB do /bulk
+    // z czytelnym komunikatem (zamiast odrzucać upload na poziomie multera).
+    cb(null, name.endsWith('.csv') || name.endsWith('.xlsx'));
+  },
+});
+
+/**
+ * POST /api/import/generic/analyze — klasyfikacja pliku pod import uniwersalny:
+ * znany broker → known:true; inaczej fingerprint + profil z biblioteki +
+ * sugestie podobnych formatów + zredagowana próbka do kreatora mapowania.
+ */
+router.post(
+  '/analyze',
+  upload.single('file'),
+  asyncHandler(async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
+    res.json(await analyzeGenericFile(req.file));
+  }),
+);
+
+/**
+ * POST /api/import/generic/preview — wykonanie profilu BEZ zapisu.
+ * multipart: file + pole tekstowe `profile` (JSON profilu).
+ */
+router.post(
+  '/preview',
+  upload.single('file'),
+  asyncHandler(async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
+    const rawProfile = parseProfileField(req.body?.profile);
+    if (rawProfile === undefined) {
+      return res.status(400).json({ error: 'Brak albo niepoprawny JSON w polu `profile`' });
+    }
+    const result = previewGeneric(req.file, rawProfile);
+    res.status(result.ok ? 200 : 422).json(result);
+  }),
+);
+
+/**
+ * POST /api/import/generic/commit — atomowy import.
+ * multipart: file + (`profileId` ALBO `profile` z JSON-em — zapisywany jako
+ * nowa wersja 'pending' w bibliotece profili).
+ */
+router.post(
+  '/commit',
+  upload.single('file'),
+  asyncHandler(async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
+    const profileId =
+      typeof req.body?.profileId === 'string' && req.body.profileId
+        ? req.body.profileId
+        : undefined;
+    const profileJson = profileId ? undefined : parseProfileField(req.body?.profile);
+    if (!profileId && profileJson === undefined) {
+      return res
+        .status(400)
+        .json({ error: 'Podaj `profileId` albo JSON profilu w polu `profile`' });
+    }
+
+    const result = await commitGeneric({
+      buffer: req.file.buffer,
+      originalname: req.file.originalname,
+      portfolioId: req.portfolioId,
+      userId: req.userId,
+      profileId,
+      profileJson,
+    });
+    if (!result.success) {
+      return res.status(400).json({ ...result, error: result.errors.join('; ') });
+    }
+    res.json(result);
+  }),
+);
+
+/** GET /api/import/generic/batches — importy generyczne tego portfela. */
+router.get('/batches', (req, res) => {
+  res.json({ batches: listGenericBatches(req.portfolioId) });
+});
+
+/**
+ * POST /api/import/generic/reimport/:importBatch — ponowne przetworzenie
+ * batcha z przechowanego pliku przy użyciu aktualnego profilu z biblioteki.
+ */
+router.post(
+  '/reimport/:importBatch',
+  asyncHandler(async (req, res) => {
+    const result = await reimportGenericBatch(req.portfolioId, req.params.importBatch);
+    if (!result.success) {
+      return res.status(400).json({ ...result, error: result.errors.join('; ') });
+    }
+    res.json(result);
+  }),
+);
+
+/** Pole `profile` z multipart przychodzi jako string — parsuj defensywnie. */
+function parseProfileField(raw: unknown): unknown {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (typeof raw !== 'string') return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+export default router;

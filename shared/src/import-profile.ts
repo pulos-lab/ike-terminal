@@ -1,4 +1,12 @@
 import { z } from 'zod';
+import type {
+  BrokerType,
+  CashOperation,
+  ImportResult,
+  SkipReason,
+  SkippedRow,
+  Transaction,
+} from './types.js';
 
 /**
  * ImportProfile — deklaratywny opis formatu CSV brokera dla uniwersalnego importu.
@@ -495,4 +503,86 @@ export function validateImportProfile(
     return `${path}${issue.message}`;
   });
   return { ok: false, errors };
+}
+
+// ── Typy API importu generycznego (/api/import/generic/*) ────────────────────
+
+/** Ślad klasyfikacji wiersza — emitowany przez silnik, podstawa tabeli podglądu w UI. */
+export interface RowTrace {
+  /** 1-based indeks wiersza w sparsowanym pliku (po skipEmptyLines). */
+  row: number;
+  /** id reguły classify, która dopasowała wiersz; null = defaultClass. */
+  matchedRuleId: string | null;
+  emitted: RowClass;
+  target?: 'transaction' | 'operation';
+  skipReason?: SkipReason;
+  /** Kluczowe zmapowane pola — do tabeli podglądu. */
+  preview?: Record<string, string | number>;
+}
+
+export type ImportProfileStatus = 'pending' | 'approved' | 'rejected' | 'superseded';
+
+/** Skrót profilu z biblioteki — bez JSON-a profilu (ten idzie osobno, bywa duży). */
+export interface GenericProfileSummary {
+  id: string;
+  fingerprint: string;
+  version: number;
+  status: ImportProfileStatus;
+  brokerLabel: string | null;
+  specVersion: number;
+  usageCount: number;
+  createdAt: string;
+}
+
+/** POST /api/import/generic/analyze */
+export interface GenericAnalyzeResult {
+  /** true = plik obsługuje parser WBUDOWANY — używaj zwykłego /api/import/bulk. */
+  known: boolean;
+  broker?: BrokerType | null;
+  fileRole?: 'transactions' | 'operations' | 'unknown';
+  /** Pola poniżej tylko gdy known=false i plik nadaje się do importu generycznego. */
+  fingerprint?: string;
+  delimiter?: string;
+  headerRowIndex?: number;
+  headers?: string[];
+  /** ZREDAGOWANE wiersze próbki (sample-redactor). */
+  sampleRows?: string[][];
+  /** Profil z biblioteki dla dokładnego fingerprinta (approved > pending). */
+  profile?: { summary: GenericProfileSummary; profileJson: unknown };
+  /** Podobne formaty (Jaccard ≥ 0.75) — szablony startowe dla edytora/LLM. */
+  suggestions?: Array<{ summary: GenericProfileSummary; similarity: number }>;
+  /** Błąd analizy (PL) — np. nie znaleziono nagłówka, XLSX nieobsługiwany. */
+  error?: string;
+}
+
+/** POST /api/import/generic/preview — bez zapisu. */
+export interface GenericPreviewResult {
+  ok: boolean;
+  /** Błędy walidacji profilu lub wykonania (PL). */
+  errors?: string[];
+  transactions?: { total: number; sample: Transaction[]; skipped: SkippedRow[] };
+  operations?: { total: number; sample: CashOperation[]; skipped: SkippedRow[] };
+  rowTraces?: RowTrace[];
+  /** true gdy rowTraces/sample zostały przycięte (duży plik). */
+  truncated?: boolean;
+  warnings?: string[];
+}
+
+/** POST /api/import/generic/commit — ImportResult + metadane użytego profilu. */
+export interface GenericCommitResult extends ImportResult {
+  profileId?: string;
+  profileVersion?: number;
+  profileStatus?: ImportProfileStatus;
+  brokerLabel?: string | null;
+}
+
+/** GET /api/import/generic/batches */
+export interface GenericBatchInfo {
+  importBatch: string;
+  fileName: string | null;
+  profileId: string;
+  profileVersion: number;
+  brokerLabel: string | null;
+  needsReimport: boolean;
+  importedAt: string;
 }

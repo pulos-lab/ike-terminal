@@ -6,6 +6,7 @@ import type {
   InstrumentCategory,
   OperationType,
   RowClass,
+  RowTrace,
   SkippedRow,
   SkipReason,
   Transaction,
@@ -37,19 +38,6 @@ import {
  * - wbudowane reguły brokerowo-niezależne: aliasy ISIN (zdarzenia korporacyjne),
  *   detekcja obligacji (kategoria 'bond'), GBX→GBP (ceny w pensach ÷100).
  */
-
-/** Ślad klasyfikacji wiersza — podstawa tabeli podglądu w UI. */
-export interface RowTrace {
-  /** 1-based indeks wiersza w sparsowanym pliku (po skipEmptyLines). */
-  row: number;
-  /** id reguły classify, która dopasowała wiersz; null = defaultClass. */
-  matchedRuleId: string | null;
-  emitted: RowClass;
-  target?: 'transaction' | 'operation';
-  skipReason?: SkipReason;
-  /** Kluczowe zmapowane pola — do tabeli podglądu. */
-  preview?: Record<string, string | number>;
-}
 
 export interface GenericParseOutput {
   transactions: TransactionsParseResult;

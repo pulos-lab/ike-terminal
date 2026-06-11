@@ -186,6 +186,14 @@ export function clearImportedTransactions(portfolioId: string = 'default'): void
   bumpPortfolioDataVersion(portfolioId);
 }
 
+/** Usuwa wiersze jednego batcha — re-import generyczny po korekcie profilu. */
+export function deleteTransactionsByBatch(importBatch: string, portfolioId: string): number {
+  const db = getDb(portfolioId);
+  const r = db.prepare('DELETE FROM transactions WHERE import_batch = ?').run(importBatch);
+  if (r.changes > 0) bumpPortfolioDataVersion(portfolioId);
+  return r.changes;
+}
+
 /**
  * Rejestruje doliczenie podatku transakcyjnego (Degiro stamp duty / FTT) do prowizji.
  * Zwraca false, gdy identyczny podatek (isin, data+czas, opis, kwota) był już
