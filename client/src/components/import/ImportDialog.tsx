@@ -13,34 +13,9 @@ import {
   type DetectResult,
   BROKER_LABELS,
 } from 'shared';
+import { GenericImportWizard } from './generic/GenericImportWizard';
 
-const SKIP_REASON_LABELS: Record<SkipReason, string> = {
-  missing_date: 'brak daty',
-  missing_isin: 'brak ISIN',
-  missing_name: 'brak nazwy',
-  invalid_side: 'nieprawidłowa strona (K/S)',
-  invalid_quantity: 'nieprawidłowa ilość',
-  invalid_price: 'nieprawidłowa cena',
-  invalid_date: 'nieprawidłowy format daty',
-  corporate_action: 'akcja korporacyjna',
-  short_row: 'niekompletny wiersz',
-  zero_amount: 'kwota zerowa',
-  settlement_record: 'rozliczenie transakcji',
-  summary_row: 'wiersz podsumowania',
-  unparseable_comment: 'nierozpoznany format komentarza',
-  close_trade_entry: 'wpis P/L (pominięty)',
-  missing_description: 'brak opisu operacji',
-  unmatched_fx_credit: 'niesparowana wymiana walut',
-  duplicate: 'duplikat (już zaimportowano)',
-  redemption_reconciled: 'wykup/wezwanie (domknięte syntetyczną sprzedażą)',
-  capital_return_reconciled: 'zwrot kapitału (widoczny w Zdarzeniach korporacyjnych)',
-  unknown_operation_type: 'nierozpoznany typ operacji',
-  unknown_type: 'nieznany typ operacji',
-  unparseable_fx_comment: 'Transfer XTB — nie udało się odczytać pary walut/kursu',
-  invalid_fx_rate: 'Transfer XTB — nieprawidłowy kurs wymiany',
-  fx_currency_mismatch: 'Transfer XTB — waluta niezgodna z kontem',
-  value_mismatch: 'wartość odbiega od ilość×cena (sprawdź mapowanie kolumn)',
-};
+import { SKIP_REASON_LABELS } from '@/lib/import-labels';
 
 interface Props {
   open: boolean;
@@ -64,6 +39,9 @@ export function ImportDialog({ open, onOpenChange }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [orphanedSells, setOrphanedSells] = useState<OrphanedSell[]>([]);
   const [resolving, setResolving] = useState<string | null>(null);
+  /** Plik nierozpoznany przez parsery wbudowane — kandydat do importu uniwersalnego. */
+  const [genericCandidate, setGenericCandidate] = useState<File | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const addMessage = useCallback((m: Message) => {
     setMessages(prev => [...prev, m]);
@@ -76,6 +54,8 @@ export function ImportDialog({ open, onOpenChange }: Props) {
     setRequiresOps(false);
     setMessages([]);
     setOrphanedSells([]);
+    setGenericCandidate(null);
+    setWizardOpen(false);
   }, []);
 
   /** Obsługuje N plików naraz — wykrywa brokera dla KAŻDEGO pliku, akceptuje
@@ -104,8 +84,9 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         if (detect.fileRole === 'unknown' || !detect.broker) {
           addMessage({
             kind: 'warn',
-            text: `Nie udało się rozpoznać formatu pliku ${file.name}. Sprawdź czy to poprawny eksport z brokera.`,
+            text: `Nie udało się rozpoznać formatu pliku ${file.name}. Sprawdź czy to poprawny eksport z brokera — albo użyj importu uniwersalnego poniżej.`,
           });
+          setGenericCandidate(file);
           continue;
         }
         if (brokerForBatch && detect.broker !== brokerForBatch) {
@@ -154,7 +135,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         addMessage({ kind: 'warn', text: `Plik "${file.name}" wygląda na eksport transakcji, nie operacji gotówkowych — przełóż go do pola wyżej.` });
         setOperationsFile(null);
       }
-    } catch (err) {
+    } catch {
       // Ignoruj błąd detekcji — bulk endpoint i tak to zwaliduje, plik zostaje
     }
   }, [addMessage]);
@@ -409,6 +390,28 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             );
           })}
 
+          {genericCandidate && (
+            <div className="rounded-md border border-info/30 bg-info/5 p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <Info className="h-4 w-4 text-info shrink-0 mt-0.5" />
+                <span className="text-sm">
+                  Plik <span className="font-medium">{genericCandidate.name}</span> nie pasuje do
+                  żadnego wspieranego brokera. Możesz zmapować jego kolumny ręcznie w imporcie
+                  uniwersalnym.
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-6 h-7 text-xs"
+                disabled={uploading}
+                onClick={() => setWizardOpen(true)}
+              >
+                Spróbuj importu uniwersalnego
+              </Button>
+            </div>
+          )}
+
           {orphanedSells.length > 0 && (
             <div className="rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3 space-y-3">
               <div className="flex items-start gap-2">
@@ -463,6 +466,21 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             Zamknij
           </Button>
         </div>
+
+        {wizardOpen && genericCandidate && (
+          <GenericImportWizard
+            file={genericCandidate}
+            open
+            onOpenChange={(v) => {
+              if (!v) {
+                // Zamknięcie = odmontowanie kreatora (świeży stan przy następnym
+                // otwarciu); kandydat znika — plik został obsłużony albo porzucony.
+                setWizardOpen(false);
+                setGenericCandidate(null);
+              }
+            }}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );

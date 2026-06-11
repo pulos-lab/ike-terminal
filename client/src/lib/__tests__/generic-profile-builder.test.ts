@@ -1,0 +1,134 @@
+import { describe, it, expect } from 'vitest';
+import {
+  buildProfileFromDraft,
+  detectDateFormat,
+  suggestDraft,
+  type ProfileDraft,
+} from '../generic-profile-builder';
+import { validateImportProfile } from 'shared';
+
+/**
+ * Testy czystej logiki kreatora importu uniwersalnego:
+ * heurystyczny prefill z nagłówków + budowa profilu z draftu.
+ */
+
+const HEADERS = ['Trade date', 'Security', 'ISIN code', 'Direction', 'Shares', 'Unit price', 'Ccy'];
+const SAMPLE = [
+  ['2025-03-15', 'CD PROJEKT', 'PLOPTTC00011', 'BUY', '10', '100.00', 'PLN'],
+  ['2025-04-10', 'KGHM', 'PLKGHM000017', 'SELL', '5', '150.00', 'PLN'],
+];
+
+describe('suggestDraft — heurystyczny prefill', () => {
+  it('rozpoznaje kolumny po nazwach (EN) i wartości strony z próbki', () => {
+    const draft = suggestDraft(HEADERS, SAMPLE, { delimiter: '|', headerRowIndex: 0 });
+
+    expect(draft.trade.dateCol).toBe(0);
+    expect(draft.trade.paperNameCol).toBe(1);
+    expect(draft.trade.isinCol).toBe(2);
+    expect(draft.trade.quantityCol).toBe(4);
+    expect(draft.trade.priceCol).toBe(5);
+    expect(draft.trade.currencyCol).toBe(6);
+    expect(draft.trade.sideStrategy).toBe('column');
+    expect(draft.trade.sideCol).toBe(3);
+    expect(draft.trade.buyValues).toBe('BUY');
+    expect(draft.trade.sellValues).toBe('SELL');
+    expect(draft.trade.dateFormat).toBe('YYYY-MM-DD');
+  });
+
+  it('rozpoznaje polskie nagłówki (Bossa-podobne)', () => {
+    const headers = ['data', 'papier', 'isin', 'ilość', 'cena', 'waluta'];
+    const sample = [['25.02.2026 09:47:27', 'KGHM', 'PLKGHM000017', '10', '150,50', 'PLN']];
+    const draft = suggestDraft(headers, sample, { delimiter: ';', headerRowIndex: 0 });
+
+    expect(draft.trade.dateCol).toBe(0);
+    expect(draft.trade.paperNameCol).toBe(1);
+    expect(draft.trade.quantityCol).toBe(3);
+    expect(draft.trade.priceCol).toBe(4);
+    expect(draft.trade.dateFormat).toBe('DD.MM.YYYY');
+  });
+});
+
+describe('detectDateFormat', () => {
+  it('rozstrzyga DD/MM vs MM/DD po zawartości', () => {
+    expect(detectDateFormat(['25/03/2025'])).toBe('DD/MM/YYYY');
+    expect(detectDateFormat(['03/25/2025'])).toBe('MM/DD/YYYY');
+    expect(detectDateFormat(['05/03/2025'])).toBe('DD/MM/YYYY'); // niejednoznaczne → DD/MM
+  });
+});
+
+describe('buildProfileFromDraft', () => {
+  const baseDraft = (): ProfileDraft =>
+    suggestDraft(HEADERS, SAMPLE, { delimiter: '|', headerRowIndex: 0 });
+
+  it('tryb all-trades → poprawny profil przechodzący walidację schematu', () => {
+    const draft = baseDraft();
+    draft.brokerLabel = 'Testowy';
+    const result = buildProfileFromDraft(draft);
+
+    expect(result.ok).toBe(true);
+    const validation = validateImportProfile(result.profile);
+    expect(validation.ok).toBe(true);
+    if (validation.ok) {
+      expect(validation.profile.brokerLabel).toBe('Testowy');
+      expect(validation.profile.classify[0].emit).toBe('trade');
+      expect(validation.profile.needsNameResolution).toBe(false); // ISIN jest
+    }
+  });
+
+  it('brak kolumny ISIN → needsNameResolution=true', () => {
+    const draft = baseDraft();
+    draft.trade.isinCol = -1;
+    const result = buildProfileFromDraft(draft);
+
+    expect(result.ok).toBe(true);
+    expect((result.profile as { needsNameResolution?: boolean }).needsNameResolution).toBe(true);
+  });
+
+  it('preludium metadanych (headerRowIndex>0) → headerRow scan z sygnaturą', () => {
+    const draft = baseDraft();
+    draft.headerRowIndex = 12;
+    const result = buildProfileFromDraft(draft);
+
+    expect(result.ok).toBe(true);
+    const file = (result.profile as { file: { headerRow: { strategy: string } } }).file;
+    expect(file.headerRow.strategy).toBe('scan');
+  });
+
+  it('tryb rules: reguły + wspólne mapowanie cash powielone per klasa', () => {
+    const headers = ['data', 'tytuł operacji', 'kwota', 'waluta'];
+    const draft = suggestDraft(headers, [['2025-01-10', 'Przelew', '100,00', 'PLN']], {
+      delimiter: ';',
+      headerRowIndex: 0,
+    });
+    draft.mode = 'rules';
+    draft.defaultClass = 'other';
+    draft.classify = [
+      { id: 'r1', colIndex: 1, op: 'contains', values: 'Przelew', emit: 'deposit' },
+      { id: 'r2', colIndex: 1, op: 'contains', values: 'dywidendy', emit: 'dividend' },
+    ];
+    const result = buildProfileFromDraft(draft);
+
+    expect(result.ok).toBe(true);
+    const profile = result.profile as Record<string, unknown>;
+    expect(profile.deposit).toBeDefined();
+    expect(profile.dividend).toBeDefined();
+    expect(profile.other).toBeDefined(); // defaultClass=other wymaga mapowania
+    expect(validateImportProfile(profile).ok).toBe(true);
+  });
+
+  it('czytelne błędy PL przy brakach (kolumna daty, wartości reguły)', () => {
+    const draft = baseDraft();
+    draft.trade.dateCol = -1;
+    const result = buildProfileFromDraft(draft);
+
+    expect(result.ok).toBe(false);
+    expect(result.errors!.some((e) => e.includes('kolumnę daty'))).toBe(true);
+
+    const rulesDraft = baseDraft();
+    rulesDraft.mode = 'rules';
+    rulesDraft.classify = [{ id: 'r1', colIndex: 1, op: 'contains', values: '', emit: 'deposit' }];
+    const rulesResult = buildProfileFromDraft(rulesDraft);
+    expect(rulesResult.ok).toBe(false);
+    expect(rulesResult.errors!.some((e) => e.includes('wartości'))).toBe(true);
+  });
+});
