@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
-import { applyIsinAlias } from 'shared';
+import { applyIsinAlias, isBondInstrument, findBondByTicker, inferBondNominal } from 'shared';
 import { parseNumber, validateTradeFields, parseDottedDate } from './utils.js';
 
 /**
@@ -58,6 +58,7 @@ export function parseBossaTransactions(
 
   const transactions: Transaction[] = [];
   const skipped: SkippedRow[] = [];
+  const warnings: string[] = [];
 
   const rows = result.data as any[];
   for (let i = 0; i < rows.length; i++) {
@@ -93,6 +94,30 @@ export function parseBossaTransactions(
       paperName || '',
     );
 
+    // Obligacje Catalyst: kurs w % wartości nominalnej (np. 98,50 = 985 zł przy nominale
+    // 1000 zł) — kategoria 'bond' mówi silnikowi, że wycena wymaga mnożnika nominal/100.
+    // Sanity-check: `wartość` z CSV ≈ qty × kurs% × nominał + odsetki narosłe (potwierdzone
+    // formularzem Bossy: FPC0235 23×101,78%×1000 + 21,70/szt = 23 908,50). Odsetki sięgają
+    // maks. ~kuponu (≤ kilkanaście %), więc próg 20% nie strzela na legalnych zakupach,
+    // a wyłapuje błędny nominał (pomyłka rzędu 10×). Saldo gotówki liczone z `po prowizji`
+    // jest poprawne niezależnie od tego — warning jest informacyjny.
+    const isBond = isBondInstrument(canonicalPaperName, canonicalIsin);
+    if (isBond) {
+      const nominal =
+        findBondByTicker(canonicalPaperName)?.nominal ?? inferBondNominal(quantity, price, value);
+      if (nominal && value > 0) {
+        const expected = Math.round(quantity) * (price / 100) * nominal;
+        if (Math.abs(value - expected) / value > 0.2) {
+          warnings.push(
+            `Wiersz ${rowNum}: wartość transakcji obligacji ${canonicalPaperName} ` +
+              `(${value.toFixed(2)}) odbiega od kurs×nominał (${expected.toFixed(2)}) o ponad 20% — ` +
+              `prawdopodobnie błędny nominał (przyjęto ${nominal}). Wycena pozycji może być ` +
+              `przekłamana; saldo gotówki (kolumna 'po prowizji') pozostaje poprawne.`,
+          );
+        }
+      }
+    }
+
     transactions.push({
       date: isoDate,
       paperName: canonicalPaperName,
@@ -108,10 +133,11 @@ export function parseBossaTransactions(
       // reconcilePaymentCurrencies() (symulacja salda walut). Bossa IKE/IKZE
       // pozwala trzymać subkonta walutowe (USD/EUR), więc zakup US może iść
       // bezpośrednio z salda USD zamiast auto-FX z PLN.
+      category: isBond ? 'bond' : undefined,
       source: 'bossa',
       importBatch,
     });
   }
 
-  return { data: transactions, skipped };
+  return { data: transactions, skipped, warnings: warnings.length > 0 ? warnings : undefined };
 }

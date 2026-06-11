@@ -94,6 +94,10 @@ export function detectSplits(
     const entry = tickerMap.get(tx.isin);
     if (!entry) continue;
 
+    // Obligacje nie mają splitów (kursy tx i providera są w tej samej skali % nominału,
+    // więc ratio ≈ 1 — guard jest defensywny, bez ryzyka fałszywych wykryć).
+    if (tx.category === 'bond') continue;
+
     // Skip if currencies don't match (FX difference, not split)
     // Normalize: GBX/GBp/GBP are all equivalent for comparison
     const txCurNorm = tx.currency.toUpperCase() === 'GBX' ? 'GBP' : tx.currency.toUpperCase();
@@ -262,6 +266,8 @@ export function detectSplitFromQuantityMismatch(
   const results: Array<{ isin: string; date: string; ratio: number }> = [];
 
   for (const [isin, txs] of byIsin) {
+    // Obligacje nie mają splitów — pomijamy całą grupę.
+    if (txs[0]?.category === 'bond') continue;
     const sorted = [...txs].sort((a, b) => a.date.localeCompare(b.date));
     let accumulated = 0;
 

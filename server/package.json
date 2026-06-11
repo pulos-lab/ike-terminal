@@ -8,6 +8,7 @@
     "seed": "tsx src/seed.ts",
     "seed-benchmarks": "tsx src/seed-benchmarks.ts",
     "scrape:gpw-sectors": "tsx scripts/scrape-gpw-sectors.ts",
+    "scrape:catalyst-bonds": "tsx scripts/scrape-catalyst-bonds.ts",
     "fix:nc": "tsx src/scripts/fix-nc-misidentification.ts",
     "fix:tickers": "tsx src/scripts/fix-tickers.ts",
     "audit:tickers": "tsx src/scripts/audit-ticker-map.ts",

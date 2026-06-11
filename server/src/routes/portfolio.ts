@@ -62,7 +62,7 @@ import {
   computeFifoMatching,
   computeSmartDeletePlan,
 } from '../services/portfolio-engine.js';
-import { BENCHMARKS, type BenchmarkKey } from 'shared';
+import { BENCHMARKS, type BenchmarkKey, findBondByTicker, inferBondNominal } from 'shared';
 import { computePortfolioHistoryMemoized } from '../services/history-memo.js';
 import {
   buildHistoryView,
@@ -248,6 +248,8 @@ router.get(
 
     for (const pos of positions) {
       if (pos.shares <= 0) continue;
+      // Obligacje Catalyst: kupony nie są dywidendami — Yahoo i kalendarz GPW ich nie znają.
+      if (pos.category === 'bond' || pos.exchange === 'CATALYST') continue;
 
       if (pos.exchange === 'GPW' || pos.exchange === 'NC') {
         const base = pos.ticker.replace(/\.WA$/i, '').toUpperCase();
@@ -1269,6 +1271,24 @@ router.post(
     // Look up ticker in ticker_map
     let entry = getTickerBySymbol(ticker, pid);
 
+    // Obligacje Catalyst: Yahoo ich nie zna — wpis z bond-map (ISIN, waluta) + Stooq.
+    // Kategoria 'bond' z requestu lub ticker rozpoznany w mapie obligacji.
+    const bondEntry = findBondByTicker(ticker);
+    const isBond = category === 'bond' || !!bondEntry;
+    if (!entry && isBond) {
+      const upperTicker = ticker.toUpperCase();
+      const newEntry: TickerMapEntry = {
+        isin: bondEntry?.isin || `AUTO_${upperTicker}`,
+        ticker: upperTicker,
+        name: bondEntry ? `${bondEntry.ticker} (${bondEntry.name})` : upperTicker,
+        exchange: 'CATALYST',
+        currency: overrideCurrency || bondEntry?.currency || 'PLN',
+        priceSource: 'stooq',
+      };
+      upsertTickerMapEntry(newEntry, pid);
+      entry = newEntry;
+    }
+
     // If not found, try to auto-create from Yahoo. Fetch price + display name in parallel
     // so the new ticker_map entry doesn't fall back to the bare symbol (Yahoo chart API
     // doesn't return name, only currency — so we hit Yahoo search separately for longname).
@@ -1305,7 +1325,10 @@ router.post(
     }
 
     const quoteCurrency = entry.currency;
-    const value = quantity * price;
+    // Obligacje: cena w % nominału → wartość = qty × kurs% × nominał (fallback 1000 zł).
+    const value = isBond
+      ? quantity * (price / 100) * (bondEntry?.nominal ?? 1000)
+      : quantity * price;
     const comm = commission || 0;
     const total = side === 'K' ? value + comm : value - comm;
     // Payment currency: explicit z body lub fallback na quote (brak przewalutowania).
@@ -1328,7 +1351,7 @@ router.post(
         currency: quoteCurrency,
         paymentCurrency: effectivePaymentCurrency,
         fxRate: effectiveFxRate,
-        category: category || 'stock',
+        category: category || (isBond ? 'bond' : 'stock'),
         source: 'manual',
       },
       pid,
@@ -1412,7 +1435,15 @@ router.put(
     const p = updates.price ?? existing.price;
     const c = updates.commission ?? existing.commission;
     const s = updates.side ?? existing.side;
-    updates.value = q * p;
+    // Obligacje: cena w % nominału → wartość przez nominał (mapa → inferencja ze starego
+    // spójnego trio qty/price/value → fallback 1000 zł).
+    const bondNominal =
+      existing.category === 'bond'
+        ? (findBondByTicker(currentTicker ?? existing.paperName)?.nominal ??
+          inferBondNominal(existing.quantity, existing.price, existing.value) ??
+          1000)
+        : null;
+    updates.value = bondNominal ? q * (p / 100) * bondNominal : q * p;
     updates.total = s === 'K' ? updates.value + c : updates.value - c;
 
     const updated = updateTransaction(id, updates, pid);
@@ -1530,7 +1561,17 @@ router.post(
       for (const edit of plan.edits) {
         const tx = getTransactionById(edit.txId, pid);
         if (!tx) continue;
-        const newValue = edit.newQuantity * tx.price;
+        // Obligacje: cena w % nominału → wartość przez nominał (inferencja ze starego
+        // spójnego trio qty/price/value pokrywa też obligacje spoza mapy).
+        const bondNominal =
+          tx.category === 'bond'
+            ? (findBondByTicker(tx.paperName)?.nominal ??
+              inferBondNominal(tx.quantity, tx.price, tx.value) ??
+              1000)
+            : null;
+        const newValue = bondNominal
+          ? edit.newQuantity * (tx.price / 100) * bondNominal
+          : edit.newQuantity * tx.price;
         const newCommission = tx.commission * (edit.newQuantity / tx.quantity);
         const newTotal = tx.side === 'K' ? newValue + newCommission : newValue - newCommission;
         updateTransaction(

@@ -7,7 +7,12 @@ import type {
   CapitalReturnMarker,
   SkippedRow,
 } from 'shared';
-import { lookupTenderPrice, lookupIpoSubscription } from 'shared';
+import {
+  lookupTenderPrice,
+  lookupIpoSubscription,
+  isBondInstrument,
+  findBondByTicker,
+} from 'shared';
 import { parseNumber } from './utils.js';
 
 /**
@@ -355,6 +360,57 @@ export function parseBossaOperations(
       continue;
     }
 
+    // 6. Wykup obligacji w terminie (Catalyst) — emit RedemptionMarker(kind='bond');
+    // reconciliation policzy qty = round(amount / nominal) (wspiera częściowy wykup).
+    // Wzorce defensywne (realne tytuły Bossy dla obligacji niezweryfikowane — brak danych):
+    // "Wykup obligacji DS1030" / "Wykup papierów wartościowych DS1030" / "Wykup PW DS1030".
+    // Warunek isBondInstrument chroni przed przechwyceniem nie-obligacji — taki tytuł
+    // spada do classifyOperation → 'unknown' → 'other' + warning (nic nie ginie).
+    // Kolejność ważna: "Wykup certyfikatów" (krok 1) i "Wykup PW - wyrównanie" (krok 5)
+    // są przechwytywane wyżej.
+    const bondRedemptionMatch = title.match(
+      /^Wykup (?:obligacji|papierów wartościowych|PW)\s+(\S+)/,
+    );
+    if (bondRedemptionMatch && isBondInstrument(bondRedemptionMatch[1])) {
+      const bondTicker = bondRedemptionMatch[1].toUpperCase();
+      redemptions.push({
+        date: `${dateStr}T00:00:00`,
+        ticker: bondTicker,
+        amount,
+        commission: 0,
+        description: humanizeDescription(title),
+        currency,
+        source: 'bossa',
+        kind: 'bond',
+        nominal: findBondByTicker(bondTicker)?.nominal,
+      });
+      skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
+      continue;
+    }
+
+    // 7. Kupon/odsetki od obligacji — przychód z pozycji, księgowany jak dywidenda
+    // z subkind='coupon' (wchodzi do totalDividends i panelu Dywidendy z badge "Kupon").
+    // Warunek isBondInstrument odróżnia od odsetek od salda gotówki ("Odsetki od środków...")
+    // — te spadają niżej do classifyOperation → unknown/other jak dotychczas.
+    const couponMatch =
+      title.match(/^(?:Wypłata\s+)?[Oo]dset(?:ek|ki)(?:\s+od\s+obligacji)?\s+(\S+)/) ||
+      title.match(/^Wypłata kuponu\s+(\S+)/i);
+    if (couponMatch && isBondInstrument(couponMatch[1])) {
+      operations.push({
+        date: `${dateStr}T00:00:00`,
+        operationType: 'dividend',
+        description: humanizeDescription(title),
+        details: details || undefined,
+        amount,
+        currency,
+        ticker: couponMatch[1].toUpperCase(),
+        source: 'bossa',
+        importBatch,
+        subkind: 'coupon',
+      });
+      continue;
+    }
+
     const operationType = classifyOperation(title);
 
     // Settlement records (Rozliczenie transakcji) → skip, należą do transakcji.
@@ -483,6 +539,15 @@ function humanizeDescription(title: string): string {
   // Wykup PW - wyrównanie TICKER → "Wyrównanie wykupu TICKER"
   const warrantAdjust = title.match(/Wykup PW\s*-\s*wyr(?:ównanie|[\u00f3]wnanie)\s+(\S+)/);
   if (warrantAdjust) return `Wyrównanie wykupu ${warrantAdjust[1]}`;
+
+  // Obligacje: tylko gdy ticker faktycznie wygląda na obligację (spójnie z główną pętlą)
+  const bondRedemption = title.match(/^Wykup (?:obligacji|papierów wartościowych|PW)\s+(\S+)/);
+  if (bondRedemption && isBondInstrument(bondRedemption[1]))
+    return `Wykup obligacji ${bondRedemption[1].toUpperCase()}`;
+  const coupon =
+    title.match(/^(?:Wypłata\s+)?[Oo]dset(?:ek|ki)(?:\s+od\s+obligacji)?\s+(\S+)/) ||
+    title.match(/^Wypłata kuponu\s+(\S+)/i);
+  if (coupon && isBondInstrument(coupon[1])) return `Kupon ${coupon[1].toUpperCase()}`;
 
   return title;
 }

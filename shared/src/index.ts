@@ -2,6 +2,7 @@ export * from './types.js';
 export * from './ticker-map.js';
 export * from './nc-ticker-map.js';
 export * from './cfd-ticker-map.js';
+export * from './bond-map.js';
 export * from './ike-ikze-limits.js';
 export * from './tender-offers-map.js';
 export * from './ipo-subscriptions-map.js';

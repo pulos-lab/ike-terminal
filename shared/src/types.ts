@@ -12,7 +12,7 @@ export const BROKER_LABELS: Record<BrokerType, string> = {
 
 // ============ Transaction Types ============
 
-export type InstrumentCategory = 'stock' | 'etf' | 'cfd';
+export type InstrumentCategory = 'stock' | 'etf' | 'cfd' | 'bond';
 
 export interface Transaction {
   id?: number;
@@ -103,7 +103,13 @@ export type CashOperationSubkind =
    * Dodatni cashflow, zielony badge w panelu "Pozostałe przepływy". UI traktuje subkind
    * jako wirtualną kategorię ("Odsetki") żeby odróżnić od innych `other`.
    */
-  | 'interest';
+  | 'interest'
+  /**
+   * `coupon` — kupon/odsetki od obligacji (Catalyst). Używane razem z `operationType='dividend'`:
+   * ekonomicznie to przychód z trzymanej pozycji, więc wchodzi do totalDividends i panelu
+   * Dywidendy (z badge "Kupon"). NIE mylić z `interest` (odsetki od salda gotówki, bez pozycji).
+   */
+  | 'coupon';
 
 export interface CashOperation {
   id?: number;
@@ -155,6 +161,11 @@ export interface Position {
   buyLots?: OpenBuyLot[];
   /** true when price comes from last transaction, not live market data */
   priceManual?: boolean;
+  /**
+   * Obligacja po terminie wykupu (maturityDate z bond-map < dziś) a pozycja wciąż otwarta —
+   * najpewniej brakuje operacji wykupu w zaimportowanych plikach. UI pokazuje ostrzeżenie.
+   */
+  maturityPassed?: boolean;
 }
 
 export interface ClosedTradeFee {
@@ -194,6 +205,8 @@ export interface DividendRecord {
   amount: number;
   currency: string;
   source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
+  /** 'coupon' gdy rekord to kupon obligacji (operationType='dividend' + subkind='coupon'). */
+  subkind?: 'coupon';
 }
 
 export interface UpcomingDividend {
@@ -364,7 +377,7 @@ export interface TickerMapEntry {
   isin: string;
   ticker: string;
   name: string;
-  exchange: 'GPW' | 'NC' | 'NYSE' | 'NASDAQ' | 'TSX' | 'XETRA' | 'OTHER';
+  exchange: 'GPW' | 'NC' | 'CATALYST' | 'NYSE' | 'NASDAQ' | 'TSX' | 'XETRA' | 'OTHER';
   currency: string;
   priceSource: 'yahoo' | 'stooq' | 'auto';
   sector?: string;
@@ -474,6 +487,8 @@ export interface SkippedRow {
 export interface ParseResult<T> {
   data: T[];
   skipped: SkippedRow[];
+  /** Ostrzeżenia parsera (po polsku) — import-service dokleja je do crossFileWarnings. */
+  warnings?: string[];
 }
 
 /**
@@ -558,10 +573,14 @@ export interface RedemptionMarker {
    * Typ wydarzenia:
    * - 'certificate' — wykup certyfikatów (all-or-nothing, reconciliation zamyka pełne openQty)
    * - 'tender'      — wezwanie skupu (qty = amount / tenderPrice; wymaga ceny z mapy)
+   * - 'bond'        — wykup obligacji w terminie/częściowy (qty = round(amount / nominal),
+   *                   cena syntetycznej S w % nominału — spójnie z kwotowaniem Catalyst)
    */
-  kind: 'certificate' | 'tender';
+  kind: 'certificate' | 'tender' | 'bond';
   /** Cena per akcja (PLN) — wymagana dla `kind === 'tender'`, niewykorzystywana dla 'certificate'. */
   tenderPrice?: number;
+  /** Wartość nominalna 1 obligacji (dla `kind === 'bond'`) — z bond-map, gdy znana parserowi. */
+  nominal?: number;
   /** URL źródłowy komunikatu ESPI (dla 'tender' z mapy) — pokazywany w tooltipie. */
   sourceUrl?: string;
 }

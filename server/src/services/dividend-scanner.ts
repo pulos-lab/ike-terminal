@@ -128,7 +128,8 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
   // Only include tickers with currently open positions (shares > 0)
   const isinEntries = new Map<string, TickerMapEntry>();
   for (const [isin, entry] of tickerMap) {
-    if (entry.exchange === 'NC') continue;
+    // NC i Catalyst: Yahoo ich nie listuje (kupony obligacji przychodzą z CSV brokera).
+    if (entry.exchange === 'NC' || entry.exchange === 'CATALYST') continue;
     // Stan posiadania "na dziś" — włącznie z dzisiejszymi transakcjami (includeDate=true).
     const shares = getSharesAtDate(adjustedTxs, isin, today, true);
     if (shares <= 0) continue;

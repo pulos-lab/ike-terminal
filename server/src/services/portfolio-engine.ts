@@ -31,7 +31,34 @@ import {
   snapToKnownRatio,
 } from './split-detector.js';
 import { getDb } from '../db/connection.js';
-import { BENCHMARKS, DEFAULT_FX_PLN } from 'shared';
+import { BENCHMARKS, DEFAULT_FX_PLN, findBondByTicker, inferBondNominal } from 'shared';
+import type { InstrumentCategory } from 'shared';
+
+// ============ Bond Helpers ============
+
+/**
+ * Mnożnik przeliczający kurs obligacji (w % wartości nominalnej — tak kwotuje
+ * Catalyst, Bossa i Stooq) na wartość w walucie: `wartość = qty × kurs × nominal/100`.
+ * Dla nie-obligacji zwraca 1 (kursy akcji/ETF są już w walucie).
+ *
+ * Nominał: bond-map (po tickerze serii) → inferencja z pierwszej transakcji K
+ * (`value ≈ qty × kurs% × nominal`) → fallback 1000 zł (standard skarbowych/BGK).
+ */
+function bondPriceMultiplier(
+  category: InstrumentCategory | undefined,
+  ticker: string | undefined,
+  txs: Transaction[],
+): number {
+  if (category !== 'bond') return 1;
+  let nominal = ticker ? findBondByTicker(ticker)?.nominal : undefined;
+  if (!nominal) {
+    const firstBuy = txs.find((t) => t.side === 'K');
+    nominal =
+      (firstBuy ? inferBondNominal(firstBuy.quantity, firstBuy.price, firstBuy.value) : null) ??
+      1000;
+  }
+  return nominal / 100;
+}
 
 // ============ Split Helpers ============
 
@@ -160,6 +187,9 @@ async function detectSplitsFromTransactions(
     const entry = tickerMap.get(tx.isin);
     if (!entry || tx.currency !== entry.currency) continue;
     if (isinsWithSplits.has(tx.isin)) continue;
+    // Obligacje nie mają splitów; Yahoo nie zna Catalyst (fetch zwróciłby null,
+    // ale jawny guard oszczędza requesty i wyklucza fałszywe wykrycia).
+    if (tx.category === 'bond') continue;
     // Only detect splits for open positions
     const net = netQty.get(tx.isin) ?? 0;
     if (net <= 0) continue;
@@ -421,21 +451,24 @@ export async function computeOpenPositions(
       const fallbackPrice = lastTx.price;
       const fxKey = fallbackEntry.currency.toUpperCase();
       const fxNativeToPln = fxRates[fxKey] || 1;
-      const currentValueNative = metrics.shares * fallbackPrice;
+      const category = txs[0]?.category || 'stock';
+      // Obligacje: kurs w % nominału — wartości w walucie przez mnożnik nominal/100;
+      // avgBuyPrice/currentPrice zostają w % (spójna skala z kwotowaniem Catalyst).
+      const bondMult = bondPriceMultiplier(category, fallbackEntry.ticker, txs);
+      const currentValueNative = metrics.shares * fallbackPrice * bondMult;
       const currentValuePln = currentValueNative * fxNativeToPln;
       let costBasisPln = 0;
       for (const lot of metrics.buyLots) {
         const lotFx = fxRates[lot.currency] || 1;
-        costBasisPln += lot.quantity * lot.price * lotFx;
+        costBasisPln += lot.quantity * lot.price * bondMult * lotFx;
       }
       const profitLossPln = currentValuePln - costBasisPln;
       const profitLossPct = costBasisPln > 0 ? (profitLossPln / costBasisPln) * 100 : 0;
       const avgBuyPriceNative =
-        metrics.shares > 0 ? costBasisPln / fxNativeToPln / metrics.shares : 0;
-      const costBasisNative = metrics.shares * avgBuyPriceNative;
+        metrics.shares > 0 ? costBasisPln / bondMult / fxNativeToPln / metrics.shares : 0;
+      const costBasisNative = metrics.shares * avgBuyPriceNative * bondMult;
       const profitLossNative = currentValueNative - costBasisNative;
       totalValuePln += currentValuePln;
-      const category = txs[0]?.category || 'stock';
       positions.push({
         paperName: fallbackEntry.name,
         isin,
@@ -470,8 +503,8 @@ export async function computeOpenPositions(
     let currentPrice: number | null = null;
     let previousClose: number | null = null;
     let priceManual = false;
-    if (entry.exchange === 'NC') {
-      // NewConnect: Stooq only (Yahoo doesn't list all NC stocks)
+    if (entry.exchange === 'NC' || entry.exchange === 'CATALYST') {
+      // NewConnect + Catalyst: Stooq only (Yahoo nie listuje NC ani obligacji Catalyst)
       currentPrice = await fetchStooqPrice(entry.ticker);
       previousClose = await fetchStooqPreviousClose(entry.ticker);
     } else {
@@ -502,7 +535,23 @@ export async function computeOpenPositions(
     }
     const fxKey = entCurUpper === 'GBX' ? 'GBP' : entCurUpper;
     const fxNativeToPln = fxRates[fxKey] || fxRates[entry.currency] || 1;
-    const currentValueNative = metrics.shares * priceInNative;
+
+    // Determine category from the first transaction
+    const category = txs[0]?.category || 'stock';
+    // Obligacje: kurs w % nominału — wartości w walucie przez mnożnik nominal/100;
+    // avgBuyPrice/currentPrice zostają w % (spójna skala z kwotowaniem Catalyst/Stooq).
+    const bondMult = bondPriceMultiplier(category, entry.ticker, txs);
+    // Obligacja po terminie wykupu a pozycja otwarta → najpewniej brakuje operacji
+    // wykupu w plikach (pozycja "wisi" po ostatnim kursie). UI pokaże ostrzeżenie.
+    const maturityPassed =
+      category === 'bond'
+        ? (() => {
+            const maturity = findBondByTicker(entry.ticker)?.maturityDate;
+            return !!maturity && maturity < new Date().toISOString().slice(0, 10);
+          })()
+        : undefined;
+
+    const currentValueNative = metrics.shares * priceInNative * bondMult;
     const currentValuePln = currentValueNative * fxNativeToPln;
 
     // Cost basis in PLN: convert each buy lot individually using its own currency.
@@ -510,7 +559,7 @@ export async function computeOpenPositions(
     let costBasisPln = 0;
     for (const lot of metrics.buyLots) {
       const lotFx = fxRates[lot.currency] || 1;
-      costBasisPln += lot.quantity * lot.price * lotFx;
+      costBasisPln += lot.quantity * lot.price * bondMult * lotFx;
     }
 
     // P/L in PLN (the account currency)
@@ -520,16 +569,13 @@ export async function computeOpenPositions(
     // For display: avgBuyPrice in the paper's native currency
     // Derived from PLN cost basis to correctly handle mixed-currency lots
     const avgBuyPriceNative =
-      metrics.shares > 0 ? costBasisPln / fxNativeToPln / metrics.shares : 0;
+      metrics.shares > 0 ? costBasisPln / bondMult / fxNativeToPln / metrics.shares : 0;
 
     // P/L in native currency (for display alongside position's currency)
-    const costBasisNative = metrics.shares * avgBuyPriceNative;
+    const costBasisNative = metrics.shares * avgBuyPriceNative * bondMult;
     const profitLossNative = currentValueNative - costBasisNative;
 
     totalValuePln += currentValuePln;
-
-    // Determine category from the first transaction
-    const category = txs[0]?.category || 'stock';
 
     positions.push({
       paperName: entry.name,
@@ -552,6 +598,7 @@ export async function computeOpenPositions(
       dailyChangePct,
       category,
       priceManual: priceManual || undefined,
+      maturityPassed,
       buyLots: metrics.buyLots.map((lot) => {
         // Convert lot price to the paper's native currency for consistent display
         const lotFx = fxRates[lot.currency] || 1;
@@ -621,6 +668,8 @@ export function computeClosedTrades(
       sellTx: Transaction;
     }> = [];
     const entry = tickerMap.get(isin);
+    // Obligacje: kursy w % nominału — P/L w walucie wymaga mnożnika nominal/100.
+    const bondMult = bondPriceMultiplier(txs[0]?.category, entry?.ticker ?? txs[0]?.paperName, txs);
 
     for (const tx of sorted) {
       if (tx.side === 'K') {
@@ -668,7 +717,7 @@ export function computeClosedTrades(
             const grossProfitPortion =
               tx.cfdGrossProfit !== undefined
                 ? roundTo2(tx.cfdGrossProfit * (matched / tx.quantity))
-                : matched * shortLot.price - matched * tx.price;
+                : (matched * shortLot.price - matched * tx.price) * bondMult;
             const pl = grossProfitPortion - sellComm - coverComm - feesTotal;
             // Percentage: derive notional value from gross profit + price change for CFD
             let plPct: number;
@@ -679,7 +728,7 @@ export function computeClosedTrades(
                 Math.abs(priceChange) > 1e-6 ? Math.abs(grossProfitPortion / priceChange) : 0;
               plPct = notional > 0 ? (pl / notional) * 100 : 0;
             } else {
-              const coverValue = matched * tx.price;
+              const coverValue = matched * tx.price * bondMult;
               plPct = coverValue > 0 ? (pl / coverValue) * 100 : 0;
             }
 
@@ -772,7 +821,7 @@ export function computeClosedTrades(
           const grossProfitPortion =
             tx.cfdGrossProfit !== undefined
               ? roundTo2(tx.cfdGrossProfit * (matched / tx.quantity))
-              : matched * tx.price - matched * lot.price;
+              : (matched * tx.price - matched * lot.price) * bondMult;
           const pl = grossProfitPortion - buyComm - sellComm - feesTotal;
           // Percentage: derive notional value from gross profit + price change for CFD
           let plPct: number;
@@ -782,7 +831,7 @@ export function computeClosedTrades(
               Math.abs(priceChange) > 1e-6 ? Math.abs(grossProfitPortion / priceChange) : 0;
             plPct = notional > 0 ? (pl / notional) * 100 : 0;
           } else {
-            const buyValue = matched * lot.price;
+            const buyValue = matched * lot.price * bondMult;
             plPct = buyValue > 0 ? (pl / buyValue) * 100 : 0;
           }
 
@@ -888,7 +937,8 @@ export function computeClosedTrades(
       const extraFeesTotal = matchedFees.reduce((s, f) => s + f.amount, 0);
       if (extraFeesTotal > 0) {
         trade.profitLoss -= extraFeesTotal;
-        const buyValue = trade.quantity * trade.buyPrice;
+        const buyValue =
+          trade.quantity * trade.buyPrice * bondPriceMultiplier(trade.category, trade.ticker, []);
         trade.profitLossPct = buyValue > 0 ? (trade.profitLoss / buyValue) * 100 : 0;
       }
     }
@@ -920,6 +970,7 @@ export function extractDividends(operations: CashOperation[]): DividendRecord[] 
       amount: op.amount,
       currency: op.currency,
       source: op.source,
+      subkind: op.subkind === 'coupon' ? ('coupon' as const) : undefined,
     }))
     .sort((a, b) => b.date.localeCompare(a.date));
 }
@@ -1435,8 +1486,8 @@ export async function computePortfolioHistory(
   const fetchPromises = tickersToFetch.map(async ({ ticker, source, isin }) => {
     const entry = tickerMap.get(isin);
     let data: Array<{ date: string; close: number }>;
-    if (entry?.exchange === 'NC') {
-      // NewConnect: Stooq only (Yahoo doesn't list all NC stocks)
+    if (entry?.exchange === 'NC' || entry?.exchange === 'CATALYST') {
+      // NewConnect + Catalyst: Stooq only (Yahoo nie listuje NC ani obligacji Catalyst)
       data = await fetchStooqHistory(ticker, start);
     } else if (ticker.endsWith('.WA')) {
       // GPW: Yahoo first, Stooq fallback (to preserve Stooq daily quota)
@@ -1620,6 +1671,26 @@ export async function computePortfolioHistory(
     }
   }
 
+  // Obligacje: kursy (tx i Stooq) w % nominału — mnożnik nominal/100 policzony raz
+  // per ISIN przed pętlą dni (wycena dzienna = shares × price × mnożnik × fx).
+  const bondMultByIsin = new Map<string, number>();
+  {
+    const txsByIsin = new Map<string, Transaction[]>();
+    for (const tx of adjustedTxs) {
+      if (tx.category !== 'bond') continue;
+      const arr = txsByIsin.get(tx.isin) || [];
+      arr.push(tx);
+      txsByIsin.set(tx.isin, arr);
+    }
+    for (const [isin, txs] of txsByIsin) {
+      const entry = tickerMap.get(isin);
+      bondMultByIsin.set(
+        isin,
+        bondPriceMultiplier('bond', entry?.ticker ?? txs[0]?.paperName, txs),
+      );
+    }
+  }
+
   // Determine the last date of any activity (deposit, withdrawal, or transaction)
   const allActivityDates = [
     ...Array.from(dailyDeposit.keys()),
@@ -1756,7 +1827,7 @@ export async function computePortfolioHistory(
       }
 
       const fx = fxRates.get(upperCur === 'GBX' ? 'GBP' : upperCur) ?? 1;
-      stockValueBase += shares * price * fx;
+      stockValueBase += shares * price * (bondMultByIsin.get(isin) ?? 1) * fx;
     }
 
     // Total cash in baseCurrency (convert all foreign currency balances)
