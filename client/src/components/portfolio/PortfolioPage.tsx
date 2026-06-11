@@ -109,9 +109,11 @@ export function PortfolioPage() {
         cashValuePln: data.cashValuePln,
       };
     }
-    const totalValue = data.totalValuePln;
+    // Wiersz „Razem" musi być sumą kolumny „Wartość" nad nim, czyli samych pozycji
+    // (stocksValuePln) — totalValuePln zawiera też wolną gotówkę, która ma własną kartę.
+    const totalValue = data.stocksValuePln ?? data.totalValuePln;
     const totalProfitLoss = data.positions.reduce((s, p) => s + p.profitLossPln, 0);
-    const totalCostBasis = data.stocksValuePln - totalProfitLoss;
+    const totalCostBasis = totalValue - totalProfitLoss;
     const totalProfitLossPct = totalCostBasis > 0 ? (totalProfitLoss / totalCostBasis) * 100 : 0;
     return {
       totalValue,
