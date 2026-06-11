@@ -721,15 +721,19 @@ export function computeClosedTrades(
             const pl = grossProfitPortion - sellComm - coverComm - feesTotal;
             // Percentage: derive notional value from gross profit + price change for CFD
             let plPct: number;
+            let costBasis: number;
             if (tx.cfdGrossProfit !== undefined) {
               const priceChange =
                 shortLot.price > 0 ? (shortLot.price - tx.price) / shortLot.price : 0;
               const notional =
                 Math.abs(priceChange) > 1e-6 ? Math.abs(grossProfitPortion / priceChange) : 0;
               plPct = notional > 0 ? (pl / notional) * 100 : 0;
+              costBasis = notional > 0 ? notional : matched * shortLot.price * bondMult + sellComm;
             } else {
               const coverValue = matched * tx.price * bondMult;
               plPct = coverValue > 0 ? (pl / coverValue) * 100 : 0;
+              // Kapitał zaangażowany = wartość otwarcia shorta + prowizja otwarcia
+              costBasis = matched * shortLot.price * bondMult + sellComm;
             }
 
             closedTrades.push({
@@ -753,6 +757,7 @@ export function computeClosedTrades(
               isShort: true,
               fees: tradeFees.length > 0 ? tradeFees : undefined,
               totalCost: sellComm + coverComm + feesTotal,
+              costBasis,
             });
 
             if (shortLot.quantity <= remaining + EPSILON) {
@@ -825,14 +830,18 @@ export function computeClosedTrades(
           const pl = grossProfitPortion - buyComm - sellComm - feesTotal;
           // Percentage: derive notional value from gross profit + price change for CFD
           let plPct: number;
+          let costBasis: number;
           if (tx.cfdGrossProfit !== undefined) {
             const priceChange = lot.price > 0 ? (tx.price - lot.price) / lot.price : 0;
             const notional =
               Math.abs(priceChange) > 1e-6 ? Math.abs(grossProfitPortion / priceChange) : 0;
             plPct = notional > 0 ? (pl / notional) * 100 : 0;
+            costBasis = notional > 0 ? notional : matched * lot.price * bondMult + buyComm;
           } else {
             const buyValue = matched * lot.price * bondMult;
             plPct = buyValue > 0 ? (pl / buyValue) * 100 : 0;
+            // Kapitał zaangażowany = wartość nabycia (z nominałem obligacji) + prowizja kupna
+            costBasis = buyValue + buyComm;
           }
 
           closedTrades.push({
@@ -855,6 +864,7 @@ export function computeClosedTrades(
             category: tx.category,
             fees: tradeFees.length > 0 ? tradeFees : undefined,
             totalCost: buyComm + sellComm + feesTotal,
+            costBasis,
           });
 
           if (lot.quantity <= remaining + EPSILON) {
