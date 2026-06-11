@@ -662,12 +662,24 @@ export interface ClosedTradesResponse {
   trades: ClosedTrade[];
 }
 
+/** Suma dywidend w jednej walucie + jej równowartość w PLN. */
+export interface DividendCurrencyTotal {
+  /** Kod waluty (PLN, USD, EUR, ...). */
+  currency: string;
+  /** Suma dywidend w tej walucie (kwota oryginalna). */
+  amount: number;
+  /** Równowartość w PLN po kursie z dnia każdej wypłaty; null gdy brak kursu FX. */
+  pln: number | null;
+}
+
 export interface DividendsResponse {
   dividends: DividendRecord[];
-  /** Suma dywidend wypłaconych w PLN (bez konwersji innych walut). */
+  /** Łączna suma wszystkich dywidend przeliczona na PLN (kurs z dnia wypłaty per rekord). */
   totalPln: number;
-  /** Suma dywidend wypłaconych w USD (bez konwersji). */
-  totalUsd: number;
+  /** True gdy `totalPln` pomija rekordy bez dostępnego kursu FX (suma jest zaniżona). */
+  totalPlnApprox: boolean;
+  /** Rozbicie sum per waluta (oryginał + równowartość PLN), malejąco po wartości PLN. */
+  byCurrency: DividendCurrencyTotal[];
 }
 
 /**

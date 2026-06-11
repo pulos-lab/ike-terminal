@@ -64,7 +64,7 @@ import {
 } from '../services/portfolio-engine.js';
 import { BENCHMARKS, type BenchmarkKey, findBondByTicker, inferBondNominal } from 'shared';
 import { computePortfolioHistoryMemoized } from '../services/history-memo.js';
-import { annotateClosedTradesPln } from '../services/fx-history.js';
+import { annotateClosedTradesPln, summarizeDividendsInPln } from '../services/fx-history.js';
 import {
   buildHistoryView,
   buildPositionsView,
@@ -110,13 +110,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const operations = getAllOperations(req.portfolioId);
     const dividends = extractDividends(operations);
-    const totalPln = dividends
-      .filter((d) => d.currency === 'PLN')
-      .reduce((s, d) => s + d.amount, 0);
-    const totalUsd = dividends
-      .filter((d) => d.currency === 'USD')
-      .reduce((s, d) => s + d.amount, 0);
-    res.json({ dividends, totalPln, totalUsd });
+    const { totalPln, totalPlnApprox, byCurrency } = await summarizeDividendsInPln(dividends);
+    res.json({ dividends, totalPln, totalPlnApprox, byCurrency });
   }),
 );
 
