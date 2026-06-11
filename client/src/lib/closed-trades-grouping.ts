@@ -1,4 +1,4 @@
-import type { ClosedTrade } from 'shared';
+import type { ClosedTrade, RecordSource } from 'shared';
 
 /**
  * Zgrupowana pozycja zamknięta — jedna transakcja sprzedaży (sellTransactionId)
@@ -21,7 +21,7 @@ export interface TradeGroup {
   maxBuyPrice: number;
   avgHoldingDays: number;
   sellTransactionId: number;
-  sellSource: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
+  sellSource: RecordSource;
   trades: ClosedTrade[];
 }
 

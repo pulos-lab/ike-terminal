@@ -10,8 +10,14 @@ import {
 } from '../db/transactions-repo.js';
 import { getOperationsCount, clearImportedOperations } from '../db/operations-repo.js';
 import { asyncHandler } from '../middleware/async-handler.js';
+import importGenericRouter from './import-generic.js';
 
 const router = Router();
+
+// Import uniwersalny (profile-driven) — /api/import/generic/*.
+// Montowany PRZED error-middleware multera na końcu tego routera,
+// więc błędy uploadu z sub-routera dostają te same czytelne 400/413.
+router.use('/generic', importGenericRouter);
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 

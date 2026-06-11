@@ -1,6 +1,6 @@
 // ============ Broker Types ============
 
-export type BrokerType = 'auto' | 'bossa' | 'mbank' | 'degiro' | 'xtb';
+export type BrokerType = 'auto' | 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'generic';
 
 export const BROKER_LABELS: Record<BrokerType, string> = {
   auto: 'Wykryj automatycznie',
@@ -8,7 +8,21 @@ export const BROKER_LABELS: Record<BrokerType, string> = {
   mbank: 'mBank eMakler',
   degiro: 'DEGIRO',
   xtb: 'XTB',
+  generic: 'Inny broker (profil)',
 };
+
+/**
+ * Źródło rekordu w bazie. 'generic' = import uniwersalny (silnik profili) —
+ * etykieta brokera żyje wtedy w profilu (brokerLabel), nie w source.
+ */
+export type RecordSource =
+  | 'bossa'
+  | 'mbank'
+  | 'degiro'
+  | 'xtb'
+  | 'manual'
+  | 'auto-yahoo'
+  | 'generic';
 
 // ============ Transaction Types ============
 
@@ -40,7 +54,7 @@ export interface Transaction {
   /** Kurs wymiany user'a: paymentCurrency × fxRate ≈ quote currency amount. */
   fxRate?: number;
   category?: InstrumentCategory;
-  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
+  source: RecordSource;
   importBatch?: string;
   swap?: number; // CFD: swap cost (from Closed Positions sheet)
   rollover?: number; // CFD: rollover cost (from Closed Positions sheet)
@@ -122,7 +136,7 @@ export interface CashOperation {
   ticker?: string; // for dividends
   fxRate?: number; // for fx exchanges
   fxPair?: string; // e.g., 'PLN/USD'
-  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
+  source: RecordSource;
   importBatch?: string;
   /** Opcjonalna subkategoria — używana gdy `operationType` ∈ { capital_return, corporate_action_pending }. */
   subkind?: CashOperationSubkind;
@@ -190,7 +204,7 @@ export interface ClosedTrade {
   holdingDays: number;
   currency: string;
   sellTransactionId: number;
-  sellSource: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
+  sellSource: RecordSource;
   category?: InstrumentCategory;
   fees?: ClosedTradeFee[];
   totalCost?: number;
@@ -223,7 +237,7 @@ export interface DividendRecord {
   description: string;
   amount: number;
   currency: string;
-  source: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
+  source: RecordSource;
   /** 'coupon' gdy rekord to kupon obligacji (operationType='dividend' + subkind='coupon'). */
   subkind?: 'coupon';
 }
@@ -495,7 +509,8 @@ export type SkipReason =
   | 'unknown_type' // XTB — typ operacji spoza znanych typów parsera, wiersz pominięty (paperName zawiera nazwę typu)
   | 'unparseable_fx_comment' // XTB Transfer — brak pary walutowej + kursu w Comment
   | 'invalid_fx_rate' // XTB Transfer — Exchange rate ≤ 0 w Comment
-  | 'fx_currency_mismatch'; // XTB Transfer — ani fromCur ani toCur nie zgadza się z walutą konta
+  | 'fx_currency_mismatch' // XTB Transfer — ani fromCur ani toCur nie zgadza się z walutą konta
+  | 'value_mismatch'; // import generyczny — wartość z CSV odbiega od qty×cena (podejrzane mapowanie kolumn)
 
 export interface SkippedRow {
   row: number;

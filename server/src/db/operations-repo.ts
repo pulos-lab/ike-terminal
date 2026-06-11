@@ -167,6 +167,14 @@ export function clearImportedOperations(portfolioId: string = 'default'): void {
   bumpPortfolioDataVersion(portfolioId);
 }
 
+/** Usuwa wiersze jednego batcha — re-import generyczny po korekcie profilu. */
+export function deleteOperationsByBatch(importBatch: string, portfolioId: string): number {
+  const db = getDb(portfolioId);
+  const r = db.prepare('DELETE FROM cash_operations WHERE import_batch = ?').run(importBatch);
+  if (r.changes > 0) bumpPortfolioDataVersion(portfolioId);
+  return r.changes;
+}
+
 export function getOperationById(
   id: number,
   portfolioId: string = 'default',

@@ -464,6 +464,53 @@ export const api = {
     return uploadFile<import('shared').ImportResult & { error?: string }>('/import/bulk', formData);
   },
 
+  // ── Import uniwersalny (profile-driven) ────────────────────────────────────
+
+  /**
+   * Analiza pliku pod import uniwersalny: znany broker → known:true (użyj
+   * bulkImport); inaczej fingerprint + profil z biblioteki + zredagowana próbka.
+   */
+  genericAnalyze: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return uploadFile<import('shared').GenericAnalyzeResult & { error?: string }>(
+      '/import/generic/analyze',
+      formData,
+    );
+  },
+
+  /** Wykonanie profilu BEZ zapisu — obowiązkowy podgląd przed importem. */
+  genericPreview: (file: File, profile: unknown) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('profile', JSON.stringify(profile));
+    return uploadFile<import('shared').GenericPreviewResult & { error?: string }>(
+      '/import/generic/preview',
+      formData,
+    );
+  },
+
+  /** Atomowy import: profil z biblioteki (profileId) ALBO inline (zapisany jako pending). */
+  genericCommit: (file: File, opts: { profileId?: string; profile?: unknown }) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (opts.profileId) formData.append('profileId', opts.profileId);
+    else formData.append('profile', JSON.stringify(opts.profile));
+    return uploadFile<import('shared').GenericCommitResult & { error?: string }>(
+      '/import/generic/commit',
+      formData,
+    );
+  },
+
+  genericBatches: () =>
+    request<{ batches: import('shared').GenericBatchInfo[] }>('/import/generic/batches'),
+
+  genericReimport: (importBatch: string) =>
+    request<import('shared').GenericCommitResult>(
+      `/import/generic/reimport/${encodeURIComponent(importBatch)}`,
+      { method: 'POST' },
+    ),
+
   // Public share (CRUD właściciela — wymaga sesji + X-Portfolio-Id)
   getShare: () => request<{ share: PortfolioShare | null }>('/share'),
   createShare: (body: ShareSettingsInput) =>
