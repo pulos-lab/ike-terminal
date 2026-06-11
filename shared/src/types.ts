@@ -195,6 +195,25 @@ export interface ClosedTrade {
   fees?: ClosedTradeFee[];
   totalCost?: number;
   isShort?: boolean;
+  /**
+   * Zaangażowany kapitał w walucie instrumentu: qty × buyPrice × bondMult + prowizja
+   * otwarcia (dla short: wartość otwarcia shorta; dla CFD z cfdGrossProfit: notional).
+   * Mianownik dla zagregowanego P/L% — w przeciwieństwie do buyPrice × qty po stronie
+   * klienta uwzględnia nominał obligacji i mnożnik kontraktu CFD.
+   */
+  costBasis?: number;
+  /**
+   * P/L zrealizowany w PLN: przychód po kursie z dnia zamknięcia, koszt po kursie
+   * z dnia otwarcia (zawiera więc efekt walutowy na kapitale). Dla PLN = profitLoss.
+   * undefined gdy brak danych kursowych dla którejś z dat.
+   */
+  profitLossPln?: number;
+  /** costBasis po kursie z dnia otwarcia pozycji. Dla PLN = costBasis. */
+  costBasisPln?: number;
+  /** Kurs waluta→PLN użyty dla nogi otwarcia (1 dla PLN). */
+  fxRateOpen?: number;
+  /** Kurs waluta→PLN użyty dla nogi zamknięcia (1 dla PLN). */
+  fxRateClose?: number;
 }
 
 export interface DividendRecord {
