@@ -21,6 +21,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ExcelJS from 'exceljs';
+import Papa from 'papaparse';
 import type { CashOperation, Transaction } from 'shared';
 import { decodeCSVBuffer } from '../src/parsers/encoding.js';
 import { isBossaFormat, parseBossaTransactions } from '../src/parsers/bossa-transactions.js';
@@ -30,12 +32,14 @@ import {
   isDegiroAccountFormat,
   parseDegiroOperations,
 } from '../src/parsers/degiro-operations.js';
+import { isXtbFormat, parseXtbFile } from '../src/parsers/xtb-transactions.js';
 import { parseWithProfile } from '../src/parsers/generic/engine.js';
 import { GenericParseError } from '../src/parsers/generic/value-parsers.js';
 import { BOSSA_TRANSACTIONS_PROFILE } from '../src/parsers/generic/profiles/bossa-transactions.profile.js';
 import { BOSSA_OPERATIONS_PROFILE } from '../src/parsers/generic/profiles/bossa-operations.profile.js';
 import { DEGIRO_TRANSACTIONS_PROFILE } from '../src/parsers/generic/profiles/degiro-transactions.profile.js';
 import { DEGIRO_ACCOUNT_PROFILE } from '../src/parsers/generic/profiles/degiro-account.profile.js';
+import { buildXtbCashOperationsProfile } from '../src/parsers/generic/profiles/xtb-cash-operations.profile.js';
 
 const BATCH = 'parity-harness';
 const RESOLVER_LIVE = process.argv.includes('--resolver-live');
@@ -64,20 +68,180 @@ const EXPECTED_DIFF_TITLE = new RegExp(
     // Niesparowany podatek u źródła: parser wbudowany go GUBI (pairing-only),
     // generyczny importuje jako fee — różnica oczekiwana na korzyść generycznego.
     '^Podatek Dywidendowy',
+    // XTB Transfer (jednowierszowa wymiana FX) — parser wbudowany dekoduje
+    // kierunek i parę z komentarza, poza zakresem profilu deklaratywnego.
+    '\\[z wymiany walut',
+    // XTB: swapy/rollovery pozycji CFD — parser wbudowany rozlicza je wewnątrz
+    // syntetycznych transakcji CFD z arkusza Closed Positions (poza zakresem).
+    '^(Swap|Rollover) of position',
   ].join('|'),
 );
 
 let hardFailures = 0;
 
-function walkCsv(dir: string): string[] {
+function walkFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = path.join(dir, entry);
     const st = statSync(full);
-    if (st.isDirectory()) out.push(...walkCsv(full));
-    else if (entry.toLowerCase().endsWith('.csv')) out.push(full);
+    if (st.isDirectory()) out.push(...walkFiles(full));
+    else if (/\.(csv|xlsx)$/i.test(entry)) out.push(full);
   }
   return out.sort();
+}
+
+// ── XLSX (XTB) → wiersze CSV ────────────────────────────────────────────────
+
+/** Serializacja komórki jak w parserze wbudowanym (daty: czas LOKALNY). */
+function cellToString(v: ExcelJS.CellValue): string {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) {
+    const p = (n: number) => String(n).padStart(2, '0');
+    return (
+      `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())} ` +
+      `${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`
+    );
+  }
+  if (typeof v === 'object') {
+    if ('result' in v) return cellToString((v as { result: ExcelJS.CellValue }).result);
+    if ('richText' in v) {
+      return (v as { richText: Array<{ text: string }> }).richText.map((t) => t.text).join('');
+    }
+    if ('text' in v) return String((v as { text: unknown }).text);
+    return '';
+  }
+  return String(v);
+}
+
+/** Arkusz "Cash Operations" / "CASH OPERATION HISTORY" → string CSV (średniki). */
+async function xtbSheetToCsv(buffer: Buffer): Promise<string | null> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+  const ws = wb.worksheets.find((w) => w.name.toUpperCase().includes('CASH OPERATION'));
+  if (!ws) return null;
+  const rows: string[][] = [];
+  ws.eachRow({ includeEmpty: false }, (row) => {
+    const cells: string[] = [];
+    row.eachCell({ includeEmpty: true }, (c) => {
+      cells.push(cellToString(c.value));
+    });
+    rows.push(cells);
+  });
+  return Papa.unparse(rows, { delimiter: ';' });
+}
+
+/**
+ * Mapa nazwa instrumentu → ticker Yahoo z arkusza "Closed Positions" — replika
+ * cross-sheet lookupu parsera wbudowanego. To funkcja POZA spec profilu v1;
+ * harness nakłada ją na wynik generyczny, żeby zmierzyć, czy to JEDYNA
+ * brakująca zdolność (reszta pól musi być wtedy identyczna).
+ */
+const XTB_SUFFIX_TO_YAHOO: Record<string, string> = {
+  PL: '.WA', US: '', NL: '.AS', DE: '.DE', UK: '.L', FR: '.PA',
+  ES: '.MC', IT: '.MI', SE: '.ST', NO: '.OL', DK: '.CO', CH: '.SW', HK: '.HK',
+};
+
+function xtbTickerToYahoo(symbol: string): string {
+  const dot = symbol.lastIndexOf('.');
+  if (dot === -1) return symbol;
+  const suffix = XTB_SUFFIX_TO_YAHOO[symbol.slice(dot + 1).toUpperCase()];
+  return suffix !== undefined ? symbol.slice(0, dot) + suffix : symbol.slice(0, dot);
+}
+
+async function xtbNameToTickerMap(buffer: Buffer): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+  const ws = wb.worksheets.find((w) => w.name.toUpperCase().includes('CLOSED POSITION'));
+  if (!ws) return map;
+  let nameCol = -1;
+  let tickerCol = -1;
+  ws.eachRow({ includeEmpty: false }, (row) => {
+    const cells: string[] = [];
+    row.eachCell({ includeEmpty: true }, (c) => cells.push(cellToString(c.value).trim()));
+    if (nameCol === -1) {
+      const n = cells.findIndex((c) => c.toLowerCase() === 'instrument');
+      const t = cells.findIndex((c) => c.toLowerCase() === 'ticker');
+      if (n >= 0 && t >= 0) {
+        nameCol = n;
+        tickerCol = t;
+      }
+      return;
+    }
+    const name = cells[nameCol];
+    const ticker = cells[tickerCol];
+    if (name && ticker && !map.has(name)) map.set(name, xtbTickerToYahoo(ticker));
+  });
+  return map;
+}
+
+async function compareXtbFile(file: string, rel: string): Promise<void> {
+  const buffer = readFileSync(file);
+  if (!(await isXtbFormat(buffer))) {
+    console.log(`▷ ${rel} — XLSX bez arkusza Cash Operations (pominięto)`);
+    return;
+  }
+  console.log(`▶ ${rel} (XTB XLSX → arkusz Cash Operations)`);
+
+  const fileName = path.basename(file);
+  const builtin = await parseXtbFile(buffer, BATCH, fileName);
+  const csv = await xtbSheetToCsv(buffer);
+  if (!csv) return;
+
+  // Waluta subkonta jak w parserze wbudowanym: prefiks nazwy pliku (PLN_/USD_).
+  const accountCurrency = /^([A-Z]{3})_/.exec(fileName)?.[1] ?? 'PLN';
+  // Wariant nagłówka: część eksportów ma osobną kolumnę Ticker ("MSFT.US") obok
+  // Instrument (nazwa) — inny fingerprint → inny wariant profilu (zgodnie z projektem).
+  const headerLine = csv.split('\n').find((l) => l.includes('Type') && l.includes('Time')) ?? '';
+  const hasTickerColumn = headerLine.split(';').some((c) => c.trim() === 'Ticker');
+  const profile = buildXtbCashOperationsProfile(accountCurrency, { hasTickerColumn });
+  if (hasTickerColumn) {
+    console.log('  ℹ️  Wariant nagłówka z kolumną Ticker — profil czyta symbole z Ticker');
+  }
+  const generic = parseWithProfile(csv, profile, BATCH);
+
+  // Dwie transformacje POZA spec v1, nakładane na wynik generyczny, żeby zmierzyć,
+  // czy to jedyne brakujące zdolności:
+  // 1. cross-sheet lookup nazwa→ticker z arkusza Closed Positions (bez niego
+  //    generyczny emituje nazwę spółki jako pseudo-ISIN — ścieżka mBank),
+  // 2. translacja sufiksów XTB→Yahoo ("MSFT.US"→"MSFT", "CDR.PL"→"CDR.WA").
+  const nameMap = await xtbNameToTickerMap(buffer);
+  if (nameMap.size > 0) {
+    console.log(
+      `  ℹ️  Nałożono mapę nazwa→ticker z arkusza Closed Positions (${nameMap.size} wpisów) — ` +
+        `cross-sheet lookup poza spec profilu v1`,
+    );
+  }
+  const mapName = (n: string) => {
+    const fromSheet = nameMap.get(n);
+    if (fromSheet) return fromSheet;
+    return /\.[A-Za-z]{2}$/.test(n) ? xtbTickerToYahoo(n) : n;
+  };
+  const mappedTx = generic.transactions.data.map((t) => ({
+    ...t,
+    paperName: mapName(t.paperName),
+    isin: mapName(t.isin),
+  }));
+  const mappedOps = generic.operations.data.map((o) =>
+    o.ticker ? { ...o, ticker: mapName(o.ticker) } : o,
+  );
+
+  // CFD (arkusz Closed Positions) — świadomie poza zakresem profilu.
+  const isCfd = (t: Transaction) => Boolean(t.cfdPositionId) || t.category === 'cfd';
+  const cfd = builtin.transactions.data.filter(isCfd);
+  const cashTx = builtin.transactions.data.filter((t) => !isCfd(t));
+  if (cfd.length > 0) {
+    console.log(
+      `  ℹ️  CFD poza zakresem profilu (arkusz Closed Positions): ${cfd.length} transakcji ` +
+        `zostaje w parserze wbudowanym`,
+    );
+  }
+  console.log(
+    '  ℹ️  Kategoria (stock/etf) wyłączona z porównania — parser wbudowany czyta ją ' +
+      'z kolumny Category arkusza Closed Positions (cross-sheet, poza zakresem profilu)',
+  );
+  compareTransactions(rel, cashTx, mappedTx, { ignoreFields: ['category'] });
+  compareOperations(rel, builtin.operations.data, mappedOps);
 }
 
 const txKey = (t: Transaction) => `${t.date}|${t.isin}|${t.side}|${t.quantity}|${t.price}`;
@@ -103,22 +267,25 @@ function compareTransactions(
   label: string,
   builtin: Transaction[],
   generic: Transaction[],
+  opts: { ignoreFields?: Array<keyof Transaction> } = {},
 ): Set<string> {
-  const TX_FIELDS: Array<keyof Transaction> = [
-    'date',
-    'paperName',
-    'isin',
-    'quantity',
-    'side',
-    'price',
-    'value',
-    'commission',
-    'total',
-    'currency',
-    'paymentCurrency',
-    'fxRate',
-    'category',
-  ];
+  const TX_FIELDS: Array<keyof Transaction> = (
+    [
+      'date',
+      'paperName',
+      'isin',
+      'quantity',
+      'side',
+      'price',
+      'value',
+      'commission',
+      'total',
+      'currency',
+      'paymentCurrency',
+      'fxRate',
+      'category',
+    ] as Array<keyof Transaction>
+  ).filter((f) => !opts.ignoreFields?.includes(f));
 
   console.log(`  Transakcje: wbudowany=${builtin.length}, generyczny=${generic.length}`);
 
@@ -270,7 +437,7 @@ async function main() {
   console.log(`Katalog danych: ${IMPORT_DIR}\n`);
   let files: string[];
   try {
-    files = walkCsv(IMPORT_DIR);
+    files = walkFiles(IMPORT_DIR);
   } catch {
     console.error(
       `Nie można odczytać ${IMPORT_DIR} — ustaw IMPORT_DIR na katalog z eksportami CSV.`,
@@ -282,10 +449,15 @@ async function main() {
 
   for (const file of files) {
     const rel = path.relative(IMPORT_DIR, file);
-    const content = decodeCSVBuffer(readFileSync(file));
 
     let kind: string | null = null;
     try {
+      if (file.toLowerCase().endsWith('.xlsx')) {
+        await compareXtbFile(file, rel);
+        console.log('');
+        continue;
+      }
+      const content = decodeCSVBuffer(readFileSync(file));
       if (isBossaFormat(content)) {
         kind = 'Bossa transakcje';
         console.log(`▶ ${rel} (${kind})`);

@@ -69,6 +69,7 @@ const CASH_MAPPING_KEY: Partial<Record<RowClass, keyof ImportProfile>> = {
   withdrawal: 'withdrawal',
   fx_leg: 'fxLeg',
   fee: 'fee',
+  trade_fee: 'tradeFee',
   commission_refund: 'commissionRefund',
   capital_return: 'capitalReturn',
   other: 'other',
@@ -83,6 +84,7 @@ const CLASS_TO_OPERATION_TYPE: Partial<Record<RowClass, OperationType>> = {
   withdrawal: 'withdrawal',
   fx_leg: 'fx_exchange', // jednowierszowe FX (bez pairing.fxLegs)
   fee: 'fee',
+  trade_fee: 'trade_fee',
   commission_refund: 'commission_refund',
   capital_return: 'capital_return',
   other: 'other',
@@ -98,6 +100,7 @@ const CLASS_DESCRIPTION_PL: Partial<Record<RowClass, string>> = {
   withdrawal: 'Wypłata',
   fx_leg: 'Wymiana walut',
   fee: 'Opłata',
+  trade_fee: 'Koszt pozycji',
   commission_refund: 'Zwrot prowizji',
   capital_return: 'Zwrot kapitału',
   other: 'Operacja',

@@ -125,6 +125,7 @@ export type Condition = z.infer<typeof ConditionSchema>;
  *   withdrawal       → 'withdrawal' (kwota normalizowana do ujemnej)
  *   fx_leg           → noga wymiany walutowej; parowanie → 2× 'fx_exchange'
  *   fee              → 'fee' (znak kwoty zachowany)
+ *   trade_fee        → 'trade_fee' (koszt przypięty do pozycji: swap/rollover/tax IFTT)
  *   commission_refund→ 'commission_refund'
  *   capital_return   → 'capital_return'
  *   other            → 'other' (zachowuje cashflow nierozpoznanych operacji)
@@ -140,6 +141,7 @@ export const RowClassSchema = z.enum([
   'withdrawal',
   'fx_leg',
   'fee',
+  'trade_fee',
   'commission_refund',
   'capital_return',
   'other',
@@ -367,6 +369,7 @@ const CLASS_TO_MAPPING_KEY = {
   withdrawal: 'withdrawal',
   fx_leg: 'fxLeg',
   fee: 'fee',
+  trade_fee: 'tradeFee',
   commission_refund: 'commissionRefund',
   capital_return: 'capitalReturn',
   other: 'other',
@@ -391,6 +394,7 @@ export const ImportProfileSchema = z
     withdrawal: CashMappingSchema.optional(),
     fxLeg: CashMappingSchema.optional(),
     fee: CashMappingSchema.optional(),
+    tradeFee: CashMappingSchema.optional(),
     commissionRefund: CashMappingSchema.optional(),
     capitalReturn: CashMappingSchema.optional(),
     other: CashMappingSchema.optional(),
