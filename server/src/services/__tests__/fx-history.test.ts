@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { convertClosedTradesToPln, type FxToPlnLookup } from '../fx-history.js';
+import {
+  convertClosedTradesToPln,
+  summarizeDividendsByCurrency,
+  type FxToPlnLookup,
+} from '../fx-history.js';
 import type { ClosedTrade } from 'shared';
 
 function trade(
@@ -176,5 +180,79 @@ describe('convertClosedTradesToPln', () => {
     // 5000 GBX = 50 GBP → 250 PLN; costBasis 50 000 GBX = 500 GBP → 2500 PLN
     expect(t.profitLossPln).toBeCloseTo(250, 6);
     expect(t.costBasisPln).toBeCloseTo(2500, 6);
+  });
+});
+
+describe('summarizeDividendsByCurrency', () => {
+  const div = (amount: number, currency: string, date: string) => ({ amount, currency, date });
+
+  it('pusta lista → zera', () => {
+    const fx: FxToPlnLookup = () => 1;
+    expect(summarizeDividendsByCurrency([], fx)).toEqual({
+      totalPln: 0,
+      totalPlnApprox: false,
+      byCurrency: [],
+    });
+  });
+
+  it('sumuje per waluta i przelicza po kursie z dnia wypłaty (PLN 1:1)', () => {
+    const fx = fxStub({
+      'USD|2026-03-30': 4.0,
+      'USD|2026-05-29': 3.5,
+      'EUR|2026-03-31': 4.3,
+    });
+    const out = summarizeDividendsByCurrency(
+      [
+        div(100, 'PLN', '2025-10-31'),
+        div(10, 'USD', '2026-03-30'), // → 40 PLN
+        div(20, 'USD', '2026-05-29'), // → 70 PLN
+        div(5, 'EUR', '2026-03-31'), // → 21.5 PLN
+      ],
+      fx,
+    );
+    expect(out.totalPlnApprox).toBe(false);
+    expect(out.totalPln).toBeCloseTo(231.5, 6); // 100 + 40 + 70 + 21.5
+    // posortowane malejąco po PLN: PLN(100) > USD(110) ... właściwie USD ma większe PLN
+    const byCur = Object.fromEntries(out.byCurrency.map((c) => [c.currency, c]));
+    expect(byCur.USD).toMatchObject({ amount: 30, pln: 110 });
+    expect(byCur.EUR).toMatchObject({ amount: 5, pln: 21.5 });
+    expect(byCur.PLN).toMatchObject({ amount: 100, pln: 100 });
+    // sort: USD(110) > PLN(100) > EUR(21.5)
+    expect(out.byCurrency.map((c) => c.currency)).toEqual(['USD', 'PLN', 'EUR']);
+  });
+
+  it('waluta bez ŻADNEGO kursu → pln=null, approx=true, pomijana w sumie', () => {
+    const fx = fxStub({ 'USD|2026-01-02': 4.0 });
+    const out = summarizeDividendsByCurrency(
+      [div(10, 'USD', '2026-01-02'), div(2.24, 'CAD', '2026-03-27')],
+      fx,
+    );
+    expect(out.totalPln).toBeCloseTo(40, 6); // tylko USD
+    expect(out.totalPlnApprox).toBe(true);
+    const cad = out.byCurrency.find((c) => c.currency === 'CAD');
+    expect(cad).toMatchObject({ amount: 2.24, pln: null });
+    expect(out.byCurrency[out.byCurrency.length - 1].currency).toBe('CAD'); // null na końcu
+  });
+
+  it('część rekordów waluty bez kursu → suma częściowa + approx=true', () => {
+    const fx = fxStub({ 'USD|2026-01-02': 4.0 }); // brak kursu dla 2026-02-02
+    const out = summarizeDividendsByCurrency(
+      [div(10, 'USD', '2026-01-02'), div(10, 'USD', '2026-02-02')],
+      fx,
+    );
+    const usd = out.byCurrency.find((c) => c.currency === 'USD')!;
+    expect(usd.amount).toBe(20); // oryginał: pełna suma
+    expect(usd.pln).toBeCloseTo(40, 6); // PLN: tylko rekord z kursem
+    expect(out.totalPlnApprox).toBe(true);
+  });
+
+  it('normalizuje wielkość liter waluty (usd == USD)', () => {
+    const fx = fxStub({ 'USD|2026-01-02': 4.0 });
+    const out = summarizeDividendsByCurrency(
+      [div(10, 'usd', '2026-01-02'), div(5, 'USD', '2026-01-02')],
+      fx,
+    );
+    expect(out.byCurrency).toHaveLength(1);
+    expect(out.byCurrency[0]).toMatchObject({ currency: 'USD', amount: 15, pln: 60 });
   });
 });

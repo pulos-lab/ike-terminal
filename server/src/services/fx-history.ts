@@ -11,7 +11,7 @@
  * (NodeCache → price_history.db → sieć), więc po pierwszym żądaniu lookup jest
  * praktycznie darmowy.
  */
-import type { ClosedTrade } from 'shared';
+import type { ClosedTrade, DividendRecord, DividendCurrencyTotal } from 'shared';
 import { fetchYahooHistory } from './yahoo-finance.js';
 
 /** Kurs waluta→PLN na dany dzień (YYYY-MM-DD lub ISO). null = brak danych. */
@@ -136,6 +136,83 @@ export function convertClosedTradesToPln(trades: ClosedTrade[], fx: FxToPlnLooku
     }
     trade.costBasisPln = trade.costBasis * openFx;
   }
+}
+
+/** Sumy dywidend per waluta + łączna równowartość w PLN. */
+export interface DividendsPlnSummary {
+  totalPln: number;
+  totalPlnApprox: boolean;
+  byCurrency: DividendCurrencyTotal[];
+}
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+type DividendLike = Pick<DividendRecord, 'amount' | 'currency' | 'date'>;
+
+/**
+ * Pure: sumuje dywidendy per waluta i przelicza każdy rekord na PLN po kursie
+ * z dnia jego wypłaty (`fx`). PLN liczy się 1:1.
+ *
+ * `totalPln` to suma równowartości rekordów dających się przeliczyć. Waluta bez
+ * ANI jednego kursu dostaje `pln=null`; jeśli choć jeden rekord danej waluty nie
+ * ma kursu, `totalPlnApprox=true` sygnalizuje, że łączna suma jest zaniżona.
+ */
+export function summarizeDividendsByCurrency(
+  dividends: DividendLike[],
+  fx: FxToPlnLookup,
+): DividendsPlnSummary {
+  // Agregacja per waluta: kwota oryginalna, suma PLN z przeliczalnych rekordów,
+  // ile rekordów udało się przeliczyć (do wykrycia walut bez ANI jednego kursu).
+  const agg = new Map<string, { amount: number; pln: number; converted: number; total: number }>();
+  for (const d of dividends) {
+    const cur = d.currency.toUpperCase();
+    const e = agg.get(cur) ?? { amount: 0, pln: 0, converted: 0, total: 0 };
+    e.amount += d.amount;
+    e.total += 1;
+    const rate = fx(cur, d.date);
+    if (rate != null) {
+      e.pln += d.amount * rate;
+      e.converted += 1;
+    }
+    agg.set(cur, e);
+  }
+
+  let totalPln = 0;
+  let totalPlnApprox = false;
+  const byCurrency: DividendCurrencyTotal[] = [];
+  for (const [currency, e] of agg) {
+    const pln = e.converted > 0 ? round2(e.pln) : null; // null tylko gdy zero rekordów przeliczono
+    if (pln != null) totalPln += pln;
+    if (e.converted < e.total) totalPlnApprox = true; // część (lub całość) waluty bez kursu
+    byCurrency.push({ currency, amount: round2(e.amount), pln });
+  }
+  // Malejąco po PLN; waluty bez kursu (pln=null) na końcu.
+  byCurrency.sort((a, b) => (b.pln ?? -Infinity) - (a.pln ?? -Infinity));
+
+  return { totalPln: round2(totalPln), totalPlnApprox, byCurrency };
+}
+
+/**
+ * Wrapper dla endpointu: buduje lookup kursów (od najwcześniejszej daty wśród
+ * walut obcych) i woła `summarizeDividendsByCurrency`. Same PLN-y → bez sieci.
+ */
+export async function summarizeDividendsInPln(
+  dividends: DividendLike[],
+): Promise<DividendsPlnSummary> {
+  if (dividends.length === 0) return { totalPln: 0, totalPlnApprox: false, byCurrency: [] };
+
+  const foreign = dividends.filter((d) => d.currency.toUpperCase() !== 'PLN');
+  let minDate = '9999-12-31';
+  for (const d of foreign) {
+    const key = d.date.slice(0, 10);
+    if (key < minDate) minDate = key;
+  }
+  const fx: FxToPlnLookup =
+    foreign.length > 0
+      ? await buildFxToPlnLookup(Array.from(new Set(foreign.map((d) => d.currency))), minDate)
+      : (cur) => (cur.toUpperCase() === 'PLN' ? 1 : null);
+
+  return summarizeDividendsByCurrency(dividends, fx);
 }
 
 /**
