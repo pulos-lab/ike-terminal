@@ -229,15 +229,23 @@ function ClosedTilesView({
       if (fromDate) trades = trades.filter((t) => t.sellDate.slice(0, 10) >= fromDate!);
       if (toDate) trades = trades.filter((t) => t.sellDate.slice(0, 10) <= toDate!);
     }
-    const totalPnl = trades.reduce((s, t) => s + t.profitLoss, 0);
-    // Cost basis = actual invested capital (buyPrice × quantity + buyCommission).
-    // Note: aggregated in mixed currency when trades span PLN/USD/EUR etc — FX conversion
-    // would require historic fx per trade, which the backend doesn't return. This matches
-    // how profitLoss is aggregated — accurate for PLN-dominated portfolios.
-    const totalCost = trades.reduce(
-      (s, t) => s + (t.buyPrice ?? 0) * (t.quantity ?? 0) + (t.buyCommission ?? 0),
-      0,
-    );
+    // Suma w PLN: serwer przelicza każdą nogę po kursie z jej dnia (profitLossPln)
+    // i zwraca costBasisPln (z nominałem obligacji / notionalem CFD). Pozycje bez
+    // kursu pomijamy i raportujemy w sub zamiast sumować surowe kwoty jak złotówki.
+    let totalPnl = 0;
+    let totalCost = 0;
+    let unconvertible = 0;
+    for (const t of trades) {
+      const pln = t.profitLossPln ?? (t.currency === 'PLN' ? t.profitLoss : null);
+      if (pln == null) {
+        unconvertible += 1;
+        continue;
+      }
+      totalPnl += pln;
+      totalCost +=
+        t.costBasisPln ??
+        (t.currency === 'PLN' ? (t.buyPrice ?? 0) * (t.quantity ?? 0) + (t.buyCommission ?? 0) : 0);
+    }
     const pnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;
     const profitable = trades.filter((t) => t.profitLoss > 0).length;
     const losers = trades.filter((t) => t.profitLoss < 0).length;
@@ -252,6 +260,7 @@ function ClosedTilesView({
       uniqueTickers,
       totalPnl,
       pnlPct,
+      unconvertible,
       profitable,
       losers,
       winRate,
@@ -269,11 +278,14 @@ function ClosedTilesView({
         value={formatPLN(stats.totalPnl)}
         valueClass={plColor(stats.totalPnl)}
         sub={
-          stats.pnlPct !== 0
-            ? `${stats.pnlPct >= 0 ? '+' : ''}${stats.pnlPct.toFixed(2)}%`
-            : undefined
+          [
+            stats.pnlPct !== 0 ? `${stats.pnlPct >= 0 ? '+' : ''}${stats.pnlPct.toFixed(2)}%` : '',
+            stats.unconvertible > 0 ? `bez ${stats.unconvertible} poz. bez kursu` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined
         }
-        subClass={plColor(stats.pnlPct)}
+        subClass={stats.unconvertible > 0 ? undefined : plColor(stats.pnlPct)}
       />
       <Tile
         label="Win rate"

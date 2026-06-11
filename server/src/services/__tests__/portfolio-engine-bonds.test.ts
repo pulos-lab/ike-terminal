@@ -116,6 +116,8 @@ describe('computeClosedTrades — obligacje', () => {
     // Ceny w trade'zie zostają w % (wyświetlacz)
     expect(trades[0].buyPrice).toBe(98.5);
     expect(trades[0].sellPrice).toBe(100);
+    // Zaangażowany kapitał z nominałem (nie surowe buyPrice×qty = 985): 9850 + prowizja
+    expect(trades[0].costBasis).toBeCloseTo(9850 + 19.7);
   });
 });
 

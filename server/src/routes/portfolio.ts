@@ -64,6 +64,7 @@ import {
 } from '../services/portfolio-engine.js';
 import { BENCHMARKS, type BenchmarkKey, findBondByTicker, inferBondNominal } from 'shared';
 import { computePortfolioHistoryMemoized } from '../services/history-memo.js';
+import { annotateClosedTradesPln } from '../services/fx-history.js';
 import {
   buildHistoryView,
   buildPositionsView,
@@ -98,6 +99,7 @@ router.get(
     const operations = getAllOperations(pid);
     const savedSplits = loadSplitsForEngine(pid);
     const trades = computeClosedTrades(transactions, tickerMap, operations, savedSplits);
+    await annotateClosedTradesPln(trades);
     res.json({ trades });
   }),
 );
