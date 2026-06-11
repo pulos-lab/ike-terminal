@@ -261,6 +261,9 @@ export function DividendsPage() {
       } else {
         toast.info(`Brak nowych dywidend (przeskanowano ${result.scanned} tickerów)`);
       }
+      for (const w of (result.warnings ?? []).slice(0, 3)) {
+        toast.warning(w, { duration: 10000 });
+      }
     },
     onError: (e: Error) => errorToast('Skan nie powiódł się', e),
   });

@@ -36,10 +36,52 @@ function shiftDays(dateKey: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Kurs z mapy dziennej z cofaniem do ostatniego notowania (weekend/święto). */
+function rateAt(byDate: Map<string, number> | undefined, date: string): number | null {
+  if (!byDate) return null;
+  let key = date.slice(0, 10);
+  for (let i = 0; i <= MAX_LOOKBACK_DAYS; i++) {
+    const rate = byDate.get(key);
+    if (rate !== undefined) return rate;
+    key = shiftDays(key, -1);
+  }
+  return null;
+}
+
+/** Seria z fetchYahooHistory → mapa data→close (tylko dodatnie); null gdy pusta/błąd. */
+async function fetchRateSeries(symbol: string, start: string): Promise<Map<string, number> | null> {
+  try {
+    const data = await fetchYahooHistory(symbol, start);
+    const byDate = new Map<string, number>();
+    for (const d of data) {
+      if (d.close > 0) byDate.set(d.date, d.close);
+    }
+    return byDate.size > 0 ? byDate : null;
+  } catch (err) {
+    console.warn(`fx-history: brak kursów ${symbol}:`, err);
+    return null;
+  }
+}
+
+/** Bezpośrednia seria nie pokrywa zakresu → potrzebny kurs krzyżowy przez USD.
+ *  Yahoo dla niektórych par xxxPLN=X zwraca szczątkową historię (np. CADPLN=X:
+ *  1 punkt), podczas gdy xxxUSD=X i USDPLN=X są kompletne. */
+function needsCrossRate(direct: Map<string, number> | null, fromDate: string): boolean {
+  if (!direct || direct.size < 2) return true;
+  let earliest = '9999-12-31';
+  for (const key of direct.keys()) {
+    if (key < earliest) earliest = key;
+  }
+  return earliest > shiftDays(fromDate, 14);
+}
+
 /**
  * Buduje lookup kursów dziennych dla podanych walut od `fromDate`.
  * Brak pary / błąd sieci nie rzuca — lookup zwraca null dla tej waluty,
  * a wywołujący zostawia pola PLN niewypełnione.
+ *
+ * Kurs bezpośredni (`xxxPLN=X`) ma priorytet; gdy seria jest szczątkowa lub
+ * nie pokrywa zakresu, fallback per-data na kurs krzyżowy `xxxUSD=X × USDPLN=X`.
  */
 export async function buildFxToPlnLookup(
   currencies: string[],
@@ -52,34 +94,45 @@ export async function buildFxToPlnLookup(
   }
 
   // Bufor na lookback (start zakresu może wypaść w weekend)
-  const start = shiftDays(fromDate.slice(0, 10), -(MAX_LOOKBACK_DAYS * 2));
-  const rates = new Map<string, Map<string, number>>();
+  const startKey = fromDate.slice(0, 10);
+  const start = shiftDays(startKey, -(MAX_LOOKBACK_DAYS * 2));
+
+  const direct = new Map<string, Map<string, number>>();
   await Promise.all(
     Array.from(pairs).map(async (pair) => {
-      try {
-        const data = await fetchYahooHistory(`${pair}PLN=X`, start);
-        const byDate = new Map<string, number>();
-        for (const d of data) {
-          if (d.close > 0) byDate.set(d.date, d.close);
-        }
-        if (byDate.size > 0) rates.set(pair, byDate);
-      } catch (err) {
-        console.warn(`fx-history: brak kursów ${pair}PLN=X:`, err);
-      }
+      const series = await fetchRateSeries(`${pair}PLN=X`, start);
+      if (series) direct.set(pair, series);
     }),
   );
+
+  const crossPairs = Array.from(pairs).filter(
+    (pair) => pair !== 'USD' && needsCrossRate(direct.get(pair) ?? null, startKey),
+  );
+  const crossUsd = new Map<string, Map<string, number>>();
+  let usdPln = direct.get('USD') ?? null;
+  if (crossPairs.length > 0) {
+    const fetches: Promise<void>[] = crossPairs.map(async (pair) => {
+      const series = await fetchRateSeries(`${pair}USD=X`, start);
+      if (series) crossUsd.set(pair, series);
+    });
+    if (!usdPln) {
+      fetches.push(
+        fetchRateSeries('USDPLN=X', start).then((series) => {
+          usdPln = series;
+        }),
+      );
+    }
+    await Promise.all(fetches);
+  }
 
   return (currency, date) => {
     const norm = fxPairFor(currency);
     if (!norm) return 1; // PLN
-    const byDate = rates.get(norm.pair);
-    if (!byDate) return null;
-    let key = date.slice(0, 10);
-    for (let i = 0; i <= MAX_LOOKBACK_DAYS; i++) {
-      const rate = byDate.get(key);
-      if (rate !== undefined) return rate * norm.factor;
-      key = shiftDays(key, -1);
-    }
+    const directRate = rateAt(direct.get(norm.pair), date);
+    if (directRate !== null) return directRate * norm.factor;
+    const curUsd = rateAt(crossUsd.get(norm.pair), date);
+    const usdRate = rateAt(usdPln ?? undefined, date);
+    if (curUsd !== null && usdRate !== null) return curUsd * usdRate * norm.factor;
     return null;
   };
 }

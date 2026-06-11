@@ -21,6 +21,7 @@ import { getSplits } from '../db/splits-repo.js';
 import { getSharesAtDate } from './portfolio-engine.js';
 import { adjustTransactionsForSplits } from './split-detector.js';
 import { fetchYahooDividendEvents, fetchDividendCalendar } from './yahoo-finance.js';
+import { assumedPayoutsPerYear } from './dividend-estimate.js';
 import { DIVIDEND_TAX_REGULAR, DIVIDEND_TAX_IKE_IKZE } from 'shared';
 import type { CashOperation, PortfolioSettings, TickerMapEntry } from 'shared';
 
@@ -28,6 +29,8 @@ export interface ScanResult {
   scanned: number;
   newDividends: number;
   errors: string[];
+  /** Pominięte podejrzane eventy (sanity-check kwoty) — nie blokują flagi "scan done". */
+  warnings: string[];
 }
 
 const DEFAULT_LOOKBACK_DAYS = 90;
@@ -66,6 +69,34 @@ function roundTo2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** Maksymalny akceptowany odchył kwoty eventu od oczekiwanej raty per wypłatę. */
+const SUSPICIOUS_DEVIATION = 4;
+
+/**
+ * Sanity-check kwoty dywidendy per akcję z eventu Yahoo.
+ *
+ * Yahoo potrafi zwrócić błędną kwotę eventu (realny przypadek: BKNG 0.42 USD
+ * zamiast ~9.60 — odchył ×23). Porównujemy z oczekiwaną ratą per wypłatę
+ * (bieżąca roczna stawka `dividendRate` / liczba wypłat w roku); odchył
+ * > SUSPICIOUS_DEVIATION w którąkolwiek stronę → podejrzane. Bez referencji
+ * (brak dividendRate) nie oceniamy. Świadomy kompromis: legalna dywidenda
+ * specjalna >4× raty też wpadnie — wolimy ostrzeżenie i ręczne dodanie niż
+ * cichy śmieciowy wpis.
+ */
+export function isSuspiciousDividendAmount(
+  eventAmount: number,
+  annualRate: number | null,
+  payoutsPerYear: number,
+): { suspicious: false } | { suspicious: true; expected: number; ratio: number } {
+  if (!annualRate || annualRate <= 0 || payoutsPerYear <= 0 || eventAmount <= 0) {
+    return { suspicious: false };
+  }
+  const expected = annualRate / payoutsPerYear;
+  const ratio = eventAmount > expected ? eventAmount / expected : expected / eventAmount;
+  if (ratio <= SUSPICIOUS_DEVIATION) return { suspicious: false };
+  return { suspicious: true, expected, ratio };
+}
+
 /**
  * Scan a single portfolio for new dividend events.
  * Only scans tickers with currently open positions (shares > 0).
@@ -74,14 +105,19 @@ function roundTo2(n: number): number {
 export async function scanDividends(portfolioId: string): Promise<ScanResult> {
   const portfolio = getPortfolio(portfolioId);
   if (!portfolio) {
-    return { scanned: 0, newDividends: 0, errors: [`Portfolio ${portfolioId} not found`] };
+    return {
+      scanned: 0,
+      newDividends: 0,
+      errors: [`Portfolio ${portfolioId} not found`],
+      warnings: [],
+    };
   }
 
   // Skip if already scanned today
   const today = new Date().toISOString().split('T')[0];
   const lastScan = getMetadata(portfolioId, 'last_dividend_scan');
   if (lastScan === today) {
-    return { scanned: 0, newDividends: 0, errors: [] };
+    return { scanned: 0, newDividends: 0, errors: [], warnings: [] };
   }
 
   const settings = portfolio.settings;
@@ -89,7 +125,7 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
   const tickerMap = getTickerMap(portfolioId);
 
   if (transactions.length === 0) {
-    return { scanned: 0, newDividends: 0, errors: [] };
+    return { scanned: 0, newDividends: 0, errors: [], warnings: [] };
   }
 
   // Liczba akcji musi być liczona na transakcjach skorygowanych o splity —
@@ -138,6 +174,7 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
 
   const newOperations: CashOperation[] = [];
   const errors: string[] = [];
+  const warnings: string[] = [];
   let scanned = 0;
 
   for (const [isin, entry] of isinEntries) {
@@ -178,6 +215,23 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
         const shares = getSharesAtDate(adjustedTxs, isin, event.date);
         if (shares <= 0) continue;
 
+        // Sanity-check kwoty eventu vs bieżąca roczna stawka (cache 12h per ticker;
+        // dla świeżych eventów kalendarz i tak był już pobrany wyżej).
+        const calForSanity = await fetchDividendCalendar(entry.ticker).catch(() => null);
+        const sanity = isSuspiciousDividendAmount(
+          event.amount,
+          calForSanity?.dividendRate ?? null,
+          assumedPayoutsPerYear(entry.ticker),
+        );
+        if (sanity.suspicious) {
+          warnings.push(
+            `${entry.ticker}: pominięto podejrzaną dywidendę z ${event.date.slice(0, 10)} — ` +
+              `${event.amount} ${entry.currency}/akcję przy oczekiwanych ~${sanity.expected.toFixed(2)} ` +
+              `(odchył ×${sanity.ratio.toFixed(1)}). Jeśli kwota jest poprawna, dodaj dywidendę ręcznie.`,
+          );
+          continue;
+        }
+
         const country = getCountryFromExchange(entry.exchange, entry.ticker);
         const taxRate = getDividendTaxRate(country, settings);
         const grossAmount = roundTo2(event.amount * shares);
@@ -217,13 +271,19 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
     );
   }
 
+  if (warnings.length > 0) {
+    console.warn(`[dividend-scanner] ${portfolioId}:\n  ${warnings.join('\n  ')}`);
+  }
+
   // Mark scan as done for today — ale NIE gdy wszystko się wysypało (np. outage Yahoo)
   // i nic nie weszło: wtedy zostawiamy flagę, żeby kolejny request spróbował ponownie.
+  // Warnings (pominięte podejrzane eventy) celowo NIE blokują flagi — uporczywie
+  // błędny event Yahoo nie może wymuszać rescanu przy każdym wywołaniu.
   if (!(errors.length > 0 && inserted === 0)) {
     setMetadata(portfolioId, 'last_dividend_scan', today);
   }
 
-  return { scanned, newDividends: inserted, errors };
+  return { scanned, newDividends: inserted, errors, warnings };
 }
 
 /**

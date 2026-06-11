@@ -1,10 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  buildFxToPlnLookup,
   convertClosedTradesToPln,
   summarizeDividendsByCurrency,
   type FxToPlnLookup,
 } from '../fx-history.js';
 import type { ClosedTrade } from 'shared';
+
+// Mock sieci: fetchYahooHistory czyta serie z mapy per symbol (pusta = brak danych).
+const yahooMock = vi.hoisted(() => ({
+  series: {} as Record<string, Array<{ date: string; close: number }>>,
+  calls: [] as string[],
+}));
+vi.mock('../yahoo-finance.js', () => ({
+  fetchYahooHistory: vi.fn(async (symbol: string) => {
+    yahooMock.calls.push(symbol);
+    return yahooMock.series[symbol] ?? [];
+  }),
+}));
 
 function trade(
   overrides: Partial<ClosedTrade> & {
@@ -254,5 +267,66 @@ describe('summarizeDividendsByCurrency', () => {
     );
     expect(out.byCurrency).toHaveLength(1);
     expect(out.byCurrency[0]).toMatchObject({ currency: 'USD', amount: 15, pln: 60 });
+  });
+});
+
+describe('buildFxToPlnLookup — kurs krzyżowy przez USD', () => {
+  beforeEach(() => {
+    yahooMock.series = {};
+    yahooMock.calls = [];
+  });
+
+  it('szczątkowa seria xxxPLN=X → fallback per-data na xxxUSD=X × USDPLN=X (case CADPLN)', async () => {
+    yahooMock.series = {
+      'CADPLN=X': [{ date: '2026-05-05', close: 2.661 }], // 1 punkt — jak realny Yahoo
+      'CADUSD=X': [{ date: '2026-03-27', close: 0.7 }],
+      'USDPLN=X': [{ date: '2026-03-27', close: 4.0 }],
+    };
+    const fx = await buildFxToPlnLookup(['CAD'], '2026-01-01');
+    expect(fx('CAD', '2026-03-27')).toBeCloseTo(2.8, 6); // 0.7 × 4.0
+  });
+
+  it('data pokryta przez bezpośrednią serię ma priorytet nad kursem krzyżowym', async () => {
+    yahooMock.series = {
+      'CADPLN=X': [{ date: '2026-05-05', close: 2.661 }],
+      'CADUSD=X': [
+        { date: '2026-03-27', close: 0.7 },
+        { date: '2026-05-05', close: 0.75 },
+      ],
+      'USDPLN=X': [
+        { date: '2026-03-27', close: 4.0 },
+        { date: '2026-05-05', close: 4.0 },
+      ],
+    };
+    const fx = await buildFxToPlnLookup(['CAD'], '2026-01-01');
+    expect(fx('CAD', '2026-05-06')).toBeCloseTo(2.661, 6); // direct (lookback 1 dzień), nie 3.0
+  });
+
+  it('pełna seria bezpośrednia → kurs krzyżowy w ogóle nie jest pobierany', async () => {
+    yahooMock.series = {
+      'EURPLN=X': [
+        { date: '2026-03-02', close: 4.3 },
+        { date: '2026-03-10', close: 4.31 },
+      ],
+    };
+    const fx = await buildFxToPlnLookup(['EUR'], '2026-03-01');
+    expect(fx('EUR', '2026-03-10')).toBeCloseTo(4.31, 6);
+    expect(yahooMock.calls).not.toContain('EURUSD=X');
+    expect(yahooMock.calls).not.toContain('USDPLN=X');
+  });
+
+  it('GBX przez kurs krzyżowy: GBPUSD × USDPLN × 0.01', async () => {
+    yahooMock.series = {
+      'GBPUSD=X': [{ date: '2026-04-10', close: 1.3 }],
+      'USDPLN=X': [{ date: '2026-04-10', close: 4.0 }],
+    };
+    const fx = await buildFxToPlnLookup(['GBX'], '2026-04-01');
+    expect(fx('GBX', '2026-04-10')).toBeCloseTo(0.052, 6); // 1.3 × 4.0 × 0.01
+  });
+
+  it('brak obu nóg → null (waluta nieprzeliczalna)', async () => {
+    yahooMock.series = { 'USDPLN=X': [{ date: '2026-04-10', close: 4.0 }] };
+    const fx = await buildFxToPlnLookup(['NOK'], '2026-04-01');
+    expect(fx('NOK', '2026-04-10')).toBeNull();
   });
 });

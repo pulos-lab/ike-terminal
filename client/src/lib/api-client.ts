@@ -167,7 +167,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   scanDividends: () =>
-    request<{ scanned: number; newDividends: number; errors: string[] }>(
+    request<{ scanned: number; newDividends: number; errors: string[]; warnings: string[] }>(
       '/portfolio/dividends/scan',
       {
         method: 'POST',
