@@ -252,6 +252,18 @@ export function PortfolioPage() {
                         <TableCell className="font-mono font-medium">
                           {pos.ticker}
                           <CategoryBadge category={pos.category} />
+                          {pos.maturityPassed && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <AlertTriangle className="h-4 w-4 text-amber-500 inline ml-1 cursor-help" />
+                              </TooltipTrigger>
+                              <TooltipContent side="right" className="max-w-[280px]">
+                                Obligacja po terminie wykupu, a pozycja wciąż otwarta —
+                                prawdopodobnie brakuje operacji wykupu. Zaimportuj aktualny plik
+                                operacji z Bossy albo dodaj sprzedaż ręcznie w panelu Transakcje.
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                           {recentSplitMap.has(pos.isin) &&
                             (() => {
                               const split = recentSplitMap.get(pos.isin)!;

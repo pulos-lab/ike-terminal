@@ -119,7 +119,7 @@ export function TradesPage() {
     }: {
       ticker: string;
       form: SellForm;
-      category?: 'stock' | 'etf' | 'cfd';
+      category?: 'stock' | 'etf' | 'cfd' | 'bond';
     }) =>
       api.createTransaction({
         date: form.date,

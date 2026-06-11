@@ -13,5 +13,11 @@ export function CategoryBadge({ category }: { category?: string }) {
         ETF
       </Badge>
     );
+  if (category === 'bond')
+    return (
+      <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">
+        OBL
+      </Badge>
+    );
   return null;
 }

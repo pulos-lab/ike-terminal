@@ -27,6 +27,7 @@ import type {
   CapitalReturnMarker,
   ParseResult,
 } from 'shared';
+import { findBondByTicker, inferBondNominal } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
 import {
   detectBroker,
@@ -641,6 +642,38 @@ function reconcileBossaRedemptions(
       price = red.tenderPrice;
       commission = red.commission;
       originTag = `${red.description} — ${qty} szt @ ${price.toFixed(2)} ${red.currency} (cena z tender-offers-map${red.sourceUrl ? `, źródło: ${red.sourceUrl}` : ''})`;
+    } else if (red.kind === 'bond') {
+      // Wykup obligacji: qty = amount / nominał (wspiera częściowy wykup/amortyzację).
+      // Cena syntetycznej S w % nominału — spójnie z kwotowaniem Catalyst i resztą
+      // transakcji obligacyjnych (engine przelicza przez mnożnik nominal/100).
+      const firstBuy = allTxForTicker.find((t) => t.side === 'K');
+      const nominal =
+        red.nominal ??
+        findBondByTicker(red.ticker)?.nominal ??
+        (firstBuy ? inferBondNominal(firstBuy.quantity, firstBuy.price, firstBuy.value) : null) ??
+        1000;
+      qty = Math.round(red.amount / nominal);
+      if (qty <= 0) {
+        warnings.push(
+          `Bossa: ${red.description} — wyliczona ilość obligacji <= 0 (amount=${red.amount}, nominał=${nominal}); pomijam`,
+        );
+        continue;
+      }
+      if (qty > openQty) {
+        warnings.push(
+          `Bossa: ${red.description} — wyliczono ${qty} szt (nominał ${nominal}), ale otwarta pozycja to ${openQty}. ` +
+            `Zamykam ${openQty} szt — sprawdź kompletność plików i nominał obligacji.`,
+        );
+        qty = openQty;
+      } else if (qty < openQty) {
+        warnings.push(
+          `Bossa: ${red.description} — częściowy wykup ${qty}/${openQty} szt (nominał ${nominal}). ` +
+            `Pozostała pozycja ${red.ticker}: ${openQty - qty} szt.`,
+        );
+      }
+      price = Math.round((red.amount / qty / nominal) * 100 * 10000) / 10000;
+      commission = 0;
+      originTag = `${red.description} — ${qty} szt @ ${price.toFixed(2)}% nominału (${nominal} ${red.currency})`;
     } else {
       // Wykup certyfikatów — zamknij pełen openQty.
       qty = openQty;
@@ -662,6 +695,7 @@ function reconcileBossaRedemptions(
       total: netTotal,
       currency: red.currency,
       paymentCurrency: 'PLN',
+      category: red.kind === 'bond' ? 'bond' : undefined,
       source: 'bossa',
       importBatch,
       syntheticOrigin: originTag,

@@ -37,6 +37,12 @@ import type { DividendRecord, UpcomingDividend } from 'shared';
 
 type BadgeVariant = ComponentProps<typeof Badge>['variant'];
 
+/** Badge "Kupon" — odróżnia kupon obligacji (subkind='coupon') od dywidendy spółki. */
+function CouponBadge({ subkind }: { subkind?: string }) {
+  if (subkind !== 'coupon') return null;
+  return <Badge variant="info">Kupon</Badge>;
+}
+
 const SOURCE_LABELS: Record<string, { label: string; variant: BadgeVariant }> = {
   'auto-yahoo': { label: 'Auto', variant: 'info' },
   manual: { label: 'Ręczne', variant: 'muted' },
@@ -397,6 +403,7 @@ export function DividendsPage() {
                           <span className="font-mono font-semibold text-sm truncate">
                             {d.ticker}
                           </span>
+                          <CouponBadge subkind={d.subkind} />
                           <CcyChip ccy={d.currency} />
                         </>
                       }
@@ -480,7 +487,9 @@ export function DividendsPage() {
                     {sortedDividends.map((d: DividendRecord) => (
                       <TableRow key={d.id}>
                         <TableCell>{formatDate(d.date)}</TableCell>
-                        <TableCell className="font-mono font-medium">{d.ticker}</TableCell>
+                        <TableCell className="font-mono font-medium">
+                          {d.ticker} <CouponBadge subkind={d.subkind} />
+                        </TableCell>
                         <TableCell className="text-muted-foreground text-sm">
                           {d.description}
                         </TableCell>

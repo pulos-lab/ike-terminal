@@ -19,7 +19,7 @@ Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i st
 - `server/src/routes/` — endpointy API: `portfolios`, `portfolio`, `prices`, `import`, `bug-reports`, `share` (CRUD publicznego linku), `public-share` (widok publiczny bez auth)
 - `server/src/parsers/` — parsery brokerów: `bossa-transactions`, `bossa-operations`, `mbank-transactions`, `degiro-transactions`, `degiro-operations`, `xtb-transactions` (XLSX) + `registry`, `encoding`, `utils`, `__tests__/`
 - `server/src/services/` — logika biznesowa: `portfolio-engine`, `history-memo` (cache computePortfolioHistory, wersjonowanie w `db/data-version`), `price-cache`, `history-cache`, `isin-resolver`, `sector-resolver`, `ticker-search`, `dividend-scanner`, `dividend-estimate`, `gpw-dividend-calendar` (kalendarz dywidend GPW/NC ze stockwatch+biznesradar, lazy refresh 24h), `split-detector`, `payment-currency-reconciler`, `benchmark-updater`, `import-service`, `yahoo-finance`, `yahoo-auth`, `stooq` + `__tests__/`
-- `shared/src/` — typy, stałe, mapy: `ticker-map`, `nc-ticker-map`, `cfd-ticker-map`, `gpw-sector-map`, `gics-to-stockwatch`, `isin-aliases-map`, `ipo-subscriptions-map`, `tender-offers-map`, `ike-ikze-limits`
+- `shared/src/` — typy, stałe, mapy: `ticker-map`, `nc-ticker-map`, `cfd-ticker-map`, `bond-map` (+ `bond-map-data` generowany scraperem z obligacje.pl: ~930 obligacji Catalyst z ISIN/nominałem/zapadalnością), `gpw-sector-map`, `gics-to-stockwatch`, `isin-aliases-map`, `ipo-subscriptions-map`, `tender-offers-map`, `ike-ikze-limits`
 - `data/` — bazy SQLite (per portfel + `price_history.db` + `auth.db`)
 - `Import/` — pliki CSV/XLSX użytkownika (IKE/, IKZE/, Degiro/)
 
@@ -43,7 +43,7 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
 - Reużycie logiki: `portfolio-views.ts` (`buildHistoryView`/`buildPositionsView`) — wspólne dla `/api/portfolio` i `/api/public`; świeżość danych z memo per dzień kalendarzowy (bez crona)
 
 ## Import danych — obsługiwane domy maklerskie
-1. **Bossa** — transakcje + operacje (średnik, Windows-1250, CSV)
+1. **Bossa** — transakcje + operacje (średnik, Windows-1250, CSV); obsługa obligacji Catalyst: kategoria `bond` (detekcja: bond-map / regex serii skarbowych / ISIN PL0000\*), kupony → `dividend`+`subkind='coupon'`, wykup → RedemptionMarker `kind='bond'` (syntetyczna S, qty = kwota/nominał, wspiera częściowy wykup). UWAGA: kursy obligacji w % nominału — `Transaction.price` ZOSTAJE w %, przeliczenie ×nominal/100 wyłącznie w silniku (`bondPriceMultiplier`)
 2. **mBank eMakler** — transakcje GPW + zagraniczne (średnik, Windows-1250, CSV)
 3. **DEGIRO** — transakcje multi-currency (przecinek, UTF-8, CSV)
 4. **XTB** — transakcje stock/ETF + zamknięte pozycje CFD (XLSX, ExcelJS)
@@ -58,6 +58,7 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
 ### Ceny bieżące (live)
 - **GPW (akcje .WA)**: Yahoo Finance
 - **NewConnect (NC)**: Stooq (jedyne źródło — Yahoo nie listuje NC)
+- **Obligacje Catalyst (exchange `CATALYST`)**: Stooq (jedyne źródło; kurs w % nominału — silnik mnoży przez nominał z `bond-map`)
 - **Zagraniczne (NYSE, NASDAQ, XETRA, TSX)**: Yahoo Finance
 - **CFD (surowce, indeksy, forex, krypto)**: Yahoo Finance (statyczna mapa instrument → ticker w `shared/src/cfd-ticker-map.ts`, np. GOLD → GC=F)
 - **FX (kursy walut)**: Yahoo Finance (USDPLN=X, EURPLN=X, CADPLN=X, GBPPLN=X)
@@ -111,4 +112,5 @@ Zunifikowana taksonomia: 8 nadsektorów × 40 podsektorów ze stockwatch.pl/gpw/
 - `npm run build` — build all workspaces
 - `npm run seed -w server` — seed bazy danych
 - `npm run scrape:gpw-sectors -w server` — regeneracja `gpw-sector-map.ts` ze stockwatch.pl
+- `npm run scrape:catalyst-bonds -w server` — regeneracja `bond-map-data.ts` z obligacje.pl (~6 min; gpwcatalyst.pl blokuje boty WAF-em)
 - `start.command` — alternatywny skrypt startowy (kill portów + start + open browser)

@@ -1,5 +1,12 @@
 import type { Transaction, TickerMapEntry } from 'shared';
-import { findNcTicker, findCfdTicker, getCfdSector } from 'shared';
+import {
+  findNcTicker,
+  findCfdTicker,
+  getCfdSector,
+  isBondInstrument,
+  findBondByIsin,
+  findBondByTicker,
+} from 'shared';
 import { getTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { searchYahoo, validateStooq, searchStooqByName } from './ticker-search.js';
 import { fetchYahooPrice } from './yahoo-finance.js';
@@ -144,6 +151,31 @@ export function tryNcOfflineGuard(isin: string, paperName: string): TickerMapEnt
   };
 }
 
+/**
+ * Wczesny guard obligacji Catalyst — analogia do tryNcOfflineGuard. Yahoo nie zna
+ * Catalyst, więc każdy request to strata; Stooq kwotuje obligacje po tickerze serii
+ * (np. ds1030, fpc0733) w % nominału. Wpis z bond-map gdy znamy serię; dla obligacji
+ * spoza mapy (np. świeża emisja korporacyjna) fallback na paperName — Stooq i tak
+ * rozpozna symbol, a nominał silnik wyinferuje z transakcji.
+ */
+export function tryBondGuard(
+  isin: string,
+  paperName: string,
+  txCurrency: string,
+): TickerMapEntry | null {
+  if (!isBondInstrument(paperName, isin)) return null;
+  const bond = findBondByIsin(isin) ?? findBondByTicker(paperName);
+  const ticker = bond?.ticker ?? paperName.toUpperCase().trim();
+  return {
+    isin,
+    ticker,
+    name: bond ? `${bond.ticker} (${bond.name})` : ticker,
+    exchange: 'CATALYST' as TickerMapEntry['exchange'],
+    currency: bond?.currency ?? txCurrency ?? 'PLN',
+    priceSource: 'stooq',
+  };
+}
+
 export async function resolveIsin(
   isin: string,
   paperName: string,
@@ -174,6 +206,10 @@ export async function resolveIsin(
   // gwarantuje że NC offline map wygra dla każdej ścieżki ISIN-u.
   const ncGuard = tryNcOfflineGuard(isin, paperName);
   if (ncGuard) return ncGuard;
+
+  // Wczesny guard obligacji Catalyst — przed jakimkolwiek requestem do Yahoo/Stooq.
+  const bondGuard = tryBondGuard(isin, paperName, txCurrency);
+  if (bondGuard) return bondGuard;
 
   // === Polish pseudo-ISINs: Stooq FIRST (authoritative for GPW) ===
   // This covers: mBank tickers (CDR, KTY), XTB new format (Cyfrowy Polsat, PGE),
@@ -581,6 +617,20 @@ export async function resolveUnknownIsins(
 
   await mapWithConcurrency(items, 3, async ([isin, { paperName, currency, category }]) => {
     try {
+      // Obligacje Catalyst: wpis bez requestów sieciowych (mapa/regex → Stooq).
+      // Kategorię 'bond' ustawia parser, więc isBondInstrument na pewno przejdzie;
+      // tryBondGuard w resolveIsin to ścieżka zapasowa (np. ręcznie dodane transakcje).
+      if (category === 'bond') {
+        const bondEntry = tryBondGuard(isin, paperName, currency);
+        if (bondEntry) {
+          upsertTickerMapEntry(bondEntry, portfolioId);
+          resolved.push(bondEntry);
+          console.log(`  ✓ ${isin} → ${bondEntry.ticker} (${bondEntry.name}) [BOND]`);
+          return;
+        }
+        // category='bond' bez przejścia guardu nie powinno się zdarzyć — spadnij na zwykłą ścieżkę.
+      }
+
       // CFD instruments: resolve via static map (Yahoo/Stooq search won't find them)
       if (category === 'cfd') {
         const cfdEntry = findCfdTicker(isin);

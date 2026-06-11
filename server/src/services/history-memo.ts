@@ -34,6 +34,13 @@ type HistoryResult = Awaited<ReturnType<ComputeHistoryFn>>;
 
 const MAX_MEMO_ENTRIES = 8;
 
+/**
+ * Wersja logiki silnika w kluczu memo — podbij przy zmianie SPOSOBU liczenia historii
+ * bez zmiany danych w DB (dataVersion tego nie wykryje, a memo in-memory przeżywa
+ * hot-reload tsx watch). v2: wycena obligacji przez mnożnik nominal/100.
+ */
+const ENGINE_VERSION = 2;
+
 const memo = new Map<string, Promise<HistoryResult>>();
 
 /** Wyczyść cały cache memo (testy / diagnostyka). */
@@ -60,6 +67,7 @@ export function computePortfolioHistoryMemoized(
 ): Promise<HistoryResult> {
   const today = new Date().toISOString().split('T')[0];
   const key = [
+    `v${ENGINE_VERSION}`,
     portfolioId,
     benchmarkTicker,
     benchmarkSource,

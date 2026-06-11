@@ -70,7 +70,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
   /** Waluta zakupu/rozliczenia — wybór usera. 'auto' = równa walucie notowania (brak FX). */
   const [paymentCurrency, setPaymentCurrency] = useState<string>('auto');
   const [fxRate, setFxRate] = useState('');
-  const [category, setCategory] = useState<'stock' | 'etf' | 'cfd'>('stock');
+  const [category, setCategory] = useState<'stock' | 'etf' | 'cfd' | 'bond'>('stock');
 
   const { data: pricesData } = useQuery({
     queryKey: QUERY_KEYS.livePrices,
@@ -293,7 +293,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
             <label className="text-xs text-muted-foreground">Kategoria</label>
             <Select
               value={category}
-              onValueChange={(v) => setCategory(v as 'stock' | 'etf' | 'cfd')}
+              onValueChange={(v) => setCategory(v as 'stock' | 'etf' | 'cfd' | 'bond')}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -302,8 +302,14 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
                 <SelectItem value="stock">Stock</SelectItem>
                 <SelectItem value="etf">ETF</SelectItem>
                 <SelectItem value="cfd">CFD</SelectItem>
+                <SelectItem value="bond">Obligacja</SelectItem>
               </SelectContent>
             </Select>
+            {category === 'bond' && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Ticker serii Catalyst (np. DS1030), cena w % wartości nominalnej (np. 98,50)
+              </p>
+            )}
           </div>
 
           <div>
