@@ -1,0 +1,451 @@
+import { describe, it, expect } from 'vitest';
+import { CategoryRulesSchema, ImportProfileSchema, type ImportProfile } from 'shared';
+import { parseWithProfile } from '../engine.js';
+import { GenericParseError, parseDateWithFormats } from '../value-parsers.js';
+
+/**
+ * Testy silnika generycznego — syntetyczne fixtures per element taksonomii.
+ * Każdy test buduje minimalny profil + CSV i sprawdza wynik mapowania.
+ */
+
+const BATCH = 'batch-test';
+
+/** Minimalny profil transakcyjny nad CSV: data;papier;isin;strona;ilosc;cena;waluta */
+function tradeProfile(overrides: Record<string, unknown> = {}): ImportProfile {
+  return ImportProfileSchema.parse({
+    specVersion: 1,
+    brokerLabel: 'Test',
+    file: { delimiter: ';', headerRow: { strategy: 'first' } },
+    classify: [{ id: 'trade', when: [{ col: { name: 'data' }, op: 'notEmpty' }], emit: 'trade' }],
+    trade: {
+      date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['DD.MM.YYYY'] },
+      paperName: { kind: 'column', col: { name: 'papier' } },
+      isin: { kind: 'column', col: { name: 'isin' } },
+      quantity: { kind: 'column', col: { name: 'ilosc' } },
+      price: { kind: 'column', col: { name: 'cena' } },
+      currency: { kind: 'column', col: { name: 'waluta' }, fallback: 'PLN' },
+      side: {
+        strategy: 'column',
+        col: { name: 'strona' },
+        buyValues: ['K', 'BUY'],
+        sellValues: ['S', 'SELL'],
+      },
+    },
+    ...overrides,
+  });
+}
+
+const TRADE_HEADER = 'data;papier;isin;strona;ilosc;cena;waluta';
+
+describe('parseWithProfile — transakcje', () => {
+  it('mapuje wiersz K z wyliczonym value i total', () => {
+    const csv = `${TRADE_HEADER}\n25.02.2026 09:47:27;KGHM;PLKGHM000017;K;10;150,50;PLN`;
+    const out = parseWithProfile(csv, tradeProfile(), BATCH);
+
+    expect(out.transactions.data).toHaveLength(1);
+    const tx = out.transactions.data[0];
+    expect(tx).toMatchObject({
+      date: '2026-02-25T09:47:27',
+      paperName: 'KGHM',
+      isin: 'PLKGHM000017',
+      quantity: 10,
+      side: 'K',
+      price: 150.5,
+      value: 1505,
+      commission: 0,
+      total: 1505,
+      currency: 'PLN',
+      source: 'generic',
+      importBatch: BATCH,
+    });
+  });
+
+  it('strona ze znaku ilości (signedQuantity) + fractional shares', () => {
+    const profile = tradeProfile();
+    profile.trade!.side = { strategy: 'signedQuantity', col: { name: 'ilosc' } };
+    const csv = `${TRADE_HEADER}\n01.03.2026;AAPL;US0378331005;;-0,3069;494,15;USD`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.transactions.data).toHaveLength(1);
+    expect(out.transactions.data[0].side).toBe('S');
+    expect(out.transactions.data[0].quantity).toBeCloseTo(0.3069);
+  });
+
+  it('GBX: cena w pensach ÷100, waluta GBP', () => {
+    const csv = `${TRADE_HEADER}\n01.03.2026;RIO;GB0007188757;K;10;5512,00;GBX`;
+    const out = parseWithProfile(csv, tradeProfile(), BATCH);
+
+    const tx = out.transactions.data[0];
+    expect(tx.currency).toBe('GBP');
+    expect(tx.price).toBeCloseTo(55.12);
+    expect(tx.value).toBeCloseTo(551.2);
+  });
+
+  it('wholeShares zaokrągla ilość do pełnych sztuk', () => {
+    const profile = tradeProfile();
+    profile.trade!.wholeShares = true;
+    const csv = `${TRADE_HEADER}\n01.03.2026;KGHM;PLKGHM000017;K;9,9999999;150,00;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    expect(out.transactions.data[0].quantity).toBe(10);
+  });
+
+  it('value_mismatch: wartość z CSV odbiega od qty×cena → skip + warning', () => {
+    const profile = tradeProfile();
+    profile.trade!.value = { kind: 'column', col: { name: 'wartosc' } };
+    const csv = `data;papier;isin;strona;ilosc;cena;waluta;wartosc\n01.03.2026;KGHM;PLKGHM000017;K;10;150,00;PLN;9999,00`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.transactions.data).toHaveLength(0);
+    expect(out.transactions.skipped[0].reason).toBe('value_mismatch');
+    expect(out.warnings.some((w) => w.includes('mapowanie kolumn'))).toBe(true);
+  });
+
+  it('obligacja: kurs w % nominału — bez cross-checku, kategoria bond', () => {
+    const profile = tradeProfile();
+    profile.trade!.value = { kind: 'column', col: { name: 'wartosc' } };
+    // DS1030 (obligacja skarbowa): 23 szt × 101,78% × 1000 nominału ≈ 23 409,40
+    const csv = `data;papier;isin;strona;ilosc;cena;waluta;wartosc\n01.03.2026;DS1030;PL0000111456;K;23;101,78;PLN;23409,40`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.transactions.data).toHaveLength(1);
+    expect(out.transactions.data[0].category).toBe('bond');
+    expect(out.transactions.data[0].value).toBeCloseTo(23409.4);
+  });
+
+  it('reguły kategorii: matcher → etf, default dla pozostałych', () => {
+    const profile = tradeProfile();
+    profile.trade!.category = CategoryRulesSchema.parse({
+      rules: [{ when: { by: 'nameRegex', pattern: 'ETF|UCITS' }, category: 'etf' }],
+      default: 'stock',
+    });
+    const csv = `${TRADE_HEADER}\n01.03.2026;BETA ETF WIG20;PLBETA000017;K;10;50,00;PLN\n02.03.2026;KGHM;PLKGHM000017;K;5;150,00;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.transactions.data[0].category).toBe('etf');
+    expect(out.transactions.data[1].category).toBe('stock');
+  });
+
+  it('fallback waluty przy pustej komórce', () => {
+    const csv = `${TRADE_HEADER}\n01.03.2026;KGHM;PLKGHM000017;K;10;150,00;`;
+    const out = parseWithProfile(csv, tradeProfile(), BATCH);
+    expect(out.transactions.data[0].currency).toBe('PLN');
+  });
+
+  it('nieprawidłowa strona → invalid_side; zła data → invalid_date', () => {
+    const csv = `${TRADE_HEADER}\n01.03.2026;KGHM;PLKGHM000017;X;10;150,00;PLN\nnie-data;KGHM;PLKGHM000017;K;10;150,00;PLN`;
+    const out = parseWithProfile(csv, tradeProfile(), BATCH);
+
+    expect(out.transactions.data).toHaveLength(0);
+    expect(out.transactions.skipped.map((s) => s.reason)).toEqual(['invalid_side', 'invalid_date']);
+  });
+
+  it('brak kolumny wymaganej przez profil → GenericParseError (PL)', () => {
+    const csv = `data;papier;strona;ilosc;cena;waluta\n01.03.2026;KGHM;K;10;150,00;PLN`;
+    expect(() => parseWithProfile(csv, tradeProfile(), BATCH)).toThrow(GenericParseError);
+    expect(() => parseWithProfile(csv, tradeProfile(), BATCH)).toThrow(/brakuje kolumny "isin"/);
+  });
+
+  it('headerRow scan: nagłówek po preludium metadanych', () => {
+    const profile = tradeProfile({
+      file: {
+        delimiter: ';',
+        headerRow: { strategy: 'scan', signature: ['data', 'papier'], maxScanRows: 10 },
+      },
+    });
+    const csv = `mBank eksport\nklient: 0000111122223333\n${TRADE_HEADER}\n01.03.2026;KGHM;PLKGHM000017;K;10;150,00;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    expect(out.transactions.data).toHaveLength(1);
+  });
+
+  it('zduplikowane nazwy nagłówków — occurrence wybiera właściwą', () => {
+    const profile = tradeProfile();
+    profile.trade!.currency = {
+      kind: 'column',
+      col: { name: 'waluta', occurrence: 1 },
+      fallback: 'PLN',
+    };
+    const csv = `data;papier;isin;strona;ilosc;cena;waluta;waluta\n01.03.2026;AAPL;US0378331005;K;10;150,00;XXX;USD`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    expect(out.transactions.data[0].currency).toBe('USD');
+  });
+
+  it('footerStop przerywa przetwarzanie; skipRows → summary_row', () => {
+    const profile = tradeProfile({
+      file: {
+        delimiter: ';',
+        headerRow: { strategy: 'first' },
+        footerStop: [{ col: { name: 'data' }, op: 'startsWith', values: ['RAZEM'] }],
+        skipRows: [[{ col: { name: 'papier' }, op: 'equals', values: ['SUMA'] }]],
+      },
+    });
+    const csv = [
+      TRADE_HEADER,
+      '01.03.2026;KGHM;PLKGHM000017;K;10;150,00;PLN',
+      '01.03.2026;SUMA;;;;;',
+      'RAZEM;;;;;;',
+      '02.03.2026;CDR;PLOPTTC00011;K;5;300,00;PLN', // za stopką — ignorowane
+    ].join('\n');
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.transactions.data).toHaveLength(1);
+    expect(out.operations.skipped.some((s) => s.reason === 'summary_row')).toBe(true);
+  });
+
+  it('rowTraces zawierają id reguły i podgląd pól', () => {
+    const csv = `${TRADE_HEADER}\n25.02.2026;KGHM;PLKGHM000017;K;10;150,50;PLN`;
+    const out = parseWithProfile(csv, tradeProfile(), BATCH);
+    const trace = out.rowTraces.find((t) => t.target === 'transaction');
+    expect(trace?.matchedRuleId).toBe('trade');
+    expect(trace?.preview).toMatchObject({ papier: 'KGHM', strona: 'K' });
+  });
+});
+
+// ── Operacje gotówkowe ───────────────────────────────────────────────────────
+
+const OPS_HEADER = 'data;tytul;kwota;waluta';
+
+function opsProfile(
+  classify: Array<Record<string, unknown>>,
+  mappings: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+): ImportProfile {
+  const cash = {
+    date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['YYYY-MM-DD'] },
+    amount: { kind: 'column', col: { name: 'kwota' } },
+    currency: { kind: 'column', col: { name: 'waluta' }, fallback: 'PLN' },
+    description: { kind: 'column', col: { name: 'tytul' } },
+  };
+  return ImportProfileSchema.parse({
+    specVersion: 1,
+    brokerLabel: 'Test',
+    file: { delimiter: ';', headerRow: { strategy: 'first' } },
+    classify,
+    ...Object.fromEntries(Object.entries(mappings).map(([k, v]) => [k, v === true ? cash : v])),
+    ...extra,
+  });
+}
+
+describe('parseWithProfile — operacje gotówkowe', () => {
+  it('deposit z ujemną kwotą → withdrawal + warning (znak nigdy nie jest odwracany)', () => {
+    const profile = opsProfile(
+      [{ id: 'dep', when: [{ col: { name: 'tytul' }, op: 'contains', values: ['Przelew'] }], emit: 'deposit' }],
+      { deposit: true },
+    );
+    const csv = `${OPS_HEADER}\n2026-01-10;Przelew zwrotny;-200,00;PLN\n2026-01-11;Przelew do DM;500,00;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.operations.data).toHaveLength(2);
+    expect(out.operations.data[0]).toMatchObject({ operationType: 'withdrawal', amount: -200 });
+    expect(out.operations.data[1]).toMatchObject({ operationType: 'deposit', amount: 500 });
+    expect(out.warnings.some((w) => w.includes('ujemną kwotą'))).toBe(true);
+  });
+
+  it('coupon → dividend + subkind coupon; interest → other + subkind interest', () => {
+    const profile = opsProfile(
+      [
+        { id: 'kupon', when: [{ col: { name: 'tytul' }, op: 'startsWith', values: ['Wypłata kuponu'] }], emit: 'coupon' },
+        { id: 'odsetki', when: [{ col: { name: 'tytul' }, op: 'startsWith', values: ['Odsetki'] }], emit: 'interest' },
+      ],
+      { coupon: true, interest: true },
+    );
+    const csv = `${OPS_HEADER}\n2026-01-10;Wypłata kuponu DS1030;21,70;PLN\n2026-01-11;Odsetki od środków;3,50;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.operations.data[0]).toMatchObject({
+      operationType: 'dividend',
+      subkind: 'coupon',
+      amount: 21.7,
+    });
+    expect(out.operations.data[1]).toMatchObject({ operationType: 'other', subkind: 'interest' });
+  });
+
+  it('kwota zerowa → skip zero_amount', () => {
+    const profile = opsProfile(
+      [{ id: 'dep', when: [{ col: { name: 'tytul' }, op: 'notEmpty' }], emit: 'deposit' }],
+      { deposit: true },
+    );
+    const csv = `${OPS_HEADER}\n2026-01-10;Przelew;0,00;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    expect(out.operations.data).toHaveLength(0);
+    expect(out.operations.skipped[0].reason).toBe('zero_amount');
+  });
+
+  it('defaultClass=skip → unknown_operation_type (wiersz widoczny w podglądzie)', () => {
+    const profile = opsProfile(
+      [{ id: 'dep', when: [{ col: { name: 'tytul' }, op: 'equals', values: ['Przelew'] }], emit: 'deposit' }],
+      { deposit: true },
+    );
+    const csv = `${OPS_HEADER}\n2026-01-10;Egzotyczna operacja;10,00;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    expect(out.operations.skipped[0].reason).toBe('unknown_operation_type');
+  });
+});
+
+describe('parseWithProfile — parowanie dywidenda ↔ WHT', () => {
+  const classify = [
+    { id: 'div', when: [{ col: { name: 'tytul' }, op: 'equals', values: ['Dywidenda'] }], emit: 'dividend' },
+    { id: 'wht', when: [{ col: { name: 'tytul' }, op: 'equals', values: ['Podatek'] }], emit: 'withholding_tax' },
+  ];
+  const HEADER = 'data;tytul;ticker;kwota;waluta';
+  const cashWithTicker = {
+    date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['YYYY-MM-DD'] },
+    amount: { kind: 'column', col: { name: 'kwota' } },
+    currency: { kind: 'column', col: { name: 'waluta' }, fallback: 'PLN' },
+    description: { kind: 'column', col: { name: 'ticker' } },
+    ticker: { kind: 'column', col: { name: 'ticker' } },
+  };
+
+  it('subtract: netto + dopisek "(podatek X%)"', () => {
+    const profile = opsProfile(classify, { dividend: cashWithTicker, withholdingTax: cashWithTicker }, {
+      pairing: { dividendWht: { matchBy: ['ticker', 'date'], windowDays: 0, handling: 'subtract' } },
+    });
+    const csv = `${HEADER}\n2026-01-10;Dywidenda;AAPL;10,00;USD\n2026-01-10;Podatek;AAPL;-1,50;USD`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.operations.data).toHaveLength(1);
+    expect(out.operations.data[0]).toMatchObject({
+      operationType: 'dividend',
+      amount: 8.5,
+      description: 'AAPL (podatek 15%)',
+      ticker: 'AAPL',
+    });
+  });
+
+  it('fee_row: dywidenda brutto + podatek jako osobny fee', () => {
+    const profile = opsProfile(classify, { dividend: cashWithTicker, withholdingTax: cashWithTicker }, {
+      pairing: { dividendWht: { matchBy: ['ticker', 'date'], windowDays: 0, handling: 'fee_row' } },
+    });
+    const csv = `${HEADER}\n2026-01-10;Dywidenda;AAPL;10,00;USD\n2026-01-10;Podatek;AAPL;-1,50;USD`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.operations.data).toHaveLength(2);
+    expect(out.operations.data[0]).toMatchObject({ operationType: 'dividend', amount: 10 });
+    expect(out.operations.data[1]).toMatchObject({ operationType: 'fee', amount: -1.5 });
+  });
+
+  it('niesparowany WHT → fee + warning (nic nie ginie)', () => {
+    const profile = opsProfile(classify, { dividend: cashWithTicker, withholdingTax: cashWithTicker }, {
+      pairing: { dividendWht: { matchBy: ['ticker', 'date'], windowDays: 0, handling: 'subtract' } },
+    });
+    const csv = `${HEADER}\n2026-01-10;Podatek;MSFT;-2,00;USD`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.operations.data[0]).toMatchObject({ operationType: 'fee', amount: -2 });
+    expect(out.warnings.some((w) => w.includes('bez pasującej dywidendy'))).toBe(true);
+  });
+
+  it('okno dni: podatek dzień później paruje przy windowDays=2', () => {
+    const profile = opsProfile(classify, { dividend: cashWithTicker, withholdingTax: cashWithTicker }, {
+      pairing: { dividendWht: { matchBy: ['ticker', 'date'], windowDays: 2, handling: 'subtract' } },
+    });
+    const csv = `${HEADER}\n2026-01-10;Dywidenda;AAPL;10,00;USD\n2026-01-11;Podatek;AAPL;-1,50;USD`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    expect(out.operations.data).toHaveLength(1);
+    expect(out.operations.data[0].amount).toBeCloseTo(8.5);
+  });
+});
+
+describe('parseWithProfile — wymiany walutowe', () => {
+  const HEADER = 'data;czas;opis;kurs;waluta;kwota;orderid';
+  const fxCash = {
+    date: {
+      source: { kind: 'column', col: { name: 'data' } },
+      formats: ['YYYY-MM-DD'],
+      timeSource: { kind: 'column', col: { name: 'czas' } },
+    },
+    amount: { kind: 'column', col: { name: 'kwota' } },
+    currency: { kind: 'column', col: { name: 'waluta' } },
+    description: { kind: 'column', col: { name: 'opis' } },
+  };
+  const classify = [
+    { id: 'fx', when: [{ col: { name: 'opis' }, op: 'startsWith', values: ['FX'] }], emit: 'fx_leg' },
+  ];
+
+  it('parowanie po kolumnie klucza: 2 operacje fx_exchange z kursem i parą', () => {
+    const profile = opsProfile(classify, { fxLeg: fxCash }, {
+      pairing: {
+        fxLegs: {
+          pairKey: { by: 'column', col: { name: 'orderid' } },
+          rateSource: { kind: 'column', col: { name: 'kurs' } },
+        },
+      },
+    });
+    const csv = `${HEADER}\n2026-01-10;10:00;FX Withdrawal;4,3127;PLN;-431,27;ord-1\n2026-01-10;10:00;FX Credit;4,3127;EUR;100,00;ord-1`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.operations.data).toHaveLength(2);
+    expect(out.operations.data[0]).toMatchObject({
+      operationType: 'fx_exchange',
+      amount: -431.27,
+      currency: 'PLN',
+      fxRate: 4.3127,
+      fxPair: 'PLN/EUR',
+      description: 'Wymiana PLN/EUR',
+    });
+    expect(out.operations.data[1]).toMatchObject({ amount: 100, currency: 'EUR' });
+  });
+
+  it('niesparowana noga → import samodzielny + warning', () => {
+    const profile = opsProfile(classify, { fxLeg: fxCash }, {
+      pairing: { fxLegs: { pairKey: { by: 'datetime' } } },
+    });
+    const csv = `${HEADER}\n2026-01-10;10:00;FX Credit;;USD;355,00;`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.operations.data).toHaveLength(1);
+    expect(out.operations.data[0]).toMatchObject({
+      operationType: 'fx_exchange',
+      amount: 355,
+      description: 'FX Credit USD',
+    });
+    expect(out.warnings.some((w) => w.includes('niesparowana noga'))).toBe(true);
+  });
+
+  it('jednowierszowe FX (bez pairing): kurs i para z regexExtract — wzorzec Bossa', () => {
+    const HEADER_BOSSA = 'data;tytul;kwota;waluta';
+    const profile = opsProfile(
+      [{ id: 'fx', when: [{ col: { name: 'tytul' }, op: 'startsWith', values: ['Wymiana waluty'] }], emit: 'fx_leg' }],
+      {
+        fxLeg: {
+          date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['YYYY-MM-DD'] },
+          amount: { kind: 'column', col: { name: 'kwota' } },
+          currency: { kind: 'column', col: { name: 'waluta' }, fallback: 'PLN' },
+          description: { kind: 'column', col: { name: 'tytul' } },
+          fxRate: { kind: 'regexExtract', col: { name: 'tytul' }, pattern: 'Wymiana waluty \\w+/\\w+ ([\\d.]+)', group: 1 },
+          fxPair: { kind: 'regexExtract', col: { name: 'tytul' }, pattern: 'Wymiana waluty (\\w+/\\w+)', group: 1 },
+        },
+      },
+    );
+    const csv = `${HEADER_BOSSA}\n2026-02-17;Wymiana waluty PLN/USD 3.5713;-5871,00;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.operations.data).toHaveLength(1);
+    expect(out.operations.data[0]).toMatchObject({
+      operationType: 'fx_exchange',
+      amount: -5871,
+      currency: 'PLN',
+      fxRate: 3.5713,
+      fxPair: 'PLN/USD',
+    });
+  });
+});
+
+describe('parseDateWithFormats', () => {
+  it('obsługuje wszystkie formaty enum + sufiks czasu', () => {
+    expect(parseDateWithFormats('2026-02-25', ['YYYY-MM-DD'])).toBe('2026-02-25T00:00:00');
+    expect(parseDateWithFormats('25.02.2026 09:47:27', ['DD.MM.YYYY'])).toBe('2026-02-25T09:47:27');
+    expect(parseDateWithFormats('25-02-2026', ['DD-MM-YYYY'], '09:47')).toBe('2026-02-25T09:47:00');
+    expect(parseDateWithFormats('02/25/2026', ['MM/DD/YYYY'])).toBe('2026-02-25T00:00:00');
+    expect(parseDateWithFormats('25/02/2026', ['DD/MM/YYYY'])).toBe('2026-02-25T00:00:00');
+  });
+
+  it('odrzuca nieprawidłowe daty (miesiąc 13)', () => {
+    expect(parseDateWithFormats('25.13.2026', ['DD.MM.YYYY'])).toBeNull();
+  });
+
+  it('pierwszy pasujący format wygrywa', () => {
+    expect(parseDateWithFormats('05/02/2026', ['DD/MM/YYYY', 'MM/DD/YYYY'])).toBe(
+      '2026-02-05T00:00:00',
+    );
+  });
+});

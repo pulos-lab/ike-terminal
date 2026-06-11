@@ -4,7 +4,7 @@ import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { formatCurrency, formatDate, formatNumber, formatQuantity } from '@/lib/formatters';
 import { ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
-import type { ClosedTrade } from 'shared';
+import type { ClosedTrade, RecordSource } from 'shared';
 
 interface TradeGroup {
   key: string;
@@ -23,7 +23,7 @@ interface TradeGroup {
   maxBuyPrice: number;
   avgHoldingDays: number;
   sellTransactionId: number;
-  sellSource: 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'manual' | 'auto-yahoo';
+  sellSource: RecordSource;
   trades: ClosedTrade[];
 }
 

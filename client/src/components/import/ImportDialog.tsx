@@ -39,6 +39,7 @@ const SKIP_REASON_LABELS: Record<SkipReason, string> = {
   unparseable_fx_comment: 'Transfer XTB — nie udało się odczytać pary walut/kursu',
   invalid_fx_rate: 'Transfer XTB — nieprawidłowy kurs wymiany',
   fx_currency_mismatch: 'Transfer XTB — waluta niezgodna z kontem',
+  value_mismatch: 'wartość odbiega od ilość×cena (sprawdź mapowanie kolumn)',
 };
 
 interface Props {
