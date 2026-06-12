@@ -127,34 +127,35 @@ export function resolveNumber(vs: ValueSource, row: string[], resolver: ColumnRe
 /**
  * Regexy formatów: grupy (1,2,3) wg kolejności w formacie + opcjonalny sufiks
  * czasu HH:MM(:SS) w tej samej komórce (Bossa: "25.02.2026 09:47:27").
+ * Ułamki sekund są tolerowane i ucinane (Trading 212: "...17:08:00.000").
  */
 const DATE_PATTERNS: Record<DateFormat, { re: RegExp; order: 'YMD' | 'DMY' | 'MDY' }> = {
   'YYYY-MM-DD': {
-    re: /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    re: /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?)(?:\.\d{1,6})?)?$/,
     order: 'YMD',
   },
   'YYYY.MM.DD': {
-    re: /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    re: /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?)(?:\.\d{1,6})?)?$/,
     order: 'YMD',
   },
   'YYYY/MM/DD': {
-    re: /^(\d{4})\/(\d{1,2})\/(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    re: /^(\d{4})\/(\d{1,2})\/(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?)(?:\.\d{1,6})?)?$/,
     order: 'YMD',
   },
   'DD.MM.YYYY': {
-    re: /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    re: /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?)(?:\.\d{1,6})?)?$/,
     order: 'DMY',
   },
   'DD-MM-YYYY': {
-    re: /^(\d{1,2})-(\d{1,2})-(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    re: /^(\d{1,2})-(\d{1,2})-(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?)(?:\.\d{1,6})?)?$/,
     order: 'DMY',
   },
   'DD/MM/YYYY': {
-    re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?)(?:\.\d{1,6})?)?$/,
     order: 'DMY',
   },
   'MM/DD/YYYY': {
-    re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/,
+    re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?)(?:\.\d{1,6})?)?$/,
     order: 'MDY',
   },
 };
@@ -164,7 +165,7 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
 /** "9:47" / "09:47" / "09:47:27" → "09:47:27"; null gdy nie wygląda na czas. */
 function normalizeTime(raw: string | undefined): string | null {
   if (!raw) return null;
-  const m = raw.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  const m = raw.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d{1,6})?$/);
   if (!m) return null;
   const h = Number(m[1]);
   if (h > 23) return null;

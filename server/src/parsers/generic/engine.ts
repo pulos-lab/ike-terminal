@@ -125,6 +125,11 @@ export function parseWithProfile(
   const pendingDividends: PendingCashRow[] = [];
   const pendingWht: PendingCashRow[] = [];
   const pendingFxLegs: PendingCashRow[] = [];
+  // Operacje gotówkowe finalizowane wprost (deposit/withdrawal/fee/other/…) —
+  // buforowane, by po pętli ustalić, czy plik W OGÓLE używa ujemnych kwot.
+  // Jeśli nie (broker eksportuje magnitudy bez znaku, np. Trading 212), znak
+  // bierzemy z etykiety classify, nie reklasyfikujemy wg sprzecznego znaku.
+  const pendingDirect: Array<{ cls: RowClass; pending: PendingCashRow }> = [];
 
   const currencyAliases = new Map(
     Object.entries(profile.file.currencyAliases).map(([k, v]) => [
@@ -274,7 +279,22 @@ export function parseWithProfile(
     }
     // fx_leg bez pairing.fxLegs = jednowierszowa wymiana FX (kurs/para z mapowania).
 
-    operations.push(finalizeCashOperation(cls.emit, cash.pending, importBatch, warnings));
+    pendingDirect.push({ cls: cls.emit, pending: cash.pending });
+  }
+
+  // Czy plik niesie ZNAK w kwotach operacji (Bossa: wypłaty/IPO ujemne) — czy
+  // tylko magnitudy (Trading 212: wszystko dodatnie). Decyduje, czy przy
+  // niezgodności znaku z etykietą deposit/withdrawal reklasyfikować (znak
+  // znaczący), czy znormalizować znak do etykiety (magnitudy bez znaku).
+  const signedCashAmounts = [
+    ...pendingDirect.map((d) => d.pending),
+    ...pendingDividends,
+    ...pendingWht,
+    ...pendingFxLegs,
+  ].some((p) => p.amount < 0);
+
+  for (const { cls, pending } of pendingDirect) {
+    operations.push(finalizeCashOperation(cls, pending, importBatch, warnings, signedCashAmounts));
   }
 
   // ── Parowanie ──
@@ -290,7 +310,7 @@ export function parseWithProfile(
   } else if (pendingWht.length > 0) {
     // withholding_tax bez reguł parowania (schemat tego broni; defensywnie) → fee.
     for (const wht of pendingWht) {
-      operations.push(finalizeCashOperation('fee', wht, importBatch, warnings));
+      operations.push(finalizeCashOperation('fee', wht, importBatch, warnings, signedCashAmounts));
     }
   }
 
@@ -570,24 +590,33 @@ function buildPendingCash(
 }
 
 /**
- * PendingCashRow → CashOperation z normalizacją znaku wg klasy:
- * - deposit z kwotą ujemną to faktycznie wypływ → reklasyfikacja na withdrawal
- *   (i odwrotnie) z warningiem — znak NIGDY nie jest odwracany w ciemno,
- *   bo sfabrykowałby przepływ, którego nie było;
- * - dividend/coupon → wartość bezwzględna (zwroty dywidend są poza zakresem v1);
- * - fee/commission_refund/capital_return/other → znak z pliku.
+ * PendingCashRow → CashOperation z normalizacją znaku wg klasy.
+ *
+ * deposit/withdrawal — kierunek zależy od tego, czy plik niesie ZNAK
+ * (`signedAmounts`):
+ * - plik ZE znakiem (Bossa: wypłaty ujemne): znak jest prawdą. Niezgodność
+ *   etykiety ze znakiem (np. „wpłata" z kwotą ujemną) → reklasyfikacja na
+ *   przeciwną operację z warningiem — znaku NIGDY nie odwracamy w ciemno, bo
+ *   sfabrykowałby przepływ, którego nie było.
+ * - plik BEZ znaku (Trading 212: magnitudy zawsze dodatnie): prawdą jest
+ *   etykieta `classify`. Znak normalizujemy do etykiety (deposit→+, withdrawal→−)
+ *   bez reklasyfikacji — dodatnia „wypłata" to po prostu konwencja magnitudy.
+ *
+ * dividend/coupon → wartość bezwzględna (zwroty dywidend poza zakresem v1).
+ * fee/commission_refund/capital_return/other → znak z pliku.
  */
 function finalizeCashOperation(
   cls: RowClass,
   pending: PendingCashRow,
   importBatch: string,
   warnings: string[],
+  signedAmounts: boolean,
 ): CashOperation {
   let operationType = CLASS_TO_OPERATION_TYPE[cls] ?? 'other';
   let amount = pending.amount;
 
   if (cls === 'deposit') {
-    if (amount < 0) {
+    if (amount < 0 && signedAmounts) {
       operationType = 'withdrawal';
       warnings.push(
         `Wiersz ${pending.rowNum}: wpłata z ujemną kwotą (${amount}) — ` +
@@ -597,7 +626,7 @@ function finalizeCashOperation(
       amount = Math.abs(amount);
     }
   } else if (cls === 'withdrawal') {
-    if (amount > 0) {
+    if (amount > 0 && signedAmounts) {
       operationType = 'deposit';
       warnings.push(
         `Wiersz ${pending.rowNum}: wypłata z dodatnią kwotą (${amount}) — ` +
