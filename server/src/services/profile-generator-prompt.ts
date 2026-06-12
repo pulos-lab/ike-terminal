@@ -50,6 +50,8 @@ export interface UserPromptInput {
   headerRowIndex: number;
   /** ZREDAGOWANE wiersze próbki (sample-redactor) — max ~20. */
   sampleRows: string[][];
+  /** ZREDAGOWANA nazwa pliku — wskazówka wyłącznie dla brokerLabel. */
+  fileName?: string;
   /**
    * ZREDAGOWANE wiersze do digestów wartości — domyślnie CAŁY plik (capped).
    * Rzadkie typy operacji często nie trafiają do 20-wierszowej próbki; digest
@@ -135,9 +137,13 @@ export function buildUserPrompt(input: UserPromptInput): string {
     ? ' (computed over the ENTIRE file — write classify rules for EVERY row type listed here, including ones absent from the sample rows below)'
     : '';
 
+  const fileNameLine = input.fileName
+    ? `File name (redacted): ${JSON.stringify(input.fileName)} — use ONLY as a hint for "brokerLabel"; never for column mappings.\n`
+    : '';
+
   return `# File to map
 
-Delimiter: ${JSON.stringify(input.delimiter)}
+${fileNameLine}Delimiter: ${JSON.stringify(input.delimiter)}
 Header row index in file: ${input.headerRowIndex}${input.headerRowIndex > 0 ? ' (metadata lines precede it — use headerRow strategy "scan")' : ' (use headerRow strategy "first")'}
 Headers (${input.headers.length} columns, 0-based indices):
 ${input.headers

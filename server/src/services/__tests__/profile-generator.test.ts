@@ -162,6 +162,20 @@ describe('generateProfileFromContent (mock fetch)', () => {
     expect(retryBody.response_format.type).toBe('json_object');
   });
 
+  it('nazwa pliku trafia do promptu jako wskazówka, z zamaskowanym numerem rachunku', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(llmResponse(JSON.stringify(GOOD_PROFILE)));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await generateProfileFromContent(CSV, 'trading212_export_806641123_2022-2023.csv');
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const prompt = body.messages[1].content as string;
+    expect(prompt).toContain('File name (redacted)');
+    expect(prompt).toContain('trading212_export');
+    expect(prompt).not.toContain('806641123'); // ciągi ≥6 cyfr maskowane
+    expect(prompt).toContain('2022-2023'); // krótkie liczby (lata) zostają
+  });
+
   it('redakcja payloadu: numer rachunku z próbki nie trafia do promptu', async () => {
     const csvWithAccount = [
       'Trade date|Security|ISIN code|Direction|Shares|Unit price|Ccy|Account number',

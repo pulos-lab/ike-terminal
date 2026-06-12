@@ -160,7 +160,7 @@ export async function generateProfileForFile(file: {
   userId?: string;
 }): Promise<GenerateProfileServiceResult | null> {
   const content = decodeCSVBuffer(file.buffer);
-  const generated = await generateProfileFromContent(content);
+  const generated = await generateProfileFromContent(content, file.originalname);
   if (!generated) return null;
 
   const row = insertPendingProfile({

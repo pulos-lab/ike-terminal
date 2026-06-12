@@ -88,10 +88,14 @@ let hardFailures = 0;
  * W trybie LLM generacja idzie z tej samej treści pliku (nagłówki + zredagowana
  * próbka do API; self-check lokalnie) — dokładnie ścieżka produkcyjna Fazy 4.
  */
-async function profileFor(content: string, golden: ImportProfile): Promise<ImportProfile | null> {
+async function profileFor(
+  content: string,
+  golden: ImportProfile,
+  fileName?: string,
+): Promise<ImportProfile | null> {
   if (!LLM_MODE) return golden;
   try {
-    const generated = await generateProfileFromContent(content);
+    const generated = await generateProfileFromContent(content, fileName);
     if (!generated) {
       hardFailures++;
       console.log('  ❌ LLM nie wygenerował wiarygodnego profilu (po retry) — plik pominięty');

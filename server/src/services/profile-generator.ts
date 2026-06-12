@@ -4,7 +4,7 @@ import { ImportProfileSchema, validateImportProfile, type ImportProfile } from '
 import { parseWithProfile, type GenericParseOutput } from '../parsers/generic/engine.js';
 import { GenericParseError } from '../parsers/generic/value-parsers.js';
 import { computeFingerprint, locateHeaderCandidate } from '../parsers/generic/fingerprint.js';
-import { redactSampleRows } from './sample-redactor.js';
+import { redactFileName, redactSampleRows } from './sample-redactor.js';
 import { chatComplete, LlmRequestError } from './llm-client.js';
 import {
   buildRetryFeedback,
@@ -122,6 +122,7 @@ function debugLog(message: string): void {
  */
 export async function generateProfileFromContent(
   content: string,
+  fileName?: string,
 ): Promise<GeneratedProfile | null> {
   const candidate = locateHeaderCandidate(content);
   if (!candidate) {
@@ -135,9 +136,11 @@ export async function generateProfileFromContent(
   const existing = inFlight.get(fingerprint);
   if (existing) return existing;
 
-  const job = llmMutex(() => runGeneration(content, fingerprint, candidate)).finally(() => {
-    inFlight.delete(fingerprint);
-  });
+  const job = llmMutex(() => runGeneration(content, fingerprint, candidate, fileName)).finally(
+    () => {
+      inFlight.delete(fingerprint);
+    },
+  );
   inFlight.set(fingerprint, job);
   return job;
 }
@@ -146,6 +149,7 @@ async function runGeneration(
   content: string,
   fingerprint: string,
   candidate: NonNullable<ReturnType<typeof locateHeaderCandidate>>,
+  fileName?: string,
 ): Promise<GeneratedProfile | null> {
   const redactedSample = redactSampleRows(
     candidate.headers,
@@ -159,6 +163,7 @@ async function runGeneration(
     headerRowIndex: candidate.headerRowIndex,
     sampleRows: redactedSample,
     digestRows: collectDigestRows(content, candidate),
+    fileName: fileName ? redactFileName(fileName) : undefined,
   });
 
   let jsonSchema: Record<string, unknown> | undefined;
