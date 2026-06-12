@@ -22,13 +22,17 @@ function profileOf(raw: unknown) {
 const T212_HEADER =
   'Action,Time,ISIN,Ticker,Name,No. of shares,Price / share,Currency (Price / share),Exchange rate,Total,Currency (Total),Withholding tax,Currency (Withholding tax),ID';
 
+// Czasy z ułamkami sekund jak w realnym eksporcie T212 ("...09:30:02.000").
+// Withdrawal z DODATNIĄ kwotą (100) — T212 eksportuje magnitudy bez znaku;
+// silnik ma to znormalizować na wypłatę (−100), NIE zaimportować jako wpłatę.
 const T212_CSV = [
   T212_HEADER,
-  'Deposit,2025-01-02 10:00:00,,,,,,,,1000.00,PLN,,,t-dep-1',
-  'Market buy,2025-03-14 09:30:02,US0378331005,AAPL,Apple Inc,4,227.50,USD,4.02,910.00,USD,,,o-1',
-  'Market sell,2025-04-01 12:00:00,PLOPTTC00011,CDR,CD Projekt,10,198.20,PLN,1,1982.00,PLN,,,o-2',
-  'Dividend (Ordinary),2025-05-10 08:00:00,US0378331005,AAPL,Apple Inc,4,0.25,USD,,0.85,USD,0.15,USD,d-1',
-  'Interest on cash,2025-06-30 00:00:00,,,,,,,,1.23,PLN,,,t-int-1',
+  'Deposit,2025-01-02 10:00:00.000,,,,,,,,1000.00,PLN,,,t-dep-1',
+  'Withdrawal,2025-02-01 11:00:00.000,,,,,,,,100.00,PLN,,,t-wd-1',
+  'Market buy,2025-03-14 09:30:02.000,US0378331005,AAPL,Apple Inc,4,227.50,USD,4.02,910.00,USD,,,o-1',
+  'Market sell,2025-04-01 12:00:00.000,PLOPTTC00011,CDR,CD Projekt,10,198.20,PLN,1,1982.00,PLN,,,o-2',
+  'Dividend (Ordinary),2025-05-10 08:00:00.000,US0378331005,AAPL,Apple Inc,4,0.25,USD,,0.85,USD,0.15,USD,d-1',
+  'Interest on cash,2025-06-30 00:00:00.000,,,,,,,,1.23,PLN,,,t-int-1',
 ].join('\n');
 
 const T212_PROFILE = profileOf({
@@ -50,6 +54,11 @@ const T212_PROFILE = profileOf({
       id: 'deposit',
       when: [{ col: { name: 'Action' }, op: 'equals', values: ['Deposit'] }],
       emit: 'deposit',
+    },
+    {
+      id: 'withdrawal',
+      when: [{ col: { name: 'Action' }, op: 'equals', values: ['Withdrawal'] }],
+      emit: 'withdrawal',
     },
     {
       id: 'interest',
@@ -81,6 +90,11 @@ const T212_PROFILE = profileOf({
     isin: { kind: 'column', col: { name: 'ISIN' } },
   },
   deposit: {
+    date: { source: { kind: 'column', col: { name: 'Time' } }, formats: ['YYYY-MM-DD'] },
+    amount: { kind: 'column', col: { name: 'Total' } },
+    currency: { kind: 'column', col: { name: 'Currency (Total)' } },
+  },
+  withdrawal: {
     date: { source: { kind: 'column', col: { name: 'Time' } }, formats: ['YYYY-MM-DD'] },
     amount: { kind: 'column', col: { name: 'Total' } },
     currency: { kind: 'column', col: { name: 'Currency (Total)' } },
@@ -117,12 +131,13 @@ describe('format Trading 212 (syntetyczny) przez silnik generyczny', () => {
     });
   });
 
-  it('emituje dywidendę (z tickerem), wpłatę i odsetki', () => {
-    expect(out.operations.data).toHaveLength(3);
+  it('emituje dywidendę (z tickerem), wpłatę, wypłatę i odsetki', () => {
+    expect(out.operations.data).toHaveLength(4);
     const types = out.operations.data.map(
       (o) => `${o.operationType}${o.subkind ? `/${o.subkind}` : ''}`,
     );
     expect(types).toContain('deposit');
+    expect(types).toContain('withdrawal');
     expect(types).toContain('dividend');
     expect(types).toContain('other/interest');
 
@@ -134,6 +149,14 @@ describe('format Trading 212 (syntetyczny) przez silnik generyczny', () => {
     const deposit = out.operations.data.find((o) => o.operationType === 'deposit')!;
     expect(deposit.amount).toBe(1000);
     expect(deposit.currency).toBe('PLN');
+  });
+
+  it('wypłata z DODATNIĄ kwotą (plik bez znaku) → znormalizowana na −100, NIE wpłata', () => {
+    const withdrawals = out.operations.data.filter((o) => o.operationType === 'withdrawal');
+    expect(withdrawals).toHaveLength(1);
+    expect(withdrawals[0].amount).toBe(-100);
+    // Nie powstała druga wpłata z reklasyfikacji wypłaty.
+    expect(out.operations.data.filter((o) => o.operationType === 'deposit')).toHaveLength(1);
   });
 
   it('nic nie ginie po cichu (zero pominięć)', () => {
