@@ -49,9 +49,9 @@ export const BROKER_TILES: Array<{ id: KnownBroker | 'generic'; tagline: string 
 export const BROKER_IMPORT_CONFIG: Record<KnownBroker, BrokerImportConfig> = {
   bossa: {
     exportSteps: [
-      'Zaloguj się do bossa.pl → zakładka Rachunek / Historia.',
-      'Pobierz historię transakcji papierów wartościowych (plik o nazwie zaczynającej się od „hisPW"). Jeśli masz rachunki w kilku walutach, pobierz osobny plik dla każdej waluty.',
-      'Pobierz historię finansową (operacje bez transakcji) — plik z „operacje_bez_transakcji" w nazwie.',
+      'Zaloguj się do bossa.pl → zakładka Portfel → Historia.',
+      'Pobierz historię transakcji papierów wartościowych w CSV (plik o nazwie zaczynającej się od „hisPW"). Jeśli masz rachunki w kilku walutach, pobierz osobny plik dla każdej waluty.',
+      'Pobierz historię finansową (w typie operacji wybierz wszystkie) w CSV — plik z „operacje_bez_transakcji" w nazwie.',
       'Wgraj oba poniżej i kliknij Importuj.',
     ],
     files: [
