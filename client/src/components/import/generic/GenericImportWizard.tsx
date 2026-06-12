@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { AlertCircle, AlertTriangle, CheckCircle, Info, Loader2 } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Info, Loader2, Sparkles } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import type { GenericAnalyzeResult, GenericPreviewResult, SkipReason } from 'shared';
 import {
@@ -57,6 +57,10 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
   const [preview, setPreview] = useState<GenericPreviewResult | null>(null);
   const [mappingErrors, setMappingErrors] = useState<string[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+  /** Zgoda na wysłanie ZREDAGOWANEJ próbki do usługi AI (wymagana per import). */
+  const [aiConsent, setAiConsent] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   // Analiza przy zamontowaniu — rodzic renderuje kreator warunkowo (remount na
   // każde otwarcie), więc stan startowy zawsze jest świeży i bez resetów w efekcie.
@@ -147,6 +151,38 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
     setLibraryProfileId(null); // profil zbudowany ręcznie — pójdzie inline
     setActiveProfile(built.profile);
     await runPreview(file, built.profile);
+  }
+
+  /**
+   * Generacja mapowania przez AI — wymaga zaznaczonej zgody. Backend wysyła do
+   * usługi AI wyłącznie nagłówki + zredagowaną próbkę (tę samą, którą pokazuje
+   * podgląd payloadu poniżej) i zapisuje profil jako 'pending' w bibliotece;
+   * import pójdzie po profileId, więc proweniencja (model, pewność) zostaje.
+   */
+  async function handleGenerateAi() {
+    if (!file || !aiConsent || aiBusy) return;
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const result = await api.genericGenerateProfile(file);
+      if (result.error || !result.summary) {
+        setAiError(result.error ?? 'Nieznany błąd generatora');
+        return;
+      }
+      setLibraryProfileId(result.summary.id);
+      setActiveProfile(result.profileJson);
+      setMessages([
+        {
+          kind: 'info',
+          text:
+            `Mapowanie wygenerowane automatycznie (pewność ${(result.confidence * 100).toFixed(0)}%) — ` +
+            'sprawdź podgląd przed importem.',
+        },
+      ]);
+      await runPreview(file, result.profileJson);
+    } finally {
+      setAiBusy(false);
+    }
   }
 
   async function handleImport() {
@@ -240,6 +276,74 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
         {step === 'mapping' && draft && analysis && (
           <div className="space-y-4">
             {libraryProfileNote()}
+
+            <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2.5">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Sparkles className="h-4 w-4 text-primary" />
+                Automatyczne mapowanie (AI)
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Zamiast mapować ręcznie, możesz wygenerować mapowanie automatycznie. Do usługi AI
+                (serwer w UE) trafią <span className="font-medium">wyłącznie zredagowane fragmenty
+                pliku: nazwy kolumn, poniższa próbka, listy unikalnych wartości kolumn (np. typy
+                operacji) oraz pojedyncze wiersze potrzebne do poprawy mapowania — wszystko po tej
+                samej redakcji</span> — nigdy cały plik ani dane osobowe (numery rachunków,
+                nazwiska i e-maile są maskowane).
+              </p>
+              <details className="text-xs">
+                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+                  Zobacz dokładnie, co zostanie wysłane
+                </summary>
+                <pre className="mt-2 max-h-40 overflow-auto rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
+                  {[
+                    (analysis.headers ?? []).join(analysis.delimiter ?? ';'),
+                    ...(analysis.sampleRows ?? []).map((r) =>
+                      r.join(analysis.delimiter ?? ';'),
+                    ),
+                  ].join('\n')}
+                </pre>
+              </details>
+              <label className="flex items-start gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={aiConsent}
+                  onChange={(e) => setAiConsent(e.target.checked)}
+                />
+                <span>
+                  Zgadzam się na wysłanie powyższej zredagowanej próbki do usługi AI w celu
+                  wygenerowania mapowania.
+                </span>
+              </label>
+              <div className="flex items-center gap-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  disabled={!aiConsent || aiBusy}
+                  onClick={handleGenerateAi}
+                >
+                  {aiBusy ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                      Generowanie…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                      Wygeneruj mapowanie (AI)
+                    </>
+                  )}
+                </Button>
+                {aiError && (
+                  <span className="text-xs text-warning flex items-center gap-1.5">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    {aiError}
+                  </span>
+                )}
+              </div>
+            </div>
+
             <MappingEditor
               draft={draft}
               sampleRows={analysis.sampleRows ?? []}
@@ -267,15 +371,16 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
 
         {step === 'preview' && preview && (
           <div className="space-y-4">
-            {libraryProfileId && (
+            {libraryProfileId && analysis?.profile && (
               <p className="text-xs text-muted-foreground">
-                Użyto profilu z biblioteki ({analysis?.profile?.summary.brokerLabel ?? 'bez nazwy'}
-                {analysis?.profile?.summary.status === 'pending'
+                Użyto profilu z biblioteki ({analysis.profile.summary.brokerLabel ?? 'bez nazwy'}
+                {analysis.profile.summary.status === 'pending'
                   ? ', oczekuje na zatwierdzenie'
                   : ''}
                 ) — sprawdź podgląd i zaimportuj.
               </p>
             )}
+            <MessagesList messages={messages} />
             <PreviewTable result={preview} />
             {(preview.warnings ?? []).length > 0 && (
               <div className="space-y-1">

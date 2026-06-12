@@ -479,6 +479,19 @@ export const api = {
     );
   },
 
+  /**
+   * Generacja mapowania przez LLM (wymaga jawnej zgody użytkownika w UI —
+   * do API AI idą wyłącznie nagłówki + zredagowana próbka). 503 = AI off.
+   */
+  genericGenerateProfile: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return uploadFile<import('shared').GenericGenerateProfileResult & { error?: string }>(
+      '/import/generic/generate-profile',
+      formData,
+    );
+  },
+
   /** Wykonanie profilu BEZ zapisu — obowiązkowy podgląd przed importem. */
   genericPreview: (file: File, profile: unknown) => {
     const formData = new FormData();

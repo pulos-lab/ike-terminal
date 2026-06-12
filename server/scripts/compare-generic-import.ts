@@ -6,6 +6,10 @@
  * Uruchomienie (lokalnie; pliki użytkownika NIE wchodzą do repo):
  *   IMPORT_DIR=/ścieżka/do/import npm run compare:generic -w server
  *   npm run compare:generic -w server -- --resolver-live   # + żywe wywołania resolvera
+ *   LLM_API_KEY=… npm run compare:generic -w server -- --llm
+ *     ↑ tryb dry-run Fazy 4: zamiast golden profili używa profili WYGENEROWANYCH
+ *       przez LLM z (zredagowanej) próbki każdego pliku — raport pokazuje, gdzie
+ *       model się myli, ZANIM funkcja trafi do użytkowników.
  *
  * Porównanie z resolverem tickerów: resolveIsin() jest deterministyczną funkcją
  * trójki (isin, paperName, txCurrency) — jeśli zbiory trójek z obu ścieżek są
@@ -32,6 +36,9 @@ import { isDegiroAccountFormat, parseDegiroOperations } from '../src/parsers/deg
 import { isXtbFormat, parseXtbFile } from '../src/parsers/xtb-transactions.js';
 import { parseWithProfile } from '../src/parsers/generic/engine.js';
 import { GenericParseError } from '../src/parsers/generic/value-parsers.js';
+import { generateProfileFromContent } from '../src/services/profile-generator.js';
+import { isLlmEnabled, LlmUnavailableError } from '../src/services/llm-client.js';
+import type { ImportProfile } from 'shared';
 import { BOSSA_TRANSACTIONS_PROFILE } from '../src/parsers/generic/profiles/bossa-transactions.profile.js';
 import { BOSSA_OPERATIONS_PROFILE } from '../src/parsers/generic/profiles/bossa-operations.profile.js';
 import { DEGIRO_TRANSACTIONS_PROFILE } from '../src/parsers/generic/profiles/degiro-transactions.profile.js';
@@ -40,6 +47,7 @@ import { buildXtbCashOperationsProfile } from '../src/parsers/generic/profiles/x
 
 const BATCH = 'parity-harness';
 const RESOLVER_LIVE = process.argv.includes('--resolver-live');
+const LLM_MODE = process.argv.includes('--llm');
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const IMPORT_DIR = process.env.IMPORT_DIR ?? path.resolve(scriptDir, '..', '..', 'import');
@@ -74,6 +82,34 @@ const EXPECTED_DIFF_TITLE = new RegExp(
 );
 
 let hardFailures = 0;
+
+/**
+ * Profil do porównania: golden (domyślnie) albo WYGENEROWANY przez LLM (--llm).
+ * W trybie LLM generacja idzie z tej samej treści pliku (nagłówki + zredagowana
+ * próbka do API; self-check lokalnie) — dokładnie ścieżka produkcyjna Fazy 4.
+ */
+async function profileFor(content: string, golden: ImportProfile): Promise<ImportProfile | null> {
+  if (!LLM_MODE) return golden;
+  try {
+    const generated = await generateProfileFromContent(content);
+    if (!generated) {
+      hardFailures++;
+      console.log('  ❌ LLM nie wygenerował wiarygodnego profilu (po retry) — plik pominięty');
+      return null;
+    }
+    console.log(
+      `  ℹ️  Profil z LLM: ${generated.model}, pewność ${generated.confidence}, ` +
+        `próby ${generated.attempts}, broker „${generated.profile.brokerLabel}"`,
+    );
+    return generated.profile;
+  } catch (err) {
+    if (err instanceof LlmUnavailableError) {
+      console.error(`✖ ${err.message}`);
+      process.exit(2);
+    }
+    throw err;
+  }
+}
 
 function walkFiles(dir: string): string[] {
   const out: string[] = [];
@@ -201,10 +237,12 @@ async function compareXtbFile(file: string, rel: string): Promise<void> {
   // Instrument (nazwa) — inny fingerprint → inny wariant profilu (zgodnie z projektem).
   const headerLine = csv.split('\n').find((l) => l.includes('Type') && l.includes('Time')) ?? '';
   const hasTickerColumn = headerLine.split(';').some((c) => c.trim() === 'Ticker');
-  const profile = buildXtbCashOperationsProfile(accountCurrency, { hasTickerColumn });
+  const goldenProfile = buildXtbCashOperationsProfile(accountCurrency, { hasTickerColumn });
   if (hasTickerColumn) {
     console.log('  ℹ️  Wariant nagłówka z kolumną Ticker — profil czyta symbole z Ticker');
   }
+  const profile = await profileFor(csv, goldenProfile);
+  if (!profile) return;
   const generic = parseWithProfile(csv, profile, BATCH);
 
   // Dwie transformacje POZA spec v1, nakładane na wynik generyczny, żeby zmierzyć,
@@ -469,7 +507,12 @@ async function main() {
         kind = 'Bossa transakcje';
         console.log(`▶ ${rel} (${kind})`);
         const builtin = parseBossaTransactions(content, BATCH);
-        const generic = parseWithProfile(content, BOSSA_TRANSACTIONS_PROFILE, BATCH);
+        const profile = await profileFor(content, BOSSA_TRANSACTIONS_PROFILE);
+        if (!profile) {
+          console.log('');
+          continue;
+        }
+        const generic = parseWithProfile(content, profile, BATCH);
         compareTransactions(rel, builtin.data, generic.transactions.data).forEach((t) =>
           diffTriples.add(t),
         );
@@ -477,7 +520,12 @@ async function main() {
         kind = 'Bossa operacje';
         console.log(`▶ ${rel} (${kind})`);
         const builtin = parseBossaOperations(content, BATCH);
-        const generic = parseWithProfile(content, BOSSA_OPERATIONS_PROFILE, BATCH);
+        const profile = await profileFor(content, BOSSA_OPERATIONS_PROFILE);
+        if (!profile) {
+          console.log('');
+          continue;
+        }
+        const generic = parseWithProfile(content, profile, BATCH);
         console.log(
           `  Markery rekoncyliacji (wbudowany): wykupy=${builtin.redemptions.length}, ` +
             `IPO=${builtin.ipoSubscriptions.length}, zwroty kapitału=${builtin.capitalReturns.length}`,
@@ -487,7 +535,12 @@ async function main() {
         kind = 'DEGIRO transakcje';
         console.log(`▶ ${rel} (${kind})`);
         const builtin = parseDegiroTransactions(content, BATCH);
-        const generic = parseWithProfile(content, DEGIRO_TRANSACTIONS_PROFILE, BATCH);
+        const profile = await profileFor(content, DEGIRO_TRANSACTIONS_PROFILE);
+        if (!profile) {
+          console.log('');
+          continue;
+        }
+        const generic = parseWithProfile(content, profile, BATCH);
         compareTransactions(rel, builtin.data, generic.transactions.data).forEach((t) =>
           diffTriples.add(t),
         );
@@ -495,7 +548,12 @@ async function main() {
         kind = 'DEGIRO operacje';
         console.log(`▶ ${rel} (${kind})`);
         const builtin = parseDegiroOperations(content, BATCH);
-        const generic = parseWithProfile(content, DEGIRO_ACCOUNT_PROFILE, BATCH);
+        const profile = await profileFor(content, DEGIRO_ACCOUNT_PROFILE);
+        if (!profile) {
+          console.log('');
+          continue;
+        }
+        const generic = parseWithProfile(content, profile, BATCH);
         compareOperations(rel, builtin.data, generic.operations.data);
       } else {
         console.log(`▷ ${rel} — format nierozpoznany przez detektory wbudowane (pominięto)`);

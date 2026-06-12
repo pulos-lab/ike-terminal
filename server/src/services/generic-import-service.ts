@@ -36,6 +36,7 @@ import {
 import { classifyFile } from './import-service.js';
 import { redactSampleRows } from './sample-redactor.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
+import { generateProfileFromContent } from './profile-generator.js';
 import {
   bumpProfileUsage,
   findActiveProfileByFingerprint,
@@ -132,6 +133,53 @@ export async function analyzeGenericFile(file: {
     sampleRows: redactSampleRows(candidate.headers, candidate.sampleRows.slice(0, SAMPLE_ROWS)),
     profile: active ? { summary: profileSummary(active), profileJson: active.profile } : undefined,
     suggestions: suggestions.length > 0 ? suggestions : undefined,
+  };
+}
+
+// ── Generacja profilu (LLM, Faza 4) ──────────────────────────────────────────
+
+export interface GenerateProfileServiceResult {
+  /** Profil zapisany w bibliotece jako 'pending' (generatedBy='llm'). */
+  summary: ReturnType<typeof profileSummary>;
+  profileJson: ImportProfile;
+  confidence: number;
+  attempts: number;
+}
+
+/**
+ * Generuje profil przez LLM i od razu zapisuje w bibliotece jako 'pending'
+ * (generatedBy='llm' + model + confidence — pełna proweniencja do review
+ * admina). Zwraca null gdy generator nie osiągnął wystarczającej pewności —
+ * UI przechodzi wtedy na ręczny edytor.
+ *
+ * Rzuca LlmUnavailableError (route → 503) i GenericParseError (route → 422).
+ */
+export async function generateProfileForFile(file: {
+  buffer: Buffer;
+  originalname: string;
+  userId?: string;
+}): Promise<GenerateProfileServiceResult | null> {
+  const content = decodeCSVBuffer(file.buffer);
+  const generated = await generateProfileFromContent(content);
+  if (!generated) return null;
+
+  const row = insertPendingProfile({
+    fingerprint: generated.fingerprint,
+    profile: generated.profile,
+    headerNames: generated.headers,
+    delimiter: generated.delimiter,
+    sampleRows: generated.redactedSample,
+    generatedBy: 'llm',
+    createdByUserId: file.userId,
+    llmModel: generated.model,
+    llmConfidence: generated.confidence,
+  });
+
+  return {
+    summary: profileSummary(row),
+    profileJson: row.profile,
+    confidence: generated.confidence,
+    attempts: generated.attempts,
   };
 }
 

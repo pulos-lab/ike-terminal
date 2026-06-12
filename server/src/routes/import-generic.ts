@@ -9,10 +9,13 @@ import multer from 'multer';
 import {
   analyzeGenericFile,
   commitGeneric,
+  generateProfileForFile,
   listGenericBatches,
   previewGeneric,
   reimportGenericBatch,
 } from '../services/generic-import-service.js';
+import { isLlmEnabled, LlmUnavailableError } from '../services/llm-client.js';
+import { GenericParseError } from '../parsers/generic/value-parsers.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 
 const router = Router();
@@ -41,6 +44,48 @@ router.post(
   asyncHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
     res.json(await analyzeGenericFile(req.file));
+  }),
+);
+
+/**
+ * POST /api/import/generic/generate-profile — generacja mapowania przez LLM.
+ * Do API AI trafiają WYŁĄCZNIE nagłówki + zredagowana próbka (sample-redactor);
+ * profil zapisuje się w bibliotece jako 'pending' (generatedBy='llm').
+ * 503 = LLM wyłączony/niedostępny (UI → ścieżka ręczna), 422 = niska pewność.
+ */
+router.post(
+  '/generate-profile',
+  upload.single('file'),
+  asyncHandler(async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
+    if (!isLlmEnabled()) {
+      return res.status(503).json({
+        error: 'Generator mapowań (AI) jest niedostępny — możesz zmapować kolumny ręcznie.',
+      });
+    }
+    try {
+      const result = await generateProfileForFile({
+        buffer: req.file.buffer,
+        originalname: req.file.originalname,
+        userId: req.userId,
+      });
+      if (!result) {
+        return res.status(422).json({
+          error:
+            'Nie udało się wygenerować wiarygodnego mapowania dla tego pliku — ' +
+            'zmapuj kolumny ręcznie.',
+        });
+      }
+      res.json(result);
+    } catch (err) {
+      if (err instanceof LlmUnavailableError) {
+        return res.status(503).json({ error: err.message });
+      }
+      if (err instanceof GenericParseError) {
+        return res.status(422).json({ error: err.message });
+      }
+      throw err;
+    }
   }),
 );
 
