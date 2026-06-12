@@ -595,3 +595,46 @@ export interface GenericBatchInfo {
   needsReimport: boolean;
   importedAt: string;
 }
+
+// ── API kuracji admina (Faza 5) — /api/admin/import-profiles ────────────────
+
+/** Wiersz listy/kolejki review (GET /api/admin/import-profiles). */
+export interface AdminProfileSummary {
+  id: string;
+  fingerprint: string;
+  version: number;
+  status: ImportProfileStatus;
+  specVersion: number;
+  brokerLabel: string | null;
+  headerNames: string[];
+  delimiter: string;
+  generatedBy: 'llm' | 'manual' | 'admin';
+  createdByUserId: string | null;
+  createdAt: string;
+  usageCount: number;
+  llmModel: string | null;
+  llmConfidence: number | null;
+  reviewedByUserId: string | null;
+  reviewedAt: string | null;
+  reviewNote: string | null;
+  /** Batche zaimportowane dowolną wersją tego fingerprinta. */
+  batchCount: number;
+  needsReimportCount: number;
+}
+
+/** GET /api/admin/import-profiles/:id — szczegóły do review. */
+export interface AdminProfileDetailResponse {
+  profile: AdminProfileSummary & { profile: unknown; sampleRows: string[][] | null };
+  /** Dry-run profilu na ZREDAGOWANEJ próbce (null gdy próbki nie zapisano). */
+  dryRun: GenericPreviewResult | null;
+  /** Różnice względem aktualnie zatwierdzonej wersji (null gdy brak innej approved). */
+  diff: { againstId: string; againstVersion: number; changedSections: string[] } | null;
+  audit: Array<{
+    id: number;
+    profileId: string;
+    action: string;
+    actorUserId: string | null;
+    diff: unknown;
+    createdAt: string;
+  }>;
+}

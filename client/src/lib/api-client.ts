@@ -524,6 +524,31 @@ export const api = {
       { method: 'POST' },
     ),
 
+  // Kuracja profili importu (admin)
+  adminListImportProfiles: (status?: import('shared').ImportProfileStatus) =>
+    request<{ profiles: import('shared').AdminProfileSummary[] }>(
+      `/admin/import-profiles${status ? `?status=${status}` : ''}`,
+    ),
+  adminGetImportProfile: (id: string) =>
+    request<import('shared').AdminProfileDetailResponse>(
+      `/admin/import-profiles/${encodeURIComponent(id)}`,
+    ),
+  adminUpdateImportProfile: (id: string, profile: unknown) =>
+    request<{ profile: import('shared').AdminProfileSummary }>(
+      `/admin/import-profiles/${encodeURIComponent(id)}`,
+      { method: 'PUT', body: JSON.stringify({ profile }) },
+    ),
+  adminApproveImportProfile: (id: string, note?: string) =>
+    request<{ success: boolean; flaggedBatches: number }>(
+      `/admin/import-profiles/${encodeURIComponent(id)}/approve`,
+      { method: 'POST', body: JSON.stringify({ note }) },
+    ),
+  adminRejectImportProfile: (id: string, note?: string) =>
+    request<{ success: boolean }>(`/admin/import-profiles/${encodeURIComponent(id)}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+
   // Public share (CRUD właściciela — wymaga sesji + X-Portfolio-Id)
   getShare: () => request<{ share: PortfolioShare | null }>('/share'),
   createShare: (body: ShareSettingsInput) =>

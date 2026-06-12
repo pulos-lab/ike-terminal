@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { getAuthDb } from '../auth.js';
 import { asyncHandler } from '../middleware/async-handler.js';
+import { requireAdmin } from '../middleware/require-admin.js';
 
 const router = Router();
 
@@ -55,21 +56,10 @@ router.post(
 // GET /api/bug-reports — list all reports (admin only — first registered user)
 router.get(
   '/',
+  requireAdmin,
   asyncHandler((req, res) => {
-    if (!req.userId) return res.status(401).json({ error: 'Authentication required' });
-
     const db = getAuthDb();
-
-    // Admin check: first user in the database is the admin
-    const firstUser = db.prepare('SELECT id FROM "user" ORDER BY createdAt ASC LIMIT 1').get() as
-      | { id: string }
-      | undefined;
-    if (!firstUser || firstUser.id !== req.userId) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-
     const reports = db.prepare('SELECT * FROM bug_reports ORDER BY createdAt DESC LIMIT 100').all();
-
     res.json(reports);
   }),
 );

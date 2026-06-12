@@ -20,6 +20,7 @@ import { CurrencyExchangePage } from '@/components/currency/CurrencyExchangePage
 import { CashFlowPage } from '@/components/cash/CashFlowPage';
 import { CorrectionsAndCostsPage } from '@/components/corrections-and-costs/CorrectionsAndCostsPage';
 import { BugReportsPage } from '@/components/admin/BugReportsPage';
+import { ImportProfilesPage } from '@/components/admin/ImportProfilesPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -78,6 +79,7 @@ function App() {
                             element={<Navigate to="/app/corrections-and-costs" replace />}
                           />
                           <Route path="/admin/bugs" element={<BugReportsPage />} />
+                          <Route path="/admin/import-profiles" element={<ImportProfilesPage />} />
                           <Route path="*" element={<Navigate to="/app" replace />} />
                         </Routes>
                       </AppShell>
