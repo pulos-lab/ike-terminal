@@ -17,6 +17,9 @@ import pricesRouter from './routes/prices.js';
 import portfolioRouter from './routes/portfolio.js';
 import importRouter from './routes/import.js';
 import bugReportsRouter from './routes/bug-reports.js';
+import adminImportProfilesRouter from './routes/admin-import-profiles.js';
+import { requireAdmin } from './middleware/require-admin.js';
+import { sweepRawRetention } from './db/import-profiles-repo.js';
 import shareRouter from './routes/share.js';
 import publicShareRouter from './routes/public-share.js';
 import { updateBenchmarkPrices } from './services/benchmark-updater.js';
@@ -164,6 +167,7 @@ app.use('/api/prices', requireAuth, portfolioMiddleware, pricesRouter);
 app.use('/api/portfolio', requireAuth, portfolioMiddleware, portfolioRouter);
 app.use('/api/import', requireAuth, portfolioMiddleware, importRouter);
 app.use('/api/bug-reports', requireAuth, bugReportsRouter);
+app.use('/api/admin/import-profiles', requireAuth, requireAdmin, adminImportProfilesRouter);
 app.use('/api/share', requireAuth, portfolioMiddleware, shareRouter);
 
 // ── Public share endpoints (NO auth — dostęp przez kryptograficzny token) ────
@@ -202,6 +206,21 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 const server = app.listen(config.port, () => {
   console.log(`Server running on http://localhost:${config.port} [${config.nodeEnv}]`);
 });
+
+// ── Retencja surowych plików importu generycznego (leniwie, bez crona) ──────
+// Zeruje raw_file_gz w batchach starszych niż IMPORT_RAW_RETENTION_DAYS
+// (domyślnie 90). Batch bez raw traci możliwość re-importu — świadomy koszt.
+setTimeout(() => {
+  try {
+    const days = Number(process.env.IMPORT_RAW_RETENTION_DAYS) || 90;
+    const cleared = sweepRawRetention(days);
+    if (cleared > 0) {
+      console.log(`Retencja importów: wyczyszczono surowe pliki ${cleared} batchy (> ${days} dni)`);
+    }
+  } catch (err) {
+    console.error('Retencja importów nie powiodła się:', (err as Error).message);
+  }
+}, 5_000);
 
 // ── Ticker name backfill (one-shot per startup, idempotent) ────────────────
 // Naprawia ticker_map.name dla wpisów gdzie `name = ticker` — pozostałość po

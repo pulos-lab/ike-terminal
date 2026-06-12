@@ -32,6 +32,7 @@ Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i st
 6. **Cash flow** (`/cash`) — historia wpłat/wypłat + wykres na Lightweight Charts
 7. **Korekty i koszty** (`/corrections-and-costs`) — corporate actions, korekty, koszty (zastąpiło dawne Corporate Actions)
 8. **Bug reports** (`/admin/bugs`) — panel admina dla zgłoszeń (kategorie: import, wykres, portfel, transakcje, dywidendy, waluty, inne)
+9. **Profile importu** (`/admin/import-profiles`) — kuracja profili importu uniwersalnego (kolejka pending → review ze zredagowaną próbką, dry-runem i diffem → korekta jako nowa wersja → approve/reject; approve nowej wersji flaguje wcześniejsze importy formatu do re-importu). Admin = pierwszy zarejestrowany użytkownik (`middleware/require-admin.ts`)
 
 Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPassword, Udostępniony portfel (`/share/:token`).
 
@@ -59,6 +60,7 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
 - **Generator mapowań przez LLM** (`profile-generator.ts` + `llm-client.ts`): do API AI trafiają WYŁĄCZNIE zredagowane fragmenty pliku (`sample-redactor.ts`): nagłówki, próbka wierszy, listy unikalnych wartości/wzorców kolumn z całego pliku oraz — w retry — pojedyncze zredagowane wiersze niedopasowane do reguł, za jawną zgodą użytkownika w kreatorze; profil waliduje zod + deterministyczny self-check na realnym pliku (próg pewności 0.8, max 2 retry); wynik zapisywany jako `pending` (generatedBy='llm' + model + confidence). Env:
   - `LLM_API_KEY` — wymagany (brak = AI wyłączone, ścieżka ręczna działa); `GENERIC_IMPORT_LLM=off` — twardy wyłącznik
   - `LLM_BASE_URL` — endpoint OpenAI-compatible, domyślnie `https://api.mistral.ai/v1` (Mistral: EU); DeepSeek tylko przez hosta EU (Scaleway/OVH) — **bezpośrednie `api.deepseek.com` jest zablokowane w kodzie** (dane poza EU)
+  - `IMPORT_RAW_RETENTION_DAYS` (domyślnie 90) — retencja surowych plików batchy (leniwy sweep przy starcie; batch bez raw traci możliwość re-importu)
   - `LLM_MODEL` (domyślnie `mistral-medium-latest` — wynik dry-runu na realnych plikach; `mistral-small` zawodzi na DEGIRO i plikach operacji), `LLM_MODEL_FALLBACK` (opcjonalny mocniejszy model na drugą rundę po odmowie, np. `mistral-large-latest`), `LLM_TIMEOUT_MS` (domyślnie 120000)
 
 ## Źródła cen — priorytety
