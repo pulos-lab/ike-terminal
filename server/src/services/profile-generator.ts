@@ -37,6 +37,51 @@ const MIN_CONFIDENCE = 0.8;
 const SELF_CHECK_LINES = 300;
 const SAMPLE_ROWS = 20;
 
+/**
+ * Kody walut uznawane za wiarygodne w self-checku. Lista celowo szeroka —
+ * fałszywy alarm na egzotycznej walucie obniży confidence i wymusi retry,
+ * ale nie przepuści profilu wpisującego w walutę fragmenty tickerów.
+ */
+const KNOWN_CURRENCIES = new Set([
+  'PLN',
+  'USD',
+  'EUR',
+  'GBP',
+  'GBX',
+  'CHF',
+  'CZK',
+  'HUF',
+  'SEK',
+  'NOK',
+  'DKK',
+  'CAD',
+  'AUD',
+  'NZD',
+  'JPY',
+  'HKD',
+  'SGD',
+  'CNY',
+  'CNH',
+  'TRY',
+  'ILS',
+  'MXN',
+  'BRL',
+  'ZAR',
+  'RON',
+  'BGN',
+  'UAH',
+  'ISK',
+  'KRW',
+  'TWD',
+  'INR',
+  'THB',
+  'MYR',
+  'IDR',
+  'PHP',
+  'AED',
+  'SAR',
+]);
+
 /** Powody pominięcia wskazujące na ZŁE mapowanie (obniżają confidence). */
 const PROBLEMATIC_SKIP_REASONS = new Set([
   'missing_date',
@@ -127,83 +172,113 @@ async function runGeneration(
   // Self-check na prefiksie realnego pliku (lokalnie).
   const selfCheckContent = content.split('\n').slice(0, SELF_CHECK_LINES).join('\n');
 
-  let feedback = '';
-  let lastModel = '';
+  const primary = await runAttempts(undefined);
+  if (primary) return primary;
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    let raw: string;
-    try {
-      const result = await chatComplete({
-        system: systemPrompt,
-        user: baseUserPrompt + feedback,
-        jsonSchema,
-      });
-      raw = result.content;
-      lastModel = result.model;
-    } catch (err) {
-      // Błąd żądania (np. 429/5xx) — jedna próba więcej ma sens; inne błędy w górę.
-      if (err instanceof LlmRequestError && attempt < MAX_ATTEMPTS) {
-        debugLog(`próba ${attempt}: LlmRequestError (HTTP ${err.status}) — ${err.message}`);
-        feedback = '';
+  // Drabinka modeli: po odmowie podstawowego modelu jedna runda mocniejszym
+  // (env LLM_MODEL_FALLBACK) — użycie sporadyczne, koszt pomijalny.
+  const fallbackModel = process.env.LLM_MODEL_FALLBACK?.trim();
+  if (fallbackModel) {
+    debugLog(`model podstawowy odmówił — fallback na ${fallbackModel}`);
+    return runAttempts(fallbackModel);
+  }
+  return null;
+
+  async function runAttempts(model: string | undefined): Promise<GeneratedProfile | null> {
+    let feedback = '';
+    let lastModel = '';
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      let raw: string;
+      try {
+        const result = await chatComplete({
+          system: systemPrompt,
+          user: baseUserPrompt + feedback,
+          jsonSchema,
+          model,
+        });
+        raw = result.content;
+        lastModel = result.model;
+      } catch (err) {
+        // Błąd żądania (np. 429/5xx) — jedna próba więcej ma sens; inne błędy w górę.
+        if (err instanceof LlmRequestError && attempt < MAX_ATTEMPTS) {
+          debugLog(`próba ${attempt}: LlmRequestError (HTTP ${err.status}) — ${err.message}`);
+          feedback = '';
+          continue;
+        }
+        throw err;
+      }
+
+      // 1. JSON parse (modele potrafią opakować w ```json mimo instrukcji).
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(stripCodeFence(raw));
+      } catch (err) {
+        debugLog(`próba ${attempt}: niepoprawny JSON — ${(err as Error).message}`);
+        feedback = buildRetryFeedback([
+          `Response was not valid JSON: ${(err as Error).message}. Return ONLY the JSON object.`,
+        ]);
         continue;
       }
-      throw err;
+
+      // 2. Walidacja schematem (komunikaty wracają do modelu jako feedback).
+      const validation = validateImportProfile(sanitizeGeneratedProfile(parsed));
+      if (!validation.ok) {
+        debugLog(
+          `próba ${attempt}: schemat odrzucił — ${validation.errors.slice(0, 4).join(' | ')}`,
+        );
+        feedback = buildRetryFeedback(withEnglishHints(validation.errors));
+        continue;
+      }
+
+      // 3. Self-check na realnym pliku.
+      const check = selfCheck(selfCheckContent, validation.profile);
+      if (!check.ok) {
+        debugLog(`próba ${attempt}: self-check nie wykonał profilu — ${check.errors.join(' | ')}`);
+        feedback = buildRetryFeedback(withEnglishHints(check.errors));
+        continue;
+      }
+      if (check.confidence < MIN_CONFIDENCE) {
+        debugLog(
+          `próba ${attempt}: niski confidence ${check.confidence} ` +
+            `(emitted ${check.emitted}, problematic ${check.problematic}; ${check.topReasons.join(', ')})`,
+        );
+        const examples = collectUnmatchedExamples(
+          selfCheckContent,
+          validation.profile,
+          check.problematicRowNumbers,
+          candidate.headers,
+        );
+        feedback = buildRetryFeedback([
+          ...(examples.length > 0
+            ? [
+                `These data rows were NOT handled cleanly (redacted examples) — extend the classify rules ` +
+                  `and mappings to cover each of them (or add an explicit skip rule when a row is genuinely ` +
+                  `not a portfolio event):\n${examples.map((e) => `  ${e}`).join('\n')}`,
+              ]
+            : []),
+          `Profile parsed only ${(check.confidence * 100).toFixed(0)}% of data rows cleanly ` +
+            `(emitted ${check.emitted}, problematic skips ${check.problematic}). ` +
+            `Top skip reasons: ${check.topReasons.join(', ') || 'n/a'}. ` +
+            `Re-examine column mappings (date format, quantity/price/value columns, side values, classify rules).`,
+        ]);
+        continue;
+      }
+
+      return {
+        profile: validation.profile,
+        confidence: check.confidence,
+        model: lastModel,
+        attempts: attempt,
+        fingerprint,
+        headers: candidate.headers,
+        delimiter: candidate.delimiter,
+        redactedSample,
+      };
     }
 
-    // 1. JSON parse (modele potrafią opakować w ```json mimo instrukcji).
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(stripCodeFence(raw));
-    } catch (err) {
-      debugLog(`próba ${attempt}: niepoprawny JSON — ${(err as Error).message}`);
-      feedback = buildRetryFeedback([
-        `Response was not valid JSON: ${(err as Error).message}. Return ONLY the JSON object.`,
-      ]);
-      continue;
-    }
-
-    // 2. Walidacja schematem (komunikaty wracają do modelu jako feedback).
-    const validation = validateImportProfile(sanitizeGeneratedProfile(parsed));
-    if (!validation.ok) {
-      debugLog(`próba ${attempt}: schemat odrzucił — ${validation.errors.slice(0, 4).join(' | ')}`);
-      feedback = buildRetryFeedback(withEnglishHints(validation.errors));
-      continue;
-    }
-
-    // 3. Self-check na realnym pliku.
-    const check = selfCheck(selfCheckContent, validation.profile);
-    if (!check.ok) {
-      debugLog(`próba ${attempt}: self-check nie wykonał profilu — ${check.errors.join(' | ')}`);
-      feedback = buildRetryFeedback(withEnglishHints(check.errors));
-      continue;
-    }
-    if (check.confidence < MIN_CONFIDENCE) {
-      debugLog(
-        `próba ${attempt}: niski confidence ${check.confidence} ` +
-          `(emitted ${check.emitted}, problematic ${check.problematic}; ${check.topReasons.join(', ')})`,
-      );
-      feedback = buildRetryFeedback([
-        `Profile parsed only ${(check.confidence * 100).toFixed(0)}% of data rows cleanly ` +
-          `(emitted ${check.emitted}, problematic skips ${check.problematic}). ` +
-          `Top skip reasons: ${check.topReasons.join(', ') || 'n/a'}. ` +
-          `Re-examine column mappings (date format, quantity/price/value columns, side values, classify rules).`,
-      ]);
-      continue;
-    }
-
-    return {
-      profile: validation.profile,
-      confidence: check.confidence,
-      model: lastModel,
-      attempts: attempt,
-      fingerprint,
-      headers: candidate.headers,
-      delimiter: candidate.delimiter,
-      redactedSample,
-    };
+    return null;
   }
-
-  return null;
 }
 
 interface SelfCheckResult {
@@ -213,6 +288,36 @@ interface SelfCheckResult {
   emitted: number;
   problematic: number;
   topReasons: string[];
+  /** Numery wierszy (1-based, konwencja silnika) problematycznych pominięć — do przykładów w feedbacku. */
+  problematicRowNumbers: number[];
+}
+
+/**
+ * Zredagowane przykłady wierszy, których profil nie objął — do feedbacku
+ * retry. Parsowanie identyczne jak w silniku (delimiter Z PROFILU, te same
+ * indeksy wierszy), redakcja jak próbka. Konkretne przykłady pozwalają
+ * modelowi załatać dziury w regułach zamiast zgadywać ze statystyki.
+ */
+function collectUnmatchedExamples(
+  content: string,
+  profile: ImportProfile,
+  rowNumbers: number[],
+  headers: string[],
+  limit = 12,
+): string[] {
+  if (rowNumbers.length === 0) return [];
+  const parsed = Papa.parse<string[]>(content, {
+    delimiter: profile.file.delimiter,
+    header: false,
+    skipEmptyLines: true,
+  });
+  const rows = parsed.data;
+  const picked = rowNumbers
+    .slice(0, limit)
+    .map((n) => rows[n - 1]) // rowNum jest 1-based względem sparsowanych wierszy
+    .filter((r): r is string[] => Array.isArray(r))
+    .map((r) => r.map((c) => String(c ?? '')));
+  return redactSampleRows(headers, picked).map((r) => r.join(profile.file.delimiter).slice(0, 240));
 }
 
 /** Deterministyczna ocena profilu: wykonaj go na prefiksie pliku i policz jakość. */
@@ -229,6 +334,7 @@ export function selfCheck(content: string, profile: ImportProfile): SelfCheckRes
         emitted: 0,
         problematic: 0,
         topReasons: [],
+        problematicRowNumbers: [],
       };
     }
     throw err;
@@ -237,7 +343,22 @@ export function selfCheck(content: string, profile: ImportProfile): SelfCheckRes
   const emitted = output.transactions.data.length + output.operations.data.length;
   const allSkipped = [...output.transactions.skipped, ...output.operations.skipped];
   const problematicSkips = allSkipped.filter((s) => PROBLEMATIC_SKIP_REASONS.has(s.reason));
-  const problematic = problematicSkips.length;
+  const problematicRowNumbers = [...new Set(problematicSkips.map((s) => s.row))];
+
+  // Sanity-check walut WYEMITOWANYCH rekordów: profil potrafi przejść walidację
+  // i cross-check kwot, a mimo to wpisywać w walutę śmieci z regexa (realny
+  // przypadek z dry-runu: "IMI"/"SAC" z końcówek tickerów). Nieznany kod
+  // waluty = pominięcie problemowe — obniża confidence jak złe mapowanie.
+  const suspiciousCurrency = [
+    ...output.transactions.data.map((t) => t.currency),
+    ...output.operations.data.map((o) => o.currency),
+  ].filter((c) => c && !KNOWN_CURRENCIES.has(c.toUpperCase())).length;
+
+  const problematic = problematicSkips.length + suspiciousCurrency;
+  const reasons = topSkipReasons(problematicSkips);
+  if (suspiciousCurrency > 0) {
+    reasons.unshift(`suspicious_currency×${suspiciousCurrency} (unknown ISO currency codes)`);
+  }
 
   if (emitted === 0) {
     return {
@@ -249,7 +370,8 @@ export function selfCheck(content: string, profile: ImportProfile): SelfCheckRes
       confidence: 0,
       emitted,
       problematic,
-      topReasons: topSkipReasons(problematicSkips),
+      topReasons: reasons,
+      problematicRowNumbers,
     };
   }
 
@@ -260,7 +382,8 @@ export function selfCheck(content: string, profile: ImportProfile): SelfCheckRes
     confidence: Math.round(confidence * 1000) / 1000,
     emitted,
     problematic,
-    topReasons: topSkipReasons(problematicSkips),
+    topReasons: reasons,
+    problematicRowNumbers,
   };
 }
 

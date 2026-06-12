@@ -60,18 +60,35 @@ export interface UserPromptInput {
 }
 
 /**
+ * Normalizacja wartości tekstowej do WZORCA: liczby/daty/kwoty → {N},
+ * kody pisane wersalikami (tickery, waluty, giełdy) → {SYM}. Setki tytułów
+ * operacji z wieloletniej historii zapadają się do kilkunastu wzorców —
+ * dokładnie tego potrzebuje model, żeby napisać reguły contains/regex.
+ */
+export function valuePattern(value: string): string {
+  return value
+    .replace(/\d[\d\s.,:/-]*\d|\d/g, '{N}')
+    .replace(/(?<![\p{L}\d])[A-Z][A-Z0-9]{1,7}(?![\p{L}\d])/gu, '{SYM}')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Digesty kolumn: dla kolumn o małej liczbie unikalnych wartości wypisz je
- * wszystkie (to kandydaci na dyskryminatory classify/side); dla pozostałych
- * pokaż 2 przykłady. Liczone z PRÓBKI ZREDAGOWANEJ — nic ponad to, co i tak
- * idzie w prompcie.
+ * wszystkie (kandydaci na dyskryminatory classify/side); dla kolumn
+ * wysokokardynalnych (wolny tekst tytułów) wypisz WZORCE wartości z licznikami
+ * i przykładem. Liczone z wierszy ZREDAGOWANYCH — nic ponad to nie idzie
+ * do promptu.
  */
 export function buildColumnDigests(headers: string[], sampleRows: string[][]): string[] {
   // 40: kolumny-dyskryminatory (typ operacji) miewają ~30 wartości w pełnej
   // historii — pełna lista to najcenniejsza informacja w całym prompcie.
   const MAX_DISTINCT = 40;
+  const MAX_PATTERNS = 25;
   return headers.map((header, col) => {
     const values: string[] = [];
     const seen = new Set<string>();
+    const patterns = new Map<string, { count: number; example: string }>();
     let nonEmpty = 0;
     for (const row of sampleRows) {
       const v = (row[col] ?? '').trim();
@@ -81,16 +98,32 @@ export function buildColumnDigests(headers: string[], sampleRows: string[][]): s
         seen.add(v);
         values.push(v);
       }
+      const pattern = valuePattern(v);
+      const entry = patterns.get(pattern);
+      if (entry) entry.count++;
+      else patterns.set(pattern, { count: 1, example: v });
     }
     const label = header.trim() || `(unnamed col ${col})`;
     if (nonEmpty === 0) return `[${col}] "${label}": always empty`;
     if (seen.size <= MAX_DISTINCT) {
       return `[${col}] "${label}": ${seen.size} distinct values: ${values.map((v) => JSON.stringify(v)).join(', ')}`;
     }
-    return `[${col}] "${label}": many values, e.g. ${values
-      .slice(0, 2)
-      .map((v) => JSON.stringify(v))
-      .join(', ')}`;
+    // Wolny tekst: wzorce posortowane po częstości, każdy z przykładem —
+    // model pisze reguły contains/regex po stabilnych słowach wzorca.
+    const top = [...patterns.entries()].sort((a, b) => b[1].count - a[1].count);
+    const lines = top
+      .slice(0, MAX_PATTERNS)
+      .map(
+        ([pattern, { count, example }]) =>
+          `    - ${JSON.stringify(pattern)} ×${count} (e.g. ${JSON.stringify(example.slice(0, 80))})`,
+      );
+    const omitted =
+      top.length > MAX_PATTERNS ? `\n    …and ${top.length - MAX_PATTERNS} rarer patterns` : '';
+    return (
+      `[${col}] "${label}": free text, ${top.length} value patterns ` +
+      `({N}=number/date/amount, {SYM}=ticker/currency/exchange code) — cover EVERY pattern ` +
+      `with a classify rule (match on the stable words):\n${lines.join('\n')}${omitted}`
+    );
   });
 }
 

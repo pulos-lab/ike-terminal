@@ -56,10 +56,10 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
 ### Import uniwersalny (inni brokerzy, CSV)
 - Silnik profili: `server/src/parsers/generic/` (deklaratywny `ImportProfile` w `shared/src/import-profile.ts`, zod) + biblioteka profili w globalnej bazie `data/import_profiles.db` keyed by fingerprint nagłówków; API `/api/import/generic/{analyze,generate-profile,preview,commit,batches,reimport}`; kreator UI w `client/src/components/import/generic/`
 - Harness parytetu na realnych plikach: `IMPORT_DIR=<dir> npm run compare:generic -w server` (flagi: `--resolver-live`, `--llm`)
-- **Generator mapowań przez LLM** (`profile-generator.ts` + `llm-client.ts`): do API AI trafiają WYŁĄCZNIE nagłówki + zredagowana próbka + zredagowane listy unikalnych wartości kolumn z całego pliku (`sample-redactor.ts`), za jawną zgodą użytkownika w kreatorze; profil waliduje zod + deterministyczny self-check na realnym pliku (próg pewności 0.8, max 2 retry); wynik zapisywany jako `pending` (generatedBy='llm' + model + confidence). Env:
+- **Generator mapowań przez LLM** (`profile-generator.ts` + `llm-client.ts`): do API AI trafiają WYŁĄCZNIE zredagowane fragmenty pliku (`sample-redactor.ts`): nagłówki, próbka wierszy, listy unikalnych wartości/wzorców kolumn z całego pliku oraz — w retry — pojedyncze zredagowane wiersze niedopasowane do reguł, za jawną zgodą użytkownika w kreatorze; profil waliduje zod + deterministyczny self-check na realnym pliku (próg pewności 0.8, max 2 retry); wynik zapisywany jako `pending` (generatedBy='llm' + model + confidence). Env:
   - `LLM_API_KEY` — wymagany (brak = AI wyłączone, ścieżka ręczna działa); `GENERIC_IMPORT_LLM=off` — twardy wyłącznik
   - `LLM_BASE_URL` — endpoint OpenAI-compatible, domyślnie `https://api.mistral.ai/v1` (Mistral: EU); DeepSeek tylko przez hosta EU (Scaleway/OVH) — **bezpośrednie `api.deepseek.com` jest zablokowane w kodzie** (dane poza EU)
-  - `LLM_MODEL` (domyślnie `mistral-medium-latest` — wynik dry-runu na realnych plikach; `mistral-small` zawodzi na DEGIRO i plikach operacji), `LLM_TIMEOUT_MS` (domyślnie 60000)
+  - `LLM_MODEL` (domyślnie `mistral-medium-latest` — wynik dry-runu na realnych plikach; `mistral-small` zawodzi na DEGIRO i plikach operacji), `LLM_MODEL_FALLBACK` (opcjonalny mocniejszy model na drugą rundę po odmowie, np. `mistral-large-latest`), `LLM_TIMEOUT_MS` (domyślnie 120000)
 
 ## Źródła cen — priorytety
 

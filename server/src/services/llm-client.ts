@@ -10,7 +10,7 @@
  *                     rezydencja danych w EU, natywny structured output),
  * - LLM_API_KEY     — wymagany; brak = LLM wyłączony (ścieżka ręczna działa),
  * - LLM_MODEL       — domyślnie mistral-medium-latest (dry-run na realnych plikach: small nie radzi sobie z DEGIRO/operacjami),
- * - LLM_TIMEOUT_MS  — domyślnie 60000,
+ * - LLM_TIMEOUT_MS  — domyślnie 120000,
  * - GENERIC_IMPORT_LLM=off — twardy wyłącznik funkcji.
  *
  * PRYWATNOŚĆ (decyzja produktowa): do API trafiają WYŁĄCZNIE nagłówki i
@@ -21,7 +21,7 @@
 
 const DEFAULT_BASE_URL = 'https://api.mistral.ai/v1';
 const DEFAULT_MODEL = 'mistral-medium-latest';
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 /** LLM niedostępny (brak konfiguracji / wyłączony / sieć) → route mapuje na 503. */
 export class LlmUnavailableError extends Error {
@@ -86,6 +86,8 @@ export interface ChatCompleteInput {
    * pętla walidacji zod w generatorze i tak jest obowiązkowa.
    */
   jsonSchema?: Record<string, unknown>;
+  /** Nadpisanie modelu (np. mocniejszy fallback po odmowie) — domyślnie LLM_MODEL. */
+  model?: string;
 }
 
 export interface ChatCompleteResult {
@@ -119,7 +121,7 @@ export async function chatComplete(input: ChatCompleteInput): Promise<ChatComple
           Authorization: `Bearer ${config.apiKey}`,
         },
         body: JSON.stringify({
-          model: config.model,
+          model: input.model || config.model,
           temperature: 0,
           messages: [
             { role: 'system', content: input.system },

@@ -197,4 +197,20 @@ describe('selfCheck — deterministyczna ocena profilu', () => {
     expect(check.confidence).toBeLessThan(0.8);
     expect(check.topReasons.join(',')).toContain('invalid_price');
   });
+
+  it('śmieci w walucie (nieznany kod ISO) → niska pewność mimo poprawnych kwot', () => {
+    // Realny przypadek z dry-runu: regex wyciągał fragmenty tickerów ("IMI",
+    // "SAC") do waluty — kwoty się zgadzały, więc bez sanity-checku walut
+    // profil dostawał pewność 1.
+    const garbageCurrencyProfile = {
+      ...GOOD_PROFILE,
+      trade: { ...GOOD_PROFILE.trade, currency: { kind: 'const', value: 'IMI' } },
+    };
+    const validation = validateImportProfile(garbageCurrencyProfile);
+    expect(validation.ok).toBe(true);
+    if (!validation.ok) return;
+    const check = selfCheck(CSV, validation.profile);
+    expect(check.confidence).toBeLessThan(0.8);
+    expect(check.topReasons.join(',')).toContain('suspicious_currency');
+  });
 });

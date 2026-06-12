@@ -284,10 +284,11 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
               </div>
               <p className="text-xs text-muted-foreground">
                 Zamiast mapować ręcznie, możesz wygenerować mapowanie automatycznie. Do usługi AI
-                (serwer w UE) trafią <span className="font-medium">wyłącznie nazwy kolumn,
-                poniższa zredagowana próbka oraz krótkie listy unikalnych wartości kolumn
-                (np. typy operacji) — po tej samej redakcji</span> — nigdy cały plik ani dane
-                osobowe (numery rachunków, nazwiska i e-maile są maskowane).
+                (serwer w UE) trafią <span className="font-medium">wyłącznie zredagowane fragmenty
+                pliku: nazwy kolumn, poniższa próbka, listy unikalnych wartości kolumn (np. typy
+                operacji) oraz pojedyncze wiersze potrzebne do poprawy mapowania — wszystko po tej
+                samej redakcji</span> — nigdy cały plik ani dane osobowe (numery rachunków,
+                nazwiska i e-maile są maskowane).
               </p>
               <details className="text-xs">
                 <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
