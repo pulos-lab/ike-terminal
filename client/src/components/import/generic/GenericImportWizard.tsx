@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Dialog,
@@ -60,6 +60,8 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
   /** Zgoda na wysłanie ZREDAGOWANEJ próbki do usługi AI (wymagana per import). */
   const [aiConsent, setAiConsent] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
+  const [aiElapsed, setAiElapsed] = useState(0);
+  const aiTimerRef = useRef<number | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
 
   // Analiza przy zamontowaniu — rodzic renderuje kreator warunkowo (remount na
@@ -163,6 +165,14 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
     if (!file || !aiConsent || aiBusy) return;
     setAiBusy(true);
     setAiError(null);
+    // Licznik czasu generacji — pojedyncze wywołanie potrafi trwać 1-2 min
+    // (model + retry z feedbackiem), licznik pokazuje, że proces żyje.
+    setAiElapsed(0);
+    const startedAt = Date.now();
+    aiTimerRef.current = window.setInterval(
+      () => setAiElapsed(Math.floor((Date.now() - startedAt) / 1000)),
+      1000,
+    );
     try {
       const result = await api.genericGenerateProfile(file);
       if (result.error || !result.summary) {
@@ -181,6 +191,8 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
       ]);
       await runPreview(file, result.profileJson);
     } finally {
+      if (aiTimerRef.current !== null) window.clearInterval(aiTimerRef.current);
+      aiTimerRef.current = null;
       setAiBusy(false);
     }
   }
@@ -326,7 +338,7 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
                   {aiBusy ? (
                     <>
                       <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-                      Generowanie…
+                      Generowanie… {aiElapsed}s
                     </>
                   ) : (
                     <>
@@ -342,6 +354,13 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
                   </span>
                 )}
               </div>
+              {aiBusy && (
+                <p className="text-xs text-muted-foreground">
+                  AI analizuje strukturę pliku i sprawdza wynik na realnej próbce. Proste formaty
+                  zajmują ok. minuty; przy złożonych model dostaje feedback i poprawia mapowanie —
+                  to może potrwać do kilku minut. Możesz nie zamykać tego okna i poczekać.
+                </p>
+              )}
             </div>
 
             <MappingEditor

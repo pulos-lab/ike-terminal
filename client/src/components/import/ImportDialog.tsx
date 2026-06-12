@@ -20,6 +20,7 @@ import {
   BROKER_LABELS,
 } from 'shared';
 import { GenericImportWizard } from './generic/GenericImportWizard';
+import { GenericBatchesSection } from './generic/GenericBatchesSection';
 import { SKIP_REASON_LABELS } from '@/lib/import-labels';
 import {
   BROKER_IMPORT_CONFIG,
@@ -451,6 +452,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
                 }}
               />
             </div>
+            <GenericBatchesSection />
           </div>
         )}
 
