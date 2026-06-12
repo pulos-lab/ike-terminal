@@ -48,3 +48,12 @@ export function redactSampleRows(headers: string[], rows: string[][]): string[][
     }),
   );
 }
+
+/**
+ * Redakcja nazwy pliku przed wysyłką do LLM (wskazówka dla brokerLabel).
+ * Nazwy eksportów często zawierają numer rachunku — ciągi ≥6 cyfr są
+ * maskowane; krótsze (lata, daty) zostają, bo to użyteczny, niegroźny sygnał.
+ */
+export function redactFileName(name: string): string {
+  return name.replace(/\d{6,}/g, '###').slice(0, 120);
+}
