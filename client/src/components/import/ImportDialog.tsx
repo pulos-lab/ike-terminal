@@ -320,7 +320,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
                   className={[
                     'flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors',
                     'hover:border-primary/60 hover:bg-accent/50',
-                    isGeneric ? 'border-dashed border-info/40 bg-info/5 col-span-2' : 'border-border',
+                    isGeneric ? 'border-dashed border-border bg-muted/30 col-span-2' : 'border-border',
                   ].join(' ')}
                 >
                   <span className="font-semibold text-sm">{label}</span>
@@ -425,7 +425,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         {/* ── Ekran 2B: inny broker → import uniwersalny ── */}
         {screen === 'generic' && (
           <div className="space-y-4">
-            <div className="rounded-md border border-info/30 bg-info/5 p-3 text-sm">
+            <div className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
               Import uniwersalny sam rozpozna układ kolumn Twojego pliku. Jeśli to nowy format —
               poprowadzimy Cię przez szybkie mapowanie i pokażemy podgląd przed zapisem.
             </div>
@@ -495,9 +495,9 @@ function FeedbackBlock({
             {m.kind === 'error' ? (
               <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
             ) : m.kind === 'warn' ? (
-              <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+              <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
             ) : m.kind === 'info' ? (
-              <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
+              <Info className="h-4 w-4 text-info shrink-0 mt-0.5" />
             ) : (
               <CheckCircle className="h-4 w-4 text-success shrink-0 mt-0.5" />
             )}
@@ -505,8 +505,8 @@ function FeedbackBlock({
               className={[
                 'whitespace-pre-line min-w-0',
                 isLong ? 'max-h-60 overflow-y-auto pr-2 block' : '',
-                m.kind === 'warn' ? 'text-yellow-600 dark:text-yellow-400' : '',
-                m.kind === 'info' ? 'text-blue-600 dark:text-blue-400' : '',
+                m.kind === 'warn' ? 'text-warning' : '',
+                m.kind === 'info' ? 'text-info' : '',
                 m.kind === 'error' ? 'text-destructive' : '',
               ]
                 .filter(Boolean)
@@ -519,12 +519,10 @@ function FeedbackBlock({
       })}
 
       {orphanedSells.length > 0 && (
-        <div className="rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3 space-y-3">
+        <div className="rounded-md border border-warning/30 bg-warning/5 p-3 space-y-3">
           <div className="flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
-            <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
-              Wykryto sprzedaż bez kupna
-            </span>
+            <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+            <span className="text-sm font-medium text-warning">Wykryto sprzedaż bez kupna</span>
           </div>
           {orphanedSells.map((o) => (
             <div key={o.isin} className="ml-6 space-y-1.5">

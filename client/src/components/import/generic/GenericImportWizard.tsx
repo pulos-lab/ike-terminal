@@ -280,7 +280,7 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
             {(preview.warnings ?? []).length > 0 && (
               <div className="space-y-1">
                 {preview.warnings!.slice(0, 10).map((w, i) => (
-                  <div key={i} className="flex items-start gap-2 text-xs text-yellow-600 dark:text-yellow-400">
+                  <div key={i} className="flex items-start gap-2 text-xs text-warning">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                     <span>{w}</span>
                   </div>
@@ -350,9 +350,9 @@ function MessagesList({ messages }: { messages: Message[] }) {
             {m.kind === 'error' ? (
               <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
             ) : m.kind === 'warn' ? (
-              <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+              <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
             ) : m.kind === 'info' ? (
-              <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
+              <Info className="h-4 w-4 text-info shrink-0 mt-0.5" />
             ) : (
               <CheckCircle className="h-4 w-4 text-success shrink-0 mt-0.5" />
             )}
@@ -360,8 +360,8 @@ function MessagesList({ messages }: { messages: Message[] }) {
               className={[
                 'whitespace-pre-line min-w-0',
                 isLong ? 'max-h-60 overflow-y-auto pr-2 block' : '',
-                m.kind === 'warn' ? 'text-yellow-600 dark:text-yellow-400' : '',
-                m.kind === 'info' ? 'text-blue-600 dark:text-blue-400' : '',
+                m.kind === 'warn' ? 'text-warning' : '',
+                m.kind === 'info' ? 'text-info' : '',
                 m.kind === 'error' ? 'text-destructive' : '',
               ]
                 .filter(Boolean)
