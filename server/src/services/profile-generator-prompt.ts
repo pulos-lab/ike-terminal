@@ -1,0 +1,118 @@
+import { MBANK_TRANSACTIONS_PROFILE } from '../parsers/generic/profiles/mbank-transactions.profile.js';
+
+/**
+ * Prompt generatora profili importu (LLM → ImportProfile JSON).
+ *
+ * System: skondensowana specyfikacja spec + JEDEN few-shot (golden profil mBank
+ * — pokazuje scan nagłówka, occurrence dla zduplikowanych kolumn i ścieżkę
+ * needsNameResolution). User: nagłówki + delimiter + ZREDAGOWANA próbka +
+ * digesty unikalnych wartości per kolumna — digesty podają modelowi kolumny-
+ * dyskryminatory (typ wiersza, strona K/S) na tacy, co jest najskuteczniejszą
+ * pojedynczą mitygacją słabszych modeli.
+ */
+
+const FEW_SHOT_HEADERS =
+  'Czas transakcji;Papier;Giełda;K/S;Liczba;Kurs;Waluta;Prowizja;Waluta;Wartość;Waluta';
+
+export function buildSystemPrompt(): string {
+  const fewShot = JSON.stringify(MBANK_TRANSACTIONS_PROFILE);
+  return `You are a precise data engineer. Given the header row and a redacted sample of a broker's CSV export, output an ImportProfile JSON object that maps the file onto a canonical portfolio schema. Output ONLY the JSON object — no markdown, no commentary.
+
+# ImportProfile rules (specVersion 1)
+
+- Top-level: { "specVersion": 1, "brokerLabel", "file", "classify", "defaultClass", <mappings>, "pairing"?, "needsNameResolution"? }.
+- "brokerLabel": short human guess of the broker name from headers/sample (max 60 chars).
+- "file": { "delimiter": one of ";" "," "\\t" "|", "headerRow": {"strategy":"first"} or {"strategy":"scan","signature":[2-6 exact header names]} when metadata lines precede the header, "skipRows"?: conditions for summary rows, "footerStop"?: condition that marks the start of a footer }.
+- Column references: {"name":"<exact header text>","occurrence":N} (occurrence 0-based, for duplicated header names) or a 0-based column index (use index for unnamed columns).
+- Value sources: {"kind":"column","col":<ref>,"fallback"?:"<value when cell empty>"} | {"kind":"const","value":"…"} | {"kind":"regexExtract","col":<ref>,"pattern":"…","group":N} (extract e.g. ticker, quantity or fx pair from a description cell).
+- "classify": ordered rules, first match wins: {"id","when":[matchers ANDed],"emit":<rowClass>}. Matcher: {"col":<ref>,"op":"equals"|"oneOf"|"contains"|"startsWith"|"regex"|"signPositive"|"signNegative"|"zeroNumber"|"nonzeroNumber"|"empty"|"notEmpty","values"?:[…],"pattern"?:"…"}. Row classes: trade, dividend, withholding_tax, coupon, interest, deposit, withdrawal, fx_leg, fee, trade_fee, commission_refund, capital_return, other, skip. "defaultClass": "skip" (unmatched rows reported) or "other" (imported as misc cashflow).
+- Every emitted class needs its mapping section: "trade" for trades; cash classes use keys dividend/withholdingTax/coupon/interest/deposit/withdrawal/fxLeg/fee/tradeFee/commissionRefund/capitalReturn/other.
+- "trade" mapping: { "date": {"source":<vs>,"formats":["YYYY-MM-DD"|"DD.MM.YYYY"|"DD-MM-YYYY"|"DD/MM/YYYY"|"MM/DD/YYYY"|"YYYY.MM.DD"|"YYYY/MM/DD"],"timeSource"?:<vs>}, "paperName":<vs>, "isin"?:<vs>, "quantity":<vs>, "wholeShares"?:bool (true only for whole-share markets), "price":<vs>, "value"?:<vs> (omit to compute qty×price), "commission"?:<vs> (omit when fees are separate rows), "total"?:<vs>, "currency":<vs>, "paymentCurrency"?:<vs>, "fxRate"?:<vs>, "side": {"strategy":"column","col":<ref>,"buyValues":[…],"sellValues":[…]} | {"strategy":"signedQuantity","col":<ref>} | {"strategy":"signedAmount","col":<ref>} }.
+- Cash mapping: { "date":{...}, "amount":<vs> (signed), "currency":<vs>, "description"?:<vs>, "ticker"?:<vs>, "isin"?:<vs>, "fxRate"?:<vs>, "fxPair"?:<vs> }.
+- "pairing": {"dividendWht":{"matchBy":["isin"|"ticker"|"date"|"time"],"windowDays":0-7,"handling":"subtract"|"fee_row"}} when the file has separate dividend + withholding-tax rows; {"fxLegs":{"pairKey":{"by":"column","col":<ref>}|{"by":"datetime"},"rateSource"?:<vs>}} when FX exchanges come as debit+credit leg rows. Single-row FX: classify as fx_leg WITHOUT pairing.fxLegs and put fxRate/fxPair in the fxLeg mapping (often regexExtract from the title).
+- If the file has NO ISIN column: omit "isin" in trade and set "needsNameResolution": true.
+- Numbers are parsed automatically (European and US separators) — never configure decimal separators. Dates: pick formats from the closed enum above based on the sample.
+- Prefer column references by NAME. Be conservative: when a row type is not clearly identifiable, let it fall to defaultClass instead of guessing.
+
+# Example
+
+Input headers (delimiter ";", header found after ~30 metadata lines):
+${FEW_SHOT_HEADERS}
+
+Correct output:
+${fewShot}`;
+}
+
+export interface UserPromptInput {
+  headers: string[];
+  delimiter: string;
+  headerRowIndex: number;
+  /** ZREDAGOWANE wiersze próbki (sample-redactor) — max ~20. */
+  sampleRows: string[][];
+}
+
+/**
+ * Digesty kolumn: dla kolumn o małej liczbie unikalnych wartości wypisz je
+ * wszystkie (to kandydaci na dyskryminatory classify/side); dla pozostałych
+ * pokaż 2 przykłady. Liczone z PRÓBKI ZREDAGOWANEJ — nic ponad to, co i tak
+ * idzie w prompcie.
+ */
+export function buildColumnDigests(headers: string[], sampleRows: string[][]): string[] {
+  const MAX_DISTINCT = 15;
+  return headers.map((header, col) => {
+    const values: string[] = [];
+    const seen = new Set<string>();
+    let nonEmpty = 0;
+    for (const row of sampleRows) {
+      const v = (row[col] ?? '').trim();
+      if (!v) continue;
+      nonEmpty++;
+      if (!seen.has(v) && seen.size <= MAX_DISTINCT) {
+        seen.add(v);
+        values.push(v);
+      }
+    }
+    const label = header.trim() || `(unnamed col ${col})`;
+    if (nonEmpty === 0) return `[${col}] "${label}": always empty`;
+    if (seen.size <= MAX_DISTINCT) {
+      return `[${col}] "${label}": ${seen.size} distinct values: ${values.map((v) => JSON.stringify(v)).join(', ')}`;
+    }
+    return `[${col}] "${label}": many values, e.g. ${values
+      .slice(0, 2)
+      .map((v) => JSON.stringify(v))
+      .join(', ')}`;
+  });
+}
+
+export function buildUserPrompt(input: UserPromptInput): string {
+  const sampleLines = input.sampleRows.map((row) => row.join(input.delimiter)).join('\n');
+  const digests = buildColumnDigests(input.headers, input.sampleRows).join('\n');
+
+  return `# File to map
+
+Delimiter: ${JSON.stringify(input.delimiter)}
+Header row index in file: ${input.headerRowIndex}${input.headerRowIndex > 0 ? ' (metadata lines precede it — use headerRow strategy "scan")' : ' (use headerRow strategy "first")'}
+Headers (${input.headers.length} columns, 0-based indices):
+${input.headers.map((h, i) => `[${i}] ${JSON.stringify(h)}`).join('\n')}
+
+# Column value digests (from the redacted sample)
+
+${digests}
+
+# Redacted sample rows (${input.sampleRows.length})
+
+${sampleLines}
+
+Return the ImportProfile JSON object now.`;
+}
+
+/** Feedback dla retry — doklejany do promptu user po nieudanej próbie. */
+export function buildRetryFeedback(errors: string[]): string {
+  return `\n\n# Previous attempt was rejected
+
+Fix these problems and return the corrected ImportProfile JSON:
+${errors
+  .slice(0, 12)
+  .map((e) => `- ${e}`)
+  .join('\n')}`;
+}

@@ -576,6 +576,15 @@ export interface GenericCommitResult extends ImportResult {
   brokerLabel?: string | null;
 }
 
+/** POST /api/import/generic/generate-profile — profil wygenerowany przez LLM. */
+export interface GenericGenerateProfileResult {
+  summary: GenericProfileSummary;
+  profileJson: unknown;
+  /** Wynik deterministycznego self-checku na realnym pliku (0–1). */
+  confidence: number;
+  attempts: number;
+}
+
 /** GET /api/import/generic/batches */
 export interface GenericBatchInfo {
   importBatch: string;
