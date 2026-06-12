@@ -1,3 +1,4 @@
+import Papa from 'papaparse';
 import { z } from 'zod';
 import { ImportProfileSchema, validateImportProfile, type ImportProfile } from 'shared';
 import { parseWithProfile, type GenericParseOutput } from '../parsers/generic/engine.js';
@@ -64,6 +65,11 @@ export interface GeneratedProfile {
 const llmMutex = createConcurrencyLimiter(1);
 const inFlight = new Map<string, Promise<GeneratedProfile | null>>();
 
+/** Diagnostyka per próba (LLM_DEBUG=1) — powody odrzucenia trafiają na stderr. */
+function debugLog(message: string): void {
+  if (process.env.LLM_DEBUG) console.error(`  [llm-debug] ${message}`);
+}
+
 /**
  * Generuje profil dla treści pliku CSV. Zwraca null, gdy po wszystkich próbach
  * nie powstał profil o wystarczającej pewności. Rzuca LlmUnavailableError,
@@ -107,6 +113,7 @@ async function runGeneration(
     delimiter: candidate.delimiter,
     headerRowIndex: candidate.headerRowIndex,
     sampleRows: redactedSample,
+    digestRows: collectDigestRows(content, candidate),
   });
 
   let jsonSchema: Record<string, unknown> | undefined;
@@ -136,6 +143,7 @@ async function runGeneration(
     } catch (err) {
       // Błąd żądania (np. 429/5xx) — jedna próba więcej ma sens; inne błędy w górę.
       if (err instanceof LlmRequestError && attempt < MAX_ATTEMPTS) {
+        debugLog(`próba ${attempt}: LlmRequestError (HTTP ${err.status}) — ${err.message}`);
         feedback = '';
         continue;
       }
@@ -147,6 +155,7 @@ async function runGeneration(
     try {
       parsed = JSON.parse(stripCodeFence(raw));
     } catch (err) {
+      debugLog(`próba ${attempt}: niepoprawny JSON — ${(err as Error).message}`);
       feedback = buildRetryFeedback([
         `Response was not valid JSON: ${(err as Error).message}. Return ONLY the JSON object.`,
       ]);
@@ -154,19 +163,25 @@ async function runGeneration(
     }
 
     // 2. Walidacja schematem (komunikaty wracają do modelu jako feedback).
-    const validation = validateImportProfile(parsed);
+    const validation = validateImportProfile(sanitizeGeneratedProfile(parsed));
     if (!validation.ok) {
-      feedback = buildRetryFeedback(validation.errors);
+      debugLog(`próba ${attempt}: schemat odrzucił — ${validation.errors.slice(0, 4).join(' | ')}`);
+      feedback = buildRetryFeedback(withEnglishHints(validation.errors));
       continue;
     }
 
     // 3. Self-check na realnym pliku.
     const check = selfCheck(selfCheckContent, validation.profile);
     if (!check.ok) {
-      feedback = buildRetryFeedback(check.errors);
+      debugLog(`próba ${attempt}: self-check nie wykonał profilu — ${check.errors.join(' | ')}`);
+      feedback = buildRetryFeedback(withEnglishHints(check.errors));
       continue;
     }
     if (check.confidence < MIN_CONFIDENCE) {
+      debugLog(
+        `próba ${attempt}: niski confidence ${check.confidence} ` +
+          `(emitted ${check.emitted}, problematic ${check.problematic}; ${check.topReasons.join(', ')})`,
+      );
       feedback = buildRetryFeedback([
         `Profile parsed only ${(check.confidence * 100).toFixed(0)}% of data rows cleanly ` +
           `(emitted ${check.emitted}, problematic skips ${check.problematic}). ` +
@@ -256,6 +271,100 @@ function topSkipReasons(skipped: Array<{ reason: string }>): string[] {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
     .map(([reason, n]) => `${reason}×${n}`);
+}
+
+/** Limit wierszy do digestów wartości — pokrywa pełne historie, ogranicza CPU. */
+const DIGEST_ROWS_CAP = 8000;
+
+/**
+ * Wiersze do digestów wartości per kolumna: CAŁY plik (capped), po tej samej
+ * redakcji co próbka. Rzadkie typy wierszy (np. zapis na akcje w IPO) zwykle
+ * nie trafiają do 20-wierszowej próbki — digest z pełnego pliku daje modelowi
+ * kompletną listę wartości kolumn-dyskryminatorów, więc reguły classify
+ * powstają także dla typów spoza próbki. Do API nie wychodzi nic ponad
+ * zredagowane, krótkie listy unikalnych wartości.
+ */
+function collectDigestRows(
+  content: string,
+  candidate: NonNullable<ReturnType<typeof locateHeaderCandidate>>,
+): string[][] {
+  const parsed = Papa.parse<string[]>(content.trim(), {
+    delimiter: candidate.delimiter,
+    header: false,
+    skipEmptyLines: true,
+    preview: candidate.headerRowIndex + 1 + DIGEST_ROWS_CAP,
+  });
+  const rows = parsed.data
+    .slice(candidate.headerRowIndex + 1)
+    .map((r) => r.map((c) => String(c ?? '')));
+  return redactSampleRows(candidate.headers, rows);
+}
+
+/**
+ * Sanityzacja typowych, mechanicznych potknięć modeli PRZED walidacją zod.
+ * Dwie reguły: (1) format daty przycinany do części datowej ("DD.MM.YYYY
+ * HH:mm:ss" → "DD.MM.YYYY") — silnik i tak toleruje sufiks czasu w komórce,
+ * a modele uparcie odwzorowują czas widoczny w danych; (2) sygnatura scanu
+ * nagłówka przycinana do limitu 6 pozycji — modele przepisują cały nagłówek,
+ * a do identyfikacji wiersza wystarczy prefiks. Nic poza tym nie poprawiamy:
+ * merytoryczne błędy mają wracać do modelu jako feedback.
+ */
+export function sanitizeGeneratedProfile(parsed: unknown): unknown {
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    const obj = node as Record<string, unknown>;
+    if (Array.isArray(obj.formats)) {
+      obj.formats = obj.formats.map((f) =>
+        typeof f === 'string' ? f.trim().split(/[\sT]+/)[0] : f,
+      );
+    }
+    if (Array.isArray(obj.signature) && obj.signature.length > 6) {
+      obj.signature = obj.signature.slice(0, 6);
+    }
+    for (const value of Object.values(obj)) visit(value);
+  };
+  visit(parsed);
+  return parsed;
+}
+
+/**
+ * Komunikaty walidacji schematu są po polsku (trafiają też do UI edytora
+ * mapowania) — model dostaje feedback po angielsku, więc najczęstsze
+ * odrzucenia tłumaczymy tu na konkretne instrukcje naprawy.
+ */
+const FEEDBACK_TRANSLATIONS: Array<{ match: RegExp; hint: (m: RegExpExecArray) => string }> = [
+  {
+    match: /nie ma źródła ISIN/,
+    hint: () =>
+      'The trade mapping has no ISIN source — either map the ISIN column, or (when the file has no ISIN column) set top-level "needsNameResolution": true.',
+  },
+  {
+    match: /emituje '(\w+)', ale w profilu brakuje sekcji mapowania '(\w+)'/,
+    hint: (m) =>
+      `A classify rule emits "${m[1]}" but the profile has no "${m[2]}" mapping section — add that mapping section, or change the rule to emit a class you do map (or "skip").`,
+  },
+  {
+    match: /brakuje kolumny "(.+?)"/,
+    hint: (m) =>
+      `The header contains NO column named ${JSON.stringify(m[1])} — you invented that name. ` +
+      'Re-read the header list: the value most likely lives in an UNNAMED column; reference it by bare numeric index (e.g. {"kind":"column","col":8}).',
+  },
+];
+
+/** Dołóż angielskie wskazówki naprawy do polskich komunikatów walidacji/self-checku. */
+function withEnglishHints(errors: string[]): string[] {
+  const hints = new Set<string>();
+  for (const error of errors) {
+    for (const { match, hint } of FEEDBACK_TRANSLATIONS) {
+      const m = match.exec(error);
+      if (m) hints.add(hint(m));
+    }
+  }
+  return [...errors, ...hints];
 }
 
 /** Zdejmij ewentualny płotek ```json … ``` z odpowiedzi modelu. */

@@ -9,7 +9,7 @@
  * - LLM_BASE_URL    — domyślnie https://api.mistral.ai/v1 (Mistral: firma EU,
  *                     rezydencja danych w EU, natywny structured output),
  * - LLM_API_KEY     — wymagany; brak = LLM wyłączony (ścieżka ręczna działa),
- * - LLM_MODEL       — domyślnie mistral-small-latest,
+ * - LLM_MODEL       — domyślnie mistral-medium-latest (dry-run na realnych plikach: small nie radzi sobie z DEGIRO/operacjami),
  * - LLM_TIMEOUT_MS  — domyślnie 60000,
  * - GENERIC_IMPORT_LLM=off — twardy wyłącznik funkcji.
  *
@@ -20,7 +20,7 @@
  */
 
 const DEFAULT_BASE_URL = 'https://api.mistral.ai/v1';
-const DEFAULT_MODEL = 'mistral-small-latest';
+const DEFAULT_MODEL = 'mistral-medium-latest';
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 /** LLM niedostępny (brak konfiguracji / wyłączony / sieć) → route mapuje na 503. */
