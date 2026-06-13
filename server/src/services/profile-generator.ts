@@ -428,14 +428,22 @@ function collectDigestRows(
   return redactSampleRows(candidate.headers, rows);
 }
 
+/** Czy węzeł to „goły" matcher (ma `op`), a nie warunek (tablica matcherów). */
+function looksLikeBareMatcher(node: unknown): boolean {
+  return !!node && typeof node === 'object' && !Array.isArray(node) && 'op' in (node as object);
+}
+
 /**
  * Sanityzacja typowych, mechanicznych potknięć modeli PRZED walidacją zod.
- * Dwie reguły: (1) format daty przycinany do części datowej ("DD.MM.YYYY
- * HH:mm:ss" → "DD.MM.YYYY") — silnik i tak toleruje sufiks czasu w komórce,
- * a modele uparcie odwzorowują czas widoczny w danych; (2) sygnatura scanu
- * nagłówka przycinana do limitu 6 pozycji — modele przepisują cały nagłówek,
- * a do identyfikacji wiersza wystarczy prefiks. Nic poza tym nie poprawiamy:
- * merytoryczne błędy mają wracać do modelu jako feedback.
+ * Reguły: (1) format daty przycinany do części datowej ("DD.MM.YYYY HH:mm:ss"
+ * → "DD.MM.YYYY") — silnik i tak toleruje sufiks czasu w komórce, a modele
+ * uparcie odwzorowują czas widoczny w danych; (2) sygnatura scanu nagłówka
+ * przycinana do limitu 6 pozycji — modele przepisują cały nagłówek, a do
+ * identyfikacji wiersza wystarczy prefiks; (3) `skipRows` to tablica WARUNKÓW
+ * (każdy = tablica matcherów: Matcher[][]), ale modele uparcie emitują jeden
+ * poziom mniej — tablicę gołych matcherów `[{col,op}]` zamiast `[[{col,op}]]`;
+ * owijamy każdy goły matcher w jednoelementowy warunek. Nic poza tym nie
+ * poprawiamy: merytoryczne błędy mają wracać do modelu jako feedback.
  */
 export function sanitizeGeneratedProfile(parsed: unknown): unknown {
   const visit = (node: unknown): void => {
@@ -452,6 +460,10 @@ export function sanitizeGeneratedProfile(parsed: unknown): unknown {
     }
     if (Array.isArray(obj.signature) && obj.signature.length > 6) {
       obj.signature = obj.signature.slice(0, 6);
+    }
+    // skipRows: goły matcher → owinięty w warunek (Matcher → [Matcher]).
+    if (Array.isArray(obj.skipRows)) {
+      obj.skipRows = obj.skipRows.map((cond) => (looksLikeBareMatcher(cond) ? [cond] : cond));
     }
     for (const value of Object.values(obj)) visit(value);
   };
