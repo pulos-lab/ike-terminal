@@ -302,7 +302,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             {screen === null
               ? 'Wybierz swojego brokera, a powiemy dokładnie jaki plik wgrać.'
               : screen === 'generic'
-                ? 'Wgraj plik CSV z dowolnego brokera — sami rozpoznamy kolumny.'
+                ? 'Wgraj plik CSV lub XLSX z dowolnego brokera — sami rozpoznamy kolumny.'
                 : 'Wgraj plik(i) wymienione poniżej i kliknij Importuj.'}
           </DialogDescription>
         </DialogHeader>
@@ -432,14 +432,15 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
-                Plik CSV
+                Plik CSV lub XLSX
               </label>
               <span className="text-xs text-muted-foreground -mt-0.5">
-                Eksport historii transakcji z dowolnego brokera w formacie CSV.
+                Eksport historii z dowolnego brokera w formacie CSV lub XLSX (Excel). Plik XLSX z
+                kilkoma arkuszami danych zaimportujemy w całości.
               </span>
               <Input
                 type="file"
-                accept=".csv"
+                accept=".csv,.xlsx"
                 disabled={uploading}
                 className={fileInputClass}
                 onChange={(e) => {

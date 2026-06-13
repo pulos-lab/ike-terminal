@@ -26,7 +26,6 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ExcelJS from 'exceljs';
-import Papa from 'papaparse';
 import type { CashOperation, Transaction } from 'shared';
 import { decodeCSVBuffer } from '../src/parsers/encoding.js';
 import { isBossaFormat, parseBossaTransactions } from '../src/parsers/bossa-transactions.js';
@@ -34,6 +33,7 @@ import { isBossaOperationsFormat, parseBossaOperations } from '../src/parsers/bo
 import { isDegiroFormat, parseDegiroTransactions } from '../src/parsers/degiro-transactions.js';
 import { isDegiroAccountFormat, parseDegiroOperations } from '../src/parsers/degiro-operations.js';
 import { isXtbFormat, parseXtbFile } from '../src/parsers/xtb-transactions.js';
+import { cellToString, loadXlsxSheets } from '../src/parsers/xlsx-to-csv.js';
 import { parseWithProfile } from '../src/parsers/generic/engine.js';
 import { GenericParseError } from '../src/parsers/generic/value-parsers.js';
 import { generateProfileFromContent } from '../src/services/profile-generator.js';
@@ -127,43 +127,15 @@ function walkFiles(dir: string): string[] {
 }
 
 // ── XLSX (XTB) → wiersze CSV ────────────────────────────────────────────────
-
-/** Serializacja komórki jak w parserze wbudowanym (daty: czas LOKALNY). */
-function cellToString(v: ExcelJS.CellValue): string {
-  if (v === null || v === undefined) return '';
-  if (v instanceof Date) {
-    const p = (n: number) => String(n).padStart(2, '0');
-    return (
-      `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())} ` +
-      `${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`
-    );
-  }
-  if (typeof v === 'object') {
-    if ('result' in v) return cellToString((v as { result: ExcelJS.CellValue }).result);
-    if ('richText' in v) {
-      return (v as { richText: Array<{ text: string }> }).richText.map((t) => t.text).join('');
-    }
-    if ('text' in v) return String((v as { text: unknown }).text);
-    return '';
-  }
-  return String(v);
-}
+// cellToString + serializacja arkusza żyją we wspólnym utilu
+// `src/parsers/xlsx-to-csv.ts` (ta sama ścieżka co produkcyjny import XLSX) —
+// harness importuje stamtąd, żeby parytet pilnował dokładnie tego kodu.
 
 /** Arkusz "Cash Operations" / "CASH OPERATION HISTORY" → string CSV (średniki). */
 async function xtbSheetToCsv(buffer: Buffer): Promise<string | null> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer as unknown as ArrayBuffer);
-  const ws = wb.worksheets.find((w) => w.name.toUpperCase().includes('CASH OPERATION'));
-  if (!ws) return null;
-  const rows: string[][] = [];
-  ws.eachRow({ includeEmpty: false }, (row) => {
-    const cells: string[] = [];
-    row.eachCell({ includeEmpty: true }, (c) => {
-      cells.push(cellToString(c.value));
-    });
-    rows.push(cells);
-  });
-  return Papa.unparse(rows, { delimiter: ';' });
+  const sheets = await loadXlsxSheets(buffer);
+  const sheet = sheets.find((s) => s.name.toUpperCase().includes('CASH OPERATION'));
+  return sheet ? sheet.csv : null;
 }
 
 /**
