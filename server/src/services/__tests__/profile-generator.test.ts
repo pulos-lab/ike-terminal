@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { generateProfileFromContent, selfCheck } from '../profile-generator.js';
+import {
+  generateProfileFromContent,
+  sanitizeGeneratedProfile,
+  selfCheck,
+} from '../profile-generator.js';
 import { LlmUnavailableError, resetLlmClientStateForTests } from '../llm-client.js';
 import { validateImportProfile } from 'shared';
 
@@ -226,5 +230,30 @@ describe('selfCheck — deterministyczna ocena profilu', () => {
     const check = selfCheck(CSV, validation.profile);
     expect(check.confidence).toBeLessThan(0.8);
     expect(check.topReasons.join(',')).toContain('suspicious_currency');
+  });
+});
+
+describe('sanitizeGeneratedProfile — mechaniczne potknięcia kształtu', () => {
+  it('skipRows: goły matcher → owinięty w warunek (Matcher[] → Matcher[][])', () => {
+    // Dominująca odmowa z dry-runu XTB XLSX: model emituje tablicę gołych
+    // matcherów zamiast tablicy warunków (jeden poziom zagnieżdżenia za mało).
+    const raw = {
+      file: {
+        delimiter: ';',
+        skipRows: [{ col: { name: 'Type' }, op: 'equals', values: ['Total'] }],
+      },
+    };
+    const out = sanitizeGeneratedProfile(raw) as typeof raw;
+    expect(out.file.skipRows).toEqual([
+      [{ col: { name: 'Type' }, op: 'equals', values: ['Total'] }],
+    ]);
+  });
+
+  it('skipRows już w poprawnym kształcie (Matcher[][]) zostaje nietknięty', () => {
+    const raw = {
+      file: { skipRows: [[{ col: 0, op: 'notEmpty' }], [{ col: 1, op: 'empty' }]] },
+    };
+    const out = sanitizeGeneratedProfile(raw) as typeof raw;
+    expect(out.file.skipRows).toEqual([[{ col: 0, op: 'notEmpty' }], [{ col: 1, op: 'empty' }]]);
   });
 });

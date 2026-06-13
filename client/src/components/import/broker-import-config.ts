@@ -43,7 +43,7 @@ export const BROKER_TILES: Array<{ id: KnownBroker | 'generic'; tagline: string 
   { id: 'degiro', tagline: '2 pliki CSV (Transactions + Account)' },
   { id: 'mbank', tagline: '1 plik CSV (operacje opcjonalnie)' },
   { id: 'xtb', tagline: '1 plik XLSX' },
-  { id: 'generic', tagline: 'Inny broker lub własny plik CSV' },
+  { id: 'generic', tagline: 'Inny broker — plik CSV lub XLSX' },
 ];
 
 export const BROKER_IMPORT_CONFIG: Record<KnownBroker, BrokerImportConfig> = {

@@ -30,6 +30,28 @@ describe('computeFingerprint', () => {
     const b = computeFingerprint(['papier', 'data'], ';');
     expect(a).not.toBe(b);
   });
+
+  it('WSTECZNA ZGODNOŚĆ: hash CSV jest niezmienny (biblioteka prod bez migracji)', () => {
+    // Zahardkodowany — jakakolwiek zmiana algorytmu CSV unieważniłaby profile
+    // zapisane na produkcji. Ten test ma się zepsuć, gdyby to się stało.
+    expect(computeFingerprint(['data', 'papier', 'isin'], ';')).toBe(
+      '050d08f8499ff3124bcba6be58df8b499839da44a45faefc31109eab33f513cb',
+    );
+  });
+
+  it('XLSX: marker arkusza zamiast delimitera; różne arkusze = różne profile', () => {
+    const csv = computeFingerprint(['data', 'papier', 'isin'], ';');
+    const sheetA = computeFingerprint(['data', 'papier', 'isin'], ';', 'Cash Operations');
+    const sheetB = computeFingerprint(['data', 'papier', 'isin'], ';', 'Closed Positions');
+    expect(sheetA).not.toBe(csv); // XLSX ≠ CSV mimo tych samych nagłówków
+    expect(sheetA).not.toBe(sheetB); // różne arkusze tego samego skoroszytu
+  });
+
+  it('XLSX: nazwa arkusza znormalizowana (case-insensitive)', () => {
+    expect(computeFingerprint(['data'], ';', 'Cash Operations')).toBe(
+      computeFingerprint(['data'], ';', 'CASH OPERATIONS'),
+    );
+  });
 });
 
 describe('locateHeaderCandidate', () => {

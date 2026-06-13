@@ -60,6 +60,24 @@ describe('parseWithProfile — transakcje', () => {
     });
   });
 
+  it('paymentCurrency domyślnie = waluta instrumentu, gdy profil go nie mapuje', () => {
+    // Konto jednowalutowe: rozliczenie w walucie instrumentu. Jawna wartość
+    // (zamiast undefined) pasuje do parserów wbudowanych i konsumentów `|| currency`.
+    const csv = `${TRADE_HEADER}\n01.03.2026;AAPL;US0378331005;K;5;195,30;USD`;
+    const out = parseWithProfile(csv, tradeProfile(), BATCH);
+    expect(out.transactions.data[0].paymentCurrency).toBe('USD');
+  });
+
+  it('jawne paymentCurrency w profilu wygrywa z domyślnym (multi-waluta)', () => {
+    const profile = tradeProfile();
+    profile.trade!.paymentCurrency = { kind: 'const', value: 'PLN' };
+    const csv = `${TRADE_HEADER}\n01.03.2026;AAPL;US0378331005;K;5;195,30;USD`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    const tx = out.transactions.data[0];
+    expect(tx.currency).toBe('USD');
+    expect(tx.paymentCurrency).toBe('PLN');
+  });
+
   it('strona ze znaku ilości (signedQuantity) + fractional shares', () => {
     const profile = tradeProfile();
     profile.trade!.side = { strategy: 'signedQuantity', col: { name: 'ilosc' } };

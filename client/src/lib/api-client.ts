@@ -483,20 +483,32 @@ export const api = {
    * Generacja mapowania przez LLM (wymaga jawnej zgody użytkownika w UI —
    * do API AI idą wyłącznie nagłówki + zredagowana próbka). 503 = AI off.
    */
-  genericGenerateProfile: (file: File) => {
+  genericGenerateProfile: (file: File, sheet?: string) => {
     const formData = new FormData();
     formData.append('file', file);
+    if (sheet) formData.append('sheet', sheet);
     return uploadFile<import('shared').GenericGenerateProfileResult & { error?: string }>(
       '/import/generic/generate-profile',
       formData,
     );
   },
 
-  /** Wykonanie profilu BEZ zapisu — obowiązkowy podgląd przed importem. */
+  /** Wykonanie profilu BEZ zapisu — obowiązkowy podgląd przed importem (CSV). */
   genericPreview: (file: File, profile: unknown) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('profile', JSON.stringify(profile));
+    return uploadFile<import('shared').GenericPreviewResult & { error?: string }>(
+      '/import/generic/preview',
+      formData,
+    );
+  },
+
+  /** Podgląd XLSX: profile per arkusz → wynik scalony. */
+  genericPreviewSheets: (file: File, sheets: import('shared').GenericSheetProfileInput[]) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('sheets', JSON.stringify(sheets));
     return uploadFile<import('shared').GenericPreviewResult & { error?: string }>(
       '/import/generic/preview',
       formData,
@@ -509,6 +521,17 @@ export const api = {
     formData.append('file', file);
     if (opts.profileId) formData.append('profileId', opts.profileId);
     else formData.append('profile', JSON.stringify(opts.profile));
+    return uploadFile<import('shared').GenericCommitResult & { error?: string }>(
+      '/import/generic/commit',
+      formData,
+    );
+  },
+
+  /** Atomowy import XLSX: wszystkie arkusze (profil per arkusz) w jeden import. */
+  genericCommitSheets: (file: File, sheets: import('shared').GenericSheetProfileInput[]) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('sheets', JSON.stringify(sheets));
     return uploadFile<import('shared').GenericCommitResult & { error?: string }>(
       '/import/generic/commit',
       formData,

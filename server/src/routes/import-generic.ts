@@ -12,8 +12,10 @@ import {
   generateProfileForFile,
   listGenericBatches,
   previewGeneric,
+  previewGenericMulti,
   reimportGenericBatch,
 } from '../services/generic-import-service.js';
+import type { GenericSheetProfileInput } from 'shared';
 import { isLlmEnabled, LlmUnavailableError } from '../services/llm-client.js';
 import {
   llmDailyLimit,
@@ -32,8 +34,8 @@ const upload = multer({
   limits: { fileSize: MAX_FILE_SIZE },
   fileFilter: (_req, file, cb) => {
     const name = file.originalname.toLowerCase();
-    // Generic v1 = CSV; XLSX przyjmujemy, żeby analyze mogło odesłać XTB do /bulk
-    // z czytelnym komunikatem (zamiast odrzucać upload na poziomie multera).
+    // CSV i XLSX (XLSX = każdy arkusz z danymi przez ten sam silnik; znani
+    // brokerzy XLSX, np. XTB, dalej skracają do /api/import/bulk w analyze).
     cb(null, name.endsWith('.csv') || name.endsWith('.xlsx'));
   },
 });
@@ -84,6 +86,8 @@ router.post(
         buffer: req.file.buffer,
         originalname: req.file.originalname,
         userId: req.userId,
+        // XLSX: konkretny arkusz (wieloarkuszowy import generuje profil per arkusz).
+        sheet: typeof req.body?.sheet === 'string' && req.body.sheet ? req.body.sheet : undefined,
       });
       if (!result) {
         return res.status(422).json({
@@ -107,16 +111,24 @@ router.post(
 
 /**
  * POST /api/import/generic/preview — wykonanie profilu BEZ zapisu.
- * multipart: file + pole tekstowe `profile` (JSON profilu).
+ * multipart: file + `profile` (JSON, CSV) ALBO `sheets` (JSON tablica
+ * {sheet, profileId|profileJson}, XLSX → podgląd scalony).
  */
 router.post(
   '/preview',
   upload.single('file'),
   asyncHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
+    const sheets = parseSheetsField(req.body?.sheets);
+    if (sheets !== undefined) {
+      const result = await previewGenericMulti(req.file, sheets);
+      return res.status(result.ok ? 200 : 422).json(result);
+    }
     const rawProfile = parseProfileField(req.body?.profile);
     if (rawProfile === undefined) {
-      return res.status(400).json({ error: 'Brak albo niepoprawny JSON w polu `profile`' });
+      return res
+        .status(400)
+        .json({ error: 'Brak albo niepoprawny JSON w polu `profile`/`sheets`' });
     }
     const result = previewGeneric(req.file, rawProfile);
     res.status(result.ok ? 200 : 422).json(result);
@@ -125,23 +137,25 @@ router.post(
 
 /**
  * POST /api/import/generic/commit — atomowy import.
- * multipart: file + (`profileId` ALBO `profile` z JSON-em — zapisywany jako
- * nowa wersja 'pending' w bibliotece profili).
+ * multipart: file + (`profileId` ALBO `profile`, CSV) ALBO `sheets` (JSON
+ * tablica {sheet, profileId|profileJson}, XLSX → wszystkie arkusze w 1 import).
  */
 router.post(
   '/commit',
   upload.single('file'),
   asyncHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
+
+    const sheets = parseSheetsField(req.body?.sheets);
     const profileId =
       typeof req.body?.profileId === 'string' && req.body.profileId
         ? req.body.profileId
         : undefined;
     const profileJson = profileId ? undefined : parseProfileField(req.body?.profile);
-    if (!profileId && profileJson === undefined) {
+    if (!sheets && !profileId && profileJson === undefined) {
       return res
         .status(400)
-        .json({ error: 'Podaj `profileId` albo JSON profilu w polu `profile`' });
+        .json({ error: 'Podaj `sheets` (XLSX) albo `profileId`/`profile` (CSV)' });
     }
 
     const result = await commitGeneric({
@@ -151,6 +165,7 @@ router.post(
       userId: req.userId,
       profileId,
       profileJson,
+      sheets,
     });
     if (!result.success) {
       return res.status(400).json({ ...result, error: result.errors.join('; ') });
@@ -188,6 +203,12 @@ function parseProfileField(raw: unknown): unknown {
   } catch {
     return undefined;
   }
+}
+
+/** Pole `sheets` (XLSX) — JSON tablica {sheet, profileId|profileJson}. */
+function parseSheetsField(raw: unknown): GenericSheetProfileInput[] | undefined {
+  const parsed = parseProfileField(raw);
+  return Array.isArray(parsed) ? (parsed as GenericSheetProfileInput[]) : undefined;
 }
 
 export default router;

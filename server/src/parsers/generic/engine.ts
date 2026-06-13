@@ -436,9 +436,16 @@ function buildTransaction(
     }
   }
 
-  const paymentCurrency = trade.paymentCurrency
+  // Bez jawnego mapowania zakładamy rozliczenie w walucie instrumentu — każdy
+  // konsument i tak robi `paymentCurrency || currency`, a jawna wartość pasuje
+  // do parserów wbudowanych (Bossa PLN / DEGIRO EUR / XTB accountCurrency) i
+  // znika z raportu parytetu. Rzeczywiste rozliczenie multi-walutowe (instrument
+  // USD opłacony z konta PLN) nie da się wywieść z waluty wiersza — wymaga
+  // symulacji salda (payment-currency-reconciler, dziś tylko ścieżka bulk).
+  const explicitPaymentCurrency = trade.paymentCurrency
     ? normalizeCurrency(resolveValueSource(trade.paymentCurrency, row, resolver)) || undefined
     : undefined;
+  const paymentCurrency = explicitPaymentCurrency ?? currency;
   const fxRateRaw = trade.fxRate ? resolveNumber(trade.fxRate, row, resolver) : 0;
 
   return {

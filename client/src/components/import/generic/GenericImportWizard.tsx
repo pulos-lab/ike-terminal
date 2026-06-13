@@ -11,7 +11,13 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { AlertCircle, AlertTriangle, CheckCircle, Info, Loader2, Sparkles } from 'lucide-react';
 import { api } from '@/lib/api-client';
-import type { GenericAnalyzeResult, GenericPreviewResult, SkipReason } from 'shared';
+import type {
+  GenericAnalyzeResult,
+  GenericPreviewResult,
+  GenericSheetAnalysis,
+  GenericSheetProfileInput,
+  SkipReason,
+} from 'shared';
 import {
   buildProfileFromDraft,
   suggestDraft,
@@ -22,13 +28,14 @@ import { PreviewTable } from './PreviewTable';
 import { SKIP_REASON_LABELS } from '@/lib/import-labels';
 
 /**
- * Kreator importu uniwersalnego — ścieżka dla plików, których nie rozpoznaje
- * żaden parser wbudowany. Kroki:
- *   1. Analiza (fingerprint + profil z biblioteki / heurystyczny prefill),
- *   2. Mapowanie kolumn (gdy brak profilu w bibliotece) — MappingEditor,
- *   3. Podgląd (OBOWIĄZKOWY — nic nie trafia do bazy przed akceptacją),
- *   4. Import + podsumowanie.
- * Profil z biblioteki (fingerprint exact-match) przeskakuje od razu do podglądu.
+ * Kreator importu uniwersalnego (CSV lub XLSX). Plik to ZBIÓR TABEL: CSV ma
+ * jedną, XLSX ma jedną per arkusz z danymi. Każda tabela dostaje swój profil
+ * (z biblioteki / AI / ręcznie); profile gotowe z biblioteki nie wymagają
+ * mapowania. Kroki:
+ *   1. Analiza (wykrycie arkuszy + profili z biblioteki),
+ *   2. Mapowanie kolumn — per tabela, sekwencyjnie (gdy brak profilu),
+ *   3. Podgląd (OBOWIĄZKOWY, SCALONY ze wszystkich arkuszy),
+ *   4. Import — wszystkie arkusze w jeden atomowy import.
  */
 
 type Step = 'analyzing' | 'mapping' | 'previewing' | 'preview' | 'importing' | 'done' | 'blocked';
@@ -38,34 +45,61 @@ interface Message {
   text: string;
 }
 
+/** Jedna tabela do zmapowania + jej rozwiązany profil. */
+interface SheetWork {
+  analysis: GenericSheetAnalysis;
+  /** Rozwiązany profil: z biblioteki (profileId) albo zbudowany (profileJson). */
+  resolved?: { profileId?: string; profileJson?: unknown };
+}
+
 interface Props {
   file: File | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
+/** Z wyniku analyze zbuduj jednolitą listę tabel (CSV → 1 element). */
+function toSheetWorks(result: GenericAnalyzeResult): SheetWork[] {
+  if (result.format === 'xlsx' && result.sheets) {
+    return result.sheets.map((s) => ({ analysis: s, resolved: undefined }));
+  }
+  // CSV: pola płaskie → jedna tabela bez nazwy arkusza.
+  const flat: GenericSheetAnalysis = {
+    sheet: undefined,
+    fingerprint: result.fingerprint ?? '',
+    delimiter: result.delimiter ?? ';',
+    headerRowIndex: result.headerRowIndex ?? 0,
+    headers: result.headers ?? [],
+    sampleRows: result.sampleRows ?? [],
+    profile: result.profile,
+    suggestions: result.suggestions,
+  };
+  return [{ analysis: flat, resolved: undefined }];
+}
+
 export function GenericImportWizard({ file, open, onOpenChange }: Props) {
   const queryClient = useQueryClient();
 
   const [step, setStep] = useState<Step>('analyzing');
-  const [analysis, setAnalysis] = useState<GenericAnalyzeResult | null>(null);
+  const [sheets, setSheets] = useState<SheetWork[]>([]);
+  /** Indeks tabeli aktualnie mapowanej. */
+  const [cursor, setCursor] = useState(0);
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
-  /** Profil użyty w podglądzie — ten sam JSON idzie potem do commita. */
-  const [activeProfile, setActiveProfile] = useState<unknown>(null);
-  /** Id profilu z biblioteki, jeśli używamy go bez zmian. */
-  const [libraryProfileId, setLibraryProfileId] = useState<string | null>(null);
   const [preview, setPreview] = useState<GenericPreviewResult | null>(null);
   const [mappingErrors, setMappingErrors] = useState<string[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
-  /** Zgoda na wysłanie ZREDAGOWANEJ próbki do usługi AI (wymagana per import). */
+  const [skippedSheets, setSkippedSheets] = useState<string[]>([]);
+  /** Zgoda na wysłanie ZREDAGOWANEJ próbki do usługi AI (per arkusz). */
   const [aiConsent, setAiConsent] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiElapsed, setAiElapsed] = useState(0);
   const aiTimerRef = useRef<number | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
 
-  // Analiza przy zamontowaniu — rodzic renderuje kreator warunkowo (remount na
-  // każde otwarcie), więc stan startowy zawsze jest świeży i bez resetów w efekcie.
+  const isXlsx = sheets.length > 1 || sheets.some((s) => s.analysis.sheet !== undefined);
+  const current = sheets[cursor];
+
+  // Analiza przy zamontowaniu — rodzic remountuje kreator na każde otwarcie.
   useEffect(() => {
     if (!open || !file) return;
     let cancelled = false;
@@ -73,7 +107,6 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
     (async () => {
       const result = await api.genericAnalyze(file);
       if (cancelled) return;
-      setAnalysis(result);
 
       if (result.error) {
         setMessages([{ kind: 'error', text: result.error }]);
@@ -84,39 +117,36 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
         setMessages([
           {
             kind: 'info',
-            text: 'Ten plik obsługuje zwykły import — zamknij kreator i użyj pola „Transakcje" w oknie importu.',
+            text: 'Ten plik obsługuje zwykły import — zamknij kreator i wybierz właściwego brokera w oknie importu.',
           },
         ]);
         setStep('blocked');
         return;
       }
 
-      if (result.profile) {
-        // Format znany bibliotece — od razu podgląd z gotowym profilem.
-        setLibraryProfileId(result.profile.summary.id);
-        setActiveProfile(result.profile.profileJson);
-        await runPreview(file, result.profile.profileJson);
-        return;
+      const works = toSheetWorks(result);
+      setSkippedSheets(result.skippedSheets ?? []);
+      // Auto-rozwiąż arkusze, które mają profil w bibliotece (exact-match).
+      for (const w of works) {
+        if (w.analysis.profile) w.resolved = { profileId: w.analysis.profile.summary.id };
       }
+      setSheets(works);
 
-      // Nieznany format — edytor mapowania z heurystycznym prefillem.
-      setDraft(
-        suggestDraft(result.headers ?? [], result.sampleRows ?? [], {
-          delimiter: result.delimiter ?? ';',
-          headerRowIndex: result.headerRowIndex ?? 0,
-        }),
-      );
-      if (result.suggestions?.length) {
-        setMessages([
-          {
-            kind: 'info',
-            text:
-              `W bibliotece istnieje podobny format (${result.suggestions[0].summary.brokerLabel ?? 'bez nazwy'}, ` +
-              `podobieństwo ${Math.round(result.suggestions[0].similarity * 100)}%) — ten plik ma jednak inny układ kolumn, więc wymaga własnego mapowania.`,
-          },
-        ]);
+      const intro: Message[] = [];
+      if (result.format === 'xlsx') {
+        intro.push({
+          kind: 'info',
+          text:
+            `Plik XLSX — wykryto ${works.length} ${works.length === 1 ? 'arkusz z danymi' : 'arkusze z danymi'}: ` +
+            works.map((w) => `„${w.analysis.sheet}"`).join(', ') +
+            '. Zaimportujemy wszystkie.' +
+            (result.skippedSheets?.length
+              ? ` Pominięto arkusze bez tabeli: ${result.skippedSheets.map((s) => `„${s}"`).join(', ')}.`
+              : ''),
+        });
       }
-      setStep('mapping');
+      setMessages(intro);
+      await proceedFrom(works, 0);
     })().catch((err) => {
       if (cancelled) return;
       setMessages([{ kind: 'error', text: `Błąd analizy pliku: ${(err as Error).message}` }]);
@@ -126,23 +156,43 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
     return () => {
       cancelled = true;
     };
+    // Analiza tylko przy otwarciu/zmianie pliku — proceedFrom celowo poza deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, file]);
 
-  // Zwykłe deklaracje funkcji (hoisting) — bez useCallback: kreator nie przekazuje
-  // ich do memoizowanych dzieci, a remount przy każdym otwarciu czyści stan.
-  async function runPreview(f: File, profile: unknown) {
-    setStep('previewing');
-    const result = await api.genericPreview(f, profile);
-    if (!result.ok) {
-      setMappingErrors(result.errors ?? [result.error ?? 'Nieznany błąd podglądu']);
-      setStep('mapping');
+  /** Znajdź pierwszą nierozwiązaną tabelę od `from`; wejdź w jej mapowanie albo (gdy brak) w podgląd. */
+  async function proceedFrom(works: SheetWork[], from: number) {
+    const next = works.findIndex((w, i) => i >= from && !w.resolved);
+    if (next === -1) {
+      await runMergedPreview(works);
       return;
     }
-    setPreview(result);
-    setStep('preview');
+    enterMapping(works, next);
   }
 
-  async function handleShowPreview() {
+  function enterMapping(works: SheetWork[], idx: number) {
+    const a = works[idx].analysis;
+    setCursor(idx);
+    setDraft(
+      suggestDraft(a.headers, a.sampleRows, {
+        delimiter: a.delimiter,
+        headerRowIndex: a.headerRowIndex,
+      }),
+    );
+    setMappingErrors([]);
+    setAiConsent(false);
+    setAiError(null);
+    setStep('mapping');
+  }
+
+  /** Zapisz rozwiązany profil bieżącej tabeli i przejdź dalej (kolejna tabela / podgląd). */
+  async function resolveAndAdvance(resolved: { profileId?: string; profileJson?: unknown }) {
+    const updated = sheets.map((w, i) => (i === cursor ? { ...w, resolved } : w));
+    setSheets(updated);
+    await proceedFrom(updated, cursor + 1);
+  }
+
+  function handleSheetMapped() {
     if (!file || !draft) return;
     setMappingErrors([]);
     const built = buildProfileFromDraft(draft);
@@ -150,23 +200,14 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
       setMappingErrors(built.errors ?? []);
       return;
     }
-    setLibraryProfileId(null); // profil zbudowany ręcznie — pójdzie inline
-    setActiveProfile(built.profile);
-    await runPreview(file, built.profile);
+    void resolveAndAdvance({ profileJson: built.profile });
   }
 
-  /**
-   * Generacja mapowania przez AI — wymaga zaznaczonej zgody. Backend wysyła do
-   * usługi AI wyłącznie nagłówki + zredagowaną próbkę (tę samą, którą pokazuje
-   * podgląd payloadu poniżej) i zapisuje profil jako 'pending' w bibliotece;
-   * import pójdzie po profileId, więc proweniencja (model, pewność) zostaje.
-   */
+  /** Generacja mapowania przez AI dla BIEŻĄCEJ tabeli (wymaga zgody). */
   async function handleGenerateAi() {
-    if (!file || !aiConsent || aiBusy) return;
+    if (!file || !aiConsent || aiBusy || !current) return;
     setAiBusy(true);
     setAiError(null);
-    // Licznik czasu generacji — pojedyncze wywołanie potrafi trwać 1-2 min
-    // (model + retry z feedbackiem), licznik pokazuje, że proces żyje.
     setAiElapsed(0);
     const startedAt = Date.now();
     aiTimerRef.current = window.setInterval(
@@ -174,22 +215,20 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
       1000,
     );
     try {
-      const result = await api.genericGenerateProfile(file);
+      const result = await api.genericGenerateProfile(file, current.analysis.sheet);
       if (result.error || !result.summary) {
         setAiError(result.error ?? 'Nieznany błąd generatora');
         return;
       }
-      setLibraryProfileId(result.summary.id);
-      setActiveProfile(result.profileJson);
       setMessages([
         {
           kind: 'info',
           text:
-            `Mapowanie wygenerowane automatycznie (pewność ${(result.confidence * 100).toFixed(0)}%) — ` +
-            'sprawdź podgląd przed importem.',
+            (current.analysis.sheet ? `Arkusz „${current.analysis.sheet}": ` : '') +
+            `mapowanie wygenerowane automatycznie (pewność ${(result.confidence * 100).toFixed(0)}%).`,
         },
       ]);
-      await runPreview(file, result.profileJson);
+      await resolveAndAdvance({ profileId: result.summary.id });
     } finally {
       if (aiTimerRef.current !== null) window.clearInterval(aiTimerRef.current);
       aiTimerRef.current = null;
@@ -197,13 +236,37 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
     }
   }
 
+  /** Podgląd SCALONY ze wszystkich tabel — CSV przez single-profile, XLSX przez sheets. */
+  async function runMergedPreview(works: SheetWork[]) {
+    setStep('previewing');
+    let result: GenericPreviewResult & { error?: string };
+    if (isXlsx) {
+      result = await api.genericPreviewSheets(file!, toSheetInputs(works));
+    } else {
+      const r = works[0].resolved!;
+      result = r.profileId
+        ? // profil z biblioteki — preview po jego JSON-ie z analizy
+          await api.genericPreview(file!, works[0].analysis.profile!.profileJson)
+        : await api.genericPreview(file!, r.profileJson);
+    }
+    if (!result.ok) {
+      setMappingErrors(result.errors ?? [result.error ?? 'Nieznany błąd podglądu']);
+      // Wróć do mapowania pierwszej tabeli (np. profil z biblioteki nieaktualny).
+      enterMapping(works, 0);
+      return;
+    }
+    setPreview(result);
+    setStep('preview');
+  }
+
   async function handleImport() {
-    if (!file || !activeProfile) return;
+    if (!file) return;
     setStep('importing');
-    const result = await api.genericCommit(
-      file,
-      libraryProfileId ? { profileId: libraryProfileId } : { profile: activeProfile },
-    );
+    const result = isXlsx
+      ? await api.genericCommitSheets(file, toSheetInputs(sheets))
+      : sheets[0].resolved!.profileId
+        ? await api.genericCommit(file, { profileId: sheets[0].resolved!.profileId })
+        : await api.genericCommit(file, { profile: sheets[0].resolved!.profileJson });
 
     const msgs: Message[] = [];
     if (result.success) {
@@ -212,7 +275,10 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
       if (result.operationsImported > 0) parts.push(`${result.operationsImported} operacji`);
       msgs.push({
         kind: 'success',
-        text: parts.length > 0 ? `Zaimportowano ${parts.join(' i ')}` : 'Plik przetworzony — brak nowych pozycji',
+        text:
+          parts.length > 0
+            ? `Zaimportowano ${parts.join(' i ')}`
+            : 'Plik przetworzony — brak nowych pozycji',
       });
       if (result.profileStatus === 'pending') {
         msgs.push({
@@ -243,7 +309,7 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
           text: `Pominięto ${visibleSkipped.length} wierszy:\n${lines.join('\n')}`,
         });
       }
-      queryClient.invalidateQueries();
+      void queryClient.invalidateQueries();
     } else {
       msgs.push({
         kind: 'error',
@@ -275,6 +341,9 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
           <DialogDescription>
             {file ? `Plik: ${file.name} · ` : ''}
             {stepLabel[step]}
+            {step === 'mapping' && isXlsx && current
+              ? ` · arkusz ${cursor + 1}/${sheets.length}: „${current.analysis.sheet}"`
+              : ''}
           </DialogDescription>
         </DialogHeader>
 
@@ -285,9 +354,15 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
           </div>
         )}
 
-        {step === 'mapping' && draft && analysis && (
+        {step === 'mapping' && draft && current && (
           <div className="space-y-4">
-            {libraryProfileNote()}
+            {isXlsx && (
+              <p className="text-xs text-muted-foreground">
+                Mapujesz arkusz <span className="font-medium">„{current.analysis.sheet}"</span> (
+                {cursor + 1} z {sheets.length}). Po zmapowaniu przejdziemy do kolejnego, a podgląd
+                pokaże dane ze wszystkich arkuszy razem.
+              </p>
+            )}
 
             <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2.5">
               <div className="flex items-center gap-2 text-sm font-semibold">
@@ -296,11 +371,14 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
               </div>
               <p className="text-xs text-muted-foreground">
                 Zamiast mapować ręcznie, możesz wygenerować mapowanie automatycznie. Do usługi AI
-                (serwer w UE) trafią <span className="font-medium">wyłącznie zredagowane fragmenty
-                pliku: nazwy kolumn, poniższa próbka, listy unikalnych wartości kolumn (np. typy
-                operacji) oraz pojedyncze wiersze potrzebne do poprawy mapowania — wszystko po tej
-                samej redakcji</span> — nigdy cały plik ani dane osobowe (numery rachunków,
-                nazwiska i e-maile są maskowane).
+                (serwer w UE) trafią{' '}
+                <span className="font-medium">
+                  wyłącznie zredagowane fragmenty {isXlsx ? 'tego arkusza' : 'pliku'}: nazwy kolumn,
+                  poniższa próbka, listy unikalnych wartości kolumn (np. typy operacji) oraz
+                  pojedyncze wiersze potrzebne do poprawy mapowania — wszystko po tej samej redakcji
+                </span>{' '}
+                — nigdy cały plik ani dane osobowe (numery rachunków, nazwiska i e-maile są
+                maskowane).
               </p>
               <details className="text-xs">
                 <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
@@ -308,10 +386,8 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
                 </summary>
                 <pre className="mt-2 max-h-40 overflow-auto rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
                   {[
-                    (analysis.headers ?? []).join(analysis.delimiter ?? ';'),
-                    ...(analysis.sampleRows ?? []).map((r) =>
-                      r.join(analysis.delimiter ?? ';'),
-                    ),
+                    current.analysis.headers.join(current.analysis.delimiter),
+                    ...current.analysis.sampleRows.map((r) => r.join(current.analysis.delimiter)),
                   ].join('\n')}
                 </pre>
               </details>
@@ -356,18 +432,14 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
               </div>
               {aiBusy && (
                 <p className="text-xs text-muted-foreground">
-                  AI analizuje strukturę pliku i sprawdza wynik na realnej próbce. Proste formaty
-                  zajmują ok. minuty; przy złożonych model dostaje feedback i poprawia mapowanie —
-                  to może potrwać do kilku minut. Możesz nie zamykać tego okna i poczekać.
+                  AI analizuje strukturę i sprawdza wynik na realnej próbce. Proste formaty zajmują
+                  ok. minuty; przy złożonych model dostaje feedback i poprawia mapowanie — to może
+                  potrwać do kilku minut. Możesz nie zamykać tego okna i poczekać.
                 </p>
               )}
             </div>
 
-            <MappingEditor
-              draft={draft}
-              sampleRows={analysis.sampleRows ?? []}
-              onChange={setDraft}
-            />
+            <MappingEditor draft={draft} sampleRows={current.analysis.sampleRows} onChange={setDraft} />
             {mappingErrors.length > 0 && (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
                 {mappingErrors.map((e, i) => (
@@ -383,23 +455,27 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Anuluj
               </Button>
-              <Button onClick={handleShowPreview}>Pokaż podgląd</Button>
+              <Button onClick={handleSheetMapped}>
+                {isXlsx && cursor < sheets.length - 1 ? 'Dalej (kolejny arkusz)' : 'Pokaż podgląd'}
+              </Button>
             </div>
           </div>
         )}
 
         {step === 'preview' && preview && (
           <div className="space-y-4">
-            {libraryProfileId && analysis?.profile && (
-              <p className="text-xs text-muted-foreground">
-                Użyto profilu z biblioteki ({analysis.profile.summary.brokerLabel ?? 'bez nazwy'}
-                {analysis.profile.summary.status === 'pending'
-                  ? ', oczekuje na zatwierdzenie'
-                  : ''}
-                ) — sprawdź podgląd i zaimportuj.
-              </p>
-            )}
             <MessagesList messages={messages} />
+            {preview.sheetSummaries && preview.sheetSummaries.length > 1 && (
+              <div className="rounded-md border border-border bg-muted/20 p-2.5 text-xs space-y-1">
+                <span className="font-medium">Wkład arkuszy:</span>
+                {preview.sheetSummaries.map((s, i) => (
+                  <div key={i} className="text-muted-foreground">
+                    „{s.sheet}": {s.transactions} transakcji, {s.operations} operacji
+                    {s.skipped > 0 ? `, ${s.skipped} pominiętych` : ''}
+                  </div>
+                ))}
+              </div>
+            )}
             <PreviewTable result={preview} />
             {(preview.warnings ?? []).length > 0 && (
               <div className="space-y-1">
@@ -412,12 +488,14 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
               </div>
             )}
             <div className="flex justify-between gap-2">
-              <Button variant="outline" onClick={backToMapping}>
+              <Button variant="outline" onClick={() => enterMapping(sheets, 0)}>
                 Wróć do mapowania
               </Button>
               <Button
                 onClick={handleImport}
-                disabled={(preview.transactions?.total ?? 0) + (preview.operations?.total ?? 0) === 0}
+                disabled={
+                  (preview.transactions?.total ?? 0) + (preview.operations?.total ?? 0) === 0
+                }
               >
                 Importuj
               </Button>
@@ -428,6 +506,11 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
         {(step === 'done' || step === 'blocked') && (
           <div className="space-y-4">
             <MessagesList messages={messages} />
+            {skippedSheets.length > 0 && step === 'done' && (
+              <p className="text-xs text-muted-foreground">
+                Pominięto arkusze bez tabeli danych: {skippedSheets.map((s) => `„${s}"`).join(', ')}.
+              </p>
+            )}
             <Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>
               Zamknij
             </Button>
@@ -436,31 +519,17 @@ export function GenericImportWizard({ file, open, onOpenChange }: Props) {
       </DialogContent>
     </Dialog>
   );
+}
 
-  function backToMapping() {
-    // Powrót z podglądu: profil z biblioteki nie jest edytowalny w formularzu —
-    // budujemy draft z heurystyk (użytkownik mapuje od początku, świadomie).
-    if (!draft && analysis) {
-      setDraft(
-        suggestDraft(analysis.headers ?? [], analysis.sampleRows ?? [], {
-          delimiter: analysis.delimiter ?? ';',
-          headerRowIndex: analysis.headerRowIndex ?? 0,
-        }),
-      );
-    }
-    setLibraryProfileId(null);
-    setStep('mapping');
-  }
-
-  function libraryProfileNote() {
-    if (!analysis?.profile) return null;
-    return (
-      <p className="text-xs text-muted-foreground">
-        Edytujesz mapowanie od nowa — poprzedni profil dla tego formatu zostanie zastąpiony nową
-        wersją (do zatwierdzenia przez administratora).
-      </p>
-    );
-  }
+/** SheetWork[] → wejście dla preview/commit (XLSX). */
+function toSheetInputs(works: SheetWork[]): GenericSheetProfileInput[] {
+  return works
+    .filter((w) => w.resolved)
+    .map((w) => ({
+      sheet: w.analysis.sheet,
+      profileId: w.resolved!.profileId,
+      profileJson: w.resolved!.profileJson,
+    }));
 }
 
 function MessagesList({ messages }: { messages: Message[] }) {

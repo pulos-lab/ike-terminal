@@ -351,6 +351,13 @@ export const HeaderRowSpecSchema = z.discriminatedUnion('strategy', [
 export const FileSpecSchema = z.object({
   delimiter: z.enum([';', ',', '\t', '|']),
   quoteChar: z.string().length(1).default('"'),
+  /**
+   * Nazwa arkusza XLSX, z którego pochodzi ten profil. Obecność tego pola JEST
+   * markerem formatu XLSX (brak osobnego dyskryminatora). Skoroszyt XLSX jest
+   * serializowany do CSV (średnik), więc profile XLSX mają delimiter ';'; do
+   * dopasowania liczy się arkusz, nie delimiter (zob. computeFingerprint).
+   */
+  sheet: z.string().max(120).optional(),
   headerRow: HeaderRowSpecSchema,
   /** Wiersz STOP — od pierwszego dopasowania wszystko dalej jest ignorowane (stopki podsumowań). */
   footerStop: ConditionSchema.optional(),
@@ -534,24 +541,46 @@ export interface GenericProfileSummary {
   createdAt: string;
 }
 
+/**
+ * Analiza pojedynczej tabeli: CSV = cały plik, XLSX = jeden arkusz. Te same
+ * pola płaskie co dawniej + nazwa arkusza (gdy XLSX).
+ */
+export interface GenericSheetAnalysis {
+  /** Nazwa arkusza XLSX; brak dla CSV. */
+  sheet?: string;
+  fingerprint: string;
+  delimiter: string;
+  headerRowIndex: number;
+  headers: string[];
+  /** ZREDAGOWANE wiersze próbki (sample-redactor). */
+  sampleRows: string[][];
+  /** Profil z biblioteki dla dokładnego fingerprinta (approved > pending). */
+  profile?: { summary: GenericProfileSummary; profileJson: unknown };
+  /** Podobne formaty (Jaccard ≥ 0.75) — szablony startowe dla edytora/LLM. */
+  suggestions?: Array<{ summary: GenericProfileSummary; similarity: number }>;
+}
+
 /** POST /api/import/generic/analyze */
 export interface GenericAnalyzeResult {
   /** true = plik obsługuje parser WBUDOWANY — używaj zwykłego /api/import/bulk. */
   known: boolean;
   broker?: BrokerType | null;
   fileRole?: 'transactions' | 'operations' | 'unknown';
-  /** Pola poniżej tylko gdy known=false i plik nadaje się do importu generycznego. */
+  /** Format pliku (gdy known=false). */
+  format?: 'csv' | 'xlsx';
+  /** Pola płaskie — TYLKO dla CSV (wsteczna zgodność). Dla XLSX patrz `sheets`. */
   fingerprint?: string;
   delimiter?: string;
   headerRowIndex?: number;
   headers?: string[];
-  /** ZREDAGOWANE wiersze próbki (sample-redactor). */
   sampleRows?: string[][];
-  /** Profil z biblioteki dla dokładnego fingerprinta (approved > pending). */
   profile?: { summary: GenericProfileSummary; profileJson: unknown };
-  /** Podobne formaty (Jaccard ≥ 0.75) — szablony startowe dla edytora/LLM. */
   suggestions?: Array<{ summary: GenericProfileSummary; similarity: number }>;
-  /** Błąd analizy (PL) — np. nie znaleziono nagłówka, XLSX nieobsługiwany. */
+  /** Arkusze z danymi — TYLKO dla XLSX (≥1). Każdy = osobna tabela/profil. */
+  sheets?: GenericSheetAnalysis[];
+  /** Arkusze pominięte (okładki/puste/jednokolumnowe) — informacyjnie. */
+  skippedSheets?: string[];
+  /** Błąd analizy (PL) — np. nie znaleziono nagłówka. */
   error?: string;
 }
 
@@ -566,6 +595,23 @@ export interface GenericPreviewResult {
   /** true gdy rowTraces/sample zostały przycięte (duży plik). */
   truncated?: boolean;
   warnings?: string[];
+  /** Wkład per arkusz (XLSX) — do zakładek w podglądzie. Brak dla CSV. */
+  sheetSummaries?: Array<{
+    sheet?: string;
+    transactions: number;
+    operations: number;
+    skipped: number;
+  }>;
+}
+
+/** Profil dla jednego arkusza XLSX w żądaniu preview/commit. */
+export interface GenericSheetProfileInput {
+  /** Nazwa arkusza; brak/undefined → CSV (jeden dokument). */
+  sheet?: string;
+  /** Profil z biblioteki… */
+  profileId?: string;
+  /** …albo inline (edycja w kreatorze). */
+  profileJson?: unknown;
 }
 
 /** POST /api/import/generic/commit — ImportResult + metadane użytego profilu. */
@@ -583,6 +629,8 @@ export interface GenericGenerateProfileResult {
   /** Wynik deterministycznego self-checku na realnym pliku (0–1). */
   confidence: number;
   attempts: number;
+  /** Arkusz, dla którego wygenerowano profil (XLSX) — echo żądania. */
+  sheet?: string;
 }
 
 /** GET /api/import/generic/batches */
@@ -592,6 +640,8 @@ export interface GenericBatchInfo {
   profileId: string;
   profileVersion: number;
   brokerLabel: string | null;
+  /** Nazwa arkusza XLSX (z profilu) — do etykiety; brak dla CSV. */
+  sheet?: string | null;
   needsReimport: boolean;
   importedAt: string;
 }

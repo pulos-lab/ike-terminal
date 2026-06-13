@@ -2,12 +2,18 @@ import { createHash } from 'node:crypto';
 import Papa from 'papaparse';
 
 /**
- * Fingerprint formatu CSV — klucz biblioteki profili importu generycznego.
+ * Fingerprint formatu — klucz biblioteki profili importu generycznego.
  *
  * Fingerprint = sha256(znormalizowane nazwy nagłówków, z zachowaniem kolejności,
- * + delimiter). Indeks wiersza nagłówka celowo NIE wchodzi do fingerprinta —
+ * + komponent źródła). Indeks wiersza nagłówka celowo NIE wchodzi do fingerprinta —
  * eksporty z preludium metadanych (mBank: ~34 linie) mają zmienną długość
  * preludium, a sam układ kolumn pozostaje stały.
+ *
+ * Komponent źródła jest FORMAT-AWARE:
+ * - CSV: delimiter (bajtowo identyczny jak dotąd — biblioteka prod bez migracji);
+ * - XLSX: marker "xlsx:<znormalizowana nazwa arkusza>" zamiast delimitera (XLSX
+ *   nie ma delimitera; różne arkusze jednego skoroszytu = różne profile). Brak
+ *   kolizji z CSV — delimitery to pojedyncze znaki, nigdy "xlsx:…".
  *
  * Dopasowanie jest EXACT-MATCH z założenia: broker, który dodał/zmienił kolumnę,
  * NIE może po cichu dostać profilu ze starymi indeksami. Do podpowiedzi
@@ -42,10 +48,13 @@ export function normalizeHeaderForFingerprint(name: string): string {
   );
 }
 
-export function computeFingerprint(headers: string[], delimiter: string): string {
+export function computeFingerprint(headers: string[], delimiter: string, sheet?: string): string {
   const normalized = headers.map(normalizeHeaderForFingerprint);
+  // Dla XLSX komponent źródła to nazwa arkusza (nie delimiter); CSV bez zmian.
+  const sourceComponent =
+    sheet !== undefined ? `xlsx:${normalizeHeaderForFingerprint(sheet)}` : delimiter;
   return createHash('sha256')
-    .update(normalized.join('\x1f') + '\x1e' + delimiter)
+    .update(normalized.join('\x1f') + '\x1e' + sourceComponent)
     .digest('hex');
 }
 
