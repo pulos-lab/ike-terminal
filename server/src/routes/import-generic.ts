@@ -15,6 +15,11 @@ import {
   reimportGenericBatch,
 } from '../services/generic-import-service.js';
 import { isLlmEnabled, LlmUnavailableError } from '../services/llm-client.js';
+import {
+  llmDailyLimit,
+  llmQuotaExceeded,
+  registerLlmGenerationAttempt,
+} from '../services/llm-quota.js';
 import { GenericParseError } from '../parsers/generic/value-parsers.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 
@@ -63,6 +68,17 @@ router.post(
         error: 'Generator mapowań (AI) jest niedostępny — możesz zmapować kolumny ręcznie.',
       });
     }
+    // Anty-spam: każdy NOWY fingerprint = płatne wywołanie LLM. Limit dzienny
+    // per użytkownik (uczciwy import kilku formatów go nie dotknie); 429 → UI
+    // proponuje mapowanie ręczne. req.userId gwarantowany przez requireAuth.
+    if (req.userId && llmQuotaExceeded(req.userId)) {
+      return res.status(429).json({
+        error:
+          `Wyczerpano dzienny limit generacji mapowań (AI): ${llmDailyLimit()}. ` +
+          'Spróbuj ponownie jutro albo zmapuj kolumny ręcznie.',
+      });
+    }
+    if (req.userId) registerLlmGenerationAttempt(req.userId);
     try {
       const result = await generateProfileForFile({
         buffer: req.file.buffer,

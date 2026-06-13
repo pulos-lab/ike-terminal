@@ -62,6 +62,7 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
   - `LLM_BASE_URL` — endpoint OpenAI-compatible, domyślnie `https://api.mistral.ai/v1` (Mistral: EU); DeepSeek tylko przez hosta EU (Scaleway/OVH) — **bezpośrednie `api.deepseek.com` jest zablokowane w kodzie** (dane poza EU)
   - `IMPORT_RAW_RETENTION_DAYS` (domyślnie 90) — retencja surowych plików batchy (leniwy sweep przy starcie; batch bez raw traci możliwość re-importu)
   - `LLM_MODEL` (domyślnie `mistral-medium-latest` — wynik dry-runu na realnych plikach; `mistral-small` zawodzi na DEGIRO i plikach operacji), `LLM_MODEL_FALLBACK` (opcjonalny mocniejszy model na drugą rundę po odmowie, np. `mistral-large-latest`), `LLM_TIMEOUT_MS` (domyślnie 120000)
+  - `GENERIC_IMPORT_LLM_DAILY_LIMIT` (domyślnie 20; ≤0 = bez limitu) — anty-spam: dzienny limit generacji AI per użytkownik (każdy NOWY fingerprint = płatne wywołanie LLM; trafienie w bibliotekę nie liczy się). Liczy PRÓBY (licznik w pamięci) + max z utrwalonych sukcesów w `import_profiles` (przeżywa restart); przekroczenie → 429, UI proponuje mapowanie ręczne. `services/llm-quota.ts`
 
 ## Źródła cen — priorytety
 
