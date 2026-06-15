@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
+  buildStratifiedSample,
   generateProfileFromContent,
   sanitizeGeneratedProfile,
   selfCheck,
@@ -255,5 +256,41 @@ describe('sanitizeGeneratedProfile — mechaniczne potknięcia kształtu', () =>
     };
     const out = sanitizeGeneratedProfile(raw) as typeof raw;
     expect(out.file.skipRows).toEqual([[{ col: 0, op: 'notEmpty' }], [{ col: 1, op: 'empty' }]]);
+  });
+});
+
+describe('buildStratifiedSample — pokrycie typów z długiej historii', () => {
+  const HEADERS = ['Type', 'Instrument', 'Amount'];
+  /** Distinct typ wartości kolumny „Type" w wierszu i. */
+  const typeOf = (row: string[]) => row[0];
+
+  it('rzadki typ tylko na końcu pliku → trafia do próbki mimo cap', () => {
+    // 50 wierszy „Deposit" na początku + po jednym rzadkim na końcu.
+    const rows: string[][] = [];
+    for (let i = 0; i < 50; i++) rows.push(['Deposit', '', String(100 + i)]);
+    rows.push(['Dividend', 'KGHM', '45']);
+    rows.push(['Withholding tax', 'KGHM', '-8']);
+    rows.push(['Stock purchase', 'CDR', '950']);
+
+    const sample = buildStratifiedSample(HEADERS, rows, 20);
+    const types = new Set(sample.map(typeOf));
+    // Wszystkie 4 typy widoczne, mimo że 3 rzadkie są dopiero na pozycjach 50-52.
+    expect(types).toEqual(new Set(['Deposit', 'Dividend', 'Withholding tax', 'Stock purchase']));
+    expect(sample.length).toBeLessThanOrEqual(20);
+  });
+
+  it('plik mieszczący się w cap → zwraca wszystkie wiersze bez stratyfikacji', () => {
+    const rows = [
+      ['Deposit', '', '100'],
+      ['Dividend', 'KGHM', '45'],
+    ];
+    expect(buildStratifiedSample(HEADERS, rows, 20)).toEqual(rows);
+  });
+
+  it('brak kolumny-dyskryminatora (same liczby) → fallback do pierwszych cap', () => {
+    const numericHeaders = ['Amount', 'Price'];
+    const rows = Array.from({ length: 30 }, (_, i) => [String(i), String(i * 2)]);
+    const sample = buildStratifiedSample(numericHeaders, rows, 10);
+    expect(sample).toEqual(rows.slice(0, 10));
   });
 });

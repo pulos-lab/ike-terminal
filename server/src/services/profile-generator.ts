@@ -33,9 +33,20 @@ import { createConcurrencyLimiter } from './concurrency.js';
 
 const MAX_ATTEMPTS = 3;
 const MIN_CONFIDENCE = 0.8;
-/** Self-check na prefiksie pliku — wystarcza do oceny mapowania, ogranicza koszt. */
-const SELF_CHECK_LINES = 300;
-const SAMPLE_ROWS = 20;
+/**
+ * Self-check na realnej historii (cap jak digesty). Wcześniej pierwsze 300
+ * linii — dla pliku sortowanego po dacie to same stare dane, więc rzadkie
+ * typy operacji z długich historii nie były oceniane i błędne mapowanie
+ * mogło przejść niezauważone. Koszt parsowania pomijalny przy sporadycznej
+ * generacji; pełna historia daje wiarygodny confidence.
+ */
+const SELF_CHECK_LINES = 8000;
+/**
+ * Górny rozmiar próbki wysyłanej do LLM. Próbka jest WARSTWOWA (≥1 wiersz na
+ * distinct typ kolumny-dyskryminatora), więc musi pomieścić długi ogon typów
+ * (np. ~16 typów XTB w 20-letniej historii) z zapasem; koszt tokenów pomijalny.
+ */
+const SAMPLE_ROWS = 40;
 
 /**
  * Kody walut uznawane za wiarygodne w self-checku. Lista celowo szeroka —
@@ -151,10 +162,12 @@ async function runGeneration(
   candidate: NonNullable<ReturnType<typeof locateHeaderCandidate>>,
   fileName?: string,
 ): Promise<GeneratedProfile | null> {
-  const redactedSample = redactSampleRows(
-    candidate.headers,
-    candidate.sampleRows.slice(0, SAMPLE_ROWS),
-  );
+  // Pełna (zredagowana) pula wierszy z całego pliku — zasila i digesty, i
+  // próbkę warstwową (zero dodatkowego parsowania).
+  const digestRows = collectDigestRows(content, candidate);
+  const redactedSample = buildStratifiedSample(candidate.headers, digestRows, SAMPLE_ROWS);
+  // Najpewniejsza kolumna-dyskryminator (typ operacji) — do feedbacku pokrycia.
+  const primaryDiscriminatorCol = findDiscriminatorColumns(candidate.headers, digestRows)[0]?.col;
 
   const systemPrompt = buildSystemPrompt();
   const baseUserPrompt = buildUserPrompt({
@@ -162,7 +175,7 @@ async function runGeneration(
     delimiter: candidate.delimiter,
     headerRowIndex: candidate.headerRowIndex,
     sampleRows: redactedSample,
-    digestRows: collectDigestRows(content, candidate),
+    digestRows,
     fileName: fileName ? redactFileName(fileName) : undefined,
   });
 
@@ -254,7 +267,19 @@ async function runGeneration(
           check.problematicRowNumbers,
           candidate.headers,
         );
+        // Checklista pokrycia: które wartości typu wpadły do złej klasy/skipa.
+        const coverage =
+          primaryDiscriminatorCol !== undefined
+            ? summarizeUnhandledByColumn(
+                selfCheckContent,
+                validation.profile,
+                check.problematicRows,
+                candidate.headers,
+                primaryDiscriminatorCol,
+              )
+            : null;
         feedback = buildRetryFeedback([
+          ...(coverage ? [coverage] : []),
           ...(examples.length > 0
             ? [
                 `These data rows were NOT handled cleanly (redacted examples) — extend the classify rules ` +
@@ -295,6 +320,8 @@ interface SelfCheckResult {
   topReasons: string[];
   /** Numery wierszy (1-based, konwencja silnika) problematycznych pominięć — do przykładów w feedbacku. */
   problematicRowNumbers: number[];
+  /** Problematyczne pominięcia z powodem — do agregacji „wartość dyskryminatora → powód". */
+  problematicRows: Array<{ row: number; reason: string }>;
 }
 
 /**
@@ -340,6 +367,7 @@ export function selfCheck(content: string, profile: ImportProfile): SelfCheckRes
         problematic: 0,
         topReasons: [],
         problematicRowNumbers: [],
+        problematicRows: [],
       };
     }
     throw err;
@@ -349,6 +377,7 @@ export function selfCheck(content: string, profile: ImportProfile): SelfCheckRes
   const allSkipped = [...output.transactions.skipped, ...output.operations.skipped];
   const problematicSkips = allSkipped.filter((s) => PROBLEMATIC_SKIP_REASONS.has(s.reason));
   const problematicRowNumbers = [...new Set(problematicSkips.map((s) => s.row))];
+  const problematicRows = problematicSkips.map((s) => ({ row: s.row, reason: s.reason }));
 
   // Sanity-check walut WYEMITOWANYCH rekordów: profil potrafi przejść walidację
   // i cross-check kwot, a mimo to wpisywać w walutę śmieci z regexa (realny
@@ -377,6 +406,7 @@ export function selfCheck(content: string, profile: ImportProfile): SelfCheckRes
       problematic,
       topReasons: reasons,
       problematicRowNumbers,
+      problematicRows,
     };
   }
 
@@ -389,6 +419,7 @@ export function selfCheck(content: string, profile: ImportProfile): SelfCheckRes
     problematic,
     topReasons: reasons,
     problematicRowNumbers,
+    problematicRows,
   };
 }
 
@@ -426,6 +457,144 @@ function collectDigestRows(
     .slice(candidate.headerRowIndex + 1)
     .map((r) => r.map((c) => String(c ?? '')));
   return redactSampleRows(candidate.headers, rows);
+}
+
+/**
+ * Maks. distinct wartości, by uznać kolumnę za kategoryczną (dyskryminator
+ * typu wiersza). Spójne z `buildColumnDigests` w promptcie — kolumny ≤40
+ * distinct to kandydaci na klasyfikator; numeryczne/ID naturalnie przekraczają.
+ */
+const DISCRIMINATOR_MAX_DISTINCT = 40;
+
+/**
+ * Kolumny-dyskryminatory: kategoryczne (2..40 distinct) i etykietowe (większość
+ * wartości ma literę — wyklucza kwoty/daty/ID). Zwraca posortowane malejąco po
+ * liczbie distinct (pierwsza = najpewniejszy „typ operacji"). Wiersze powinny
+ * być JUŻ zredagowane (kolumny wrażliwe → '***' → distinct 1 → odpadają).
+ */
+function findDiscriminatorColumns(
+  headers: string[],
+  rows: string[][],
+): Array<{ col: number; distinctCount: number }> {
+  const result: Array<{ col: number; distinctCount: number }> = [];
+  for (let col = 0; col < headers.length; col++) {
+    const distinct = new Set<string>();
+    let nonEmpty = 0;
+    let labelLike = 0;
+    for (const row of rows) {
+      const v = (row[col] ?? '').trim();
+      if (!v) continue;
+      nonEmpty++;
+      if (distinct.size <= DISCRIMINATOR_MAX_DISTINCT) distinct.add(v);
+      if (/[A-Za-z]/.test(v)) labelLike++;
+    }
+    if (
+      nonEmpty > 0 &&
+      distinct.size >= 2 &&
+      distinct.size <= DISCRIMINATOR_MAX_DISTINCT &&
+      labelLike / nonEmpty >= 0.8
+    ) {
+      result.push({ col, distinctCount: distinct.size });
+    }
+  }
+  return result.sort((a, b) => b.distinctCount - a.distinctCount);
+}
+
+/** Ile pierwszych wierszy zawsze w próbce (typowy kontekst), reszta = pokrycie. */
+const STRATIFIED_BASELINE_ROWS = 8;
+
+/**
+ * Próbka WARSTWOWA: każdy distinct typ kolumny-dyskryminatora ma ≥1 pełny
+ * wiersz. Naiwna próbka (pierwsze N) na pliku z długą historią pokazuje tylko
+ * typy z najwcześniejszego okresu — model nie widzi KSZTAŁTU wiersza rzadkich
+ * typów (które kolumny puste/pełne) i błędnie je klasyfikuje. `rows` są już
+ * zredagowane (z `collectDigestRows`). Fallback: brak dyskryminatora albo plik
+ * mieszczący się w `cap` → pierwsze `cap` wierszy (zachowanie jak dawniej).
+ */
+export function buildStratifiedSample(
+  headers: string[],
+  rows: string[][],
+  cap: number,
+): string[][] {
+  if (rows.length <= cap) return rows;
+  const discriminators = findDiscriminatorColumns(headers, rows);
+  if (discriminators.length === 0) return rows.slice(0, cap);
+
+  const selected = new Set<number>();
+  const covered = discriminators.map(() => new Set<string>());
+  const markRow = (r: number) =>
+    discriminators.forEach((d, di) => {
+      const v = (rows[r][d.col] ?? '').trim();
+      if (v) covered[di].add(v);
+    });
+
+  for (let i = 0; i < STRATIFIED_BASELINE_ROWS && i < rows.length; i++) {
+    selected.add(i);
+    markRow(i);
+  }
+  // Zachłannie: dobierz wiersz, jeśli wnosi NOWĄ wartość któregoś dyskryminatora.
+  for (let r = 0; r < rows.length && selected.size < cap; r++) {
+    if (selected.has(r)) continue;
+    const addsNew = discriminators.some((d, di) => {
+      const v = (rows[r][d.col] ?? '').trim();
+      return v !== '' && !covered[di].has(v);
+    });
+    if (addsNew) {
+      selected.add(r);
+      markRow(r);
+    }
+  }
+  return [...selected].sort((a, b) => a - b).map((i) => rows[i]);
+}
+
+/**
+ * Feedback pokrycia: dla problematycznych wierszy zmapuj wartość
+ * kolumny-dyskryminatora → powody i zagreguj. Daje modelowi jawną checklistę
+ * („te wartości Type nie są obsłużone: …"), zamiast samej statystyki. Wartości
+ * redagowane przed odczytem (dyskryminator to zwykle nazwa typu — bezpieczna —
+ * ale redakcja chroni gdyby padło na kolumnę wrażliwą).
+ */
+function summarizeUnhandledByColumn(
+  content: string,
+  profile: ImportProfile,
+  problematicRows: Array<{ row: number; reason: string }>,
+  headers: string[],
+  col: number,
+  limit = 10,
+): string | null {
+  if (problematicRows.length === 0) return null;
+  const parsed = Papa.parse<string[]>(content, {
+    delimiter: profile.file.delimiter,
+    header: false,
+    skipEmptyLines: true,
+  });
+  const rows = parsed.data;
+  const agg = new Map<string, Map<string, number>>();
+  for (const { row, reason } of problematicRows) {
+    const raw = rows[row - 1];
+    if (!Array.isArray(raw)) continue;
+    const redacted = redactSampleRows(headers, [raw.map((c) => String(c ?? ''))])[0];
+    const value = (redacted[col] ?? '').trim() || '(empty)';
+    if (!agg.has(value)) agg.set(value, new Map());
+    const reasons = agg.get(value)!;
+    reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+  }
+  if (agg.size === 0) return null;
+  const label = (headers[col] ?? '').trim() || `column ${col}`;
+  const lines = [...agg.entries()]
+    .map(([value, reasons]) => {
+      const total = [...reasons.values()].reduce((a, b) => a + b, 0);
+      const detail = [...reasons.entries()].map(([r, n]) => `${r}×${n}`).join(', ');
+      return { value, total, detail };
+    })
+    .sort((a, b) => b.total - a.total)
+    .slice(0, limit)
+    .map((e) => `  ${JSON.stringify(e.value)} → ${e.detail}`);
+  return (
+    `Column ${JSON.stringify(label)} values whose rows were NOT handled cleanly — add an explicit ` +
+    `classify rule + mapping for EACH (or an explicit skip when the row is genuinely not a portfolio ` +
+    `event):\n${lines.join('\n')}`
+  );
 }
 
 /** Czy węzeł to „goły" matcher (ma `op`), a nie warunek (tablica matcherów). */
