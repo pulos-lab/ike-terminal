@@ -296,7 +296,10 @@ export async function analyzeGenericFiles(
 
   return {
     known: false,
-    documents: docAnalyses.length > 0 ? docAnalyses : undefined,
+    // Zawsze tablica (także []), nigdy undefined: pusta lista znaczy „wszystkie
+    // pliki obsługuje import wbudowany" — kreator pokazuje wtedy blok knownFiles
+    // zamiast wpadać w legacy-fallback z pustym mapowaniem (undefined → flat).
+    documents: docAnalyses,
     knownFiles: knownFiles.length > 0 ? knownFiles : undefined,
     skippedDocuments: skipped.length > 0 ? skipped : undefined,
   };

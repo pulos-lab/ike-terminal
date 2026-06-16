@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Dialog,
@@ -61,6 +61,8 @@ export function ImportDialog({ open, onOpenChange }: Props) {
   /** Pliki dla importu uniwersalnego (ekran „Inny broker") — 1..N, scalane w jeden import. */
   const [genericFiles, setGenericFiles] = useState<File[]>([]);
   const [wizardOpen, setWizardOpen] = useState(false);
+  /** Broker do auto-importu po wykryciu znanego formatu w kreatorze (null = brak). */
+  const [autoImportBroker, setAutoImportBroker] = useState<KnownBroker | null>(null);
 
   const addMessage = useCallback((m: Message) => {
     setMessages((prev) => [...prev, m]);
@@ -231,6 +233,47 @@ export function ImportDialog({ open, onOpenChange }: Props) {
       setUploading(false);
     }
   }, [uploading, knownConfig, filesByRole, queryClient, addMessage]);
+
+  /**
+   * Kreator uniwersalny wykrył znany format (jeden plik). Przejmujemy sterowanie:
+   * przełączamy na kafel brokera z plikiem wczytanym wg roli i — jeśli to komplet
+   * (broker jednoplikowy, np. XTB) — od razu uruchamiamy import wbudowany. Format
+   * dwuplikowy (Bossa/DEGIRO) zostaje na kaflu, by użytkownik dołożył brakujący plik.
+   */
+  const handleKnownBroker = useCallback(
+    (broker: KnownBroker, fileRole: FileRole, files: File[]) => {
+      setWizardOpen(false);
+      setGenericFiles([]);
+      setOrphanedSells([]);
+      setScreen(broker);
+      const next: Record<FileRole, File[]> = {
+        transactions: fileRole === 'operations' ? [] : files,
+        operations: fileRole === 'operations' ? files : [],
+      };
+      setFilesByRole(next);
+      const cfg = BROKER_IMPORT_CONFIG[broker];
+      const complete = cfg.files.every((s) => !s.required || next[s.role].length > 0);
+      setMessages([
+        {
+          kind: 'info',
+          text: complete
+            ? `Wykryto format ${BROKER_LABELS[broker]} — uruchamiam import…`
+            : `Wykryto format ${BROKER_LABELS[broker]}. Dodaj brakujący plik i kliknij Importuj.`,
+        },
+      ]);
+      if (complete) setAutoImportBroker(broker);
+    },
+    [],
+  );
+
+  // Auto-import po wykryciu znanego, jednoplikowego formatu: czekamy aż stan się
+  // ustawi (canSubmit), żeby handleSubmit czytał właściwe pliki. Odpala się raz.
+  useEffect(() => {
+    if (autoImportBroker && screen === autoImportBroker && canSubmit && !uploading) {
+      setAutoImportBroker(null);
+      void handleSubmit();
+    }
+  }, [autoImportBroker, screen, canSubmit, uploading, handleSubmit]);
 
   const handleAddSpinoffBuy = useCallback(
     async (orphan: OrphanedSell) => {
@@ -463,6 +506,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
           <GenericImportWizard
             files={genericFiles}
             open
+            onKnownBroker={handleKnownBroker}
             onOpenChange={(v) => {
               if (!v) {
                 setWizardOpen(false);

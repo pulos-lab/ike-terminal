@@ -309,6 +309,26 @@ describe('generic-import-service — analyze → preview → commit → reimport
     expect(byFile['mf-trades.csv'].fingerprint).not.toBe(byFile['mf-ops.csv'].fingerprint);
   });
 
+  it('multi-plik: wszystkie pliki znane (Bossa×2) → documents [] + knownFiles 2', async () => {
+    // Regresja: gdy WSZYSTKIE pliki obsługuje parser wbudowany, `documents` MUSI
+    // być pustą tablicą (nie undefined), żeby kreator pokazał blok knownFiles
+    // zamiast wpaść w legacy-fallback z pustym mapowaniem.
+    const bossa = Buffer.from(
+      'data;papier;isin;ilość;-;cena;wartość;prowizja;po prowizji;waluta\n' +
+        '15.03.2025 10:00:00;KGHM;PLKGHM000017;10;K;150,00;1500,00;3,90;1503,90;PLN',
+      'utf-8',
+    );
+    const result = await svc.analyzeGenericFiles([
+      { buffer: bossa, originalname: 'hisPW.csv' },
+      { buffer: bossa, originalname: 'hisPW-usd.csv' },
+    ]);
+
+    expect(result.known).toBeFalsy();
+    expect(result.documents).toEqual([]);
+    expect(result.knownFiles).toHaveLength(2);
+    expect(result.knownFiles?.every((k) => k.broker === 'bossa')).toBe(true);
+  });
+
   it('multi-plik: commit scala transakcje (plik A) + operacje (plik B) w jeden import', async () => {
     const opsRepo = await import('../../db/operations-repo.js');
     const result = await svc.commitGenericDocuments({
