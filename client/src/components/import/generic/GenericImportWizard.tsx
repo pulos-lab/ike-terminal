@@ -26,6 +26,7 @@ import type {
   GenericSheetProfileInput,
   SkipReason,
 } from 'shared';
+import { BROKER_LABELS } from 'shared';
 import {
   adoptProfileForDocument,
   buildProfileFromDraft,
@@ -35,6 +36,7 @@ import {
 import { MappingEditor } from './MappingEditor';
 import { PreviewTable } from './PreviewTable';
 import { SKIP_REASON_LABELS } from '@/lib/import-labels';
+import { isKnownBroker, type FileRole, type KnownBroker } from '../broker-import-config';
 
 /**
  * Kreator importu uniwersalnego (CSV/XLSX, JEDEN lub WIELE plików). Każdy plik to
@@ -66,6 +68,12 @@ interface Props {
   files: File[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Wykryto format obsługiwany przez parser wbudowany (jeden plik). Rodzic
+   * przejmuje sterowanie: przełącza na kafel brokera i uruchamia import wbudowany.
+   * Brak handlera → fallback do komunikatu „użyj kafla brokera".
+   */
+  onKnownBroker?: (broker: KnownBroker, fileRole: FileRole, files: File[]) => void;
 }
 
 /** Z wyniku analyze zbuduj jednolitą listę tabel (multi-plik → `documents`). */
@@ -93,7 +101,7 @@ function toSheetWorks(result: GenericAnalyzeResult): SheetWork[] {
 /** Etykieta tabeli: nazwa arkusza (XLSX) albo nazwa pliku (multi-plik CSV). */
 const docLabel = (a: GenericSheetAnalysis): string => a.sheet ?? a.file ?? '';
 
-export function GenericImportWizard({ files, open, onOpenChange }: Props) {
+export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }: Props) {
   const queryClient = useQueryClient();
 
   const [step, setStep] = useState<Step>('analyzing');
@@ -136,6 +144,16 @@ export function GenericImportWizard({ files, open, onOpenChange }: Props) {
         return;
       }
       if (result.known) {
+        // Znany format (jeden plik) → oddaj sterowanie rodzicowi: nazwie brokera
+        // i od razu uruchomi import wbudowany (dla formatów jednoplikowych).
+        if (result.broker && isKnownBroker(result.broker) && onKnownBroker) {
+          onKnownBroker(
+            result.broker,
+            result.fileRole === 'operations' ? 'operations' : 'transactions',
+            files,
+          );
+          return;
+        }
         setMessages([
           {
             kind: 'info',
@@ -164,8 +182,8 @@ export function GenericImportWizard({ files, open, onOpenChange }: Props) {
         intro.push({
           kind: 'warn',
           text:
-            'Pliki obsługiwane przez import wbudowany — zaimportuj je przez kafel brokera: ' +
-            result.knownFiles.map((k) => `„${k.file}"`).join(', ') +
+            'Pliki obsługiwane przez import wbudowany — zaimportuj je przez właściwy kafel brokera: ' +
+            result.knownFiles.map((k) => `„${k.file}" (${BROKER_LABELS[k.broker]})`).join(', ') +
             '.',
         });
       }
