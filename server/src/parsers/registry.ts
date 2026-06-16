@@ -117,6 +117,23 @@ export function detectBroker(content: string): BrokerParser | null {
 }
 
 /**
+ * Wszystkie parsery (id), których detekcja trafia w treść CSV — osobno dla roli
+ * transakcji i operacji. Guard niejednoznaczności: zdrowy plik powinien pasować
+ * do DOKŁADNIE jednego brokera w danej roli. detectBroker/classifyFile wybierają
+ * pierwszy wg kolejności rejestru (specyficzność malejąco); ta funkcja pozwala
+ * wykryć i zgłosić sytuację, gdy trafia więcej niż jeden (test regresji + UI).
+ */
+export function detectAllMatches(content: string): {
+  transactions: BrokerType[];
+  operations: BrokerType[];
+} {
+  return {
+    transactions: PARSER_REGISTRY.filter((p) => p.detect(content)).map((p) => p.id),
+    operations: PARSER_REGISTRY.filter((p) => p.detectOperations?.(content)).map((p) => p.id),
+  };
+}
+
+/**
  * Get parser by broker ID. Returns undefined for 'auto'.
  */
 // ── Binary (XLSX) parser registry ──────────────────────────────────────────

@@ -84,10 +84,12 @@ function profileSummary(row: ImportProfileRow) {
 
 // ── Enumeracja dokumentów (CSV = 1 tabela, XLSX = 1 per arkusz z danymi) ──────
 
-/** Jedna tabela do przetworzenia silnikiem. */
+/** Jedna tabela do przetworzenia silnikiem. Tożsamość = (fileName, sheet). */
 interface ImportDocument {
   /** Nazwa arkusza XLSX; brak → CSV. */
   sheet?: string;
+  /** Nazwa pliku źródłowego (multi-plik). */
+  fileName: string;
   /** Treść CSV podawana silnikowi (XLSX: arkusz zserializowany średnikiem). */
   content: string;
   candidate: HeaderCandidate;
@@ -101,11 +103,12 @@ interface EnumeratedFile {
   skippedSheets: string[];
 }
 
-function buildDocument(content: string, sheet?: string): ImportDocument | null {
+function buildDocument(content: string, fileName: string, sheet?: string): ImportDocument | null {
   const candidate = locateHeaderCandidate(content);
   if (!candidate || candidate.sampleRows.length === 0) return null;
   return {
     sheet,
+    fileName,
     content,
     candidate,
     fingerprint: computeFingerprint(candidate.headers, candidate.delimiter, sheet),
@@ -123,18 +126,48 @@ async function enumerateImportDocuments(
   originalname: string,
 ): Promise<EnumeratedFile> {
   if (!isXlsxFile(buffer, originalname)) {
-    const doc = buildDocument(decodeCSVBuffer(buffer));
+    const doc = buildDocument(decodeCSVBuffer(buffer), originalname);
     return { format: 'csv', documents: doc ? [doc] : [], skippedSheets: [] };
   }
   const sheets = await loadXlsxSheets(buffer);
   const documents: ImportDocument[] = [];
   const skippedSheets: string[] = [];
   for (const s of sheets) {
-    const doc = buildDocument(s.csv, s.name);
+    const doc = buildDocument(s.csv, originalname, s.name);
     if (doc) documents.push(doc);
     else skippedSheets.push(s.name);
   }
   return { format: 'xlsx', documents, skippedSheets };
+}
+
+/** Rozłóż WIELE plików na płaską listę tabel (każda otagowana plikiem źródłowym). */
+async function enumerateImportFiles(
+  files: Array<{ buffer: Buffer; originalname: string }>,
+): Promise<{ documents: ImportDocument[]; skipped: Array<{ file: string; sheet?: string }> }> {
+  const documents: ImportDocument[] = [];
+  const skipped: Array<{ file: string; sheet?: string }> = [];
+  for (const f of files) {
+    const enumerated = await enumerateImportDocuments(f.buffer, f.originalname);
+    documents.push(...enumerated.documents);
+    for (const s of enumerated.skippedSheets) skipped.push({ file: f.originalname, sheet: s });
+    if (enumerated.documents.length === 0 && enumerated.skippedSheets.length === 0) {
+      skipped.push({ file: f.originalname }); // CSV bez rozpoznanego wiersza nagłówka
+    }
+  }
+  return { documents, skipped };
+}
+
+/**
+ * Dopasuj wejście profilu do dokumentu po (file, sheet). `file === undefined` =
+ * legacy 1-plik (dopasowanie po samym arkuszu); multi-plik zawsze podaje `file`.
+ */
+function matchDocumentInput(
+  inputs: GenericSheetProfileInput[],
+  doc: ImportDocument,
+): GenericSheetProfileInput | undefined {
+  return inputs.find(
+    (i) => (i.file === undefined || i.file === doc.fileName) && i.sheet === doc.sheet,
+  );
 }
 
 /** Wstrzyknij nazwę arkusza do profilu (marker XLSX); CSV bez zmian. */
@@ -158,9 +191,13 @@ function analyzeDocument(doc: ImportDocument): GenericSheetAnalysis {
         .map((s) => ({
           summary: profileSummary(s.p),
           similarity: Math.round(s.similarity * 100) / 100,
+          // Pełny JSON profilu — pozwala kreatorowi zaadoptować podobny profil
+          // (klon z nadpisanym delimiterem/arkuszem) bez ponownej generacji LLM.
+          profileJson: s.p.profile,
         }));
   return {
     sheet: doc.sheet,
+    file: doc.fileName,
     fingerprint: doc.fingerprint,
     delimiter: doc.candidate.delimiter,
     headerRowIndex: doc.candidate.headerRowIndex,
@@ -221,6 +258,47 @@ export async function analyzeGenericFile(file: {
     format: 'xlsx',
     sheets: documents.map(analyzeDocument),
     skippedSheets: skippedSheets.length > 0 ? skippedSheets : undefined,
+  };
+}
+
+/**
+ * Analiza WIELU plików (import multi-plik). Pojedynczy znany broker → zachowanie
+ * jak dawniej (`analyzeGenericFile` → known:true → wizard odsyła do kafla brokera).
+ * Inaczej: rozkłada wszystkie pliki na dokumenty (tabele) i zwraca zunifikowaną
+ * listę `documents` (każdy z `file`), listę `knownFiles` (obsługiwanych wbudowanym
+ * parserem — do zaimportowania przez kafel) oraz `skippedDocuments`.
+ */
+export async function analyzeGenericFiles(
+  files: Array<{ buffer: Buffer; originalname: string }>,
+): Promise<GenericAnalyzeResult> {
+  if (files.length === 1) {
+    const single = await analyzeGenericFile(files[0]);
+    if (single.known) return single;
+  }
+
+  const knownFiles: NonNullable<GenericAnalyzeResult['knownFiles']> = [];
+  const unknown: Array<{ buffer: Buffer; originalname: string }> = [];
+  for (const f of files) {
+    const classified = await classifyFile(f);
+    if (classified.broker) knownFiles.push({ file: f.originalname, broker: classified.broker });
+    else unknown.push(f);
+  }
+
+  const { documents, skipped } = await enumerateImportFiles(unknown);
+  const docAnalyses = documents.map(analyzeDocument);
+
+  if (docAnalyses.length === 0 && knownFiles.length === 0) {
+    return {
+      known: false,
+      error: 'W przesłanych plikach nie znaleziono tabeli danych (wiersza nagłówka).',
+    };
+  }
+
+  return {
+    known: false,
+    documents: docAnalyses.length > 0 ? docAnalyses : undefined,
+    knownFiles: knownFiles.length > 0 ? knownFiles : undefined,
+    skippedDocuments: skipped.length > 0 ? skipped : undefined,
   };
 }
 
@@ -336,17 +414,37 @@ export async function previewGenericMulti(
   file: { buffer: Buffer; originalname: string },
   sheetProfiles: GenericSheetProfileInput[],
 ): Promise<GenericPreviewResult> {
-  const { documents } = await enumerateImportDocuments(file.buffer, file.originalname);
+  return previewGenericDocuments(
+    [{ buffer: file.buffer, originalname: file.originalname }],
+    sheetProfiles,
+  );
+}
+
+/**
+ * Preview multi-plik/multi-arkusz: każda tabela (z dowolnego pliku) wykonana swoim
+ * profilem, wyniki SCALONE w jeden podgląd. Etykieta tabeli = arkusz (XLSX) albo
+ * nazwa pliku (multi-plik CSV).
+ */
+export async function previewGenericDocuments(
+  files: Array<{ buffer: Buffer; originalname: string }>,
+  inputs: GenericSheetProfileInput[],
+): Promise<GenericPreviewResult> {
+  const { documents } = await enumerateImportFiles(files);
+  const multi = files.length > 1;
   const tables: Array<{ sheet?: string; content: string; profile: ImportProfile }> = [];
   for (const doc of documents) {
-    const input = sheetProfiles.find((s) => s.sheet === doc.sheet);
-    if (!input) continue; // arkusz bez wybranego profilu → pominięty w podglądzie
+    const input = matchDocumentInput(inputs, doc);
+    if (!input) continue; // dokument bez wybranego profilu → pominięty w podglądzie
     const resolved = resolveSheetProfile(input);
     if (!resolved.ok) return { ok: false, errors: resolved.errors };
-    tables.push({ sheet: doc.sheet, content: doc.content, profile: resolved.profile });
+    tables.push({
+      sheet: doc.sheet ?? (multi ? doc.fileName : undefined),
+      content: doc.content,
+      profile: resolved.profile,
+    });
   }
   if (tables.length === 0) {
-    return { ok: false, errors: ['Brak arkuszy z przypisanym profilem do podglądu.'] };
+    return { ok: false, errors: ['Brak dokumentów z przypisanym profilem do podglądu.'] };
   }
   return buildPreview(tables);
 }
@@ -465,42 +563,81 @@ function resolveOrInsertProfileRow(
 }
 
 export async function commitGeneric(input: CommitGenericInput): Promise<GenericCommitResult> {
-  const { documents } = await enumerateImportDocuments(input.buffer, input.originalname);
-  if (documents.length === 0) {
-    return failResult(randomUUID(), ['Nie udało się odczytać tabeli danych z pliku.']);
-  }
-
-  // CSV: jeden dokument z profilem płaskim; XLSX: profile per arkusz.
-  const sheetInputs: GenericSheetProfileInput[] = input.sheets ?? [
+  // Cienki wrapper na multi-plik: 1 plik + wejścia z sheets/profileId/profileJson.
+  const inputs: GenericSheetProfileInput[] = input.sheets ?? [
     { sheet: undefined, profileId: input.profileId, profileJson: input.profileJson },
   ];
+  return commitGenericDocuments({
+    files: [{ buffer: input.buffer, originalname: input.originalname }],
+    inputs,
+    portfolioId: input.portfolioId,
+    userId: input.userId,
+  });
+}
+
+export interface CommitGenericDocumentsInput {
+  files: Array<{ buffer: Buffer; originalname: string }>;
+  /** Profil per dokument (file, sheet) — z biblioteki (profileId) lub inline (profileJson). */
+  inputs: GenericSheetProfileInput[];
+  portfolioId: string;
+  userId?: string;
+}
+
+/**
+ * Atomowy import WIELU plików: każdy plik → tabele (CSV: 1, XLSX: N arkuszy);
+ * każda tabela dostaje profil dopasowany po (file, sheet); wszystkie tabele
+ * scalają się w JEDEN atomowy import. Rola wynika z profilu (classify), więc nie
+ * ma slotów transakcje/operacje. Każda tabela = osobny batch z surowym plikiem
+ * SWOJEGO źródła (re-import per tabela).
+ */
+export async function commitGenericDocuments(
+  input: CommitGenericDocumentsInput,
+): Promise<GenericCommitResult> {
+  const { documents } = await enumerateImportFiles(input.files);
+  if (documents.length === 0) {
+    return failResult(randomUUID(), ['Nie udało się odczytać tabeli danych z plików.']);
+  }
+  const bufByName = new Map(input.files.map((f) => [f.originalname, f.buffer]));
 
   const tables: RunTable[] = [];
+  // Ten sam fingerprint w wielu plikach (np. Bossa per-waluta) z profilem inline:
+  // profil wstawiamy RAZ, kolejne tabele reużywają tej wersji (jeden profil, N batchy).
+  const insertedByFingerprint = new Map<string, ImportProfileRow>();
   for (const doc of documents) {
-    const si = sheetInputs.find((s) => s.sheet === doc.sheet);
-    // Arkusz bez wybranego profilu → pominięty (użytkownik nie zmapował tej karty).
+    const si = matchDocumentInput(input.inputs, doc);
+    // Dokument bez wybranego profilu → pominięty (użytkownik nie zmapował tej tabeli).
     if (!si || (!si.profileId && si.profileJson === undefined)) continue;
-    const resolved = resolveOrInsertProfileRow(si, doc, input.userId);
-    if ('errors' in resolved) return failResult(randomUUID(), resolved.errors);
-    tables.push({ content: doc.content, profileRow: resolved.row, importBatch: randomUUID() });
+    let row = si.profileId ? undefined : insertedByFingerprint.get(doc.fingerprint);
+    if (!row) {
+      const resolved = resolveOrInsertProfileRow(si, doc, input.userId);
+      if ('errors' in resolved) return failResult(randomUUID(), resolved.errors);
+      row = resolved.row;
+      if (!si.profileId) insertedByFingerprint.set(doc.fingerprint, row);
+    }
+    tables.push({
+      content: doc.content,
+      profileRow: row,
+      importBatch: randomUUID(),
+      fileName: doc.fileName,
+      rawBuffer: bufByName.get(doc.fileName) ?? null,
+    });
   }
   if (tables.length === 0) {
-    return failResult(randomUUID(), ['Żaden arkusz nie ma przypisanego profilu importu.']);
+    return failResult(randomUUID(), ['Żaden dokument nie ma przypisanego profilu importu.']);
   }
 
-  return runImportDocuments({
-    tables,
-    rawBuffer: input.buffer,
-    fileName: input.originalname,
-    portfolioId: input.portfolioId,
-  });
+  return runImportDocuments({ tables, portfolioId: input.portfolioId });
 }
 
 interface RunTable {
   content: string;
   profileRow: ImportProfileRow;
-  /** Własny import_batch (re-import i flaga needs_reimport działają per arkusz). */
+  /** Własny import_batch (re-import i flaga needs_reimport działają per tabela). */
   importBatch: string;
+  /** Nazwa pliku źródłowego tej tabeli (do batcha + cache gzipu). */
+  fileName: string | null;
+  /** Surowy plik źródłowy tej tabeli (gzip do re-importu); null = brak retencji. */
+  rawBuffer: Buffer | null;
 }
 
 /**
@@ -510,8 +647,6 @@ interface RunTable {
  */
 async function runImportDocuments(args: {
   tables: RunTable[];
-  rawBuffer: Buffer | null;
-  fileName: string | null;
   portfolioId: string;
   /** reimport: skasuj poprzednie wiersze każdego batcha przed insertem. */
   deletePreviousBatch?: boolean;
@@ -569,16 +704,27 @@ async function runImportDocuments(args: {
   });
   runAll();
 
-  // 3. Batch per tabela (wspólny gzip surowego pliku) w globalnej bazie.
-  const rawGz = args.rawBuffer ? gzipSync(args.rawBuffer) : undefined;
+  // 3. Batch per tabela — surowy plik per ŹRÓDŁOWY plik (gzip raz na plik, nie na
+  // każdy arkusz XLSX). Każdy batch trzyma raw SWOJEGO pliku → re-import per tabela.
+  const gzCache = new Map<string, Buffer>();
+  const rawGzFor = (table: RunTable): Buffer | undefined => {
+    if (!table.rawBuffer) return undefined;
+    const key = table.fileName ?? '';
+    let gz = gzCache.get(key);
+    if (!gz) {
+      gz = gzipSync(table.rawBuffer);
+      gzCache.set(key, gz);
+    }
+    return gz;
+  };
   for (const { table } of parsed) {
     recordProfileBatch({
       profileId: table.profileRow.id,
       profileVersion: table.profileRow.version,
       portfolioId: pid,
       importBatch: table.importBatch,
-      fileName: args.fileName ?? undefined,
-      rawFileGz: rawGz,
+      fileName: table.fileName ?? undefined,
+      rawFileGz: rawGzFor(table),
     });
     bumpProfileUsage(table.profileRow.id);
   }
@@ -703,9 +849,15 @@ export async function reimportGenericBatch(
   }
 
   return runImportDocuments({
-    tables: [{ content: doc.content, profileRow: active, importBatch }],
-    rawBuffer,
-    fileName: batch.fileName,
+    tables: [
+      {
+        content: doc.content,
+        profileRow: active,
+        importBatch,
+        fileName: batch.fileName,
+        rawBuffer,
+      },
+    ],
     portfolioId,
     deletePreviousBatch: true,
   });

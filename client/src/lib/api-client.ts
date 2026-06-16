@@ -470,9 +470,9 @@ export const api = {
    * Analiza pliku pod import uniwersalny: znany broker → known:true (użyj
    * bulkImport); inaczej fingerprint + profil z biblioteki + zredagowana próbka.
    */
-  genericAnalyze: (file: File) => {
+  genericAnalyze: (files: File[]) => {
     const formData = new FormData();
-    formData.append('file', file);
+    for (const f of files) formData.append('files', f);
     return uploadFile<import('shared').GenericAnalyzeResult & { error?: string }>(
       '/import/generic/analyze',
       formData,
@@ -493,45 +493,22 @@ export const api = {
     );
   },
 
-  /** Wykonanie profilu BEZ zapisu — obowiązkowy podgląd przed importem (CSV). */
-  genericPreview: (file: File, profile: unknown) => {
+  /** Podgląd SCALONY (profil per tabela) z 1..N plików BEZ zapisu — obowiązkowy przed importem. */
+  genericPreviewDocuments: (files: File[], inputs: import('shared').GenericSheetProfileInput[]) => {
     const formData = new FormData();
-    formData.append('file', file);
-    formData.append('profile', JSON.stringify(profile));
+    for (const f of files) formData.append('files', f);
+    formData.append('inputs', JSON.stringify(inputs));
     return uploadFile<import('shared').GenericPreviewResult & { error?: string }>(
       '/import/generic/preview',
       formData,
     );
   },
 
-  /** Podgląd XLSX: profile per arkusz → wynik scalony. */
-  genericPreviewSheets: (file: File, sheets: import('shared').GenericSheetProfileInput[]) => {
+  /** Atomowy import: wszystkie tabele (profil per tabela) z 1..N plików w jeden import. */
+  genericCommitDocuments: (files: File[], inputs: import('shared').GenericSheetProfileInput[]) => {
     const formData = new FormData();
-    formData.append('file', file);
-    formData.append('sheets', JSON.stringify(sheets));
-    return uploadFile<import('shared').GenericPreviewResult & { error?: string }>(
-      '/import/generic/preview',
-      formData,
-    );
-  },
-
-  /** Atomowy import: profil z biblioteki (profileId) ALBO inline (zapisany jako pending). */
-  genericCommit: (file: File, opts: { profileId?: string; profile?: unknown }) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    if (opts.profileId) formData.append('profileId', opts.profileId);
-    else formData.append('profile', JSON.stringify(opts.profile));
-    return uploadFile<import('shared').GenericCommitResult & { error?: string }>(
-      '/import/generic/commit',
-      formData,
-    );
-  },
-
-  /** Atomowy import XLSX: wszystkie arkusze (profil per arkusz) w jeden import. */
-  genericCommitSheets: (file: File, sheets: import('shared').GenericSheetProfileInput[]) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('sheets', JSON.stringify(sheets));
+    for (const f of files) formData.append('files', f);
+    formData.append('inputs', JSON.stringify(inputs));
     return uploadFile<import('shared').GenericCommitResult & { error?: string }>(
       '/import/generic/commit',
       formData,

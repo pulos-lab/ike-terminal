@@ -528,6 +528,92 @@ describe('parseWithProfile — wymiany walutowe', () => {
   });
 });
 
+describe('parseWithProfile — P2a: amountSignPolicy', () => {
+  const classify = [
+    {
+      id: 'wyp',
+      when: [{ col: { name: 'tytul' }, op: 'contains', values: ['Wypłata'] }],
+      emit: 'withdrawal',
+    },
+    {
+      id: 'wpl',
+      when: [{ col: { name: 'tytul' }, op: 'contains', values: ['Wpłata'] }],
+      emit: 'deposit',
+    },
+    {
+      id: 'opl',
+      when: [{ col: { name: 'tytul' }, op: 'contains', values: ['Opłata'] }],
+      emit: 'fee',
+    },
+  ];
+  // Plik z magnitudami (wypłata dodatnia) ALE z JEDNĄ ujemną opłatą — pod 'auto'
+  // ta ujemna przełącza heurystykę w tryb signed i reklasyfikuje wypłatę na wpłatę.
+  const csv = `${OPS_HEADER}\n2026-01-10;Wypłata środków;500,00;PLN\n2026-01-11;Wpłata środków;200,00;PLN\n2026-01-12;Opłata za prowadzenie;-10,00;PLN`;
+  const fileWith = (amountSignPolicy: string) => ({
+    file: { delimiter: ';', headerRow: { strategy: 'first' }, amountSignPolicy },
+  });
+
+  it("'magnitude' — dodatnia wypłata zostaje wypłatą (znak z etykiety, bez reklasyfikacji)", () => {
+    const profile = opsProfile(
+      classify,
+      { withdrawal: true, deposit: true, fee: true },
+      fileWith('magnitude'),
+    );
+    const out = parseWithProfile(csv, profile, BATCH);
+    const byType = Object.fromEntries(out.operations.data.map((o) => [o.operationType, o]));
+    expect(byType.withdrawal).toMatchObject({ amount: -500 });
+    expect(byType.deposit).toMatchObject({ amount: 200 });
+    expect(out.warnings.some((w) => w.includes('dodatnią kwotą'))).toBe(false);
+  });
+
+  it("'auto' (domyślnie) — jedna ujemna kwota reklasyfikuje dodatnią wypłatę (stara pułapka)", () => {
+    const profile = opsProfile(classify, { withdrawal: true, deposit: true, fee: true });
+    const out = parseWithProfile(csv, profile, BATCH);
+    expect(out.operations.data.filter((o) => o.operationType === 'deposit')).toHaveLength(2);
+    expect(out.warnings.some((w) => w.includes('dodatnią kwotą'))).toBe(true);
+  });
+
+  it("'signed' — wymusza tryb ze znakiem nawet przy samych dodatnich kwotach", () => {
+    const allPositive = `${OPS_HEADER}\n2026-01-10;Wypłata środków;500,00;PLN`;
+    const profile = opsProfile(
+      classify,
+      { withdrawal: true, deposit: true, fee: true },
+      fileWith('signed'),
+    );
+    const out = parseWithProfile(allPositive, profile, BATCH);
+    expect(out.operations.data[0].operationType).toBe('deposit'); // +500 pod signed = wpływ
+    expect(out.warnings.some((w) => w.includes('dodatnią kwotą'))).toBe(true);
+  });
+});
+
+describe('parseWithProfile — P2b: decimalSeparator', () => {
+  it("pinowany ',' — '1.234' = 1234 (kropka = tysiące), '1.234,5' = 1234.5", () => {
+    const profile = tradeProfile({
+      file: { delimiter: ';', headerRow: { strategy: 'first' }, decimalSeparator: ',' },
+    });
+    const csv = `${TRADE_HEADER}\n01.03.2026;KGHM;PLKGHM000017;K;1.234;1.234,5;PLN`;
+    const tx = parseWithProfile(csv, profile, BATCH).transactions.data[0];
+    expect(tx.quantity).toBe(1234);
+    expect(tx.price).toBeCloseTo(1234.5);
+  });
+
+  it("pinowany '.' — '1,234' = 1234 (przecinek = tysiące), '12.5' = 12.5", () => {
+    const profile = tradeProfile({
+      file: { delimiter: ';', headerRow: { strategy: 'first' }, decimalSeparator: '.' },
+    });
+    const csv = `${TRADE_HEADER}\n01.03.2026;KGHM;PLKGHM000017;K;1,234;12.5;PLN`;
+    const tx = parseWithProfile(csv, profile, BATCH).transactions.data[0];
+    expect(tx.quantity).toBe(1234);
+    expect(tx.price).toBeCloseTo(12.5);
+  });
+
+  it('brak deklaracji — auto-detekcja jak dotąd (parseNumber)', () => {
+    const csv = `${TRADE_HEADER}\n01.03.2026;KGHM;PLKGHM000017;K;10;150,50;PLN`;
+    const tx = parseWithProfile(csv, tradeProfile(), BATCH).transactions.data[0];
+    expect(tx.price).toBeCloseTo(150.5);
+  });
+});
+
 describe('parseDateWithFormats', () => {
   it('obsługuje wszystkie formaty enum + sufiks czasu', () => {
     expect(parseDateWithFormats('2026-02-25', ['YYYY-MM-DD'])).toBe('2026-02-25T00:00:00');
@@ -545,5 +631,23 @@ describe('parseDateWithFormats', () => {
     expect(parseDateWithFormats('05/02/2026', ['DD/MM/YYYY', 'MM/DD/YYYY'])).toBe(
       '2026-02-05T00:00:00',
     );
+  });
+
+  it('P2c: rok 2-cyfrowy z pivotem (00–69 → 20xx, 70–99 → 19xx)', () => {
+    expect(parseDateWithFormats('05.03.24', ['DD.MM.YY'])).toBe('2024-03-05T00:00:00');
+    expect(parseDateWithFormats('05/03/85', ['DD/MM/YY'])).toBe('1985-03-05T00:00:00');
+    // 4-cyfrowy rok nie wpada w format 2-cyfrowy (brak fałszywego dopasowania).
+    expect(parseDateWithFormats('05.03.2024', ['DD.MM.YY'])).toBeNull();
+  });
+
+  it('P2c: nazwy miesięcy EN i PL (skrót, pełna, MDY z przecinkiem)', () => {
+    expect(parseDateWithFormats('01-Jan-2024', ['DD-MMM-YYYY'])).toBe('2024-01-01T00:00:00');
+    expect(parseDateWithFormats('5 January 2024', ['DD MMM YYYY'])).toBe('2024-01-05T00:00:00');
+    expect(parseDateWithFormats('Mar 3, 2024', ['MMM DD, YYYY'])).toBe('2024-03-03T00:00:00');
+    expect(parseDateWithFormats('15 stycznia 2024', ['DD MMM YYYY'])).toBe('2024-01-15T00:00:00');
+  });
+
+  it('P2c: nieznana nazwa miesiąca → null', () => {
+    expect(parseDateWithFormats('5 Foo 2024', ['DD MMM YYYY'])).toBeNull();
   });
 });

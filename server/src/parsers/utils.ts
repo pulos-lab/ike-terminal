@@ -6,6 +6,24 @@ import type { SkipReason } from 'shared';
  */
 
 /**
+ * Normalizacja tekstu nagłówka do dopasowań detektorów formatu: lowercase, bez
+ * diakrytyków, ł→l, scalone spacje. Dzięki temu detekcja brokera jest odporna na
+ * warianty z/bez polskich znaków ("Tytuł operacji" == "Tytul operacji",
+ * "Opłaty AutoFX" == "Oplaty AutoFX"). Spójna z normalizacją fingerprinta importu
+ * uniwersalnego, ale wolnostojąca (utils nie zależy od silnika generycznego).
+ */
+export function normalizeForDetect(s: string): string {
+  return s
+    .replace(/^﻿/, '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/ł/g, 'l')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Parse European number format: "1 234,56" -> 1234.56
  * Handles whitespace thousands separators and comma decimal separator.
  * Gdy występują OBA separatory ('.' i ','), ostatni z nich jest traktowany

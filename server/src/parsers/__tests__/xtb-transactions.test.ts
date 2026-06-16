@@ -32,6 +32,15 @@ describe('parseXtbFile — deposits/withdrawals', () => {
     expect(await isXtbFormat(buf)).toBe(true);
   });
 
+  it('P3: obcy XLSX z arkuszem „CASH OPERATION …" o innych kolumnach → NIE XTB', async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('CASH OPERATION TRACKER');
+    ws.addRow(['Project', 'Hours', 'Cost', 'Notes']); // brak kolumn XTB
+    ws.addRow(['Alpha', 8, 1200, 'n/a']);
+    const buf = Buffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer);
+    expect(await isXtbFormat(buf)).toBe(false);
+  });
+
   it('zwykła wpłata i wypłata zachowują naturalne znaki', async () => {
     const buf = await buildXtbXlsx([
       {

@@ -1,6 +1,12 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
-import { parseNumber, roundTo2, validateTradeFields, parseDegiroDate } from './utils.js';
+import {
+  normalizeForDetect,
+  parseNumber,
+  roundTo2,
+  validateTradeFields,
+  parseDegiroDate,
+} from './utils.js';
 
 /**
  * Parse DEGIRO Transactions CSV.
@@ -169,11 +175,11 @@ export function parseDegiroTransactions(
  */
 export function isDegiroFormat(csvContent: string): boolean {
   const firstLine = csvContent.split('\n')[0] || '';
-  const lower = firstLine.toLowerCase();
+  const lower = normalizeForDetect(firstLine);
   // Must have DEGIRO-specific columns
   if (!lower.includes('produkt') || !lower.includes('isin')) return false;
   // Old format: "kurs wymian" (abbreviated), new format: "kurs wymiany" or "opłaty autofx"
-  return lower.includes('kurs wymian') || lower.includes('opłaty autofx');
+  return lower.includes('kurs wymian') || lower.includes('oplaty autofx');
 }
 
 /**

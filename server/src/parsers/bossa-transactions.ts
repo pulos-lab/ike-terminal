@@ -1,7 +1,7 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
 import { applyIsinAlias, isBondInstrument, findBondByTicker, inferBondNominal } from 'shared';
-import { parseNumber, validateTradeFields, parseDottedDate } from './utils.js';
+import { normalizeForDetect, parseNumber, validateTradeFields, parseDottedDate } from './utils.js';
 
 /**
  * Bossa sufiksuje tickery instrumentów nietypowych:
@@ -30,9 +30,7 @@ import { parseNumber, validateTradeFields, parseDottedDate } from './utils.js';
  * nie klasyfikowała pliku jako Bossa).
  */
 export function isBossaFormat(csvContent: string): boolean {
-  const headerCols = (csvContent.split('\n')[0] || '')
-    .split(';')
-    .map((c) => c.trim().toLowerCase());
+  const headerCols = (csvContent.split('\n')[0] || '').split(';').map(normalizeForDetect);
   return (
     headerCols.includes('data') && headerCols.includes('papier') && headerCols.includes('isin')
   );

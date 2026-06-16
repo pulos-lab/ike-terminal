@@ -112,7 +112,7 @@ export function parseWithProfile(
 
   const headerIdx = locateHeaderRow(rows, profile);
   const headers = rows[headerIdx].map((c) => String(c ?? ''));
-  const resolver = new ColumnResolver(headers);
+  const resolver = new ColumnResolver(headers, profile.file.decimalSeparator);
 
   const transactions: Transaction[] = [];
   const operations: CashOperation[] = [];
@@ -286,12 +286,23 @@ export function parseWithProfile(
   // tylko magnitudy (Trading 212: wszystko dodatnie). Decyduje, czy przy
   // niezgodności znaku z etykietą deposit/withdrawal reklasyfikować (znak
   // znaczący), czy znormalizować znak do etykiety (magnitudy bez znaku).
-  const signedCashAmounts = [
-    ...pendingDirect.map((d) => d.pending),
-    ...pendingDividends,
-    ...pendingWht,
-    ...pendingFxLegs,
-  ].some((p) => p.amount < 0);
+  //
+  // Profil może to ZADEKLAROWAĆ (amountSignPolicy) — wtedy nie zgadujemy. Brak
+  // pola (stare profile z biblioteki czytane bez walidacji) = 'auto' = heurystyka.
+  // 'auto' eliminuje pułapkę: jeden wiersz storna z minusem w pliku-magnitudach
+  // nie przełącza wtedy całego pliku w tryb signed, jeśli profil ma 'magnitude'.
+  const signPolicy = profile.file.amountSignPolicy ?? 'auto';
+  const signedCashAmounts =
+    signPolicy === 'signed'
+      ? true
+      : signPolicy === 'magnitude'
+        ? false
+        : [
+            ...pendingDirect.map((d) => d.pending),
+            ...pendingDividends,
+            ...pendingWht,
+            ...pendingFxLegs,
+          ].some((p) => p.amount < 0);
 
   for (const { cls, pending } of pendingDirect) {
     operations.push(finalizeCashOperation(cls, pending, importBatch, warnings, signedCashAmounts));

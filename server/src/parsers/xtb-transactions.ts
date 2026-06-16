@@ -263,11 +263,36 @@ function parseSecFeeDate(yyyymmdd: string): string | null {
 
 // ── Format detection ────────────────────────────────────────────────────────
 
+/** Kanoniczne nazwy kolumn arkusza Cash Operation XTB (do walidacji nagłówka). */
+const XTB_HEADER_TOKENS = [
+  'type',
+  'time',
+  'amount',
+  'comment',
+  'symbol',
+  'id',
+  'instrument',
+  'ticker',
+];
+
 export async function isXtbFormat(buffer: Buffer): Promise<boolean> {
   try {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(buffer as unknown as ArrayBuffer);
-    return wb.worksheets.some((ws) => ws.name.toUpperCase().includes('CASH OPERATION'));
+    const sheet = wb.worksheets.find((ws) => ws.name.toUpperCase().includes('CASH OPERATION'));
+    if (!sheet) return false;
+    // Anti-false-positive: sama nazwa arkusza to za mało — obcy XLSX z arkuszem
+    // „CASH OPERATION …" o niezwiązanych kolumnach NIE jest XTB. Wymagaj wiersza
+    // nagłówka z ≥2 znanymi kolumnami XTB (skan pierwszych ~20 wierszy).
+    let headerLike = false;
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (headerLike || rowNumber > 20) return;
+      const cells = (Array.isArray(row.values) ? row.values : [])
+        .filter((v) => v != null)
+        .map((v) => String(v).trim().toLowerCase());
+      if (XTB_HEADER_TOKENS.filter((t) => cells.includes(t)).length >= 2) headerLike = true;
+    });
+    return headerLike;
   } catch {
     return false;
   }
