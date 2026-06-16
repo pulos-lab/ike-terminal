@@ -133,18 +133,18 @@ export const BROKER_IMPORT_CONFIG: Record<KnownBroker, BrokerImportConfig> = {
 
   xtb: {
     exportSteps: [
-      'Zaloguj się do xStation 5 → menu Historia / Raporty.',
-      'Wyeksportuj pełny raport rachunku do pliku XLSX (nazwa zaczyna się od „account_…").',
-      'Jeden plik zawiera transakcje, dywidendy, wpłaty i zamknięte pozycje CFD — wgraj go poniżej i kliknij Importuj.',
+      'Zaloguj się do xStation 5 → menu Historia konta.',
+      'Wyeksportuj pełny raport rachunku do pliku XLSX (Eksport → nowy raport → zaznacz wszystkie konta, a przedział czasowy ustaw na „wszystko").',
+      'Jeden plik dla danej waluty zawiera transakcje, dywidendy, wpłaty i zamknięte pozycje CFD — wgraj go poniżej i kliknij Importuj.',
     ],
     files: [
       {
         role: 'transactions',
-        label: 'Raport rachunku (account_*.xlsx)',
+        label: 'Raport rachunku (XLSX)',
         accept: '.xlsx',
         multiple: false,
         required: true,
-        hint: 'Plik XLSX z arkuszami „Cash Operations" i (opcjonalnie) „Closed Positions". Zawiera wszystko w jednym.',
+        hint: 'Jeden plik XLSX dla danej waluty — arkusze „Cash Operations" i (opcjonalnie) „Closed Positions". Zawiera wszystko w jednym; przy kilku walutach zaimportuj każdy plik osobno.',
       },
     ],
     formatNote: 'Format XTB: skoroszyt XLSX (Excel).',
