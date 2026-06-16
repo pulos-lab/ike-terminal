@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  adoptProfileForDocument,
   buildProfileFromDraft,
   detectDateFormat,
   suggestDraft,
@@ -130,5 +131,43 @@ describe('buildProfileFromDraft', () => {
     const rulesResult = buildProfileFromDraft(rulesDraft);
     expect(rulesResult.ok).toBe(false);
     expect(rulesResult.errors!.some((e) => e.includes('wartości'))).toBe(true);
+  });
+});
+
+describe('adoptProfileForDocument — P1 adopcja podobnego profilu', () => {
+  const sourceProfile = (): unknown => {
+    const draft = suggestDraft(HEADERS, SAMPLE, { delimiter: '|', headerRowIndex: 0 });
+    draft.brokerLabel = 'Źródłowy';
+    const built = buildProfileFromDraft(draft);
+    if (!built.ok) throw new Error('fixture profilu niepoprawny');
+    return built.profile;
+  };
+
+  it('nadpisuje delimiter pliku docelowego i zachowuje resztę mapowania', () => {
+    const adopted = adoptProfileForDocument(sourceProfile(), { delimiter: ';' }) as {
+      file: { delimiter: string; sheet?: string };
+      brokerLabel: string;
+    };
+    expect(adopted.file.delimiter).toBe(';');
+    expect(adopted.brokerLabel).toBe('Źródłowy');
+    expect('sheet' in adopted.file).toBe(false); // CSV → bez arkusza
+    expect(validateImportProfile(adopted).ok).toBe(true);
+  });
+
+  it('dla XLSX ustawia nazwę arkusza (marker fingerprintu)', () => {
+    const adopted = adoptProfileForDocument(sourceProfile(), {
+      delimiter: ';',
+      sheet: 'CASH OPERATION HISTORY',
+    }) as { file: { sheet?: string } };
+    expect(adopted.file.sheet).toBe('CASH OPERATION HISTORY');
+  });
+
+  it('zwraca głęboki klon — nie mutuje źródła', () => {
+    const src = sourceProfile() as { file: { delimiter: string } };
+    const adopted = adoptProfileForDocument(src, { delimiter: ',' }) as {
+      file: { delimiter: string };
+    };
+    expect(adopted.file.delimiter).toBe(',');
+    expect(src.file.delimiter).toBe('|'); // źródło nietknięte
   });
 });

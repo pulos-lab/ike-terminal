@@ -29,7 +29,11 @@ export class ColumnResolver {
   private readonly normalized: string[];
   private readonly cache = new Map<string, number>();
 
-  constructor(private readonly headers: string[]) {
+  constructor(
+    private readonly headers: string[],
+    /** Jawny separator dziesiętny z profilu — używany przez resolveNumber. */
+    readonly decimalSeparator?: '.' | ',',
+  ) {
     this.normalized = headers.map(normalizeHeaderName);
   }
 
@@ -117,19 +121,59 @@ export function resolveValueSource(
   }
 }
 
-/** Jak resolveValueSource, ale przez parseNumber (formaty europejskie). */
+/**
+ * Liczba z ValueSource. Gdy profil deklaruje separator dziesiętny (resolver
+ * niesie go z file.decimalSeparator) — parsujemy deterministycznie; inaczej
+ * fallback do parseNumber (auto-detekcja separatorów, jak parsery wbudowane).
+ */
 export function resolveNumber(vs: ValueSource, row: string[], resolver: ColumnResolver): number {
-  return parseNumber(resolveValueSource(vs, row, resolver));
+  const raw = resolveValueSource(vs, row, resolver);
+  return resolver.decimalSeparator
+    ? parseNumberWithLocale(raw, resolver.decimalSeparator)
+    : parseNumber(raw);
+}
+
+/**
+ * Parsowanie liczby z JAWNYM separatorem dziesiętnym (bez zgadywania):
+ * - ',' dziesiętny → usuń '.' i spacje (tysięczne), zamień ',' na '.',
+ * - '.' dziesiętny → usuń ',' i spacje (tysięczne).
+ * Zwraca 0 dla pustych/NaN (kontrakt jak parseNumber).
+ */
+export function parseNumberWithLocale(
+  value: string | undefined,
+  decimalSeparator: '.' | ',',
+): number {
+  if (!value) return 0;
+  const noSpace = value.toString().replace(/\s/g, '');
+  const cleaned =
+    decimalSeparator === ','
+      ? noSpace.replace(/\./g, '').replace(',', '.')
+      : noSpace.replace(/,/g, '');
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
 }
 
 // ── Daty ─────────────────────────────────────────────────────────────────────
 
 /**
  * Regexy formatów: grupy (1,2,3) wg kolejności w formacie + opcjonalny sufiks
- * czasu HH:MM(:SS) w tej samej komórce (Bossa: "25.02.2026 09:47:27").
+ * czasu HH:MM(:SS) jako grupa 4 w tej samej komórce (Bossa: "25.02.2026 09:47:27").
  * Ułamki sekund są tolerowane i ucinane (Trading 212: "...17:08:00.000").
+ * Warianty: rok 2-cyfrowy (year2digit, pivot) oraz nazwa miesiąca (monthName, EN+PL).
  */
-const DATE_PATTERNS: Record<DateFormat, { re: RegExp; order: 'YMD' | 'DMY' | 'MDY' }> = {
+interface DatePattern {
+  re: RegExp;
+  order: 'YMD' | 'DMY' | 'MDY';
+  /** Rok 2-cyfrowy → pivot: 00–69 = 20xx, 70–99 = 19xx. */
+  year2digit?: boolean;
+  /** Grupa miesiąca to NAZWA (Jan/January/sty/stycznia) → monthNameToNumber. */
+  monthName?: boolean;
+}
+
+// Klasa znaków nazwy miesiąca: ASCII + polskie diakrytyki (np. „paź", „września").
+const MONTH_RE = '[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]{3,}';
+
+const DATE_PATTERNS: Record<DateFormat, DatePattern> = {
   'YYYY-MM-DD': {
     re: /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?)(?:\.\d{1,6})?)?$/,
     order: 'YMD',
@@ -158,7 +202,71 @@ const DATE_PATTERNS: Record<DateFormat, { re: RegExp; order: 'YMD' | 'DMY' | 'MD
     re: /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{2}:\d{2}(?::\d{2})?)(?:\.\d{1,6})?)?$/,
     order: 'MDY',
   },
+  'DD.MM.YY': {
+    re: /^(\d{1,2})\.(\d{1,2})\.(\d{2})(?:[ T](\d{2}:\d{2}(?::\d{2})?)(?:\.\d{1,6})?)?$/,
+    order: 'DMY',
+    year2digit: true,
+  },
+  'DD/MM/YY': {
+    re: /^(\d{1,2})\/(\d{1,2})\/(\d{2})(?:[ T](\d{2}:\d{2}(?::\d{2})?)(?:\.\d{1,6})?)?$/,
+    order: 'DMY',
+    year2digit: true,
+  },
+  'DD-MMM-YYYY': {
+    re: new RegExp(
+      `^(\\d{1,2})-(${MONTH_RE})-(\\d{4})(?:[ T](\\d{2}:\\d{2}(?::\\d{2})?)(?:\\.\\d{1,6})?)?$`,
+    ),
+    order: 'DMY',
+    monthName: true,
+  },
+  'DD MMM YYYY': {
+    re: new RegExp(
+      `^(\\d{1,2})\\s+(${MONTH_RE})\\s+(\\d{4})(?:[ T](\\d{2}:\\d{2}(?::\\d{2})?)(?:\\.\\d{1,6})?)?$`,
+    ),
+    order: 'DMY',
+    monthName: true,
+  },
+  'MMM DD, YYYY': {
+    re: new RegExp(
+      `^(${MONTH_RE})\\s+(\\d{1,2}),?\\s+(\\d{4})(?:[ T](\\d{2}:\\d{2}(?::\\d{2})?)(?:\\.\\d{1,6})?)?$`,
+    ),
+    order: 'MDY',
+    monthName: true,
+  },
 };
+
+/** Skróty nazw miesięcy (pierwsze 3 litery bez diakrytyków) → numer; EN + PL. */
+const MONTH_ABBR: Record<string, number> = {
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
+  sty: 1,
+  lut: 2,
+  kwi: 4,
+  maj: 5,
+  cze: 6,
+  lip: 7,
+  sie: 8,
+  wrz: 9,
+  paz: 10,
+  lis: 11,
+  gru: 12,
+};
+
+/** Nazwa miesiąca (EN/PL, skrót lub pełna) → 1..12; 0 gdy nieznana. */
+export function monthNameToNumber(name: string): number {
+  const key = name.trim().toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').slice(0, 3);
+  return MONTH_ABBR[key] ?? 0;
+}
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
@@ -185,13 +293,22 @@ export function parseDateWithFormats(
   if (!raw) return null;
   const value = raw.trim();
   for (const format of formats) {
-    const { re, order } = DATE_PATTERNS[format];
-    const m = value.match(re);
+    const def = DATE_PATTERNS[format];
+    const m = value.match(def.re);
     if (!m) continue;
-    const [a, b, c] = [Number(m[1]), Number(m[2]), Number(m[3])];
-    const [year, month, day] =
-      order === 'YMD' ? [a, b, c] : order === 'DMY' ? [c, b, a] : [c, a, b];
-    if (month < 1 || month > 12 || day < 1 || day > 31) continue;
+    // Grupy 1-3 → [year, month, day] wg kolejności formatu (month bywa nazwą).
+    const g: [string, string, string] = [m[1], m[2], m[3]];
+    const [yearStr, monthStr, dayStr] =
+      def.order === 'YMD'
+        ? [g[0], g[1], g[2]]
+        : def.order === 'DMY'
+          ? [g[2], g[1], g[0]]
+          : [g[2], g[0], g[1]]; // MDY
+    const month = def.monthName ? monthNameToNumber(monthStr) : Number(monthStr);
+    const day = Number(dayStr);
+    let year = Number(yearStr);
+    if (def.year2digit) year = year <= 69 ? 2000 + year : 1900 + year;
+    if (!month || month < 1 || month > 12 || day < 1 || day > 31) continue;
     const time = normalizeTime(timeRaw) ?? normalizeTime(m[4]) ?? '00:00:00';
     return `${year}-${pad2(month)}-${pad2(day)}T${time}`;
   }

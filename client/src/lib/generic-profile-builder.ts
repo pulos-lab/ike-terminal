@@ -111,6 +111,11 @@ export const DATE_FORMATS: DateFormat[] = [
   'MM/DD/YYYY',
   'YYYY.MM.DD',
   'YYYY/MM/DD',
+  'DD.MM.YY',
+  'DD/MM/YY',
+  'DD-MMM-YYYY',
+  'DD MMM YYYY',
+  'MMM DD, YYYY',
 ];
 
 // ── Heurystyczny prefill ─────────────────────────────────────────────────────
@@ -436,4 +441,29 @@ export function buildProfileFromDraft(draft: ProfileDraft): BuildResult {
   const validation = validateImportProfile(profile);
   if (!validation.ok) return { ok: false, errors: validation.errors };
   return { ok: true, profile };
+}
+
+// ── Adopcja podobnego profilu (P1: anty-dryf formatu) ────────────────────────
+
+/**
+ * Sklonuj profil z biblioteki (sugestia o podobnych nagłówkach) do użycia na
+ * BIEŻĄCYM pliku. Profil mógł powstać dla innego delimitera/arkusza, a silnik
+ * parsuje treść po `file.delimiter` — więc nadpisujemy delimiter (i nazwę
+ * arkusza dla XLSX) wartościami z analizy tego pliku. Reszta mapowania (kolumny
+ * po NAZWIE, reguły klasyfikacji, parowanie) przenosi się 1:1. Podgląd po
+ * adopcji jest dry-runem: jeśli układ jednak nie pasuje, użytkownik to zobaczy.
+ *
+ * Zwraca surowy obiekt (jak buildProfileFromDraft) — idzie wprost do preview/commit.
+ */
+export function adoptProfileForDocument(
+  profileJson: unknown,
+  doc: { delimiter: string; sheet?: string },
+): unknown {
+  const clone = structuredClone(profileJson) as { file?: Record<string, unknown> } | null;
+  if (clone && typeof clone === 'object' && clone.file && typeof clone.file === 'object') {
+    clone.file.delimiter = doc.delimiter;
+    if (doc.sheet !== undefined) clone.file.sheet = doc.sheet;
+    else delete clone.file.sheet;
+  }
+  return clone;
 }

@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import type { CashOperation, ParseResult, SkippedRow } from 'shared';
-import { parseNumber, parseDottedDate } from './utils.js';
+import { normalizeForDetect, parseNumber, parseDottedDate } from './utils.js';
 
 /**
  * Parse mBank eMakler financial history CSV (eMAKLER_historia_finansowa.Csv).
@@ -176,14 +176,14 @@ export function isMbankOperationsFormat(csvContent: string): boolean {
   const lines = csvContent.split('\n');
   const { headerIdx, delimiter } = findOperationsHeader(lines);
   if (headerIdx >= 0) {
-    const cols = lines[headerIdx].split(delimiter).map((c) => c.trim().toLowerCase());
+    const cols = lines[headerIdx].split(delimiter).map(normalizeForDetect);
     // Make sure it's not a transaction file (those also have "Data" but also "Papier"/"Walor")
     if (!cols.includes('papier') && !cols.includes('walor')) {
       return true;
     }
   }
   // Metadata-based detection
-  const content = csvContent.substring(0, 2000).toLowerCase();
+  const content = normalizeForDetect(csvContent.substring(0, 2000));
   return content.includes('emakler') && content.includes('historia finansowa');
 }
 

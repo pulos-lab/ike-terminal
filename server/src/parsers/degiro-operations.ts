@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import type { CashOperation, ParseResult, SkippedRow } from 'shared';
-import { parseNumber, roundTo2, parseDegiroDate } from './utils.js';
+import { normalizeForDetect, parseNumber, roundTo2, parseDegiroDate } from './utils.js';
 
 /**
  * Parse DEGIRO Account CSV (cash operations).
@@ -368,7 +368,7 @@ export function parseDegiroTransactionTaxes(csvContent: string): TransactionTax[
  */
 export function isDegiroAccountFormat(csvContent: string): boolean {
   const firstLine = csvContent.split('\n')[0] || '';
-  const lower = firstLine.toLowerCase();
+  const lower = normalizeForDetect(firstLine);
   return (
     lower.includes('produkt') &&
     lower.includes('isin') &&

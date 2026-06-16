@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PARSER_REGISTRY, detectBroker } from '../registry.js';
+import { PARSER_REGISTRY, detectBroker, detectAllMatches } from '../registry.js';
 
 /**
  * Testy registry parserów — detekcja transakcji vs operacji.
@@ -56,5 +56,34 @@ describe('detectBroker — detekcja transakcji', () => {
 
   it('zwraca null dla nierozpoznanej zawartości', () => {
     expect(detectBroker('foo;bar;baz\n1;2;3\n')).toBeNull();
+  });
+});
+
+describe('detekcja odporna na diakrytyki (P3)', () => {
+  it('Bossa operacje bez polskich znaków: "Tytul operacji" → bossa', () => {
+    const bossaOpsAscii = 'data;tytul operacji;szczegoly;kwota;waluta\n';
+    expect(detectOperationsBroker(bossaOpsAscii)).toBe('bossa');
+  });
+
+  it('DEGIRO transakcje bez polskich znaków: "Oplaty AutoFX" (bez ł) → degiro', () => {
+    const degiroTxAscii =
+      'Data,Czas,Produkt,ISIN,Liczba,Kurs,Wartosc,Oplaty AutoFX,Razem,Identyfikator zlecenia\n';
+    expect(detectBroker(degiroTxAscii)?.id).toBe('degiro');
+  });
+});
+
+describe('guard niejednoznaczności (P3) — detectAllMatches', () => {
+  it('pliki transakcji: dokładnie jeden broker (brak nakładania ról)', () => {
+    expect(detectAllMatches(BOSSA_TX).transactions).toEqual(['bossa']);
+    expect(detectAllMatches(MBANK_TX).transactions).toEqual(['mbank']);
+    expect(detectAllMatches(DEGIRO_TX).transactions).toEqual(['degiro']);
+  });
+
+  it('priorytet rejestru rozstrzyga rolę operacji (pierwszy = właściwy)', () => {
+    // mBank ma najluźniejszy detektor operacji (Data+Kwota bez Papier/Walor) i bywa
+    // współ-trafieniem; kolejność rejestru (degiro→mbank→bossa) wybiera właściwy broker.
+    expect(detectAllMatches(DEGIRO_OPS).operations[0]).toBe('degiro');
+    expect(detectAllMatches(MBANK_OPS).operations[0]).toBe('mbank');
+    expect(detectAllMatches(BOSSA_OPS).operations[0]).toBe('bossa');
   });
 });

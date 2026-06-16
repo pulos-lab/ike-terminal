@@ -58,8 +58,8 @@ export function ImportDialog({ open, onOpenChange }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [orphanedSells, setOrphanedSells] = useState<OrphanedSell[]>([]);
   const [resolving, setResolving] = useState<string | null>(null);
-  /** Plik dla importu uniwersalnego (ekran „Inny broker"). */
-  const [genericCandidate, setGenericCandidate] = useState<File | null>(null);
+  /** Pliki dla importu uniwersalnego (ekran „Inny broker") — 1..N, scalane w jeden import. */
+  const [genericFiles, setGenericFiles] = useState<File[]>([]);
   const [wizardOpen, setWizardOpen] = useState(false);
 
   const addMessage = useCallback((m: Message) => {
@@ -70,7 +70,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
     setFilesByRole({ transactions: [], operations: [] });
     setMessages([]);
     setOrphanedSells([]);
-    setGenericCandidate(null);
+    setGenericFiles([]);
     setWizardOpen(false);
   }, []);
 
@@ -432,22 +432,24 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
-                Plik CSV lub XLSX
+                Pliki CSV lub XLSX
               </label>
               <span className="text-xs text-muted-foreground -mt-0.5">
-                Eksport historii z dowolnego brokera w formacie CSV lub XLSX (Excel). Plik XLSX z
-                kilkoma arkuszami danych zaimportujemy w całości.
+                Eksport historii z dowolnego brokera w formacie CSV lub XLSX (Excel). Możesz wgrać
+                kilka plików naraz (np. osobno transakcje i operacje) — scalimy je w jeden import.
+                Plik XLSX z kilkoma arkuszami danych też zaimportujemy w całości.
               </span>
               <Input
                 type="file"
                 accept=".csv,.xlsx"
+                multiple
                 disabled={uploading}
                 className={fileInputClass}
                 onChange={(e) => {
-                  const file = e.target.files?.[0];
+                  const picked = e.target.files ? Array.from(e.target.files) : [];
                   e.target.value = '';
-                  if (file) {
-                    setGenericCandidate(file);
+                  if (picked.length > 0) {
+                    setGenericFiles(picked);
                     setWizardOpen(true);
                   }
                 }}
@@ -457,14 +459,14 @@ export function ImportDialog({ open, onOpenChange }: Props) {
           </div>
         )}
 
-        {wizardOpen && genericCandidate && (
+        {wizardOpen && genericFiles.length > 0 && (
           <GenericImportWizard
-            file={genericCandidate}
+            files={genericFiles}
             open
             onOpenChange={(v) => {
               if (!v) {
                 setWizardOpen(false);
-                setGenericCandidate(null);
+                setGenericFiles([]);
               }
             }}
           />

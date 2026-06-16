@@ -13,7 +13,7 @@ import {
   isBondInstrument,
   findBondByTicker,
 } from 'shared';
-import { parseNumber } from './utils.js';
+import { normalizeForDetect, parseNumber } from './utils.js';
 
 /**
  * Parse Bossa cash operations CSV
@@ -31,13 +31,11 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  * nie luźnych substringów.
  */
 export function isBossaOperationsFormat(csvContent: string): boolean {
-  const headerCols = (csvContent.split('\n')[0] || '')
-    .split(';')
-    .map((c) => c.trim().toLowerCase());
+  const headerCols = (csvContent.split('\n')[0] || '').split(';').map(normalizeForDetect);
   return (
     headerCols.includes('data') &&
     headerCols.includes('kwota') &&
-    headerCols.includes('tytuł operacji')
+    headerCols.includes('tytul operacji')
   );
 }
 

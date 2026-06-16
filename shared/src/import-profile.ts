@@ -180,6 +180,8 @@ export type ClassificationRule = z.infer<typeof ClassificationRuleSchema>;
 /**
  * Zamknięty enum formatów dat. Silnik toleruje opcjonalny sufiks czasu
  * (HH:MM lub HH:MM:SS) w tej samej komórce — np. Bossa "25.02.2026 09:47:27".
+ * Warianty z rokiem 2-cyfrowym (pivot 00–69 → 20xx, 70–99 → 19xx) oraz z nazwą
+ * miesiąca (EN: Jan/January, PL: sty/stycznia) — typowe dla brokerów zagranicznych.
  */
 export const DateFormatSchema = z.enum([
   'YYYY-MM-DD',
@@ -189,6 +191,13 @@ export const DateFormatSchema = z.enum([
   'MM/DD/YYYY',
   'YYYY.MM.DD',
   'YYYY/MM/DD',
+  // Rok 2-cyfrowy:
+  'DD.MM.YY',
+  'DD/MM/YY',
+  // Nazwa miesiąca:
+  'DD-MMM-YYYY',
+  'DD MMM YYYY',
+  'MMM DD, YYYY',
 ]);
 export type DateFormat = z.infer<typeof DateFormatSchema>;
 
@@ -368,6 +377,25 @@ export const FileSpecSchema = z.object({
    * wbudowanie: cena ÷100 → GBP, niezależnie od aliasów.
    */
   currencyAliases: z.record(z.string().max(8), z.string().max(8)).default({}),
+  /**
+   * Polityka znaku kwot operacji gotówkowych (deposit/withdrawal):
+   * - 'signed'    — plik niesie znaczący ZNAK (Bossa: wypłaty/IPO ujemne);
+   *                 niezgodność etykiety ze znakiem → reklasyfikacja (np. „wpłata"
+   *                 z kwotą ujemną → wypłata),
+   * - 'magnitude' — kwoty to magnitudy bez znaku (Trading 212); znak bierzemy z
+   *                 etykiety classify, bez reklasyfikacji,
+   * - 'auto'      — heurystyka (domyślnie): jeśli JAKAKOLWIEK kwota w pliku jest
+   *                 ujemna → traktuj jak 'signed', inaczej jak 'magnitude'.
+   * Stare profile bez tego pola silnik traktuje jak 'auto' (?? w engine).
+   */
+  amountSignPolicy: z.enum(['auto', 'signed', 'magnitude']).default('auto'),
+  /**
+   * Jawny separator dziesiętny (locale liczb). Gdy ustawiony, silnik parsuje
+   * liczby deterministycznie (drugi znak oraz spacje = separator tysięczny)
+   * zamiast auto-wykrywać — usuwa niejednoznaczność „1.234" (1234 vs 1,234).
+   * Brak → auto-detekcja jak dotąd (parseNumber z utils).
+   */
+  decimalSeparator: z.enum(['.', ',']).optional(),
 });
 export type FileSpec = z.infer<typeof FileSpecSchema>;
 
@@ -548,6 +576,8 @@ export interface GenericProfileSummary {
 export interface GenericSheetAnalysis {
   /** Nazwa arkusza XLSX; brak dla CSV. */
   sheet?: string;
+  /** Nazwa pliku źródłowego (import multi-plik); brak = pojedynczy plik (legacy). */
+  file?: string;
   fingerprint: string;
   delimiter: string;
   headerRowIndex: number;
@@ -557,7 +587,7 @@ export interface GenericSheetAnalysis {
   /** Profil z biblioteki dla dokładnego fingerprinta (approved > pending). */
   profile?: { summary: GenericProfileSummary; profileJson: unknown };
   /** Podobne formaty (Jaccard ≥ 0.75) — szablony startowe dla edytora/LLM. */
-  suggestions?: Array<{ summary: GenericProfileSummary; similarity: number }>;
+  suggestions?: Array<{ summary: GenericProfileSummary; similarity: number; profileJson: unknown }>;
 }
 
 /** POST /api/import/generic/analyze */
@@ -575,11 +605,17 @@ export interface GenericAnalyzeResult {
   headers?: string[];
   sampleRows?: string[][];
   profile?: { summary: GenericProfileSummary; profileJson: unknown };
-  suggestions?: Array<{ summary: GenericProfileSummary; similarity: number }>;
+  suggestions?: Array<{ summary: GenericProfileSummary; similarity: number; profileJson: unknown }>;
   /** Arkusze z danymi — TYLKO dla XLSX (≥1). Każdy = osobna tabela/profil. */
   sheets?: GenericSheetAnalysis[];
   /** Arkusze pominięte (okładki/puste/jednokolumnowe) — informacyjnie. */
   skippedSheets?: string[];
+  /** Multi-plik: zunifikowana lista dokumentów (tabel) ze WSZYSTKICH wgranych plików. */
+  documents?: GenericSheetAnalysis[];
+  /** Pliki obsługiwane przez parser WBUDOWANY — do zaimportowania przez kafel brokera. */
+  knownFiles?: Array<{ file: string; broker: BrokerType }>;
+  /** Pliki/arkusze bez tabeli danych (informacyjnie). */
+  skippedDocuments?: Array<{ file: string; sheet?: string }>;
   /** Błąd analizy (PL) — np. nie znaleziono nagłówka. */
   error?: string;
 }
@@ -608,6 +644,8 @@ export interface GenericPreviewResult {
 export interface GenericSheetProfileInput {
   /** Nazwa arkusza; brak/undefined → CSV (jeden dokument). */
   sheet?: string;
+  /** Nazwa pliku źródłowego (multi-plik) — dopasowanie dokumentu po (file, sheet). */
+  file?: string;
   /** Profil z biblioteki… */
   profileId?: string;
   /** …albo inline (edycja w kreatorze). */

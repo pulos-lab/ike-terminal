@@ -7,12 +7,11 @@
 import { Router } from 'express';
 import multer from 'multer';
 import {
-  analyzeGenericFile,
-  commitGeneric,
+  analyzeGenericFiles,
+  commitGenericDocuments,
   generateProfileForFile,
   listGenericBatches,
-  previewGeneric,
-  previewGenericMulti,
+  previewGenericDocuments,
   reimportGenericBatch,
 } from '../services/generic-import-service.js';
 import type { GenericSheetProfileInput } from 'shared';
@@ -47,10 +46,15 @@ const upload = multer({
  */
 router.post(
   '/analyze',
-  upload.single('file'),
+  upload.array('files', 10),
   asyncHandler(async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
-    res.json(await analyzeGenericFile(req.file));
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    if (files.length === 0) return res.status(400).json({ error: 'Brak pliku' });
+    res.json(
+      await analyzeGenericFiles(
+        files.map((f) => ({ buffer: f.buffer, originalname: f.originalname })),
+      ),
+    );
   }),
 );
 
@@ -116,21 +120,20 @@ router.post(
  */
 router.post(
   '/preview',
-  upload.single('file'),
+  upload.array('files', 10),
   asyncHandler(async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
-    const sheets = parseSheetsField(req.body?.sheets);
-    if (sheets !== undefined) {
-      const result = await previewGenericMulti(req.file, sheets);
-      return res.status(result.ok ? 200 : 422).json(result);
-    }
-    const rawProfile = parseProfileField(req.body?.profile);
-    if (rawProfile === undefined) {
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    if (files.length === 0) return res.status(400).json({ error: 'Brak pliku' });
+    const inputs = resolveDocumentInputs(req.body);
+    if (inputs === undefined) {
       return res
         .status(400)
-        .json({ error: 'Brak albo niepoprawny JSON w polu `profile`/`sheets`' });
+        .json({ error: 'Brak albo niepoprawny JSON w polu `inputs`/`sheets`/`profile`' });
     }
-    const result = previewGeneric(req.file, rawProfile);
+    const result = await previewGenericDocuments(
+      files.map((f) => ({ buffer: f.buffer, originalname: f.originalname })),
+      inputs,
+    );
     res.status(result.ok ? 200 : 422).json(result);
   }),
 );
@@ -142,30 +145,23 @@ router.post(
  */
 router.post(
   '/commit',
-  upload.single('file'),
+  upload.array('files', 10),
   asyncHandler(async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    if (files.length === 0) return res.status(400).json({ error: 'Brak pliku' });
 
-    const sheets = parseSheetsField(req.body?.sheets);
-    const profileId =
-      typeof req.body?.profileId === 'string' && req.body.profileId
-        ? req.body.profileId
-        : undefined;
-    const profileJson = profileId ? undefined : parseProfileField(req.body?.profile);
-    if (!sheets && !profileId && profileJson === undefined) {
-      return res
-        .status(400)
-        .json({ error: 'Podaj `sheets` (XLSX) albo `profileId`/`profile` (CSV)' });
+    const inputs = resolveDocumentInputs(req.body);
+    if (inputs === undefined || inputs.length === 0) {
+      return res.status(400).json({
+        error: 'Podaj `inputs` (profil per dokument) albo legacy `sheets`/`profileId`/`profile`',
+      });
     }
 
-    const result = await commitGeneric({
-      buffer: req.file.buffer,
-      originalname: req.file.originalname,
+    const result = await commitGenericDocuments({
+      files: files.map((f) => ({ buffer: f.buffer, originalname: f.originalname })),
+      inputs,
       portfolioId: req.portfolioId,
       userId: req.userId,
-      profileId,
-      profileJson,
-      sheets,
     });
     if (!result.success) {
       return res.status(400).json({ ...result, error: result.errors.join('; ') });
@@ -209,6 +205,25 @@ function parseProfileField(raw: unknown): unknown {
 function parseSheetsField(raw: unknown): GenericSheetProfileInput[] | undefined {
   const parsed = parseProfileField(raw);
   return Array.isArray(parsed) ? (parsed as GenericSheetProfileInput[]) : undefined;
+}
+
+/**
+ * Wejścia profili per dokument: nowe `inputs` (multi-plik, JSON tablica
+ * {file, sheet, profileId|profileJson}) albo legacy `sheets` (XLSX) /
+ * `profileId`/`profile` (1 CSV). undefined = nic nie podano.
+ */
+function resolveDocumentInputs(body: unknown): GenericSheetProfileInput[] | undefined {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const explicit = parseProfileField(b.inputs);
+  if (Array.isArray(explicit)) return explicit as GenericSheetProfileInput[];
+  const sheets = parseSheetsField(b.sheets);
+  if (sheets !== undefined) return sheets;
+  const profileId = typeof b.profileId === 'string' && b.profileId ? b.profileId : undefined;
+  const profileJson = profileId ? undefined : parseProfileField(b.profile);
+  if (profileId || profileJson !== undefined) {
+    return [{ sheet: undefined, profileId, profileJson }];
+  }
+  return undefined;
 }
 
 export default router;

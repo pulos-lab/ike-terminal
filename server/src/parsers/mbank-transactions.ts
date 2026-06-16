@@ -1,6 +1,7 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
 import {
+  normalizeForDetect,
   parseNumber,
   roundTo2,
   computeTotal,
@@ -137,7 +138,7 @@ export function parseMbankTransactions(
 export function isMbankFormat(csvContent: string): boolean {
   const lines = csvContent.split('\n');
   for (const line of lines) {
-    const lower = line.toLowerCase();
+    const lower = normalizeForDetect(line);
     // Real export header: "Czas transakcji;Papier;Giełda;K/S;..."
     // or comma-delimited: "Czas transakcji,Papier,Giełda,K/S,..."
     if (lower.includes('czas transakcji') && lower.includes('papier') && lower.includes('k/s')) {
@@ -149,7 +150,7 @@ export function isMbankFormat(csvContent: string): boolean {
     }
   }
   // Also check for mBank metadata markers
-  const content = csvContent.substring(0, 2000).toLowerCase();
+  const content = normalizeForDetect(csvContent.substring(0, 2000));
   return content.includes('emakler') && content.includes('historia transakcji');
 }
 
