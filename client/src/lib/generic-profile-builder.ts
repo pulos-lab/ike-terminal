@@ -249,6 +249,170 @@ export function suggestDraft(
   };
 }
 
+// ── Ocena pewności mapowania (skan próbki) ───────────────────────────────────
+
+/** Status pojedynczego pola po skanie: pewne / niepewne / brak. */
+export type FieldStatus = 'ok' | 'uncertain' | 'missing';
+
+/** Pola oceniane w trybie all-trades (wymagane do importu transakcji). */
+export type ScoredField = 'date' | 'paperName' | 'quantity' | 'price' | 'currency' | 'side';
+
+export interface DraftScore {
+  /** Werdykt sterujący gałęzią kreatora. */
+  verdict: 'complete' | 'near' | 'incomplete';
+  /** Status każdego ocenianego pola. */
+  fields: Record<ScoredField, FieldStatus>;
+  /** Pola do dopytania (status ≠ 'ok'), w kolejności wyświetlania. */
+  gaps: ScoredField[];
+  /** Plik wygląda na operacje gotówkowe (kwota bez ilości/ceny) → tryb reguł. */
+  operationsLike: boolean;
+}
+
+/** Czy wartość wygląda na liczbę (toleruje separatory PL/EN, spacje, nawiasy). */
+function looksNumeric(raw: string): boolean {
+  const cleaned = raw.trim().replace(/[^\d.,-]/g, '');
+  if (!/\d/.test(cleaned)) return false;
+  const normalized =
+    cleaned.includes(',') && !cleaned.includes('.')
+      ? cleaned.replace(',', '.')
+      : cleaned.replace(/,/g, '');
+  return Number.isFinite(parseFloat(normalized));
+}
+
+/** Czy któraś wartość próbki pasuje do znanego wzorca daty. */
+function looksLikeDate(samples: string[]): boolean {
+  return samples.some((s) => DATE_FORMAT_PATTERNS.some((p) => p.re.test(s.trim())));
+}
+
+/**
+ * Oceń draft heurystyki na (zredagowanej) próbce: które pola wymagane udało się
+ * pewnie zmapować, a o które trzeba dopytać. Sterownik UI „prowadź wynikiem":
+ *   complete   → wszystkie pola pewne → prosto do podglądu (0 pytań),
+ *   near       → 1–2 luki → karta „uzupełnij brakujące pola",
+ *   incomplete → ≥3 luki / brak daty / plik operacji → prowadź AI lub pełny edytor.
+ * Liczy TYLKO tryb all-trades; tryb reguł obsługuje pełny edytor.
+ */
+export function scoreDraft(draft: ProfileDraft, sampleRows: string[][]): DraftScore {
+  const t = draft.trade;
+  const colVals = (idx: number): string[] =>
+    idx >= 0 ? sampleRows.map((r) => (r[idx] ?? '').trim()).filter(Boolean) : [];
+  const majorityOk = (vals: string[], pred: (v: string) => boolean): boolean =>
+    vals.length > 0 && vals.filter(pred).length >= Math.ceil(vals.length / 2);
+
+  const dateStatus: FieldStatus =
+    t.dateCol < 0 ? 'missing' : looksLikeDate(colVals(t.dateCol)) ? 'ok' : 'uncertain';
+  const paperStatus: FieldStatus =
+    t.paperNameCol < 0 ? 'missing' : colVals(t.paperNameCol).length > 0 ? 'ok' : 'uncertain';
+  const numStatus = (idx: number): FieldStatus => {
+    if (idx < 0) return 'missing';
+    const vals = colVals(idx);
+    return vals.length === 0 ? 'uncertain' : majorityOk(vals, looksNumeric) ? 'ok' : 'uncertain';
+  };
+  const currencyStatus: FieldStatus =
+    t.currencyCol >= 0
+      ? colVals(t.currencyCol).some((v) => /^[A-Za-z]{3}$/.test(v))
+        ? 'ok'
+        : 'uncertain'
+      : t.currencyFallback.trim()
+        ? 'ok'
+        : 'missing';
+
+  // Strona: kolumna z rozpoznanymi tokenami K/S, albo znak liczby z ujemnymi w próbce.
+  let sideStatus: FieldStatus;
+  if (t.sideStrategy === 'column') {
+    const vals = distinctValues(sampleRows, t.sideCol);
+    const recognized =
+      vals.some((v) => BUY_VALUE_RE.test(v)) && vals.some((v) => SELL_VALUE_RE.test(v));
+    sideStatus = recognized ? 'ok' : t.sideCol >= 0 ? 'uncertain' : 'missing';
+  } else {
+    const signCol = t.sideCol >= 0 ? t.sideCol : t.quantityCol;
+    sideStatus = colVals(signCol).some((v) => v.startsWith('-') || v.startsWith('('))
+      ? 'ok'
+      : 'uncertain';
+  }
+
+  const fields: Record<ScoredField, FieldStatus> = {
+    date: dateStatus,
+    paperName: paperStatus,
+    quantity: numStatus(t.quantityCol),
+    price: numStatus(t.priceCol),
+    currency: currencyStatus,
+    side: sideStatus,
+  };
+
+  const operationsLike = t.quantityCol < 0 && t.priceCol < 0 && draft.cash.amountCol >= 0;
+  const ORDER: ScoredField[] = ['date', 'paperName', 'quantity', 'price', 'side', 'currency'];
+  const gaps = ORDER.filter((f) => fields[f] !== 'ok');
+  const REQUIRED: ScoredField[] = ['date', 'paperName', 'quantity', 'price', 'side'];
+  const requiredGaps = REQUIRED.filter((f) => fields[f] !== 'ok');
+
+  let verdict: DraftScore['verdict'];
+  if (operationsLike || dateStatus === 'missing') verdict = 'incomplete';
+  else if (requiredGaps.length === 0 && currencyStatus === 'ok') verdict = 'complete';
+  else if (requiredGaps.length <= 2) verdict = 'near';
+  else verdict = 'incomplete';
+
+  return { verdict, fields, gaps, operationsLike };
+}
+
+// ── Sugestia reguł klasyfikacji (pliki operacji) ─────────────────────────────
+
+/**
+ * Słowa-klucze opisu → typ operacji. KOLEJNOŚĆ MA ZNACZENIE (first-match):
+ * „podatek od dywidendy" musi trafić w podatek PRZED dywidendą.
+ */
+const RULE_KEYWORDS: Array<{ re: RegExp; emit: RowClass }> = [
+  { re: /podatek|withhold|\bwht\b|\btax\b/i, emit: 'withholding_tax' },
+  { re: /dywidend|dividend/i, emit: 'dividend' },
+  { re: /kupon|coupon/i, emit: 'coupon' },
+  { re: /odsetk|interest/i, emit: 'interest' },
+  { re: /wpłat|wplat|zasilenie|deposit/i, emit: 'deposit' },
+  { re: /wypłat|wyplat|withdraw/i, emit: 'withdrawal' },
+  { re: /prowizj|commission|\bfee\b|opłat|oplat/i, emit: 'fee' },
+];
+
+/**
+ * Zasiej reguły klasyfikacji z UNIKALNYCH wartości kolumny opisu — punkt startowy
+ * dla plików operacji (gdzie heurystyka all-trades nie pomaga). Dla każdego
+ * rozpoznanego słowa kluczowego tworzy regułę `opis contains <dopasowany fragment>`
+ * → typ. Fragmenty brane są z danych (zachowują wielkość liter — silnik dopasowuje
+ * case-sensitive). Wynik to SUGESTIA — użytkownik weryfikuje/edytuje w edytorze.
+ */
+export function suggestRules(
+  headers: string[],
+  sampleRows: string[][],
+): { descriptionCol: number; rules: DraftClassifyRule[] } {
+  const descriptionCol = findCol(headers, [
+    /(tytuł|tytul|opis|description|comment|komentarz|operacj|rodzaj|typ|type)/,
+  ]);
+  if (descriptionCol < 0) return { descriptionCol: -1, rules: [] };
+
+  const byEmit = new Map<RowClass, Set<string>>();
+  for (const val of distinctValues(sampleRows, descriptionCol, 50)) {
+    for (const { re, emit } of RULE_KEYWORDS) {
+      const m = re.exec(val);
+      if (m) {
+        (byEmit.get(emit) ?? byEmit.set(emit, new Set()).get(emit)!).add(m[0]);
+        break;
+      }
+    }
+  }
+
+  const rules: DraftClassifyRule[] = [];
+  let i = 0;
+  for (const [emit, matched] of byEmit) {
+    rules.push({
+      id: `rule-${i + 1}-${i}`,
+      colIndex: descriptionCol,
+      op: 'contains',
+      values: [...matched].join(', '),
+      emit,
+    });
+    i++;
+  }
+  return { descriptionCol, rules };
+}
+
 // ── Draft → ImportProfile ────────────────────────────────────────────────────
 
 const splitValues = (raw: string): string[] =>

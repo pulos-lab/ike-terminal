@@ -3,7 +3,9 @@ import {
   adoptProfileForDocument,
   buildProfileFromDraft,
   detectDateFormat,
+  scoreDraft,
   suggestDraft,
+  suggestRules,
   type ProfileDraft,
 } from '../generic-profile-builder';
 import { validateImportProfile } from 'shared';
@@ -46,6 +48,80 @@ describe('suggestDraft — heurystyczny prefill', () => {
     expect(draft.trade.quantityCol).toBe(3);
     expect(draft.trade.priceCol).toBe(4);
     expect(draft.trade.dateFormat).toBe('DD.MM.YYYY');
+  });
+});
+
+describe('scoreDraft — skan pewności mapowania', () => {
+  it('pełne transakcje z kolumną strony → complete, brak luk', () => {
+    const draft = suggestDraft(HEADERS, SAMPLE, { delimiter: '|', headerRowIndex: 0 });
+    const score = scoreDraft(draft, SAMPLE);
+    expect(score.verdict).toBe('complete');
+    expect(score.gaps).toEqual([]);
+    expect(score.fields.side).toBe('ok');
+  });
+
+  it('brak kolumny strony + dodatnie ilości → near z luką „side"', () => {
+    const headers = ['data', 'papier', 'ilość', 'cena', 'waluta'];
+    const sample = [
+      ['2025-01-10', 'KGHM', '10', '150,50', 'PLN'],
+      ['2025-02-11', 'CD PROJEKT', '5', '120,00', 'PLN'],
+    ];
+    const draft = suggestDraft(headers, sample, { delimiter: ';', headerRowIndex: 0 });
+    const score = scoreDraft(draft, sample);
+    expect(score.verdict).toBe('near');
+    expect(score.gaps).toContain('side');
+    expect(score.fields.date).toBe('ok');
+    expect(score.fields.quantity).toBe('ok');
+  });
+
+  it('plik operacji (kwota bez ilości/ceny) → incomplete + operationsLike', () => {
+    const headers = ['data', 'tytuł operacji', 'kwota', 'waluta'];
+    const sample = [
+      ['2025-01-10', 'Dywidenda KGHM', '12,50', 'PLN'],
+      ['2025-02-01', 'Wpłata środków', '1000,00', 'PLN'],
+    ];
+    const draft = suggestDraft(headers, sample, { delimiter: ';', headerRowIndex: 0 });
+    const score = scoreDraft(draft, sample);
+    expect(score.verdict).toBe('incomplete');
+    expect(score.operationsLike).toBe(true);
+  });
+
+  it('brak kolumny daty → incomplete', () => {
+    const headers = ['papier', 'ilość', 'cena'];
+    const sample = [['KGHM', '10', '150']];
+    const draft = suggestDraft(headers, sample, { delimiter: ';', headerRowIndex: 0 });
+    expect(scoreDraft(draft, sample).verdict).toBe('incomplete');
+    expect(scoreDraft(draft, sample).fields.date).toBe('missing');
+  });
+});
+
+describe('suggestRules — sugestia reguł z opisu', () => {
+  it('mapuje słowa-klucze opisu na typy (podatek > dywidenda)', () => {
+    const headers = ['data', 'tytuł operacji', 'kwota', 'waluta'];
+    const sample = [
+      ['2025-01-10', 'Dywidenda KGHM', '12,50', 'PLN'],
+      ['2025-02-01', 'Podatek od dywidendy', '-2,38', 'PLN'],
+      ['2025-03-01', 'Wpłata środków', '1000,00', 'PLN'],
+      ['2025-04-01', 'Wypłata środków', '-500,00', 'PLN'],
+    ];
+    const { descriptionCol, rules } = suggestRules(headers, sample);
+    expect(descriptionCol).toBe(1);
+    const emits = rules.map((r) => r.emit);
+    expect(emits).toContain('withholding_tax');
+    expect(emits).toContain('dividend');
+    expect(emits).toContain('deposit');
+    expect(emits).toContain('withdrawal');
+    // Reguły zasiane z opisu budują poprawny profil reguł.
+    const draft = suggestDraft(headers, sample, { delimiter: ';', headerRowIndex: 0 });
+    draft.mode = 'rules';
+    draft.classify = rules;
+    draft.cash.descriptionCol = descriptionCol;
+    expect(buildProfileFromDraft(draft).ok).toBe(true);
+  });
+
+  it('brak kolumny opisu → brak reguł', () => {
+    const { rules } = suggestRules(['data', 'ilość', 'cena'], [['2025-01-01', '10', '100']]);
+    expect(rules).toEqual([]);
   });
 });
 
