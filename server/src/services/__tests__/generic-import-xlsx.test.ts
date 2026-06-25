@@ -164,6 +164,24 @@ describe('generic-import-service — XLSX wieloarkuszowy', () => {
     expect(batches.map((b) => b.sheet).sort()).toEqual(['Cash', 'Trades']);
   });
 
+  it('reimport przez ponowne wgranie: izoluje arkusz Trades, Cash nietknięty', async () => {
+    // Dokładnie jeden batch Trades (przed testem idempotencji) — ten z wierszami.
+    const tradesBatch = svc.listGenericBatches(PID).find((b) => b.sheet === 'Trades')!;
+    const beforeTx = txRepo.getTransactionsCount(PID);
+    const beforeOps = opsRepo.getOperationsCount(PID);
+
+    // Użytkownik wgrywa cały plik XLSX ponownie; fingerprint dobiera arkusz Trades.
+    const result = await svc.reimportGenericBatchFromUpload(PID, tradesBatch.importBatch, {
+      buffer: xlsxBuffer,
+      originalname: 'broker_export.xlsx',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.transactionsImported).toBe(2); // arkusz Trades: delete + insert
+    expect(txRepo.getTransactionsCount(PID)).toBe(beforeTx);
+    expect(opsRepo.getOperationsCount(PID)).toBe(beforeOps); // Cash (inny batch) — bez zmian
+  });
+
   it('commit ponownie tego samego pliku → wszystko duplikaty (idempotencja)', async () => {
     const result = await svc.commitGeneric({
       buffer: xlsxBuffer,

@@ -471,7 +471,9 @@ export function ImportDialog({ open, onOpenChange }: Props) {
           <div className="space-y-4">
             <div className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
               Import uniwersalny sam rozpozna układ kolumn Twojego pliku. Jeśli to nowy format —
-              poprowadzimy Cię przez szybkie mapowanie i pokażemy podgląd przed zapisem.
+              poprowadzimy Cię przez szybkie mapowanie i pokażemy podgląd przed zapisem. Plików nie
+              przechowujemy na serwerze — jeśli kiedyś poprawimy mapowanie, poprosimy Cię o ponowne
+              wgranie pliku.
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">

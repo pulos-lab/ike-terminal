@@ -19,7 +19,7 @@ const {
   findActiveProfileByFingerprint,
   listProfileAudit,
   profileChangedSections,
-  sweepRawRetention,
+  purgeAllRawFiles,
 } = await import('../import-profiles-repo.js');
 const { getImportsDb, closeImportsDb } = await import('../imports-db.js');
 const { validateImportProfile } = await import('shared');
@@ -78,7 +78,6 @@ describe('kuracja admina — approve/reject/edycja/retencja', () => {
       portfolioId: 'p-1',
       importBatch: 'batch-1',
       fileName: 'x.csv',
-      rawFileGz: Buffer.from('raw'),
     });
     const r1 = approveProfile({ id: v1.id, adminUserId: 'admin', note: 'pierwsza wersja' });
     // Batch zaimportowany TĄ wersją nie wymaga re-importu.
@@ -140,20 +139,19 @@ describe('kuracja admina — approve/reject/edycja/retencja', () => {
     expect(profileChangedSections(a, a)).toEqual([]);
   });
 
-  it('retencja: zeruje raw starsze niż N dni, świeże zostawia', () => {
+  it('purgeAllRawFiles: zeruje legacy surowe pliki, idempotentny', () => {
     const db = getImportsDb();
-    // Postarz batch-1 o 100 dni.
+    // Symuluj legacy zapis surowego pliku (recordProfileBatch już go NIE zapisuje).
     db.prepare(
-      `UPDATE profile_import_batches SET imported_at = datetime('now', '-100 days')
-       WHERE import_batch = 'batch-1'`,
-    ).run();
-    const cleared = sweepRawRetention(90);
+      `UPDATE profile_import_batches SET raw_file_gz = ? WHERE import_batch = 'batch-1'`,
+    ).run(Buffer.from('legacy-raw'));
+    const cleared = purgeAllRawFiles();
     expect(cleared).toBe(1);
     const raw = db
       .prepare(`SELECT raw_file_gz FROM profile_import_batches WHERE import_batch = 'batch-1'`)
       .get() as { raw_file_gz: Buffer | null };
     expect(raw.raw_file_gz).toBeNull();
-    // Drugi sweep nie ma już czego czyścić.
-    expect(sweepRawRetention(90)).toBe(0);
+    // Drugi przebieg nie ma już czego czyścić.
+    expect(purgeAllRawFiles()).toBe(0);
   });
 });

@@ -8,12 +8,13 @@
  * Tabele:
  * - import_profiles        — wersjonowane profile keyed by fingerprint nagłówków,
  * - profile_audit          — ślad zmian (created/edited/approved/rejected/superseded),
- * - profile_import_batches — który import (portfel+batch) użył której wersji profilu
- *                            + gzip oryginalnego pliku (re-import po korekcie profilu).
+ * - profile_import_batches — który import (portfel+batch) użył której wersji profilu.
  *
- * Prywatność: w `sample_rows_json` ląduje WYŁĄCZNIE zredagowana próbka
- * (sample-redactor) — to ją widzi admin przy review. Surowy plik (raw_file_gz)
- * jest scoped do portfela właściciela i nigdy nie jest pokazywany adminowi.
+ * Prywatność: plików użytkownika NIE przechowujemy. Kolumna `raw_file_gz` to legacy
+ * (niezapisywana; czyszczona przy starcie przez `purgeAllRawFiles`). Re-import po
+ * korekcie profilu wymaga ponownego wgrania pliku przez użytkownika. W
+ * `sample_rows_json` ląduje WYŁĄCZNIE zredagowana próbka (sample-redactor) — to ją
+ * widzi admin przy review.
  */
 import Database from 'better-sqlite3';
 import fs from 'fs';
@@ -74,7 +75,7 @@ export function getImportsDb(): Database.Database {
         portfolio_id TEXT NOT NULL,
         import_batch TEXT NOT NULL,
         file_name TEXT,
-        raw_file_gz BLOB,
+        raw_file_gz BLOB, -- legacy, nieużywane: plików nie przechowujemy (purgeAllRawFiles czyści)
         needs_reimport INTEGER NOT NULL DEFAULT 0,
         imported_at TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(portfolio_id, import_batch)

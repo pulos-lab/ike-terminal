@@ -205,18 +205,16 @@ export function recordProfileBatch(input: {
   portfolioId: string;
   importBatch: string;
   fileName?: string;
-  rawFileGz?: Buffer;
 }): void {
   getImportsDb()
     .prepare(
       `INSERT INTO profile_import_batches
-         (profile_id, profile_version, portfolio_id, import_batch, file_name, raw_file_gz)
-       VALUES (?, ?, ?, ?, ?, ?)
+         (profile_id, profile_version, portfolio_id, import_batch, file_name)
+       VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(portfolio_id, import_batch) DO UPDATE SET
          profile_id = excluded.profile_id,
          profile_version = excluded.profile_version,
          file_name = excluded.file_name,
-         raw_file_gz = excluded.raw_file_gz,
          needs_reimport = 0,
          imported_at = datetime('now')`,
     )
@@ -226,7 +224,6 @@ export function recordProfileBatch(input: {
       input.portfolioId,
       input.importBatch,
       input.fileName ?? null,
-      input.rawFileGz ?? null,
     );
 }
 
@@ -259,15 +256,12 @@ export function listProfileBatches(portfolioId: string): ProfileBatchRow[] {
   }));
 }
 
-/** Batch + surowy plik (gzip) — wyłącznie dla portfela właściciela (scoping w WHERE). */
-export function getProfileBatchWithRaw(
-  portfolioId: string,
-  importBatch: string,
-): (ProfileBatchRow & { rawFileGz: Buffer | null }) | null {
+/** Pojedynczy batch (bez pliku) — wyłącznie dla portfela właściciela (scoping w WHERE). */
+export function getProfileBatch(portfolioId: string, importBatch: string): ProfileBatchRow | null {
   const r = getImportsDb()
     .prepare(
       `SELECT id, profile_id, profile_version, portfolio_id, import_batch, file_name,
-              raw_file_gz, needs_reimport, imported_at
+              needs_reimport, imported_at
        FROM profile_import_batches WHERE portfolio_id = ? AND import_batch = ?`,
     )
     .get(portfolioId, importBatch) as
@@ -278,7 +272,6 @@ export function getProfileBatchWithRaw(
         portfolio_id: string;
         import_batch: string;
         file_name: string | null;
-        raw_file_gz: Buffer | null;
         needs_reimport: number;
         imported_at: string;
       }
@@ -291,7 +284,6 @@ export function getProfileBatchWithRaw(
     portfolioId: r.portfolio_id,
     importBatch: r.import_batch,
     fileName: r.file_name,
-    rawFileGz: r.raw_file_gz,
     needsReimport: r.needs_reimport === 1,
     importedAt: r.imported_at,
   };
@@ -526,16 +518,14 @@ export function rejectProfile(input: { id: string; adminUserId: string; note?: s
 }
 
 /**
- * Retencja surowych plików: zeruje raw_file_gz starsze niż N dni (leniwie,
- * przy starcie serwera — bez crona, styl projektu). Batch bez raw traci
- * możliwość re-importu — to świadomy koszt retencji.
+ * Jednorazowe wymazanie WSZYSTKICH przechowanych surowych plików. Kolumna
+ * raw_file_gz to legacy — plików już nie zapisujemy (prywatność); ta funkcja
+ * czyści to, co zapisały starsze wersje. Wołana przy starcie serwera,
+ * idempotentna (drugi przebieg: 0 wierszy). Zwraca liczbę wyczyszczonych batchy.
  */
-export function sweepRawRetention(days: number): number {
+export function purgeAllRawFiles(): number {
   const res = getImportsDb()
-    .prepare(
-      `UPDATE profile_import_batches SET raw_file_gz = NULL
-       WHERE raw_file_gz IS NOT NULL AND imported_at < datetime('now', ?)`,
-    )
-    .run(`-${Math.max(1, Math.floor(days))} days`);
+    .prepare(`UPDATE profile_import_batches SET raw_file_gz = NULL WHERE raw_file_gz IS NOT NULL`)
+    .run();
   return res.changes;
 }
