@@ -240,7 +240,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !createMut.isPending && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Dodaj transakcję</DialogTitle>
           <DialogDescription>

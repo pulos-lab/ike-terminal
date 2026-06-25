@@ -263,7 +263,7 @@ function ReviewDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             Review profilu {p?.brokerLabel ? `„${p.brokerLabel}"` : ''} v{p?.version ?? '…'}

@@ -391,7 +391,15 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
 
   return (
     <Dialog open={open} onOpenChange={(v) => onOpenChange(v)}>
-      <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
+      {/*
+       * Szerokość przez wariant `sm:` — bez prefiksu tailwind-merge NIE usuwa
+       * domyślnego `sm:max-w-lg` z DialogContent (inny wariant = brak konfliktu),
+       * więc na desktopie wygrywało 512px i podgląd (7 kolumn) przewijał się w poziomie.
+       * Krok podglądu dostaje więcej miejsca niż formularz mapowania.
+       */}
+      <DialogContent
+        className={`${step === 'preview' ? 'sm:max-w-4xl' : 'sm:max-w-3xl'} max-h-[88vh] overflow-y-auto`}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             Import uniwersalny
@@ -417,8 +425,8 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
           <div className="space-y-4">
             {multiDoc && (
               <p className="text-xs text-muted-foreground">
-                Mapujesz tabelę <span className="font-medium">„{docLabel(current.analysis)}"</span> (
-                {cursor + 1} z {sheets.length}). Po zmapowaniu przejdziemy do kolejnej, a podgląd
+                Mapujesz tabelę <span className="font-medium">„{docLabel(current.analysis)}"</span>{' '}
+                ({cursor + 1} z {sheets.length}). Po zmapowaniu przejdziemy do kolejnej, a podgląd
                 pokaże dane ze wszystkich tabel razem.
               </p>
             )}
@@ -535,7 +543,11 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
               )}
             </div>
 
-            <MappingEditor draft={draft} sampleRows={current.analysis.sampleRows} onChange={setDraft} />
+            <MappingEditor
+              draft={draft}
+              sampleRows={current.analysis.sampleRows}
+              onChange={setDraft}
+            />
             {mappingErrors.length > 0 && (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
                 {mappingErrors.map((e, i) => (
@@ -552,7 +564,9 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
                 Anuluj
               </Button>
               <Button onClick={handleSheetMapped}>
-                {multiDoc && cursor < sheets.length - 1 ? 'Dalej (kolejna tabela)' : 'Pokaż podgląd'}
+                {multiDoc && cursor < sheets.length - 1
+                  ? 'Dalej (kolejna tabela)'
+                  : 'Pokaż podgląd'}
               </Button>
             </div>
           </div>
