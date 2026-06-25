@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { getAuthDb } from '../auth.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { requireAdmin } from '../middleware/require-admin.js';
+import { notifyNewBugReport } from '../services/admin-notifications.js';
 
 const router = Router();
 
@@ -48,6 +49,14 @@ router.post(
       req.headers['user-agent'] || null,
       req.headers['referer'] || null,
     );
+
+    // Powiadom admina (fire-and-forget; nie blokuje odpowiedzi, nigdy nie rzuca).
+    void notifyNewBugReport({
+      category,
+      description: description.trim(),
+      reporterEmail: req.userEmail ?? null,
+      reporterUserId: req.userId,
+    });
 
     res.json({ success: true, id });
   }),

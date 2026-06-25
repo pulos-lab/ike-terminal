@@ -45,6 +45,7 @@ import { classifyFile } from './import-service.js';
 import { redactSampleRows } from './sample-redactor.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
 import { generateProfileFromContent } from './profile-generator.js';
+import { notifyNewImportProfile } from './admin-notifications.js';
 import {
   bumpProfileUsage,
   findActiveProfileByFingerprint,
@@ -373,6 +374,9 @@ export async function generateProfileForFile(file: {
     llmConfidence: generated.confidence,
   });
 
+  // Powiadom admina o nowym profilu (AI) do kuracji — fire-and-forget.
+  void notifyNewImportProfile(row);
+
   return {
     summary: profileSummary(row),
     profileJson: row.profile,
@@ -568,6 +572,8 @@ function resolveOrInsertProfileRow(
     generatedBy: 'manual',
     createdByUserId: userId,
   });
+  // Powiadom admina o nowym profilu (ręczne mapowanie) do kuracji — fire-and-forget.
+  void notifyNewImportProfile(row);
   return { row };
 }
 
