@@ -12,7 +12,7 @@ import {
   generateProfileForFile,
   listGenericBatches,
   previewGenericDocuments,
-  reimportGenericBatch,
+  reimportGenericBatchFromUpload,
 } from '../services/generic-import-service.js';
 import type { GenericSheetProfileInput } from 'shared';
 import { isLlmEnabled, LlmUnavailableError } from '../services/llm-client.js';
@@ -176,13 +176,19 @@ router.get('/batches', (req, res) => {
 });
 
 /**
- * POST /api/import/generic/reimport/:importBatch — ponowne przetworzenie
- * batcha z przechowanego pliku przy użyciu aktualnego profilu z biblioteki.
+ * POST /api/import/generic/reimport/:importBatch — ponowne przetworzenie batcha
+ * z pliku WGRANEGO PONOWNIE (multipart, pole `file`) aktualnym profilem z
+ * biblioteki. Plików nie przechowujemy, więc korekta wymaga ponownego wgrania.
  */
 router.post(
   '/reimport/:importBatch',
+  upload.single('file'),
   asyncHandler(async (req, res) => {
-    const result = await reimportGenericBatch(req.portfolioId, req.params.importBatch);
+    if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
+    const result = await reimportGenericBatchFromUpload(req.portfolioId, req.params.importBatch, {
+      buffer: req.file.buffer,
+      originalname: req.file.originalname,
+    });
     if (!result.success) {
       return res.status(400).json({ ...result, error: result.errors.join('; ') });
     }

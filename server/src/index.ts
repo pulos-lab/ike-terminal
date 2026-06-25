@@ -19,7 +19,7 @@ import importRouter from './routes/import.js';
 import bugReportsRouter from './routes/bug-reports.js';
 import adminImportProfilesRouter from './routes/admin-import-profiles.js';
 import { requireAdmin } from './middleware/require-admin.js';
-import { sweepRawRetention } from './db/import-profiles-repo.js';
+import { purgeAllRawFiles } from './db/import-profiles-repo.js';
 import shareRouter from './routes/share.js';
 import publicShareRouter from './routes/public-share.js';
 import { updateBenchmarkPrices } from './services/benchmark-updater.js';
@@ -207,18 +207,17 @@ const server = app.listen(config.port, () => {
   console.log(`Server running on http://localhost:${config.port} [${config.nodeEnv}]`);
 });
 
-// ── Retencja surowych plików importu generycznego (leniwie, bez crona) ──────
-// Zeruje raw_file_gz w batchach starszych niż IMPORT_RAW_RETENTION_DAYS
-// (domyślnie 90). Batch bez raw traci możliwość re-importu — świadomy koszt.
+// ── Jednorazowe wyczyszczenie legacy surowych plików importu (prywatność) ────
+// Plików użytkownika nie przechowujemy; ta funkcja czyści to, co zapisały starsze
+// wersje. Idempotentne (kolejny start: 0 wierszy).
 setTimeout(() => {
   try {
-    const days = Number(process.env.IMPORT_RAW_RETENTION_DAYS) || 90;
-    const cleared = sweepRawRetention(days);
+    const cleared = purgeAllRawFiles();
     if (cleared > 0) {
-      console.log(`Retencja importów: wyczyszczono surowe pliki ${cleared} batchy (> ${days} dni)`);
+      console.log(`Import: wyczyszczono ${cleared} legacy surowych plików (prywatność)`);
     }
   } catch (err) {
-    console.error('Retencja importów nie powiodła się:', (err as Error).message);
+    console.error('Czyszczenie surowych plików importu nie powiodło się:', (err as Error).message);
   }
 }, 5_000);
 

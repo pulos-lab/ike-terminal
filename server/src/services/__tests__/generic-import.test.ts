@@ -176,7 +176,7 @@ describe('generic-import-service — analyze → preview → commit → reimport
     expect(result.errors!.length).toBeGreaterThan(0);
   });
 
-  it('commit z profilem inline: import + profil zapisany jako pending + batch z gzipem', async () => {
+  it('commit z profilem inline: import + profil zapisany jako pending + batch (bez pliku)', async () => {
     const result = await svc.commitGeneric({
       buffer: csvBuffer([ROW_CDR, ROW_KGH]),
       originalname: 'unknown-broker.csv',
@@ -200,7 +200,7 @@ describe('generic-import-service — analyze → preview → commit → reimport
     expect(analyze.profile?.summary.id).toBe(result.profileId);
     expect(analyze.profile?.summary.status).toBe('pending');
 
-    // Batch zapisany z surowym plikiem (re-import możliwy)
+    // Batch zapisany (bez pliku — plików nie przechowujemy)
     const batches = svc.listGenericBatches(PID);
     expect(batches).toHaveLength(1);
     expect(batches[0].importBatch).toBe(result.importBatch);
@@ -247,14 +247,18 @@ describe('generic-import-service — analyze → preview → commit → reimport
     expect(analyze.profile?.summary.brokerLabel).toBe('Testowy Broker v2');
   });
 
-  it('reimport batcha: liczba wierszy bez zmian (delete + insert atomowo)', async () => {
+  it('reimport przez ponowne wgranie: liczba wierszy bez zmian (delete + insert atomowo)', async () => {
     const before = txRepo.getTransactionsCount(PID);
     const batches = svc.listGenericBatches(PID);
     // Najstarszy batch = pierwszy commit — jedyny, do którego należą wiersze
     // (kolejne commity były w całości duplikatami).
     const target = batches[batches.length - 1];
 
-    const result = await svc.reimportGenericBatch(PID, target.importBatch);
+    // Użytkownik wgrywa TEN SAM plik ponownie (plików nie przechowujemy).
+    const result = await svc.reimportGenericBatchFromUpload(PID, target.importBatch, {
+      buffer: csvBuffer([ROW_CDR, ROW_KGH]),
+      originalname: 'unknown-broker.csv',
+    });
 
     expect(result.success).toBe(true);
     expect(result.transactionsImported).toBe(2); // wstawione na nowo po delete
@@ -263,6 +267,30 @@ describe('generic-import-service — analyze → preview → commit → reimport
     const after = svc.listGenericBatches(PID).find((b) => b.importBatch === target.importBatch);
     expect(after?.profileVersion).toBe(2);
     expect(after?.needsReimport).toBe(false);
+  });
+
+  it('reimport: wgrany ZŁY plik (inny układ kolumn) → odrzucony, dane nietknięte', async () => {
+    const before = txRepo.getTransactionsCount(PID);
+    const target = svc.listGenericBatches(PID).slice(-1)[0];
+
+    const result = await svc.reimportGenericBatchFromUpload(PID, target.importBatch, {
+      buffer: Buffer.from('Kolumna A|Kolumna B|Kolumna C\nx|y|z', 'utf-8'),
+      originalname: 'inny-plik.csv',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.join(' ')).toMatch(/nie pasuje|inny układ/i);
+    // Żadnego delete bez replace — wiersze starego batcha zostają nietknięte.
+    expect(txRepo.getTransactionsCount(PID)).toBe(before);
+  });
+
+  it('commit NIE zapisuje surowego pliku (raw_file_gz = NULL)', () => {
+    const db = importsDb.getImportsDb();
+    const rows = db
+      .prepare(`SELECT raw_file_gz FROM profile_import_batches WHERE portfolio_id = ?`)
+      .all(PID) as Array<{ raw_file_gz: Buffer | null }>;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.raw_file_gz === null)).toBe(true);
   });
 
   it('analyze: podobny format (dodatkowa kolumna) → sugestia z biblioteki', async () => {
@@ -364,11 +392,17 @@ describe('generic-import-service — analyze → preview → commit → reimport
     expect(batches.map((b) => b.fileName).sort()).toEqual(['mf-ops.csv', 'mf-trades.csv']);
   });
 
-  it('multi-plik: re-import jednego batcha (raw per plik) — operacje nietknięte', async () => {
+  it('multi-plik: re-import jednego batcha przez ponowne wgranie — operacje nietknięte', async () => {
     const opsRepo = await import('../../db/operations-repo.js');
     const txBatch = svc.listGenericBatches(MF_PID).find((b) => b.fileName === 'mf-trades.csv')!;
     const before = txRepo.getTransactionsCount(MF_PID);
-    const result = await svc.reimportGenericBatch(MF_PID, txBatch.importBatch);
+    const result = await svc.reimportGenericBatchFromUpload(MF_PID, txBatch.importBatch, {
+      buffer: mfTx([
+        '2025-05-01,CD PROJEKT,PLOPTTC00011,BUY,10,100.00,PLN',
+        '2025-05-02,KGHM,PLKGHM000017,BUY,5,150.00,PLN',
+      ]),
+      originalname: 'mf-trades.csv',
+    });
     expect(result.success).toBe(true);
     expect(result.transactionsImported).toBe(2);
     expect(txRepo.getTransactionsCount(MF_PID)).toBe(before); // delete + insert

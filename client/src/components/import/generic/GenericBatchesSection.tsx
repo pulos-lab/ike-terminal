@@ -1,14 +1,13 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
-import { Button } from '@/components/ui/button';
-import { Loader2, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react';
+import { Loader2, Upload, CheckCircle, AlertCircle } from 'lucide-react';
 
 /**
  * Poprzednie importy uniwersalne tego portfela — domyka pętlę kuracji z F5:
  * gdy admin zatwierdzi poprawiony profil, batch dostaje flagę needsReimport,
- * a użytkownik widzi tu przycisk „Przetwórz ponownie" (idempotentny re-import
- * z przechowanego pliku przy użyciu aktualnego profilu).
+ * a użytkownik wgrywa plik PONOWNIE (plików nie przechowujemy). Re-import używa
+ * aktualnego profilu i zastępuje stary batch (ten sam import_batch).
  */
 export function GenericBatchesSection() {
   const queryClient = useQueryClient();
@@ -20,17 +19,21 @@ export function GenericBatchesSection() {
   });
 
   const reimport = useMutation({
-    mutationFn: (importBatch: string) => api.genericReimport(importBatch),
+    mutationFn: ({ importBatch, file }: { importBatch: string; file: File }) =>
+      api.genericReimport(importBatch, file),
+    // uploadFile NIE rzuca na błędy HTTP — zły plik (400) wraca jako success:false.
     onSuccess: (result) => {
+      if (!result.success) {
+        setResultMsg({
+          ok: false,
+          text: result.error || result.errors?.join('; ') || 'Nie udało się przetworzyć ponownie.',
+        });
+        return;
+      }
       void queryClient.invalidateQueries();
-      const added = (result.transactionsImported ?? 0) + (result.operationsImported ?? 0);
       setResultMsg({
         ok: true,
-        text:
-          `Przetworzono ponownie poprawionym profilem. ` +
-          (added > 0
-            ? `Nowe wiersze: ${added}.`
-            : 'Dane bez zmian (wszystko już było zaimportowane).'),
+        text: 'Zaimportowano ponownie z poprawionym mapowaniem. Stary import został zastąpiony.',
       });
     },
     onError: (err) =>
@@ -54,7 +57,8 @@ export function GenericBatchesSection() {
         <div className="rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs text-info">
           Administrator poprawił mapowanie {flagged.length === 1 ? 'formatu' : 'formatów'} —{' '}
           {flagged.length === 1 ? '1 import czeka' : `${flagged.length} importy czekają`} na
-          ponowne przetworzenie. To bezpieczne: istniejące wiersze nie zostaną zdublowane.
+          poprawkę. Wgraj ponownie ten sam plik — plików nie przechowujemy, więc korekta wymaga
+          wgrania go jeszcze raz. Stary, błędnie zmapowany import zostanie zastąpiony.
         </div>
       )}
       {resultMsg && (
@@ -94,20 +98,29 @@ export function GenericBatchesSection() {
               </span>
             </span>
             {b.needsReimport ? (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs shrink-0 border-info/50 text-info"
-                disabled={reimport.isPending}
-                onClick={() => reimport.mutate(b.importBatch)}
+              <label
+                className={`inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md border border-info/50 px-2 text-xs text-info hover:bg-info/10 ${
+                  reimport.isPending ? 'pointer-events-none opacity-60' : ''
+                }`}
               >
-                {reimport.isPending && reimport.variables === b.importBatch ? (
+                {reimport.isPending && reimport.variables?.importBatch === b.importBatch ? (
                   <Loader2 className="h-3 w-3 animate-spin" />
                 ) : (
-                  <RefreshCw className="h-3 w-3" />
+                  <Upload className="h-3 w-3" />
                 )}
-                <span className="ml-1">Przetwórz ponownie</span>
-              </Button>
+                <span>Wgraj plik ponownie</span>
+                <input
+                  type="file"
+                  accept=".csv,.xlsx"
+                  className="hidden"
+                  disabled={reimport.isPending}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    if (file) reimport.mutate({ importBatch: b.importBatch, file });
+                  }}
+                />
+              </label>
             ) : (
               <span className="text-muted-foreground shrink-0">aktualny</span>
             )}

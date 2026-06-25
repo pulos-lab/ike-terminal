@@ -6,10 +6,10 @@
  *             → profil z biblioteki / sugestie podobnych formatów / zredagowana próbka,
  * - preview : parseWithProfile bez ŻADNYCH zapisów — obowiązkowy krok przed commitem,
  * - commit  : atomowy import (te same inserty dedup co bulkImport → idempotencja),
- *             zapis batcha z gzipem oryginalnego pliku (re-import po korekcie profilu),
+ *             zapis batcha BEZ pliku (plików nie przechowujemy — prywatność),
  *             post-tx rezolucja tickerów (istniejący pipeline isin-resolver),
- * - reimport: delete wierszy batcha → re-parse surowego pliku aktualnym profilem
- *             → insert — całość atomowo w obrębie bazy portfela.
+ * - reimport: użytkownik wgrywa plik PONOWNIE → delete wierszy batcha → re-parse
+ *             aktualnym profilem → insert — całość atomowo w obrębie bazy portfela.
  *
  * Plik = zbiór TABEL: CSV ma jedną, XLSX ma jedną per arkusz z danymi. Każda
  * tabela przechodzi przez TEN SAM silnik (osobny fingerprint → osobny profil),
@@ -17,7 +17,6 @@
  * własny `import_batch` (re-import i flaga needs_reimport działają per arkusz).
  */
 import { randomUUID } from 'crypto';
-import { gzipSync, gunzipSync } from 'zlib';
 import type { CashOperation, ImportResult, SkippedRow, Transaction } from 'shared';
 import {
   validateImportProfile,
@@ -49,7 +48,7 @@ import { notifyNewImportProfile } from './admin-notifications.js';
 import {
   bumpProfileUsage,
   findActiveProfileByFingerprint,
-  getProfileBatchWithRaw,
+  getProfileBatch,
   getProfileById,
   insertPendingProfile,
   listActiveProfiles,
@@ -602,8 +601,8 @@ export interface CommitGenericDocumentsInput {
  * Atomowy import WIELU plików: każdy plik → tabele (CSV: 1, XLSX: N arkuszy);
  * każda tabela dostaje profil dopasowany po (file, sheet); wszystkie tabele
  * scalają się w JEDEN atomowy import. Rola wynika z profilu (classify), więc nie
- * ma slotów transakcje/operacje. Każda tabela = osobny batch z surowym plikiem
- * SWOJEGO źródła (re-import per tabela).
+ * ma slotów transakcje/operacje. Każda tabela = osobny batch (bez pliku — plików
+ * nie przechowujemy; re-import przez ponowne wgranie przez użytkownika).
  */
 export async function commitGenericDocuments(
   input: CommitGenericDocumentsInput,
@@ -612,7 +611,6 @@ export async function commitGenericDocuments(
   if (documents.length === 0) {
     return failResult(randomUUID(), ['Nie udało się odczytać tabeli danych z plików.']);
   }
-  const bufByName = new Map(input.files.map((f) => [f.originalname, f.buffer]));
 
   const tables: RunTable[] = [];
   // Ten sam fingerprint w wielu plikach (np. Bossa per-waluta) z profilem inline:
@@ -634,7 +632,6 @@ export async function commitGenericDocuments(
       profileRow: row,
       importBatch: randomUUID(),
       fileName: doc.fileName,
-      rawBuffer: bufByName.get(doc.fileName) ?? null,
     });
   }
   if (tables.length === 0) {
@@ -649,10 +646,8 @@ interface RunTable {
   profileRow: ImportProfileRow;
   /** Własny import_batch (re-import i flaga needs_reimport działają per tabela). */
   importBatch: string;
-  /** Nazwa pliku źródłowego tej tabeli (do batcha + cache gzipu). */
+  /** Nazwa pliku źródłowego tej tabeli (etykieta batcha + wybór arkusza XLSX przy re-imporcie). */
   fileName: string | null;
-  /** Surowy plik źródłowy tej tabeli (gzip do re-importu); null = brak retencji. */
-  rawBuffer: Buffer | null;
 }
 
 /**
@@ -719,19 +714,8 @@ async function runImportDocuments(args: {
   });
   runAll();
 
-  // 3. Batch per tabela — surowy plik per ŹRÓDŁOWY plik (gzip raz na plik, nie na
-  // każdy arkusz XLSX). Każdy batch trzyma raw SWOJEGO pliku → re-import per tabela.
-  const gzCache = new Map<string, Buffer>();
-  const rawGzFor = (table: RunTable): Buffer | undefined => {
-    if (!table.rawBuffer) return undefined;
-    const key = table.fileName ?? '';
-    let gz = gzCache.get(key);
-    if (!gz) {
-      gz = gzipSync(table.rawBuffer);
-      gzCache.set(key, gz);
-    }
-    return gz;
-  };
+  // 3. Batch per tabela (BEZ pliku — plików nie przechowujemy; prywatność). Re-import
+  // następuje przez ponowne wgranie i reużywa TEGO SAMEGO import_batch (deletePreviousBatch).
   for (const { table } of parsed) {
     recordProfileBatch({
       profileId: table.profileRow.id,
@@ -739,7 +723,6 @@ async function runImportDocuments(args: {
       portfolioId: pid,
       importBatch: table.importBatch,
       fileName: table.fileName ?? undefined,
-      rawFileGz: rawGzFor(table),
     });
     bumpProfileUsage(table.profileRow.id);
   }
@@ -823,24 +806,22 @@ export function listGenericBatches(portfolioId: string): GenericBatchInfo[] {
 }
 
 /**
- * Re-import batcha z przechowanego surowego pliku przy użyciu AKTUALNEGO
- * aktywnego profilu dla fingerprinta (approved > pending). XLSX: z pliku
- * wybieramy DOKŁADNIE tę tabelę, której fingerprint pasuje do tego batcha
- * (fingerprint XLSX zawiera nazwę arkusza) — pozostałe arkusze/batche nietknięte.
+ * Re-import batcha z pliku WGRANEGO PONOWNIE przez użytkownika (plików nie
+ * przechowujemy), przy użyciu AKTUALNEGO aktywnego profilu dla fingerprinta
+ * (approved > pending). Plik musi pasować fingerprintem do tego batcha — to
+ * zarazem walidacja, że użytkownik wgrał właściwy plik. XLSX: wybieramy DOKŁADNIE
+ * ten arkusz, którego fingerprint pasuje do batcha — pozostałe arkusze/batche
+ * nietknięte. Re-import reużywa TEGO SAMEGO import_batch + deletePreviousBatch,
+ * więc stare (błędnie zmapowane) wiersze są kasowane (dedup ich nie łapie).
  */
-export async function reimportGenericBatch(
+export async function reimportGenericBatchFromUpload(
   portfolioId: string,
   importBatch: string,
+  file: { buffer: Buffer; originalname: string },
 ): Promise<GenericCommitResult> {
-  const batch = getProfileBatchWithRaw(portfolioId, importBatch);
+  const batch = getProfileBatch(portfolioId, importBatch);
   if (!batch) {
     return failResult(importBatch, ['Nie znaleziono importu o podanym identyfikatorze.']);
-  }
-  if (!batch.rawFileGz) {
-    return failResult(importBatch, [
-      'Oryginalny plik tego importu nie jest już przechowywany (polityka retencji) — ' +
-        'wgraj plik ponownie przez import uniwersalny.',
-    ]);
   }
 
   const original = getProfileById(batch.profileId);
@@ -851,15 +832,14 @@ export async function reimportGenericBatch(
     return failResult(importBatch, ['Profil tego importu nie istnieje w bibliotece.']);
   }
 
-  const rawBuffer = gunzipSync(batch.rawFileGz);
-  const { documents } = await enumerateImportDocuments(rawBuffer, batch.fileName ?? '');
-  // Tabela tego batcha = ta o fingerprincie profilu; fallback: jedyna tabela.
-  const doc =
-    documents.find((d) => d.fingerprint === active.fingerprint) ??
-    (documents.length === 1 ? documents[0] : undefined);
+  const { documents } = await enumerateImportDocuments(file.buffer, file.originalname);
+  // Tabela tego batcha = ta o fingerprincie profilu. BEZ fallbacku „jedyna tabela":
+  // przy pliku od użytkownika niedopasowany fingerprint = zły albo zmieniony plik.
+  const doc = documents.find((d) => d.fingerprint === active.fingerprint);
   if (!doc) {
     return failResult(importBatch, [
-      'Nie odnaleziono w pliku tabeli pasującej do tego importu (zmienił się układ pliku?).',
+      'Wgrany plik nie pasuje do tego importu (inny układ kolumn). Wgraj dokładnie ten sam ' +
+        'plik/format, którego użyłeś przy pierwszym imporcie tego wiersza.',
     ]);
   }
 
@@ -870,7 +850,6 @@ export async function reimportGenericBatch(
         profileRow: active,
         importBatch,
         fileName: batch.fileName,
-        rawBuffer,
       },
     ],
     portfolioId,

@@ -518,11 +518,15 @@ export const api = {
   genericBatches: () =>
     request<{ batches: import('shared').GenericBatchInfo[] }>('/import/generic/batches'),
 
-  genericReimport: (importBatch: string) =>
-    request<import('shared').GenericCommitResult>(
+  /** Re-import batcha przez PONOWNE WGRANIE pliku (plików nie przechowujemy). */
+  genericReimport: (importBatch: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return uploadFile<import('shared').GenericCommitResult & { error?: string }>(
       `/import/generic/reimport/${encodeURIComponent(importBatch)}`,
-      { method: 'POST' },
-    ),
+      formData,
+    );
+  },
 
   // Kuracja profili importu (admin)
   adminListImportProfiles: (status?: import('shared').ImportProfileStatus) =>

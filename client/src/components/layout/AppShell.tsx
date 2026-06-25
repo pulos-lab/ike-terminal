@@ -164,6 +164,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     ? formatTimestampLocal(importStatus.lastImportDate)
     : null;
 
+  // Importy uniwersalne czekające na ponowne wgranie po korekcie mapowania przez
+  // admina. Wspólny klucz z GenericBatchesSection → jedno zapytanie; kropka
+  // aktualizuje się po re-imporcie (invalidateQueries unieważnia ten klucz).
+  const { data: genericBatches } = useQuery({
+    queryKey: ['generic-batches'],
+    queryFn: api.genericBatches,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const reimportCount = genericBatches?.batches.filter((b) => b.needsReimport).length ?? 0;
+
   return (
     <div className="flex h-screen overflow-hidden">
       <aside
@@ -217,10 +228,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </button>
               <button
                 onClick={() => setImportOpen(true)}
-                className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border hover:border-border-hover hover:bg-accent text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                title={
+                  reimportCount > 0
+                    ? `${reimportCount} import(y) czeka na ponowne wgranie pliku po korekcie mapowania`
+                    : undefined
+                }
+                className="relative flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border hover:border-border-hover hover:bg-accent text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Upload className="h-3.5 w-3.5" />
                 Import
+                {reimportCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-info px-1 text-[10px] font-semibold text-info-foreground">
+                    {reimportCount}
+                  </span>
+                )}
               </button>
             </div>
             {lastImport && (
@@ -282,6 +303,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <DropdownMenuItem onSelect={() => setImportOpen(true)}>
                 <Upload className="h-4 w-4" />
                 Import transakcji
+                {reimportCount > 0 && (
+                  <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-info px-1.5 text-[10px] font-semibold text-info-foreground">
+                    {reimportCount}
+                  </span>
+                )}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={toggleTheme}>
                 {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
