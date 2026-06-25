@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Dialog,
@@ -16,6 +16,7 @@ import {
   Info,
   Library,
   Loader2,
+  Settings2,
   Sparkles,
 } from 'lucide-react';
 import { api } from '@/lib/api-client';
@@ -30,9 +31,13 @@ import { BROKER_LABELS } from 'shared';
 import {
   adoptProfileForDocument,
   buildProfileFromDraft,
+  scoreDraft,
   suggestDraft,
+  suggestRules,
+  type DraftScore,
   type ProfileDraft,
 } from '@/lib/generic-profile-builder';
+import { GapFields } from './GapFields';
 import { MappingEditor } from './MappingEditor';
 import { PreviewTable } from './PreviewTable';
 import { SKIP_REASON_LABELS } from '@/lib/import-labels';
@@ -119,11 +124,30 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
   const [aiElapsed, setAiElapsed] = useState(0);
   const aiTimerRef = useRef<number | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  /** Werdykt pewności bieżącej tabeli — steruje gałęzią mapowania (near vs incomplete). */
+  const [initialVerdict, setInitialVerdict] = useState<'near' | 'incomplete'>('near');
+  /** Progresywne ujawnianie: pełny edytor i boks AI domyślnie schowane. */
+  const [showAllFields, setShowAllFields] = useState(false);
+  const [showAiBox, setShowAiBox] = useState(false);
 
   /** >1 tabela → pokazuj UI per tabela (numerację, „kolejna tabela", wkład tabel). */
   const multiDoc = sheets.length > 1;
   const current = sheets[cursor];
   const filesLabel = files.length === 1 ? (files[0]?.name ?? '') : `${files.length} plików`;
+
+  /** Live-skan bieżącego draftu (tryb all-trades) → karta luk + potwierdzenie pól. */
+  const liveScore = useMemo(
+    () =>
+      step === 'mapping' && draft && draft.mode === 'all-trades' && current
+        ? scoreDraft(draft, current.analysis.sampleRows)
+        : null,
+    [step, draft, current],
+  );
+  /** Tryb reguł = plik operacji; etykieta przełącznika edytora to sygnalizuje. */
+  const manualToggleLabel =
+    draft?.mode === 'rules' && draft.classify.length > 0
+      ? `Edytuj reguły ręcznie (${draft.classify.length} zasugerowanych)`
+      : 'Edytuj wszystkie pola ręcznie';
 
   /** Plik źródłowy danej tabeli (po nazwie); fallback do pierwszego (legacy 1-plik). */
   const fileForAnalysis = (a: GenericSheetAnalysis): File | undefined =>
@@ -217,25 +241,86 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, files]);
 
-  /** Znajdź pierwszą nierozwiązaną tabelę od `from`; wejdź w jej mapowanie albo (gdy brak) w podgląd. */
-  async function proceedFrom(works: SheetWork[], from: number) {
-    const next = works.findIndex((w, i) => i >= from && !w.resolved);
-    if (next === -1) {
-      await runMergedPreview(works);
-      return;
-    }
-    enterMapping(works, next);
+  /** Heurystyka tabeli: draft + werdykt pewności (czysta logika, bez efektów). */
+  function analyzeSheet(a: GenericSheetAnalysis): { draft: ProfileDraft; score: DraftScore } {
+    const draft = suggestDraft(a.headers, a.sampleRows, {
+      delimiter: a.delimiter,
+      headerRowIndex: a.headerRowIndex,
+    });
+    return { draft, score: scoreDraft(draft, a.sampleRows) };
   }
 
-  function enterMapping(works: SheetWork[], idx: number) {
+  function noteAutoDetected(labels: string[], multi: boolean) {
+    setMessages((prev) => [
+      ...prev,
+      {
+        kind: 'info',
+        text: multi
+          ? `Rozpoznano automatycznie układ kolumn: ${labels.map((l) => `„${l}"`).join(', ')}. Sprawdź podgląd przed importem.`
+          : 'Rozpoznaliśmy układ kolumn automatycznie — sprawdź podgląd przed importem.',
+      },
+    ]);
+  }
+
+  /**
+   * Od `from` znajdź pierwszą nierozwiązaną tabelę. Tabele z PEWNYM mapowaniem
+   * (verdict 'complete') auto-rozwiązujemy bez pytań i lecimy dalej; pierwszą
+   * niepewną otwieramy w mapowaniu; gdy wszystko rozwiązane — podgląd scalony.
+   */
+  async function proceedFrom(works: SheetWork[], from: number) {
+    let updated = works;
+    const auto: string[] = [];
+    let i = updated.findIndex((w, idx) => idx >= from && !w.resolved);
+    while (i !== -1) {
+      const a = updated[i].analysis;
+      const { draft, score } = analyzeSheet(a);
+      if (score.verdict === 'complete') {
+        const built = buildProfileFromDraft(draft);
+        if (built.ok) {
+          updated = updated.map((w, idx) =>
+            idx === i ? { ...w, resolved: { profileJson: built.profile } } : w,
+          );
+          auto.push(docLabel(a));
+          i = updated.findIndex((w, idx) => idx > i && !w.resolved);
+          continue;
+        }
+      }
+      setSheets(updated);
+      if (auto.length > 0) noteAutoDetected(auto, updated.length > 1);
+      enterMapping(updated, i, { draft, score });
+      return;
+    }
+    setSheets(updated);
+    if (auto.length > 0) noteAutoDetected(auto, updated.length > 1);
+    await runMergedPreview(updated);
+  }
+
+  function enterMapping(
+    works: SheetWork[],
+    idx: number,
+    pre?: { draft: ProfileDraft; score: DraftScore },
+  ) {
     const a = works[idx].analysis;
+    const { draft: d0, score } = pre ?? analyzeSheet(a);
+    let draft = d0;
+    // Plik operacji: zasiej tryb reguł, żeby pełny edytor nie startował pusty (P4).
+    if (score.operationsLike) {
+      const seeded = suggestRules(a.headers, a.sampleRows);
+      if (seeded.rules.length > 0) {
+        draft = {
+          ...d0,
+          mode: 'rules',
+          classify: seeded.rules,
+          defaultClass: 'skip',
+          cash: { ...d0.cash, descriptionCol: seeded.descriptionCol },
+        };
+      }
+    }
     setCursor(idx);
-    setDraft(
-      suggestDraft(a.headers, a.sampleRows, {
-        delimiter: a.delimiter,
-        headerRowIndex: a.headerRowIndex,
-      }),
-    );
+    setDraft(draft);
+    setInitialVerdict(score.verdict === 'incomplete' ? 'incomplete' : 'near');
+    setShowAllFields(false);
+    setShowAiBox(false);
     setMappingErrors([]);
     setAiConsent(false);
     setAiError(null);
@@ -432,122 +517,97 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
             )}
 
             {current.analysis.suggestions && current.analysis.suggestions.length > 0 && (
-              <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2.5">
+              <SuggestionsBox
+                suggestions={current.analysis.suggestions}
+                onUse={handleUseSuggestion}
+              />
+            )}
+
+            {/* INCOMPLETE: nietypowy układ / plik operacji → prowadź AI (CTA niżej). */}
+            {initialVerdict === 'incomplete' && (
+              <div className="rounded-md border border-primary/40 bg-primary/5 p-3 space-y-1">
                 <div className="flex items-center gap-2 text-sm font-semibold">
-                  <Library className="h-4 w-4 text-primary" />
-                  Podobne formaty w bibliotece
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  {draft.mode === 'rules'
+                    ? 'Plik wygląda na operacje gotówkowe'
+                    : 'Nie rozpoznaliśmy układu automatycznie'}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Te zapisane profile mają niemal identyczne kolumny. Jeśli broker tylko zmienił
-                  nazwę albo kolejność kolumny, użyj gotowego profilu zamiast generować mapowanie od
-                  nowa — podgląd potwierdzi dopasowanie, zanim cokolwiek zaimportujesz.
+                  {draft.mode === 'rules'
+                    ? 'Zawiera różne typy wierszy (dywidendy, wpłaty, opłaty…). Najpewniej rozpozna je automat — albo zmapuj regułami ręcznie poniżej.'
+                    : 'Układ kolumn jest nietypowy. Najszybciej rozpozna go automat — albo uzupełnij mapowanie ręcznie poniżej.'}
                 </p>
-                <div className="space-y-1.5">
-                  {current.analysis.suggestions.map((s) => (
-                    <div
-                      key={s.summary.id}
-                      className="flex items-center justify-between gap-3 rounded border border-border bg-background/50 px-2.5 py-1.5"
-                    >
-                      <span className="min-w-0 truncate text-xs">
-                        {s.summary.brokerLabel || 'Profil bez nazwy'}{' '}
-                        <span className="text-muted-foreground">
-                          · podobieństwo {(s.similarity * 100).toFixed(0)}%
-                        </span>
-                      </span>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 shrink-0 text-xs"
-                        onClick={() => handleUseSuggestion(s)}
-                      >
-                        Użyj i pokaż podgląd
-                      </Button>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
 
-            <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2.5">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <Sparkles className="h-4 w-4 text-primary" />
-                Automatyczne mapowanie (AI)
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Zamiast mapować ręcznie, możesz wygenerować mapowanie automatycznie. Do usługi AI
-                (serwer w UE) trafią{' '}
-                <span className="font-medium">
-                  wyłącznie zredagowane fragmenty {multiDoc ? 'tej tabeli' : 'pliku'}: nazwy kolumn,
-                  poniższa próbka, listy unikalnych wartości kolumn (np. typy operacji) oraz
-                  pojedyncze wiersze potrzebne do poprawy mapowania — wszystko po tej samej redakcji
-                </span>{' '}
-                — nigdy cały plik ani dane osobowe (numery rachunków, nazwiska i e-maile są
-                maskowane).
-              </p>
-              <details className="text-xs">
-                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                  Zobacz dokładnie, co zostanie wysłane
-                </summary>
-                <pre className="mt-2 max-h-40 overflow-auto rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
-                  {[
-                    current.analysis.headers.join(current.analysis.delimiter),
-                    ...current.analysis.sampleRows.map((r) => r.join(current.analysis.delimiter)),
-                  ].join('\n')}
-                </pre>
-              </details>
-              <label className="flex items-start gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={aiConsent}
-                  onChange={(e) => setAiConsent(e.target.checked)}
+            {/* NEAR: karta „uzupełnij brakujące pola" — pyta tylko o luki. */}
+            {initialVerdict === 'near' && liveScore && (
+              <div className="rounded-md border border-border bg-muted/30 p-3 space-y-3">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <CheckCircle className="h-4 w-4 text-success" />
+                  {liveScore.gaps.length === 0
+                    ? 'Wszystko gotowe — pokaż podgląd'
+                    : `Prawie gotowe — uzupełnij ${liveScore.gaps.length} ${pluralFields(liveScore.gaps.length)}`}
+                </div>
+                <GapFields
+                  draft={draft}
+                  sampleRows={current.analysis.sampleRows}
+                  score={liveScore}
+                  onChange={setDraft}
                 />
-                <span>
-                  Zgadzam się na wysłanie powyższej zredagowanej próbki do usługi AI w celu
-                  wygenerowania mapowania.
-                </span>
-              </label>
-              <div className="flex items-center gap-3">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 text-xs"
-                  disabled={!aiConsent || aiBusy}
-                  onClick={handleGenerateAi}
-                >
-                  {aiBusy ? (
-                    <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-                      Generowanie… {aiElapsed}s
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-                      Wygeneruj mapowanie (AI)
-                    </>
-                  )}
-                </Button>
-                {aiError && (
-                  <span className="text-xs text-warning flex items-center gap-1.5">
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                    {aiError}
-                  </span>
-                )}
               </div>
-              {aiBusy && (
-                <p className="text-xs text-muted-foreground">
-                  AI analizuje strukturę i sprawdza wynik na realnej próbce. Proste formaty zajmują
-                  ok. minuty; przy złożonych model dostaje feedback i poprawia mapowanie — to może
-                  potrwać do kilku minut. Możesz nie zamykać tego okna i poczekać.
-                </p>
-              )}
-            </div>
+            )}
 
-            <MappingEditor
-              draft={draft}
-              sampleRows={current.analysis.sampleRows}
-              onChange={setDraft}
-            />
+            {/* Boks AI: prominentnie przy incomplete; przy near za cichym linkiem. */}
+            {(initialVerdict === 'incomplete' || showAiBox) && (
+              <AiMappingBox
+                analysis={current.analysis}
+                multiDoc={multiDoc}
+                consent={aiConsent}
+                onConsent={setAiConsent}
+                busy={aiBusy}
+                elapsed={aiElapsed}
+                error={aiError}
+                onGenerate={handleGenerateAi}
+              />
+            )}
+            {initialVerdict === 'near' && !showAiBox && (
+              <button
+                type="button"
+                onClick={() => setShowAiBox(true)}
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+              >
+                Złożony format? Wygeneruj mapowanie przez AI
+              </button>
+            )}
+
+            {/* Pełny edytor — domyślnie zwinięty (progresywne ujawnianie). */}
+            {showAllFields ? (
+              <div className="space-y-2">
+                <MappingEditor
+                  draft={draft}
+                  sampleRows={current.analysis.sampleRows}
+                  onChange={setDraft}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAllFields(false)}
+                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                >
+                  Ukryj wszystkie pola
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowAllFields(true)}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground underline-offset-2 hover:underline"
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+                {manualToggleLabel}
+              </button>
+            )}
+
             {mappingErrors.length > 0 && (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
                 {mappingErrors.map((e, i) => (
@@ -642,6 +702,157 @@ function toSheetInputs(works: SheetWork[]): GenericSheetProfileInput[] {
       profileId: w.resolved!.profileId,
       profileJson: w.resolved!.profileJson,
     }));
+}
+
+/** Polska odmiana rzeczownika „pole" wg liczby (1 pole / 2–4 pola / 5+ pól). */
+function pluralFields(n: number): string {
+  if (n === 1) return 'pole';
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  return mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20) ? 'pola' : 'pól';
+}
+
+/** Boks „Podobne formaty w bibliotece" — adopcja gotowego profilu (bez AI). */
+function SuggestionsBox({
+  suggestions,
+  onUse,
+}: {
+  suggestions: NonNullable<GenericSheetAnalysis['suggestions']>;
+  onUse: (s: NonNullable<GenericSheetAnalysis['suggestions']>[number]) => void;
+}) {
+  return (
+    <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2.5">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <Library className="h-4 w-4 text-primary" />
+        Podobne formaty w bibliotece
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Te zapisane profile mają niemal identyczne kolumny. Jeśli broker tylko zmienił nazwę albo
+        kolejność kolumny, użyj gotowego profilu zamiast generować mapowanie od nowa — podgląd
+        potwierdzi dopasowanie, zanim cokolwiek zaimportujesz.
+      </p>
+      <div className="space-y-1.5">
+        {suggestions.map((s) => (
+          <div
+            key={s.summary.id}
+            className="flex items-center justify-between gap-3 rounded border border-border bg-background/50 px-2.5 py-1.5"
+          >
+            <span className="min-w-0 truncate text-xs">
+              {s.summary.brokerLabel || 'Profil bez nazwy'}{' '}
+              <span className="text-muted-foreground">
+                · podobieństwo {(s.similarity * 100).toFixed(0)}%
+              </span>
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 shrink-0 text-xs"
+              onClick={() => onUse(s)}
+            >
+              Użyj i pokaż podgląd
+            </Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Boks generacji mapowania przez AI (zgoda + zredagowana próbka + przycisk). */
+function AiMappingBox({
+  analysis,
+  multiDoc,
+  consent,
+  onConsent,
+  busy,
+  elapsed,
+  error,
+  onGenerate,
+}: {
+  analysis: GenericSheetAnalysis;
+  multiDoc: boolean;
+  consent: boolean;
+  onConsent: (v: boolean) => void;
+  busy: boolean;
+  elapsed: number;
+  error: string | null;
+  onGenerate: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2.5">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <Sparkles className="h-4 w-4 text-primary" />
+        Automatyczne mapowanie (AI)
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Zamiast mapować ręcznie, możesz wygenerować mapowanie automatycznie. Do usługi AI (serwer w
+        UE) trafią{' '}
+        <span className="font-medium">
+          wyłącznie zredagowane fragmenty {multiDoc ? 'tej tabeli' : 'pliku'}: nazwy kolumn,
+          poniższa próbka, listy unikalnych wartości kolumn (np. typy operacji) oraz pojedyncze
+          wiersze potrzebne do poprawy mapowania — wszystko po tej samej redakcji
+        </span>{' '}
+        — nigdy cały plik ani dane osobowe (numery rachunków, nazwiska i e-maile są maskowane).
+      </p>
+      <details className="text-xs">
+        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+          Zobacz dokładnie, co zostanie wysłane
+        </summary>
+        <pre className="mt-2 max-h-40 overflow-auto rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
+          {[
+            analysis.headers.join(analysis.delimiter),
+            ...analysis.sampleRows.map((r) => r.join(analysis.delimiter)),
+          ].join('\n')}
+        </pre>
+      </details>
+      <label className="flex items-start gap-2 text-xs">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={consent}
+          onChange={(e) => onConsent(e.target.checked)}
+        />
+        <span>
+          Zgadzam się na wysłanie powyższej zredagowanej próbki do usługi AI w celu wygenerowania
+          mapowania.
+        </span>
+      </label>
+      <div className="flex items-center gap-3">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 text-xs"
+          disabled={!consent || busy}
+          onClick={onGenerate}
+        >
+          {busy ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+              Generowanie… {elapsed}s
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+              Wygeneruj mapowanie (AI)
+            </>
+          )}
+        </Button>
+        {error && (
+          <span className="text-xs text-warning flex items-center gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            {error}
+          </span>
+        )}
+      </div>
+      {busy && (
+        <p className="text-xs text-muted-foreground">
+          AI analizuje strukturę i sprawdza wynik na realnej próbce. Proste formaty zajmują ok.
+          minuty; przy złożonych model dostaje feedback i poprawia mapowanie — to może potrwać do
+          kilku minut. Możesz nie zamykać tego okna i poczekać.
+        </p>
+      )}
+    </div>
+  );
 }
 
 function MessagesList({ messages }: { messages: Message[] }) {

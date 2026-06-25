@@ -7,15 +7,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { Trash2 } from 'lucide-react';
-import type { DateFormat } from 'shared';
+import { Trash2, Wand2 } from 'lucide-react';
 import {
-  DATE_FORMATS,
   ROW_CLASS_LABELS,
   RULE_CLASSES,
+  suggestRules,
   type DraftClassifyRule,
   type ProfileDraft,
 } from '@/lib/generic-profile-builder';
+import { ColumnSelect, DateFormatSelect, Field } from './mapping-fields';
 
 /**
  * Edytor mapowania kolumn — ręczna ścieżka kreatora importu uniwersalnego.
@@ -36,92 +36,6 @@ const OPERATOR_LABELS: Record<DraftClassifyRule['op'], string> = {
   startsWith: 'zaczyna się od',
   notEmpty: 'niepusta',
 };
-
-/** Przykładowa wartość kolumny z pierwszego wiersza próbki, który ją ma. */
-function exampleFor(sampleRows: string[][], colIndex: number): string {
-  for (const row of sampleRows) {
-    const v = (row[colIndex] ?? '').trim();
-    if (v) return v.length > 24 ? `${v.slice(0, 24)}…` : v;
-  }
-  return '';
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-interface ColumnSelectProps {
-  headers: string[];
-  sampleRows: string[][];
-  value: number;
-  onValue: (v: number) => void;
-  allowNone?: boolean;
-  placeholder?: string;
-}
-
-function ColumnSelect({
-  headers,
-  sampleRows,
-  value,
-  onValue,
-  allowNone = true,
-  placeholder = 'Wybierz kolumnę',
-}: ColumnSelectProps) {
-  return (
-    <Select value={String(value)} onValueChange={(v) => onValue(Number(v))}>
-      <SelectTrigger className="h-8 text-xs">
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        {allowNone && (
-          <SelectItem value="-1">
-            <span className="text-muted-foreground">— brak —</span>
-          </SelectItem>
-        )}
-        {headers.map((h, i) => (
-          <SelectItem key={i} value={String(i)}>
-            <span>{h || `(kolumna ${i + 1})`}</span>
-            {exampleFor(sampleRows, i) && (
-              <span className="ml-2 text-muted-foreground">
-                np. {exampleFor(sampleRows, i)}
-              </span>
-            )}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-function DateFormatSelect({
-  value,
-  onValue,
-}: {
-  value: DateFormat;
-  onValue: (v: DateFormat) => void;
-}) {
-  return (
-    <Select value={value} onValueChange={(v) => onValue(v as DateFormat)}>
-      <SelectTrigger className="h-8 text-xs">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {DATE_FORMATS.map((f) => (
-          <SelectItem key={f} value={f}>
-            {f}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
 
 export function MappingEditor({ draft, sampleRows, onChange }: Props) {
   const set = (patch: Partial<ProfileDraft>) => onChange({ ...draft, ...patch });
@@ -147,10 +61,26 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
       ],
     });
 
+  /** P4: zasiej reguły z unikalnych wartości kolumny opisu (dla plików operacji). */
+  const suggestRulesFromDescription = () => {
+    const { descriptionCol, rules } = suggestRules(draft.headers, sampleRows);
+    const existing = new Set(draft.classify.map((r) => r.emit));
+    const added = rules
+      .filter((r) => !existing.has(r.emit))
+      .map((r, k) => ({ ...r, id: `rule-seed-${k}-${draft.classify.length}` }));
+    if (added.length === 0) return;
+    set({
+      classify: [...draft.classify, ...added],
+      cash: {
+        ...draft.cash,
+        descriptionCol: draft.cash.descriptionCol >= 0 ? draft.cash.descriptionCol : descriptionCol,
+      },
+    });
+  };
+
   const colProps = { headers: draft.headers, sampleRows };
 
-  const emitsTrade =
-    draft.mode === 'all-trades' || draft.classify.some((r) => r.emit === 'trade');
+  const emitsTrade = draft.mode === 'all-trades' || draft.classify.some((r) => r.emit === 'trade');
   const emitsCash =
     draft.mode === 'rules' &&
     (draft.defaultClass === 'other' ||
@@ -185,7 +115,18 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
 
       {draft.mode === 'rules' && (
         <section className="space-y-2">
-          <h4 className="text-sm font-semibold">Reguły klasyfikacji wierszy</h4>
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-sm font-semibold">Reguły klasyfikacji wierszy</h4>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={suggestRulesFromDescription}
+            >
+              <Wand2 className="h-3.5 w-3.5 mr-1.5" />
+              Zasugeruj reguły z opisu
+            </Button>
+          </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>Pierwsza pasująca reguła wygrywa. Wiersze bez dopasowania:</span>
             <Select
