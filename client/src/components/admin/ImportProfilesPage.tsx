@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { EmptyState } from '@/components/ui/loading-spinner';
+import { LintsPanel } from '@/components/import/generic/LintsPanel';
 
 const STATUS_LABELS: Record<ImportProfileStatus, string> = {
   pending: 'Oczekuje',
@@ -342,6 +343,8 @@ function ReviewDialog({
                 )}
               </div>
             )}
+
+            {data.dryRun?.ok && <LintsPanel lints={data.dryRun.lints} />}
 
             <details>
               <summary className="cursor-pointer text-xs font-semibold">

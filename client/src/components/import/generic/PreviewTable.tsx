@@ -13,6 +13,7 @@ import { formatDate, formatQuantity } from '@/lib/formatters';
 import type { GenericPreviewResult, SkipReason } from 'shared';
 import { SKIP_REASON_LABELS } from '@/lib/import-labels';
 import { OperationTypeBadge } from './ClassBadge';
+import { LintsPanel } from './LintsPanel';
 
 /**
  * Podgląd wyniku profilu PRZED importem — obowiązkowy krok kreatora.
@@ -42,7 +43,9 @@ export function PreviewTable({ result }: Props) {
   const skippedRows = skipped.slice(0, DISPLAY_LIMIT);
 
   return (
-    <Tabs value={tab} onValueChange={setTab}>
+    <div className="space-y-3">
+      <LintsPanel lints={result.lints} />
+      <Tabs value={tab} onValueChange={setTab}>
       <TabsList>
         <TabsTrigger value="tx">Transakcje ({txTotal})</TabsTrigger>
         <TabsTrigger value="ops">Operacje ({opsTotal})</TabsTrigger>
@@ -167,7 +170,8 @@ export function PreviewTable({ result }: Props) {
           </ScrollBox>
         )}
       </TabsContent>
-    </Tabs>
+      </Tabs>
+    </div>
   );
 }
 
