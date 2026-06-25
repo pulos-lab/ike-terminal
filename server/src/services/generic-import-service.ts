@@ -28,10 +28,12 @@ import {
   type GenericSheetAnalysis,
   type GenericSheetProfileInput,
   type ImportProfile,
+  type ProfileLint,
 } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
 import { loadXlsxSheets, looksLikeXlsx } from '../parsers/xlsx-to-csv.js';
 import { parseWithProfile, type GenericParseOutput } from '../parsers/generic/engine.js';
+import { lintProfile } from '../parsers/generic/profile-lints.js';
 import { GenericParseError } from '../parsers/generic/value-parsers.js';
 import {
   computeFingerprint,
@@ -462,6 +464,7 @@ function buildPreview(
   const opsSkipped: SkippedRow[] = [];
   const rowTraces: GenericParseOutput['rowTraces'] = [];
   const warnings: string[] = [];
+  const lints: ProfileLint[] = [];
   const sheetSummaries: NonNullable<GenericPreviewResult['sheetSummaries']> = [];
 
   for (const t of tables) {
@@ -487,6 +490,8 @@ function buildPreview(
       operations: output.operations.data.length,
       skipped: output.transactions.skipped.length + output.operations.skipped.length,
     });
+    // Linty diagnostyczne profilu (ciche błędy) — atrybucja arkusza tylko przy >1 tabeli.
+    lints.push(...lintProfile(t.profile, output, tables.length > 1 ? t.sheet : undefined));
   }
 
   const truncated =
@@ -509,6 +514,7 @@ function buildPreview(
     rowTraces: rowTraces.slice(0, PREVIEW_LIMIT),
     truncated: truncated || undefined,
     warnings: warnings.length > 0 ? warnings : undefined,
+    lints: lints.length > 0 ? lints : undefined,
     sheetSummaries: tables.length > 1 ? sheetSummaries : undefined,
   };
 }

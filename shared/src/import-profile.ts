@@ -620,6 +620,30 @@ export interface GenericAnalyzeResult {
   error?: string;
 }
 
+/**
+ * Lint podglądu — strukturalne ostrzeżenie o profilu, który PRZECHODZI walidację
+ * i self-check, ale może mapować subtelnie źle (cichy błąd niewidoczny w liczbach).
+ * Doradcze: NIE blokują commitu, podświetlają ryzyko do weryfikacji przez człowieka.
+ */
+export interface ProfileLint {
+  code:
+    | 'payment-currency-assumed'
+    | 'payment-currency-const'
+    | 'no-trade-time'
+    | 'ticker-via-regex'
+    | 'ticker-empty'
+    | 'high-skip-rate'
+    | 'needs-name-resolution'
+    | 'non-skip-default';
+  severity: 'info' | 'warning';
+  /** Treść PL gotowa do wyświetlenia (z wplecionymi licznikami). */
+  message: string;
+  /** Atrybucja tabeli (XLSX/multi-plik); brak dla pojedynczego CSV. */
+  sheet?: string;
+  /** Licznik dla lintów agregatowych (np. ile wierszy bez godziny). */
+  count?: number;
+}
+
 /** POST /api/import/generic/preview — bez zapisu. */
 export interface GenericPreviewResult {
   ok: boolean;
@@ -631,6 +655,8 @@ export interface GenericPreviewResult {
   /** true gdy rowTraces/sample zostały przycięte (duży plik). */
   truncated?: boolean;
   warnings?: string[];
+  /** Linty doradcze o profilu (ciche błędy) — render w kreatorze i panelu admina. */
+  lints?: ProfileLint[];
   /** Wkład per arkusz (XLSX) — do zakładek w podglądzie. Brak dla CSV. */
   sheetSummaries?: Array<{
     sheet?: string;
