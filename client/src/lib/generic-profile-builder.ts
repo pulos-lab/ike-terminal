@@ -99,6 +99,7 @@ export const ROW_CLASS_LABELS: Record<RowClass, string> = {
   trade_fee: 'Koszt pozycji (swap)',
   commission_refund: 'Zwrot prowizji',
   capital_return: 'Zwrot kapitału',
+  share_in: 'Przydział akcji',
   other: 'Inna operacja',
   skip: 'Pomiń wiersz',
 };

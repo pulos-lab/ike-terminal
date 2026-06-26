@@ -217,6 +217,43 @@ export function parseWithProfile(
       continue;
     }
 
+    // Ruch akcji bez gotówki (share_in) → syntetyczna transakcja, NIE operacja
+    // gotówkowa. Musi być PRZED CASH_MAPPING_KEY (które go nie zna → defensywny skip).
+    if (cls.emit === 'share_in') {
+      const outcome = buildShareMove(
+        row,
+        rowNum,
+        profile.shareIn,
+        resolver,
+        normalizeCurrency,
+        importBatch,
+      );
+      if (outcome.ok) {
+        transactions.push(outcome.transaction);
+        rowTraces.push({
+          row: rowNum,
+          matchedRuleId: cls.ruleId,
+          emitted: 'share_in',
+          target: 'transaction',
+          preview: {
+            data: outcome.transaction.date,
+            papier: outcome.transaction.paperName,
+            ilość: outcome.transaction.quantity,
+            cena: 0,
+          },
+        });
+      } else {
+        skippedTx.push(outcome.skipped);
+        rowTraces.push({
+          row: rowNum,
+          matchedRuleId: cls.ruleId,
+          emitted: 'share_in',
+          skipReason: outcome.skipped.reason,
+        });
+      }
+      continue;
+    }
+
     // Klasy gotówkowe.
     const mappingKey = CASH_MAPPING_KEY[cls.emit];
     const mapping = mappingKey ? (profile[mappingKey] as CashMapping | undefined) : undefined;
@@ -477,6 +514,73 @@ function buildTransaction(
       category,
       source: 'generic',
       importBatch,
+    },
+  };
+}
+
+/**
+ * Wolne akcje / przydział / dystrybucja (`share_in`) → syntetyczna transakcja K po
+ * cenie 0. FIFO dodaje lot zerokosztowy (cały wpływ ze sprzedaży = zysk). Czyta
+ * WŁASNE kolumny (sekcja shareIn) — obsługuje inny układ niż zwykłe transakcje.
+ * Bez cross-checku value (cena celowo 0), bez kolumny strony (zawsze K).
+ */
+function buildShareMove(
+  row: string[],
+  rowNum: number,
+  mapping: ImportProfile['shareIn'],
+  resolver: ColumnResolver,
+  normalizeCurrency: (raw: string | undefined) => string,
+  importBatch: string,
+): TransactionOutcome {
+  if (!mapping) {
+    // superRefine schematu tego pilnuje — defensywnie: skip zamiast crash.
+    return { ok: false, skipped: { row: rowNum, reason: 'unknown_operation_type' } };
+  }
+  const paperNameRaw = resolveValueSource(mapping.paperName, row, resolver);
+  const skip = (reason: SkipReason): TransactionOutcome => ({
+    ok: false,
+    skipped: { row: rowNum, reason, paperName: paperNameRaw || undefined },
+  });
+
+  const dateRaw = resolveValueSource(mapping.date.source, row, resolver);
+  if (!dateRaw) return skip('missing_date');
+  const dateIso = resolveDate(mapping.date, row, resolver);
+  if (!dateIso) return skip('invalid_date');
+  if (!paperNameRaw) return skip('missing_name');
+
+  let isinRaw: string | undefined;
+  if (mapping.isin) {
+    isinRaw = resolveValueSource(mapping.isin, row, resolver);
+    if (!isinRaw) return skip('missing_isin');
+  }
+
+  const quantityRaw = Math.abs(resolveNumber(mapping.quantity, row, resolver));
+  const quantity = mapping.wholeShares ? Math.round(quantityRaw) : quantityRaw;
+  if (quantity <= 0) return skip('invalid_quantity');
+
+  const { isin, paperName } = applyIsinAlias(isinRaw ?? paperNameRaw, paperNameRaw);
+  const currency = mapping.currency
+    ? normalizeCurrency(resolveValueSource(mapping.currency, row, resolver))
+    : '';
+
+  return {
+    ok: true,
+    transaction: {
+      date: dateIso,
+      paperName,
+      isin,
+      quantity,
+      side: 'K',
+      price: 0,
+      value: 0,
+      commission: 0,
+      total: 0,
+      currency,
+      paymentCurrency: currency,
+      category: isBondInstrument(paperName, isin) ? 'bond' : undefined,
+      source: 'generic',
+      importBatch,
+      syntheticOrigin: 'Przydział akcji (import)',
     },
   };
 }

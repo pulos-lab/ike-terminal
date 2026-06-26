@@ -152,6 +152,7 @@ export const RowClassSchema = z.enum([
   'trade_fee',
   'commission_refund',
   'capital_return',
+  'share_in',
   'other',
   'skip',
 ]);
@@ -313,6 +314,24 @@ export const CashMappingSchema = z.object({
 });
 export type CashMapping = z.infer<typeof CashMappingSchema>;
 
+/**
+ * Ruch akcji BEZ przepływu gotówki — wolne akcje / przydział / dystrybucja
+ * (`share_in` → syntetyczna transakcja K po cenie 0). Te wiersze często mają INNY
+ * układ kolumn niż zwykłe transakcje (ilość w innej kolumnie), więc dostają własną
+ * sekcję z własnymi kolumnami. Cena/wartość są zawsze 0 (brak kosztu nabycia).
+ */
+export const ShareMoveMappingSchema = z.object({
+  date: DateSpecSchema,
+  paperName: ValueSourceSchema,
+  /** Brak → pseudo-ISIN = paperName (wymaga needsNameResolution, jak trade). */
+  isin: ValueSourceSchema.optional(),
+  quantity: ValueSourceSchema,
+  /** Waluta — do rozpoznania instrumentu/wyświetlenia; cena i tak = 0. */
+  currency: ValueSourceSchema.optional(),
+  wholeShares: z.boolean().default(false),
+});
+export type ShareMoveMapping = z.infer<typeof ShareMoveMappingSchema>;
+
 // ── Parowanie wierszy ────────────────────────────────────────────────────────
 
 export const DividendWhtPairingSchema = z.object({
@@ -423,6 +442,7 @@ const CLASS_TO_MAPPING_KEY = {
   trade_fee: 'tradeFee',
   commission_refund: 'commissionRefund',
   capital_return: 'capitalReturn',
+  share_in: 'shareIn',
   other: 'other',
 } as const;
 
@@ -448,6 +468,7 @@ export const ImportProfileSchema = z
     tradeFee: CashMappingSchema.optional(),
     commissionRefund: CashMappingSchema.optional(),
     capitalReturn: CashMappingSchema.optional(),
+    shareIn: ShareMoveMappingSchema.optional(),
     other: CashMappingSchema.optional(),
     pairing: PairingRulesSchema.default({}),
     /** true → brak ISIN w pliku; import-service uruchamia resolucję nazwa→ISIN (mBank path). */
@@ -476,6 +497,15 @@ export const ImportProfileSchema = z
       ctx.issues.push({
         code: 'custom',
         message: `Mapowanie 'trade' nie ma źródła ISIN — ustaw needsNameResolution=true`,
+        input: p,
+      });
+    }
+
+    // share_in bez ISIN — jak trade: pseudo-ISIN = paperName wymaga needsNameResolution.
+    if (p.shareIn && !p.shareIn.isin && !p.needsNameResolution) {
+      ctx.issues.push({
+        code: 'custom',
+        message: `Mapowanie 'shareIn' nie ma źródła ISIN — ustaw needsNameResolution=true`,
         input: p,
       });
     }

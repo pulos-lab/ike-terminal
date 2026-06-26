@@ -718,3 +718,92 @@ describe('parseWithProfile — podatek u źródła w kolumnie (inline WHT, Faza 
     }
   });
 });
+
+describe('parseWithProfile — wolne akcje (share_in, Faza 1+2)', () => {
+  const SHARE_HEADER = 'typ;data;papier;isin;ilosc';
+  const shareProfile = () =>
+    ImportProfileSchema.parse({
+      specVersion: 1,
+      brokerLabel: 'Test',
+      file: { delimiter: ';', headerRow: { strategy: 'first' } },
+      classify: [
+        {
+          id: 'dist',
+          when: [{ col: { name: 'typ' }, op: 'equals', values: ['DIST'] }],
+          emit: 'share_in',
+        },
+      ],
+      shareIn: {
+        date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['YYYY-MM-DD'] },
+        paperName: { kind: 'column', col: { name: 'papier' } },
+        isin: { kind: 'column', col: { name: 'isin' } },
+        quantity: { kind: 'column', col: { name: 'ilosc' } },
+      },
+    });
+
+  it('share_in → syntetyczna transakcja K po cenie 0 (lot zerokosztowy)', () => {
+    const csv = `${SHARE_HEADER}\nDIST;2026-01-10;KGHM;PLKGHM000017;11,0563`;
+    const out = parseWithProfile(csv, shareProfile(), BATCH);
+
+    expect(out.transactions.data).toHaveLength(1);
+    expect(out.operations.data).toHaveLength(0); // transakcja, NIE operacja gotówkowa
+    expect(out.transactions.data[0]).toMatchObject({
+      side: 'K',
+      price: 0,
+      value: 0,
+      commission: 0,
+      total: 0,
+      paperName: 'KGHM',
+      isin: 'PLKGHM000017',
+    });
+    expect(out.transactions.data[0].quantity).toBeCloseTo(11.0563);
+    expect(out.transactions.data[0].syntheticOrigin).toContain('Przydział');
+  });
+
+  it('share_in: zła ilość → skip invalid_quantity', () => {
+    const csv = `${SHARE_HEADER}\nDIST;2026-01-10;KGHM;PLKGHM000017;0`;
+    const out = parseWithProfile(csv, shareProfile(), BATCH);
+    expect(out.transactions.data).toHaveLength(0);
+    expect(out.transactions.skipped[0].reason).toBe('invalid_quantity');
+  });
+
+  it('schema: emisja share_in bez sekcji shareIn → odrzucone', () => {
+    const r = ImportProfileSchema.safeParse({
+      specVersion: 1,
+      brokerLabel: 'Test',
+      file: { delimiter: ';', headerRow: { strategy: 'first' } },
+      classify: [
+        {
+          id: 'd',
+          when: [{ col: { name: 'typ' }, op: 'equals', values: ['DIST'] }],
+          emit: 'share_in',
+        },
+      ],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues.some((i) => i.message.includes('shareIn'))).toBe(true);
+  });
+
+  it('schema: shareIn bez ISIN i bez needsNameResolution → odrzucone', () => {
+    const r = ImportProfileSchema.safeParse({
+      specVersion: 1,
+      brokerLabel: 'Test',
+      file: { delimiter: ';', headerRow: { strategy: 'first' } },
+      classify: [
+        {
+          id: 'd',
+          when: [{ col: { name: 'typ' }, op: 'equals', values: ['DIST'] }],
+          emit: 'share_in',
+        },
+      ],
+      shareIn: {
+        date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['YYYY-MM-DD'] },
+        paperName: { kind: 'column', col: { name: 'papier' } },
+        quantity: { kind: 'column', col: { name: 'ilosc' } },
+      },
+    });
+    expect(r.success).toBe(false);
+    if (!r.success)
+      expect(r.error.issues.some((i) => i.message.includes('needsNameResolution'))).toBe(true);
+  });
+});
