@@ -1,7 +1,25 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
-import type { AdminProfileSummary, ImportProfileStatus } from 'shared';
+import type {
+  AdminProfileSummary,
+  ImportProfile,
+  ImportProfileStatus,
+  RowClass,
+  RowTrace,
+} from 'shared';
+import {
+  appendClassifyRule,
+  buildClassBreakdown,
+  buildMappingTables,
+  buildSkipGroups,
+  inferDiscriminatorCol,
+  mappedClasses,
+  unhandledDiscriminatorValues,
+  type FieldStatus,
+} from '@/lib/admin-review';
+import { ROW_CLASS_LABELS } from '@/lib/generic-profile-builder';
+import { SKIP_REASON_LABELS } from '@/lib/import-labels';
 import {
   Table,
   TableBody,
@@ -209,6 +227,8 @@ function ReviewDialog({
   const [note, setNote] = useState('');
   const [editedJson, setEditedJson] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const editorRef = useRef<HTMLDetailsElement>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-import-profile', profileId],
@@ -259,6 +279,14 @@ function ReviewDialog({
     } catch {
       setEditError('To nie jest poprawny JSON.');
     }
+  };
+
+  const jumpToEditor = () => {
+    setEditorOpen(true);
+    setTimeout(
+      () => editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }),
+      0,
+    );
   };
 
   return (
@@ -344,9 +372,34 @@ function ReviewDialog({
               </div>
             )}
 
+            {data.dryRun?.ok && data.dryRun.rowTraces && data.dryRun.rowTraces.length > 0 && (
+              <MappingReview
+                profile={p.profile as ImportProfile}
+                headerNames={p.headerNames}
+                sampleRows={p.sampleRows ?? []}
+                rowTraces={data.dryRun.rowTraces}
+              />
+            )}
+
             {data.dryRun?.ok && <LintsPanel lints={data.dryRun.lints} />}
 
-            <details>
+            {data.dryRun?.ok && data.dryRun.rowTraces && data.dryRun.rowTraces.length > 0 && (
+              <SkipActions
+                profile={p.profile as ImportProfile}
+                headerNames={p.headerNames}
+                sampleRows={p.sampleRows ?? []}
+                rowTraces={data.dryRun.rowTraces}
+                busy={saveEdit.isPending}
+                onApply={(next) => saveEdit.mutate(next)}
+                onJumpToEditor={jumpToEditor}
+              />
+            )}
+
+            <details
+              ref={editorRef}
+              open={editorOpen}
+              onToggle={(e) => setEditorOpen((e.currentTarget as HTMLDetailsElement).open)}
+            >
               <summary className="cursor-pointer text-xs font-semibold">
                 Profil (JSON) — edytuj, aby zapisać korektę jako nową wersję
               </summary>
@@ -420,5 +473,220 @@ function ReviewDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+const STATUS_ICON: Record<FieldStatus, { sym: string; cls: string; title: string }> = {
+  ok: { sym: '✓', cls: 'text-success', title: 'OK' },
+  uncertain: { sym: '⚠', cls: 'text-warning', title: 'do sprawdzenia' },
+  missing: { sym: '✗', cls: 'text-destructive', title: 'brak mapowania' },
+};
+
+/** Rozbicie klasyfikacji + tabela kolumna→pole — z `rowTraces` i JSON-a profilu. */
+function MappingReview({
+  profile,
+  headerNames,
+  sampleRows,
+  rowTraces,
+}: {
+  profile: ImportProfile;
+  headerNames: string[];
+  sampleRows: string[][];
+  rowTraces: RowTrace[];
+}) {
+  const breakdown = buildClassBreakdown(rowTraces);
+  const tables = buildMappingTables(profile, headerNames, sampleRows, rowTraces);
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="mb-1 text-xs font-semibold">Rozpoznane typy wierszy</p>
+        <div className="flex flex-wrap gap-1.5">
+          {breakdown.map((c) => (
+            <Badge
+              key={c.emitted}
+              variant={
+                c.target === 'transaction'
+                  ? 'info'
+                  : c.target === 'operation'
+                    ? 'success'
+                    : 'warning'
+              }
+              className="text-[10px]"
+            >
+              {c.label} ×{c.count}
+            </Badge>
+          ))}
+        </div>
+      </div>
+
+      {tables.map((t) => (
+        <details key={t.emitted} open className="rounded-md border px-3 py-2">
+          <summary className="cursor-pointer text-xs font-semibold">Mapowanie: {t.label}</summary>
+          <table className="mt-2 w-full text-[11px]">
+            <thead className="text-muted-foreground">
+              <tr className="text-left">
+                <th className="pr-2 font-medium">Pole</th>
+                <th className="pr-2 font-medium">Źródło</th>
+                <th className="pr-2 font-medium">Przykłady (z próbki)</th>
+                <th className="w-6 font-medium" />
+              </tr>
+            </thead>
+            <tbody>
+              {t.fields.map((f) => (
+                <tr key={f.field} className="border-t border-border/50 align-top">
+                  <td className="py-1 pr-2 font-medium">{f.field}</td>
+                  <td className="py-1 pr-2 text-muted-foreground">{f.source}</td>
+                  <td className="py-1 pr-2 font-mono text-[10px] text-muted-foreground">
+                    {f.examples.join(', ') || '—'}
+                  </td>
+                  <td className={`py-1 text-center ${STATUS_ICON[f.status].cls}`}>
+                    <span title={STATUS_ICON[f.status].title}>{STATUS_ICON[f.status].sym}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+const SKIP_BADGE: Record<'unknown' | 'mapping' | 'gentle', 'info' | 'warning' | 'muted'> = {
+  unknown: 'info',
+  mapping: 'warning',
+  gentle: 'muted',
+};
+
+/** Pominięte wiersze pogrupowane po powodzie + jednoklik / skok do edytora. */
+function SkipActions({
+  profile,
+  headerNames,
+  sampleRows,
+  rowTraces,
+  busy,
+  onApply,
+  onJumpToEditor,
+}: {
+  profile: ImportProfile;
+  headerNames: string[];
+  sampleRows: string[][];
+  rowTraces: RowTrace[];
+  busy: boolean;
+  onApply: (next: ImportProfile) => void;
+  onJumpToEditor: () => void;
+}) {
+  const groups = buildSkipGroups(rowTraces);
+  const discr = inferDiscriminatorCol(profile);
+  const unhandled = unhandledDiscriminatorValues(profile, headerNames, sampleRows);
+  const classes = mappedClasses(profile);
+  const [emit, setEmit] = useState<RowClass>(classes[0] ?? 'other');
+  const canAddRule = discr != null && unhandled.length > 0 && classes.length > 0;
+
+  if (groups.length === 0) return null;
+
+  return (
+    <div className="space-y-2 rounded-md border px-3 py-2">
+      <p className="text-xs font-semibold">Pominięte wiersze — jak je obsłużyć</p>
+      {groups.map((g) => (
+        <div
+          key={g.reason}
+          className="border-t border-border/50 pt-2 text-xs first:border-0 first:pt-0"
+        >
+          <Badge variant={SKIP_BADGE[g.category]} className="text-[10px]">
+            {SKIP_REASON_LABELS[g.reason]} ×{g.count}
+          </Badge>
+
+          {g.category === 'gentle' && (
+            <p className="mt-1 text-muted-foreground">
+              Celowo pomijane — profil działa zgodnie z zamierzeniem.
+            </p>
+          )}
+
+          {g.category === 'mapping' && (
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className="text-muted-foreground">Prawdopodobnie złe mapowanie kolumny.</span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 text-[11px]"
+                onClick={onJumpToEditor}
+              >
+                Popraw w edytorze
+              </Button>
+            </div>
+          )}
+
+          {g.category === 'unknown' &&
+            (canAddRule ? (
+              <div className="mt-1 space-y-1">
+                <p className="text-muted-foreground">
+                  Nierozpoznane wartości:{' '}
+                  <span className="font-mono">
+                    {unhandled.slice(0, 5).join(', ')}
+                    {unhandled.length > 5 ? '…' : ''}
+                  </span>
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-muted-foreground">To jest:</span>
+                  <select
+                    value={emit}
+                    onChange={(e) => setEmit(e.target.value as RowClass)}
+                    className="h-6 rounded border bg-background px-1 text-[11px]"
+                  >
+                    {classes.map((c) => (
+                      <option key={c} value={c}>
+                        {ROW_CLASS_LABELS[c]}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[11px]"
+                    disabled={busy}
+                    onClick={() =>
+                      onApply(appendClassifyRule(profile, { col: discr, values: unhandled, emit }))
+                    }
+                  >
+                    Dodaj regułę
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 text-[11px]"
+                    disabled={busy}
+                    onClick={() =>
+                      onApply(
+                        appendClassifyRule(profile, {
+                          col: discr,
+                          values: unhandled,
+                          emit: 'skip',
+                          skipReason: 'summary_row',
+                        }),
+                      )
+                    }
+                  >
+                    Oznacz jako pominięcie
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span className="text-muted-foreground">Nierozpoznane wiersze.</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[11px]"
+                  onClick={onJumpToEditor}
+                >
+                  Popraw w edytorze
+                </Button>
+              </div>
+            ))}
+        </div>
+      ))}
+    </div>
   );
 }
