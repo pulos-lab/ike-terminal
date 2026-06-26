@@ -714,7 +714,9 @@ function MappingReview({
       {tables.map((t) => (
         <details key={t.emitted} open className="rounded-md border px-3 py-2">
           <summary className="cursor-pointer text-xs font-semibold">Mapowanie: {t.label}</summary>
-          <table className="mt-2 w-full text-[11px]">
+          {/* Bez w-full: tabela dopasowuje się do treści (inaczej przy szerokim oknie
+              kolumny rozjeżdżają się i powstaje pusta przerwa „Źródło"↔„Przykłady"). */}
+          <table className="mt-2 text-[11px]">
             <thead className="text-muted-foreground">
               <tr className="text-left">
                 <th className="pr-2 font-medium">Pole</th>
