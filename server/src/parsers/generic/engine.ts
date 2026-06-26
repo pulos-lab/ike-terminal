@@ -603,6 +603,12 @@ function buildPendingCash(
       pairKeyValue,
       rate: rate > 0 ? rate : undefined,
       fxPair,
+      tax: mapping.tax
+        ? Math.abs(resolveNumber(mapping.tax, row, resolver)) || undefined
+        : undefined,
+      taxCurrency: mapping.taxCurrency
+        ? normalizeCurrency(resolveValueSource(mapping.taxCurrency, row, resolver)) || undefined
+        : undefined,
     },
   };
 }
@@ -632,6 +638,7 @@ function finalizeCashOperation(
 ): CashOperation {
   let operationType = CLASS_TO_OPERATION_TYPE[cls] ?? 'other';
   let amount = pending.amount;
+  let description = pending.description;
 
   if (cls === 'deposit') {
     if (amount < 0 && signedAmounts) {
@@ -655,12 +662,28 @@ function finalizeCashOperation(
     }
   } else if (cls === 'dividend' || cls === 'coupon') {
     amount = Math.abs(amount);
+    // Podatek u źródła z kolumny tego wiersza (inline WHT): netto przy tej samej
+    // walucie; przy innej walucie nie odejmujemy (przeliczenie poza zakresem).
+    if (pending.tax && pending.tax > 0) {
+      const baseDesc = description || CLASS_DESCRIPTION_PL[cls] || 'Dywidenda';
+      if (pending.taxCurrency && pending.taxCurrency !== pending.currency) {
+        description = `${baseDesc} (podatek ${pending.tax} ${pending.taxCurrency})`;
+        warnings.push(
+          `Wiersz ${pending.rowNum}: podatek (${pending.tax} ${pending.taxCurrency}) w innej ` +
+            `walucie niż kwota (${pending.currency}) — NIE odjęto od kwoty.`,
+        );
+      } else {
+        const taxPct = amount > 0 ? Math.round((pending.tax / amount) * 100) : 0;
+        amount = roundTo2(amount - pending.tax);
+        description = taxPct > 0 ? `${baseDesc} (podatek ${taxPct}%)` : baseDesc;
+      }
+    }
   }
 
   return {
     date: pending.dateIso,
     operationType,
-    description: pending.description || CLASS_DESCRIPTION_PL[cls] || 'Operacja',
+    description: description || CLASS_DESCRIPTION_PL[cls] || 'Operacja',
     details: pending.details,
     amount,
     currency: pending.currency,

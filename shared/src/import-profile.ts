@@ -302,6 +302,14 @@ export const CashMappingSchema = z.object({
   fxRate: ValueSourceSchema.optional(),
   /** Para walutowa (np. "PLN/USD") dla jednowierszowych operacji FX. */
   fxPair: ValueSourceSchema.optional(),
+  /**
+   * Podatek u źródła (WHT) w KOLUMNIE tego samego wiersza dywidendy — odejmowany
+   * od kwoty (netto) gdy w tej samej walucie. Wyklucza się z pairing.dividendWht
+   * (parowanie osobnym wierszem), inaczej podatek zostałby odjęty dwa razy.
+   */
+  tax: ValueSourceSchema.optional(),
+  /** Waluta podatku inline; gdy inna niż waluta kwoty → NIE odejmujemy, tylko adnotacja. */
+  taxCurrency: ValueSourceSchema.optional(),
 });
 export type CashMapping = z.infer<typeof CashMappingSchema>;
 
@@ -482,6 +490,17 @@ export const ImportProfileSchema = z
         message:
           `Klasyfikacja emituje 'withholding_tax', ale brakuje 'pairing.dividendWht' — ` +
           `sklasyfikuj podatek jako 'fee' albo dodaj reguły parowania`,
+        input: p,
+      });
+    }
+
+    // Podatek inline (kolumna na wierszu) wyklucza się z parowaniem osobnym wierszem.
+    if (p.dividend?.tax && p.pairing.dividendWht) {
+      ctx.issues.push({
+        code: 'custom',
+        message:
+          `'dividend.tax' (podatek w kolumnie wiersza) wyklucza się z 'pairing.dividendWht' ` +
+          `(podatek osobnym wierszem) — wybierz jedno, inaczej odejmiesz podatek dwukrotnie`,
         input: p,
       });
     }

@@ -651,3 +651,70 @@ describe('parseDateWithFormats', () => {
     expect(parseDateWithFormats('5 Foo 2024', ['DD MMM YYYY'])).toBeNull();
   });
 });
+
+describe('parseWithProfile — podatek u źródła w kolumnie (inline WHT, Faza 3)', () => {
+  const divMapping = (extra: Record<string, unknown> = {}) => ({
+    date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['YYYY-MM-DD'] },
+    amount: { kind: 'column', col: { name: 'kwota' } },
+    currency: { kind: 'column', col: { name: 'waluta' }, fallback: 'PLN' },
+    description: { kind: 'column', col: { name: 'tytul' } },
+    ...extra,
+  });
+  const divClassify = [
+    {
+      id: 'div',
+      when: [{ col: { name: 'tytul' }, op: 'contains', values: ['Dywidenda'] }],
+      emit: 'dividend',
+    },
+  ];
+
+  it('ta sama waluta → kwota netto + dopisek „(podatek X%)"', () => {
+    const profile = opsProfile(divClassify, {
+      dividend: divMapping({ tax: { kind: 'column', col: { name: 'podatek' } } }),
+    });
+    const csv = `data;tytul;kwota;waluta;podatek\n2026-01-10;Dywidenda KGHM;10,00;PLN;2,00`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.operations.data[0]).toMatchObject({ operationType: 'dividend', amount: 8 });
+    expect(out.operations.data[0].description).toContain('podatek 20%');
+  });
+
+  it('inna waluta podatku → kwota brutto bez odjęcia + warning + adnotacja', () => {
+    const profile = opsProfile(divClassify, {
+      dividend: divMapping({
+        tax: { kind: 'column', col: { name: 'podatek' } },
+        taxCurrency: { kind: 'column', col: { name: 'walpod' } },
+      }),
+    });
+    const csv = `data;tytul;kwota;waluta;podatek;walpod\n2026-01-10;Dywidenda MAIN;0,03;EUR;0,01;USD`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.operations.data[0].amount).toBe(0.03); // brutto, NIE odjęto
+    expect(out.operations.data[0].description).toContain('podatek 0.01 USD');
+    expect(out.warnings.some((w) => w.includes('NIE odjęto'))).toBe(true);
+  });
+
+  it('schema: dividend.tax + pairing.dividendWht → odrzucone (podwójne odjęcie)', () => {
+    const result = ImportProfileSchema.safeParse({
+      specVersion: 1,
+      brokerLabel: 'Test',
+      file: { delimiter: ';', headerRow: { strategy: 'first' } },
+      classify: [
+        { id: 'div', when: [{ col: { name: 'tytul' }, op: 'notEmpty' }], emit: 'dividend' },
+      ],
+      dividend: {
+        date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['YYYY-MM-DD'] },
+        amount: { kind: 'column', col: { name: 'kwota' } },
+        currency: { kind: 'const', value: 'PLN' },
+        tax: { kind: 'column', col: { name: 'podatek' } },
+      },
+      pairing: {
+        dividendWht: { matchBy: ['ticker', 'date'], windowDays: 0, handling: 'subtract' },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.message.includes('wyklucza'))).toBe(true);
+    }
+  });
+});

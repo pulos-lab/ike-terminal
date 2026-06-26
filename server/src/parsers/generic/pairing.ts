@@ -34,6 +34,10 @@ export interface PendingCashRow {
   rate?: number;
   /** Para walutowa z mapowania fxPair (jednowierszowe operacje FX). */
   fxPair?: string;
+  /** Podatek u źródła z KOLUMNY tego wiersza (inline WHT) — wartość bezwzględna. */
+  tax?: number;
+  /** Waluta podatku inline (gdy inna niż waluta kwoty → nie odejmujemy). */
+  taxCurrency?: string;
 }
 
 const dayDiff = (a: string, b: string): number =>
