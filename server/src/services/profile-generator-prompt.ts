@@ -35,6 +35,7 @@ export function buildSystemPrompt(): string {
 - "file.amountSignPolicy": set "signed" when the amount column carries a real sign (e.g. withdrawals negative) so the sign drives deposit/withdrawal direction; set "magnitude" when amounts are always positive magnitudes and direction comes only from the row type/label (e.g. Trading 212); omit (or "auto") to let the engine infer from whether any amount in the file is negative.
 - Side values: if the sample shows only one side (e.g. only buys), still provide the standard counterpart pair for that broker's language (K/S, BUY/SELL, Buy/Sell, Kupno/Sprzedaż).
 - Prefer column references by NAME. Be conservative: when a row type is not clearly identifiable, let it fall to defaultClass instead of guessing.
+- Corporate actions that move share count but do NOT fit the standard trade columns (stock splits, share transfers in/out, reorganizations, in-kind/stock distributions) often use a DIFFERENT column layout than ordinary trades (e.g. quantity in another column, an id where the price should be). Do NOT force them into "trade"/"other" — that produces garbage. Classify them as skip WITH a reason: {"id":…,"when":[…],"emit":"skip","skipReason":"corporate_action"}. They are reported to the user (not silently dropped) and do not lower confidence.
 
 # Example
 

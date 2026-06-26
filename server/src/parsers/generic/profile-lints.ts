@@ -193,5 +193,19 @@ export function lintProfile(
     });
   }
 
+  // Akcje korporacyjne celowo pominięte (split/transfer/przydział) — łagodne dla
+  // pewności, ale ZMIENIAJĄ liczbę akcji, więc użytkownik musi o nich wiedzieć.
+  const corpActions = skipped.filter((s) => s.reason === 'corporate_action');
+  if (corpActions.length > 0) {
+    push({
+      code: 'corporate-action-skipped',
+      severity: 'warning',
+      count: corpActions.length,
+      message:
+        `Pominięto ${corpActions.length} wierszy jako akcje korporacyjne (split, transfer, ` +
+        'przydział akcji) — nie wchodzą do portfela, więc sprawdź, czy liczba akcji się zgadza.',
+    });
+  }
+
   return lints;
 }

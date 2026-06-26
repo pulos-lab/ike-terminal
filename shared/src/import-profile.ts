@@ -633,6 +633,7 @@ export interface ProfileLint {
     | 'ticker-via-regex'
     | 'ticker-empty'
     | 'high-skip-rate'
+    | 'corporate-action-skipped'
     | 'needs-name-resolution'
     | 'non-skip-default';
   severity: 'info' | 'warning';
