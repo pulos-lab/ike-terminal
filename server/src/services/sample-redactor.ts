@@ -7,9 +7,10 @@
  * Dwie warstwy:
  * 1. Kolumny wrażliwe po NAZWIE nagłówka (rachunki, właściciel, adres, PESEL…)
  *    — cała komórka maskowana.
- * 2. Wzorce w pozostałych komórkach: IBAN, e-maile, długie ciągi cyfr
- *    (numery rachunków/identyfikatory klienta; kwoty mają separatory, więc
- *    nie wpadają w ciąg ≥9 cyfr).
+ * 2. Wzorce w pozostałych komórkach: IBAN, e-maile, SAMODZIELNE długie ciągi cyfr
+ *    (numery rachunków/identyfikatory klienta). Cyfry będące częścią liczby
+ *    dziesiętnej (np. ułamkowe ilości „0.3069000000") NIE są maskowane — to nie
+ *    PII, a są potrzebne do uczciwego dry-runu profilu na próbce.
  */
 
 const SENSITIVE_HEADER_RE =
@@ -17,7 +18,10 @@ const SENSITIVE_HEADER_RE =
 
 const IBAN_RE = /\b[A-Z]{2}\d{2}(?:[ ]?\d{4}){4,8}\b/g;
 const EMAIL_RE = /\b[\w.+-]+@[\w-]+\.[\w.]+\b/g;
-const LONG_DIGITS_RE = /\d{9,}/g;
+// ≥9 cyfr, ale tylko SAMODZIELNY ciąg: lookbehind/lookahead wyklucza cyfry sąsiadujące
+// z inną cyfrą albo separatorem dziesiętnym (`.`/`,`), więc ułamkowe ilości/ceny
+// (np. „0.3069000000", „1234567.890123456") zostają, a numery rachunków są maskowane.
+const LONG_DIGITS_RE = /(?<![\d.,])\d{9,}(?![\d.,])/g;
 
 export const REDACTED = '***';
 
