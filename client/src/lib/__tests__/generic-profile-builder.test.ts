@@ -6,6 +6,7 @@ import {
   scoreDraft,
   suggestDraft,
   suggestRules,
+  suggestSideValues,
   type ProfileDraft,
 } from '../generic-profile-builder';
 import { validateImportProfile } from 'shared';
@@ -38,6 +39,23 @@ describe('suggestDraft — heurystyczny prefill', () => {
     expect(draft.trade.dateFormat).toBe('YYYY-MM-DD');
   });
 
+  it('Trading 212: kolumna „Action" → strona z kolumny + wartości Market buy/sell', () => {
+    const headers = ['Action', 'Time', 'ISIN', 'Ticker', 'Name', 'No. of shares', 'Price / share'];
+    const sample = [
+      ['Market buy', '2023-12-18 14:30', 'US17275R1023', 'CSCO', 'Cisco', '0.3069000000', '49.96'],
+      ['Market sell', '2023-12-26 14:30', 'US04634X2027', 'ASTR', 'Astra', '1.5', '1.26'],
+      ['Dividend (Dividend)', '2023-12-27', 'US56035L1044', 'MAIN', 'Main', '0.5', '0.23'],
+    ];
+    const draft = suggestDraft(headers, sample, { delimiter: ',', headerRowIndex: 0 });
+
+    expect(draft.trade.sideStrategy).toBe('column');
+    expect(draft.trade.sideCol).toBe(0); // „Action", nie „No. of shares"
+    expect(draft.trade.buyValues).toContain('Market buy');
+    expect(draft.trade.sellValues).toContain('Market sell');
+    // Strona rozpoznana → karta luki „side" się nie pokaże.
+    expect(scoreDraft(draft, sample).fields.side).toBe('ok');
+  });
+
   it('rozpoznaje polskie nagłówki (Bossa-podobne)', () => {
     const headers = ['data', 'papier', 'isin', 'ilość', 'cena', 'waluta'];
     const sample = [['25.02.2026 09:47:27', 'KGHM', 'PLKGHM000017', '10', '150,50', 'PLN']];
@@ -48,6 +66,20 @@ describe('suggestDraft — heurystyczny prefill', () => {
     expect(draft.trade.quantityCol).toBe(3);
     expect(draft.trade.priceCol).toBe(4);
     expect(draft.trade.dateFormat).toBe('DD.MM.YYYY');
+  });
+});
+
+describe('suggestSideValues — wartości kupna/sprzedaży z kolumny', () => {
+  it('rozpoznaje prefiksowane wartości (Market buy/sell), ignoruje inne typy', () => {
+    const sample = [['Market buy'], ['Market sell'], ['Dividend (Dividend)'], ['Deposit']];
+    const sv = suggestSideValues(sample, 0)!;
+    expect(sv.buyValues).toBe('Market buy');
+    expect(sv.sellValues).toBe('Market sell');
+  });
+
+  it('zwraca null, gdy żadna wartość nie wygląda na kupno/sprzedaż', () => {
+    expect(suggestSideValues([['Dividend'], ['Deposit']], 0)).toBeNull();
+    expect(suggestSideValues([['x']], -1)).toBeNull();
   });
 });
 

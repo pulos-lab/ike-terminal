@@ -12,6 +12,7 @@ import {
   ROW_CLASS_LABELS,
   RULE_CLASSES,
   suggestRules,
+  suggestSideValues,
   type DraftClassifyRule,
   type ProfileDraft,
 } from '@/lib/generic-profile-builder';
@@ -308,13 +309,20 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
             </Field>
             <Field
               label={
-                draft.trade.sideStrategy === 'column' ? 'Kolumna strony' : 'Kolumna ze znakiem'
+                draft.trade.sideStrategy === 'column'
+                  ? 'W której kolumnie jest kupno/sprzedaż?'
+                  : 'Kolumna ze znakiem (+/−)'
               }
             >
               <ColumnSelect
                 {...colProps}
                 value={draft.trade.sideCol}
-                onValue={(v) => setTrade({ sideCol: v })}
+                onValue={(v) => {
+                  if (draft.trade.sideStrategy !== 'column') return setTrade({ sideCol: v });
+                  // Po wyborze kolumny auto-uzupełnij wartości kupna/sprzedaży z próbki.
+                  const sv = suggestSideValues(sampleRows, v);
+                  setTrade({ sideCol: v, ...(sv ?? {}) });
+                }}
                 allowNone={false}
               />
             </Field>
