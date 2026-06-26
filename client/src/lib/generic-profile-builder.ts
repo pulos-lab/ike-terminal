@@ -652,3 +652,362 @@ export function adoptProfileForDocument(
   }
   return clone;
 }
+
+// ── Profil → Draft (reverse-map: edycja istniejącego mapowania) ──────────────
+
+/** Klucze mapowania transakcji odwzorowywalne w edytorze. */
+const DRAFT_TRADE_KEYS = new Set([
+  'date',
+  'paperName',
+  'isin',
+  'quantity',
+  'wholeShares',
+  'price',
+  'value',
+  'commission',
+  'total',
+  'currency',
+  'side',
+]);
+/** Klucz profilu klasy gotówkowej → RowClass (odwrotność mappingKey z buildProfileFromDraft). */
+const CASH_KEY_TO_CLASS: Record<string, RowClass> = {
+  dividend: 'dividend',
+  withholdingTax: 'withholding_tax',
+  coupon: 'coupon',
+  interest: 'interest',
+  deposit: 'deposit',
+  withdrawal: 'withdrawal',
+  fxLeg: 'fx_leg',
+  fee: 'fee',
+  tradeFee: 'trade_fee',
+  commissionRefund: 'commission_refund',
+  capitalReturn: 'capital_return',
+  other: 'other',
+};
+const DRAFT_CASH_KEYS = new Set(['date', 'amount', 'currency', 'description', 'ticker']);
+const DRAFT_TOP_KEYS = new Set([
+  'specVersion',
+  'brokerLabel',
+  'file',
+  'classify',
+  'defaultClass',
+  'trade',
+  'pairing',
+  'needsNameResolution',
+  ...Object.keys(CASH_KEY_TO_CLASS),
+]);
+/** Operatory reguł odwzorowywalne w edytorze (oneOf === equals w silniku). */
+const REVERSIBLE_OPS = new Set(['equals', 'oneOf', 'contains', 'startsWith', 'notEmpty']);
+
+const asRecord = (v: unknown): Record<string, unknown> | null =>
+  v && typeof v === 'object' ? (v as Record<string, unknown>) : null;
+
+/** Indeks kolumny, gdy source = {kind:'column', col}; inaczej undefined (nieodwzorowywalne). */
+function columnIndexOf(source: unknown): number | undefined {
+  const s = asRecord(source);
+  return s && s.kind === 'column' && typeof s.col === 'number' ? s.col : undefined;
+}
+
+function firstDateFormat(formats: unknown): DateFormat {
+  return Array.isArray(formats) && typeof formats[0] === 'string'
+    ? (formats[0] as DateFormat)
+    : 'YYYY-MM-DD';
+}
+
+function defaultTradeMapping(): DraftTradeMapping {
+  return {
+    dateCol: -1,
+    dateFormat: 'YYYY-MM-DD',
+    paperNameCol: -1,
+    isinCol: -1,
+    quantityCol: -1,
+    priceCol: -1,
+    valueCol: -1,
+    commissionCol: -1,
+    totalCol: -1,
+    currencyCol: -1,
+    currencyFallback: 'PLN',
+    sideStrategy: 'signedQuantity',
+    sideCol: -1,
+    buyValues: 'K, BUY, Kupno',
+    sellValues: 'S, SELL, Sprzedaż',
+    wholeShares: false,
+  };
+}
+function defaultCashMapping(): DraftCashMapping {
+  return {
+    dateCol: -1,
+    dateFormat: 'YYYY-MM-DD',
+    amountCol: -1,
+    currencyCol: -1,
+    currencyFallback: 'PLN',
+    descriptionCol: -1,
+    tickerCol: -1,
+  };
+}
+
+function optionalColumn(source: unknown, lossy: string[], label: string): number {
+  if (source === undefined) return -1;
+  const col = columnIndexOf(source);
+  if (col === undefined) {
+    lossy.push(`${label} (wyrażenie)`);
+    return -1;
+  }
+  return col;
+}
+
+function currencyFromSource(source: unknown): { col: number; fallback: string } | null {
+  const s = asRecord(source);
+  if (!s) return null;
+  if (s.kind === 'column' && typeof s.col === 'number') {
+    return { col: s.col, fallback: typeof s.fallback === 'string' ? s.fallback : '' };
+  }
+  const value = s.value;
+  if (s.kind === 'const' && typeof value === 'string') return { col: -1, fallback: value };
+  return null;
+}
+
+function sideFromSource(source: unknown): {
+  strategy: DraftTradeMapping['sideStrategy'];
+  col: number;
+  buyValues: string;
+  sellValues: string;
+} | null {
+  const s = asRecord(source);
+  const col = s?.col;
+  if (!s || typeof col !== 'number') return null;
+  if (s.strategy === 'column') {
+    return {
+      strategy: 'column',
+      col,
+      buyValues: Array.isArray(s.buyValues) ? s.buyValues.join(', ') : '',
+      sellValues: Array.isArray(s.sellValues) ? s.sellValues.join(', ') : '',
+    };
+  }
+  if (s.strategy === 'signedQuantity' || s.strategy === 'signedAmount') {
+    return {
+      strategy: s.strategy,
+      col,
+      buyValues: 'K, BUY, Kupno',
+      sellValues: 'S, SELL, Sprzedaż',
+    };
+  }
+  return null;
+}
+
+export interface ReverseMapResult {
+  ok: boolean;
+  draft?: ProfileDraft;
+  /** Cechy profilu nieodwzorowane w edytorze — przepadną przy zapisie (ostrzeżenie). */
+  lossy: string[];
+  /** Gdy ok=false: profil zbyt złożony, by bezpiecznie edytować go w formularzu. */
+  reason?: string;
+}
+
+/**
+ * Odwrotność `buildProfileFromDraft`: wczytuje istniejący profil (z AI/biblioteki)
+ * do edytowalnego `ProfileDraft`, by użytkownik mógł go PODKRĘCIĆ zamiast mapować
+ * od zera. `meta` daje nagłówki/delimiter/headerRowIndex bieżącego pliku (profil
+ * trzyma indeksy kolumn, nie nazwy). Trzy wyniki:
+ *  - ok:true, lossy:[]        → wierne odwzorowanie (round-trip z buildProfileFromDraft),
+ *  - ok:true, lossy:[…]       → przybliżenie; wymienione cechy (regex, kilka formatów
+ *    daty, polityki pliku…) NIE są w formularzu i znikną przy zapisie → UI ostrzega,
+ *  - ok:false, reason         → profil zbyt złożony (reguła regex/wielowarunkowa,
+ *    kluczowe pole nie-kolumnowe) → UI zostaje przy heurystyce.
+ */
+export function draftFromProfile(
+  profileJson: unknown,
+  meta: { headers: string[]; delimiter: string; headerRowIndex: number },
+): ReverseMapResult {
+  const lossy: string[] = [];
+  const p = asRecord(profileJson);
+  if (!p) return { ok: false, lossy, reason: 'Profil ma nieoczekiwany format.' };
+
+  for (const k of Object.keys(p)) {
+    if (!DRAFT_TOP_KEYS.has(k)) lossy.push(`pole „${k}"`);
+  }
+
+  const file = asRecord(p.file) ?? ({} as Record<string, unknown>);
+  if (typeof file.amountSignPolicy === 'string' && file.amountSignPolicy !== 'auto') {
+    lossy.push('polityka znaku kwoty');
+  }
+  if (file.decimalSeparator) lossy.push('separator dziesiętny');
+  if (file.footerStop) lossy.push('reguła stopu (footer)');
+  if (Array.isArray(file.skipRows) && file.skipRows.length > 0)
+    lossy.push('reguły pomijania wierszy');
+  if (asRecord(file.headerRow)?.strategy === 'scan' && meta.headerRowIndex <= 0) {
+    lossy.push('wykrywanie wiersza nagłówka');
+  }
+
+  // Tryb all-trades = pojedyncza reguła trade z warunkiem notEmpty (jak generuje build).
+  const classify = Array.isArray(p.classify) ? (p.classify as unknown[]) : [];
+  const firstRule = asRecord(classify[0]);
+  const firstWhen = firstRule && Array.isArray(firstRule.when) ? (firstRule.when as unknown[]) : [];
+  const isAllTrades =
+    classify.length === 1 &&
+    firstRule?.emit === 'trade' &&
+    firstWhen.length === 1 &&
+    asRecord(firstWhen[0])?.op === 'notEmpty';
+
+  // Tryb reguł: jeden matcher na regułę, operator odwzorowywalny.
+  const draftClassify: DraftClassifyRule[] = [];
+  if (!isAllTrades) {
+    for (let i = 0; i < classify.length; i++) {
+      const r = asRecord(classify[i]);
+      const when = r && Array.isArray(r.when) ? (r.when as unknown[]) : [];
+      if (when.length !== 1) {
+        return {
+          ok: false,
+          lossy,
+          reason: 'Reguła łączy kilka warunków — nieobsługiwane w formularzu.',
+        };
+      }
+      const m = asRecord(when[0]);
+      const op = m?.op;
+      if (typeof op !== 'string' || !REVERSIBLE_OPS.has(op)) {
+        return {
+          ok: false,
+          lossy,
+          reason: `Reguła używa operatora „${String(op)}" — nieobsługiwany w formularzu.`,
+        };
+      }
+      if (typeof m?.col !== 'number') {
+        return { ok: false, lossy, reason: 'Reguła nie wskazuje kolumny po indeksie.' };
+      }
+      draftClassify.push({
+        id: typeof r?.id === 'string' ? r.id : `rule-${i + 1}`,
+        colIndex: m.col,
+        op: op === 'oneOf' ? 'equals' : (op as DraftClassifyRule['op']),
+        values: Array.isArray(m.values) ? m.values.join(', ') : '',
+        emit: (r?.emit as RowClass) ?? 'other',
+      });
+    }
+  }
+
+  // Mapowanie transakcji.
+  let trade = defaultTradeMapping();
+  const tradeRaw = asRecord(p.trade);
+  if (tradeRaw) {
+    for (const k of Object.keys(tradeRaw)) {
+      if (!DRAFT_TRADE_KEYS.has(k)) lossy.push(`transakcje: pole „${k}"`);
+    }
+    const dateSrc = asRecord(tradeRaw.date);
+    const dateFormats = dateSrc?.formats;
+    const dateCol = columnIndexOf(dateSrc?.source);
+    const paperCol = columnIndexOf(tradeRaw.paperName);
+    const quantityCol = columnIndexOf(tradeRaw.quantity);
+    const priceCol = columnIndexOf(tradeRaw.price);
+    if (
+      dateCol === undefined ||
+      paperCol === undefined ||
+      quantityCol === undefined ||
+      priceCol === undefined
+    ) {
+      return {
+        ok: false,
+        lossy,
+        reason: 'Kluczowe pole transakcji (data/papier/ilość/cena) nie jest zwykłą kolumną.',
+      };
+    }
+    if (Array.isArray(dateFormats) && dateFormats.length > 1) {
+      lossy.push('kilka formatów daty (transakcje)');
+    }
+    const currency = currencyFromSource(tradeRaw.currency);
+    if (!currency)
+      return { ok: false, lossy, reason: 'Waluta transakcji w nieobsługiwanej formie.' };
+    const side = sideFromSource(tradeRaw.side);
+    if (!side) {
+      return {
+        ok: false,
+        lossy,
+        reason: 'Sposób rozpoznania kupna/sprzedaży nieobsługiwany w formularzu.',
+      };
+    }
+    trade = {
+      dateCol,
+      dateFormat: firstDateFormat(dateFormats),
+      paperNameCol: paperCol,
+      isinCol: optionalColumn(tradeRaw.isin, lossy, 'transakcje: ISIN'),
+      quantityCol,
+      priceCol,
+      valueCol: optionalColumn(tradeRaw.value, lossy, 'transakcje: wartość'),
+      commissionCol: optionalColumn(tradeRaw.commission, lossy, 'transakcje: prowizja'),
+      totalCol: optionalColumn(tradeRaw.total, lossy, 'transakcje: kwota łączna'),
+      currencyCol: currency.col,
+      currencyFallback: currency.fallback,
+      sideStrategy: side.strategy,
+      sideCol: side.col,
+      buyValues: side.buyValues,
+      sellValues: side.sellValues,
+      wholeShares: Boolean(tradeRaw.wholeShares),
+    };
+  }
+
+  // Mapowanie operacji (wspólne) — z pierwszej obecnej klasy gotówkowej.
+  let cash = defaultCashMapping();
+  const cashKeys = Object.keys(CASH_KEY_TO_CLASS).filter((k) => asRecord(p[k]));
+  if (cashKeys.length > 0) {
+    const c = asRecord(p[cashKeys[0]])!;
+    for (const k of Object.keys(c)) {
+      if (!DRAFT_CASH_KEYS.has(k)) lossy.push(`operacje: pole „${k}"`);
+    }
+    const dateSrc = asRecord(c.date);
+    const dateFormats = dateSrc?.formats;
+    const dateCol = columnIndexOf(dateSrc?.source);
+    const amountCol = columnIndexOf(c.amount);
+    if (dateCol === undefined || amountCol === undefined) {
+      return { ok: false, lossy, reason: 'Operacje: data lub kwota nie jest zwykłą kolumną.' };
+    }
+    const currency = currencyFromSource(c.currency);
+    if (!currency) return { ok: false, lossy, reason: 'Waluta operacji w nieobsługiwanej formie.' };
+    if (Array.isArray(dateFormats) && dateFormats.length > 1) {
+      lossy.push('kilka formatów daty (operacje)');
+    }
+    let tickerCol = -1;
+    for (const k of cashKeys) {
+      const cc = asRecord(p[k]);
+      if (cc && 'ticker' in cc) {
+        const t = columnIndexOf(cc.ticker);
+        if (t === undefined) lossy.push('operacje: ticker (wyrażenie)');
+        else tickerCol = t;
+        break;
+      }
+    }
+    cash = {
+      dateCol,
+      dateFormat: firstDateFormat(dateFormats),
+      amountCol,
+      currencyCol: currency.col,
+      currencyFallback: currency.fallback,
+      descriptionCol: columnIndexOf(c.description) ?? -1,
+      tickerCol,
+    };
+  }
+
+  if (!tradeRaw && cashKeys.length === 0) {
+    return { ok: false, lossy, reason: 'Profil nie zawiera rozpoznawalnego mapowania.' };
+  }
+
+  // Parowanie inne niż auto-regenerowane (dividendWht) — nieodwzorowane.
+  const pairing = asRecord(p.pairing);
+  if (pairing) {
+    for (const k of Object.keys(pairing)) {
+      if (k !== 'dividendWht') lossy.push(`parowanie „${k}"`);
+    }
+  }
+
+  const brokerLabel =
+    typeof p.brokerLabel === 'string' && p.brokerLabel !== 'Nieznany broker' ? p.brokerLabel : '';
+  const draft: ProfileDraft = {
+    brokerLabel,
+    delimiter: typeof file.delimiter === 'string' ? file.delimiter : meta.delimiter,
+    headerRowIndex: meta.headerRowIndex,
+    headers: meta.headers,
+    mode: isAllTrades ? 'all-trades' : 'rules',
+    classify: isAllTrades ? [] : draftClassify,
+    defaultClass: p.defaultClass === 'other' ? 'other' : 'skip',
+    trade,
+    cash,
+  };
+  return { ok: true, draft, lossy };
+}

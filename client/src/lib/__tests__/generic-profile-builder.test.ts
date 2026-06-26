@@ -3,6 +3,7 @@ import {
   adoptProfileForDocument,
   buildProfileFromDraft,
   detectDateFormat,
+  draftFromProfile,
   scoreDraft,
   suggestDraft,
   suggestRules,
@@ -239,6 +240,108 @@ describe('buildProfileFromDraft', () => {
     const rulesResult = buildProfileFromDraft(rulesDraft);
     expect(rulesResult.ok).toBe(false);
     expect(rulesResult.errors!.some((e) => e.includes('wartości'))).toBe(true);
+  });
+});
+
+describe('draftFromProfile — reverse-map (edycja istniejącego mapowania)', () => {
+  const META = { headers: HEADERS, delimiter: '|', headerRowIndex: 0 };
+
+  it('round-trip all-trades: profil → draft → identyczny profil', () => {
+    const d = suggestDraft(HEADERS, SAMPLE, { delimiter: '|', headerRowIndex: 0 });
+    d.brokerLabel = 'Testowy';
+    const built = buildProfileFromDraft(d);
+    expect(built.ok).toBe(true);
+
+    const rev = draftFromProfile(built.profile, META);
+    expect(rev.ok).toBe(true);
+    expect(rev.lossy).toEqual([]);
+
+    const rebuilt = buildProfileFromDraft(rev.draft!);
+    expect(rebuilt.ok).toBe(true);
+    expect(rebuilt.profile).toEqual(built.profile); // bez utraty informacji
+  });
+
+  it('round-trip rules: profil operacji → draft → identyczny profil', () => {
+    const headers = ['data', 'tytuł operacji', 'kwota', 'waluta'];
+    const d = suggestDraft(headers, [['2025-01-10', 'Przelew', '100,00', 'PLN']], {
+      delimiter: ';',
+      headerRowIndex: 0,
+    });
+    d.mode = 'rules';
+    d.defaultClass = 'other';
+    d.classify = [
+      { id: 'r1', colIndex: 1, op: 'contains', values: 'Przelew', emit: 'deposit' },
+      { id: 'r2', colIndex: 1, op: 'contains', values: 'dywidendy', emit: 'dividend' },
+    ];
+    const built = buildProfileFromDraft(d);
+    expect(built.ok).toBe(true);
+
+    const rev = draftFromProfile(built.profile, { headers, delimiter: ';', headerRowIndex: 0 });
+    expect(rev.ok).toBe(true);
+    expect(rev.lossy).toEqual([]);
+    expect(buildProfileFromDraft(rev.draft!).profile).toEqual(built.profile);
+  });
+
+  it('waluta const → currencyCol -1 + fallback, bez utraty', () => {
+    const d = suggestDraft(HEADERS, SAMPLE, { delimiter: '|', headerRowIndex: 0 });
+    d.trade.currencyCol = -1;
+    d.trade.currencyFallback = 'USD';
+    const built = buildProfileFromDraft(d);
+
+    const rev = draftFromProfile(built.profile, META);
+    expect(rev.ok).toBe(true);
+    expect(rev.lossy).toEqual([]);
+    expect(rev.draft!.trade.currencyCol).toBe(-1);
+    expect(rev.draft!.trade.currencyFallback).toBe('USD');
+  });
+
+  it('kilka formatów daty → lossy (nie blokuje, ostrzega)', () => {
+    const built = buildProfileFromDraft(
+      suggestDraft(HEADERS, SAMPLE, { delimiter: '|', headerRowIndex: 0 }),
+    );
+    const prof = structuredClone(built.profile) as { trade: { date: { formats: string[] } } };
+    prof.trade.date.formats = ['YYYY-MM-DD', 'DD.MM.YYYY'];
+
+    const rev = draftFromProfile(prof, META);
+    expect(rev.ok).toBe(true);
+    expect(rev.lossy).toContain('kilka formatów daty (transakcje)');
+  });
+
+  it('reguła z operatorem regex → ok:false (zbyt złożone)', () => {
+    const prof = {
+      specVersion: 1,
+      brokerLabel: 'X',
+      file: { delimiter: ';', headerRow: { strategy: 'first' } },
+      classify: [{ id: 'r1', when: [{ col: 1, op: 'regex', pattern: 'DYW.*' }], emit: 'dividend' }],
+      defaultClass: 'skip',
+      dividend: {
+        date: { source: { kind: 'column', col: 0 }, formats: ['YYYY-MM-DD'] },
+        amount: { kind: 'column', col: 2 },
+        currency: { kind: 'const', value: 'PLN' },
+      },
+    };
+    const rev = draftFromProfile(prof, {
+      headers: ['data', 'opis', 'kwota'],
+      delimiter: ';',
+      headerRowIndex: 0,
+    });
+    expect(rev.ok).toBe(false);
+    expect(rev.reason).toMatch(/operatora/);
+  });
+
+  it('kluczowe pole transakcji jako wyrażenie (regexExtract) → ok:false', () => {
+    const prof = structuredClone(
+      buildProfileFromDraft(suggestDraft(HEADERS, SAMPLE, { delimiter: '|', headerRowIndex: 0 }))
+        .profile,
+    ) as { trade: Record<string, unknown> };
+    prof.trade.paperName = {
+      kind: 'regexExtract',
+      source: { kind: 'column', col: 1 },
+      pattern: '(\\w+)',
+    };
+
+    const rev = draftFromProfile(prof, META);
+    expect(rev.ok).toBe(false);
   });
 });
 

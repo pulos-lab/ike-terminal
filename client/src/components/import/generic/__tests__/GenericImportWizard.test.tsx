@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GenericImportWizard } from '../GenericImportWizard';
 import { api } from '@/lib/api-client';
@@ -150,5 +150,33 @@ describe('GenericImportWizard — gałęzie progresywnego mapowania', () => {
     // Boks AI prominentny + przełącznik pokazuje zasiane reguły.
     expect(screen.getByText('Automatyczne mapowanie (AI)')).toBeInTheDocument();
     expect(screen.getByText(/Edytuj reguły ręcznie/)).toBeInTheDocument();
+  });
+
+  it('„Wróć do mapowania" wczytuje rozpoznane mapowanie do edytora (reverse-map)', async () => {
+    mockedApi.genericAnalyze.mockResolvedValue(
+      csvAnalysis(
+        ['Data', 'Papier', 'ISIN', 'K/S', 'Ilość', 'Cena', 'Waluta'],
+        [
+          ['2025-03-15', 'CD PROJEKT', 'PLOPTTC00011', 'K', '10', '100,00', 'PLN'],
+          ['2025-04-10', 'KGHM', 'PLKGHM000017', 'S', '5', '150,00', 'PLN'],
+        ],
+      ),
+    );
+    mockedApi.genericPreviewDocuments.mockResolvedValue({
+      ok: true,
+      transactions: { total: 2, sample: [], skipped: [] },
+      operations: { total: 0, sample: [], skipped: [] },
+    });
+
+    renderWizard();
+
+    fireEvent.click(await screen.findByText('Wróć do mapowania'));
+
+    // Edytor wczytał istniejące mapowanie (nie czysta heurystyka od zera).
+    expect(await screen.findByText(/Edytujesz istniejące mapowanie/)).toBeInTheDocument();
+    expect(screen.getByText('Nazwa brokera (etykieta)')).toBeInTheDocument();
+    // Nie wygenerowaliśmy nowego profilu ani drugiego podglądu.
+    expect(mockedApi.genericGenerateProfile).not.toHaveBeenCalled();
+    expect(mockedApi.genericPreviewDocuments).toHaveBeenCalledTimes(1);
   });
 });
