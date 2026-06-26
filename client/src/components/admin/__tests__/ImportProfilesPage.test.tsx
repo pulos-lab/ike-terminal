@@ -146,6 +146,9 @@ describe('ImportProfilesPage — review', () => {
     // Sekcja akcji dla nierozpoznanych wierszy (z propozycją reguły).
     expect(screen.getByText(/Nierozpoznane wartości/)).toBeInTheDocument();
     expect(screen.getByText('Dodaj regułę')).toBeInTheDocument();
+    // Próbka jako tabela + przycisk kopiowania surowego CSV.
+    expect(screen.getByText('Kopiuj surowy CSV')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'No. of shares' })).toBeInTheDocument();
   });
 
   it('„Dodaj regułę" woła adminUpdateImportProfile z dołożoną regułą classify', async () => {

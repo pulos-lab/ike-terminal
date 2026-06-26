@@ -228,6 +228,7 @@ function ReviewDialog({
   const [editedJson, setEditedJson] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [copiedSample, setCopiedSample] = useState(false);
   const editorRef = useRef<HTMLDetailsElement>(null);
 
   const { data, isLoading } = useQuery({
@@ -289,9 +290,20 @@ function ReviewDialog({
     );
   };
 
+  const copySampleCsv = () => {
+    if (!p?.sampleRows) return;
+    const csv = [
+      p.headerNames.join(p.delimiter),
+      ...p.sampleRows.map((r) => r.join(p.delimiter)),
+    ].join('\n');
+    void navigator.clipboard?.writeText(csv);
+    setCopiedSample(true);
+    setTimeout(() => setCopiedSample(false), 1500);
+  };
+
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[95vw] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             Review profilu {p?.brokerLabel ? `„${p.brokerLabel}"` : ''} v{p?.version ?? '…'}
@@ -345,12 +357,54 @@ function ReviewDialog({
                 <summary className="cursor-pointer text-xs font-semibold">
                   Zredagowana próbka ({p.sampleRows.length} wierszy)
                 </summary>
-                <pre className="mt-2 max-h-44 overflow-auto rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
-                  {[
-                    p.headerNames.join(p.delimiter),
-                    ...p.sampleRows.map((r) => r.join(p.delimiter)),
-                  ].join('\n')}
-                </pre>
+                <div className="mt-2">
+                  <div className="mb-1 flex justify-end">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 text-[11px]"
+                      onClick={copySampleCsv}
+                    >
+                      {copiedSample ? 'Skopiowano ✓' : 'Kopiuj surowy CSV'}
+                    </Button>
+                  </div>
+                  <div className="max-h-56 overflow-auto rounded border">
+                    <table className="w-full border-collapse font-mono text-[10px]">
+                      <thead className="sticky top-0 bg-muted">
+                        <tr>
+                          <th className="border-b border-border px-1.5 py-1 text-right font-normal text-muted-foreground">
+                            #
+                          </th>
+                          {p.headerNames.map((h, i) => (
+                            <th
+                              key={i}
+                              className="whitespace-nowrap border-b border-l border-border px-2 py-1 text-left font-semibold"
+                            >
+                              {h || `(kol. ${i + 1})`}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {p.sampleRows.map((row, ri) => (
+                          <tr key={ri} className="odd:bg-muted/30">
+                            <td className="px-1.5 py-0.5 text-right text-muted-foreground">
+                              {ri + 1}
+                            </td>
+                            {p.headerNames.map((_, ci) => (
+                              <td
+                                key={ci}
+                                className="whitespace-nowrap border-l border-border/50 px-2 py-0.5"
+                              >
+                                {row[ci] ?? ''}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </details>
             )}
 
