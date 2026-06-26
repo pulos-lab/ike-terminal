@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/select';
 import { CheckCircle2 } from 'lucide-react';
 import type { DraftScore, ProfileDraft, ScoredField } from '@/lib/generic-profile-builder';
+import { suggestSideValues } from '@/lib/generic-profile-builder';
 import { ColumnSelect, DateFormatSelect, Field } from './mapping-fields';
 
 /**
@@ -149,11 +150,22 @@ function SideField({
             </SelectContent>
           </Select>
         </Field>
-        <Field label={t.sideStrategy === 'column' ? 'Kolumna strony' : 'Kolumna ze znakiem'}>
+        <Field
+          label={
+            t.sideStrategy === 'column'
+              ? 'W której kolumnie jest kupno/sprzedaż?'
+              : 'Kolumna ze znakiem (+/−)'
+          }
+        >
           <ColumnSelect
             {...colProps}
             value={t.sideCol}
-            onValue={(v) => setTrade({ sideCol: v })}
+            onValue={(v) => {
+              if (t.sideStrategy !== 'column') return setTrade({ sideCol: v });
+              // Po wyborze kolumny auto-uzupełnij wartości kupna/sprzedaży z próbki.
+              const sv = suggestSideValues(colProps.sampleRows, v);
+              setTrade({ sideCol: v, ...(sv ?? {}) });
+            }}
             allowNone={false}
           />
         </Field>

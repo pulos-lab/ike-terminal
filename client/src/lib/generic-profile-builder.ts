@@ -159,8 +159,16 @@ export function detectDateFormat(samples: string[]): DateFormat {
   return 'YYYY-MM-DD';
 }
 
-const BUY_VALUE_RE = /^(k|b|buy|kupno|nabycie|zakup|purchase|stock purchase|open)$/i;
-const SELL_VALUE_RE = /^(s|sell|sprzedaż|sprzedaz|zbycie|sale|stock sale|close)$/i;
+// Rozpoznanie kupna/sprzedaży po TOKENACH (nie zakotwiczone) — brokerzy często
+// prefiksują, np. „Market buy", „Stock sale", więc rozbijamy wartość na słowa.
+const BUY_TOKENS = new Set(['k', 'b', 'buy', 'kupno', 'nabycie', 'zakup', 'purchase', 'open']);
+const SELL_TOKENS = new Set(['s', 'sell', 'sprzedaż', 'sprzedaz', 'zbycie', 'sale', 'close']);
+const sideTokens = (v: string) =>
+  norm(v)
+    .split(/[\s/_,-]+/)
+    .filter(Boolean);
+const isBuyValue = (v: string) => sideTokens(v).some((t) => BUY_TOKENS.has(t));
+const isSellValue = (v: string) => sideTokens(v).some((t) => SELL_TOKENS.has(t));
 
 /** Wartości kolumny w próbce (unikalne, niepuste, max `limit`). */
 function distinctValues(sampleRows: string[][], col: number, limit = 8): string[] {
@@ -171,6 +179,22 @@ function distinctValues(sampleRows: string[][], col: number, limit = 8): string[
     if (seen.size > limit) break;
   }
   return [...seen];
+}
+
+/**
+ * Wykryj w wskazanej kolumnie wartości oznaczające kupno/sprzedaż (do prefilla
+ * pól w kreatorze). Zwraca null, gdy nic nie rozpoznano — wtedy zostają domyślne.
+ */
+export function suggestSideValues(
+  sampleRows: string[][],
+  col: number,
+): { buyValues: string; sellValues: string } | null {
+  if (col < 0) return null;
+  const values = distinctValues(sampleRows, col);
+  const buys = values.filter(isBuyValue);
+  const sells = values.filter(isSellValue);
+  if (buys.length === 0 && sells.length === 0) return null;
+  return { buyValues: buys.join(', '), sellValues: sells.join(', ') };
 }
 
 /** Heurystyczny prefill draftu z nagłówków i (zredagowanej) próbki. */
@@ -191,8 +215,8 @@ export function suggestDraft(
   const commissionCol = findCol(headers, [/(prowizja|commission)/]);
   const currencyCol = findCol(headers, [/(waluta|currency|ccy)/]);
   const sideCol = findCol(headers, [
-    /^(k\/s|strona|side|direction|kierunek)$/,
-    /(k\/s|strona|side|direction|typ|type|rodzaj|operacja)/,
+    /^(k\/s|strona|side|direction|kierunek|action|akcja)$/,
+    /(k\/s|strona|side|direction|typ|type|rodzaj|operacja|operation|action|akcja)/,
   ]);
   const amountCol = findCol(headers, [/(kwota|amount)/]);
   const descriptionCol = findCol(headers, [/(tytuł|tytul|opis|description|comment|komentarz)/]);
@@ -203,12 +227,10 @@ export function suggestDraft(
   // Strona K/S: spróbuj rozpoznać wartości kupna/sprzedaży w kolumnie strony.
   let buyValues = 'K, BUY, Kupno';
   let sellValues = 'S, SELL, Sprzedaż';
-  if (sideCol >= 0) {
-    const values = distinctValues(sampleRows, sideCol);
-    const buys = values.filter((v) => BUY_VALUE_RE.test(v));
-    const sells = values.filter((v) => SELL_VALUE_RE.test(v));
-    if (buys.length > 0) buyValues = buys.join(', ');
-    if (sells.length > 0) sellValues = sells.join(', ');
+  const detectedSide = suggestSideValues(sampleRows, sideCol);
+  if (detectedSide) {
+    if (detectedSide.buyValues) buyValues = detectedSide.buyValues;
+    if (detectedSide.sellValues) sellValues = detectedSide.sellValues;
   }
 
   return {
@@ -321,8 +343,7 @@ export function scoreDraft(draft: ProfileDraft, sampleRows: string[][]): DraftSc
   let sideStatus: FieldStatus;
   if (t.sideStrategy === 'column') {
     const vals = distinctValues(sampleRows, t.sideCol);
-    const recognized =
-      vals.some((v) => BUY_VALUE_RE.test(v)) && vals.some((v) => SELL_VALUE_RE.test(v));
+    const recognized = vals.some(isBuyValue) && vals.some(isSellValue);
     sideStatus = recognized ? 'ok' : t.sideCol >= 0 ? 'uncertain' : 'missing';
   } else {
     const signCol = t.sideCol >= 0 ? t.sideCol : t.quantityCol;
