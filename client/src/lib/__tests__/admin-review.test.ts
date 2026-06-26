@@ -7,6 +7,7 @@ import {
   buildSkipGroups,
   inferDiscriminatorCol,
   mappedClasses,
+  rowAnnotations,
   unhandledDiscriminatorValues,
 } from '../admin-review';
 
@@ -207,5 +208,59 @@ describe('admin-review — akcje na skipach', () => {
     const rule = next.classify[next.classify.length - 1] as Record<string, unknown>;
     expect(rule.emit).toBe('skip');
     expect(rule.skipReason).toBe('summary_row');
+  });
+});
+
+describe('admin-review — naprawy z audytu', () => {
+  it('rowAnnotations: klasa per wiersz, skip z powodem', () => {
+    const annos = rowAnnotations([
+      { row: 1, matchedRuleId: 'b', emitted: 'trade', target: 'transaction' },
+      { row: 2, matchedRuleId: null, emitted: 'skip', skipReason: 'unknown_operation_type' },
+    ]);
+    expect(annos[0]).toMatchObject({ emitted: 'trade', isSkip: false, label: 'Transakcja (K/S)' });
+    expect(annos[1]).toMatchObject({ isSkip: true, skipReason: 'unknown_operation_type' });
+  });
+
+  it('fieldStatus: powód współdzielony (missing_date) NIE flaguje, unikalny (invalid_quantity) flaguje', () => {
+    const traces: RowTrace[] = [
+      ...TRACES,
+      { row: 4, matchedRuleId: null, emitted: 'skip', skipReason: 'missing_date' },
+      { row: 5, matchedRuleId: null, emitted: 'skip', skipReason: 'invalid_quantity' },
+    ];
+    const trade = buildMappingTables(PROFILE, HEADERS, SAMPLE, traces).find(
+      (t) => t.emitted === 'trade',
+    )!;
+    expect(trade.fields.find((f) => f.field === 'Data')!.status).toBe('ok'); // missing_date współdzielone
+    expect(trade.fields.find((f) => f.field === 'Ilość')!.status).toBe('uncertain'); // invalid_quantity
+  });
+
+  it('unhandledDiscriminatorValues: per-op, krótka wartość reguły nie zjada nierozpoznanych', () => {
+    const profile = {
+      ...PROFILE,
+      classify: [
+        {
+          id: 'k',
+          when: [{ col: { name: 'Action' }, op: 'equals', values: ['K'] }],
+          emit: 'trade',
+        },
+      ],
+    } as unknown as ImportProfile;
+    const sample = [['K'], ['KGHM'], ['Dividend']];
+    // 'K' obsłużone (equals); 'KGHM'/'Dividend' NIE (per-op, nie podciąg jak wcześniej).
+    expect(unhandledDiscriminatorValues(profile, ['Action'], sample)).toEqual(['KGHM', 'Dividend']);
+  });
+
+  it('etykieta strony: strategia znaku → „znak kolumny", nie „kolumna"', () => {
+    const profile = {
+      ...PROFILE,
+      trade: {
+        ...PROFILE.trade,
+        side: { strategy: 'signedQuantity', col: { name: 'No. of shares' } },
+      },
+    } as unknown as ImportProfile;
+    const side = buildMappingTables(profile, HEADERS, SAMPLE, TRACES)
+      .find((t) => t.emitted === 'trade')!
+      .fields.find((f) => f.field === 'Strona (K/S)')!;
+    expect(side.source).toContain('znak kolumny ilości');
   });
 });

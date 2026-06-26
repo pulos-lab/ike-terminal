@@ -34,6 +34,26 @@ export function buildClassBreakdown(rowTraces: RowTrace[]): ClassCount[] {
     .sort((a, b) => b.count - a.count);
 }
 
+/**
+ * Adnotacja każdego wiersza próbki klasą (po pozycji: rowTraces[k] ↔ sampleRows[k]).
+ * Do tabeli próbki: „Typ" per wiersz + wyróżnienie pominiętych z powodem.
+ */
+export interface RowAnnotation {
+  emitted: RowClass;
+  label: string;
+  isSkip: boolean;
+  skipReason?: SkipReason;
+}
+
+export function rowAnnotations(rowTraces: RowTrace[]): RowAnnotation[] {
+  return rowTraces.map((t) => ({
+    emitted: t.emitted,
+    label: ROW_CLASS_LABELS[t.emitted] ?? t.emitted,
+    isSkip: t.emitted === 'skip',
+    skipReason: t.skipReason,
+  }));
+}
+
 // ── Tabela mapowań kolumna→pole ──────────────────────────────────────────────
 
 export interface MappingField {
@@ -62,7 +82,12 @@ interface FieldSpec {
   /** Powody skipu wskazujące na to pole (→ status „uncertain"). */
   reasons: SkipReason[];
   getVs: (m: Record<string, unknown>) => ValueSourceLike;
+  /** Nadpisanie etykiety źródła (np. dla strategii znaku przy stronie). */
+  sourceOverride?: (m: Record<string, unknown>) => string | undefined;
 }
+
+// Powody skipu współdzielone przez trade i cash (Data) — nie flagują cross-class.
+const SHARED_REASONS = new Set<SkipReason>(['missing_date', 'invalid_date']);
 
 /** RowClass (snake_case) → klucz sekcji mapowania w profilu (camelCase). */
 const CLASS_TO_KEY: Partial<Record<RowClass, string>> = {
@@ -120,6 +145,12 @@ const TRADE_FIELDS: FieldSpec[] = [
     getVs: (m) => {
       const s = m.side as { col?: ColRef } | undefined;
       return s?.col !== undefined ? { kind: 'column', col: s.col } : undefined;
+    },
+    sourceOverride: (m) => {
+      const s = m.side as { strategy?: string } | undefined;
+      if (s?.strategy === 'signedQuantity') return 'znak kolumny ilości (− = sprzedaż)';
+      if (s?.strategy === 'signedAmount') return 'znak kolumny kwoty (wydatek = kupno)';
+      return undefined;
     },
   },
 ];
@@ -208,7 +239,8 @@ function fieldStatus(
   if (src.kind === 'const') return 'ok';
   if (examples.length === 0) return 'uncertain';
   if (examples.some((e) => e.includes('***'))) return 'uncertain';
-  if (reasons.some((r) => globalReasons.has(r))) return 'uncertain';
+  // Tylko powody UNIKALNE dla klasy (współdzielone, jak data, nie flagują cross-class).
+  if (reasons.some((r) => !SHARED_REASONS.has(r) && globalReasons.has(r))) return 'uncertain';
   return 'ok';
 }
 
@@ -257,7 +289,7 @@ export function buildMappingTables(
         src.constValue !== undefined ? [src.constValue] : columnExamples(src.colIndex, classRows);
       fields.push({
         field: spec.label,
-        source: src.label,
+        source: spec.sourceOverride?.(mapping) ?? src.label,
         examples,
         status: fieldStatus(spec.required, src, examples, spec.reasons, globalReasons),
       });
@@ -346,17 +378,37 @@ export function unhandledDiscriminatorValues(
   const idx = resolveColIndex(col, headerNames);
   if (idx == null) return [];
 
-  const handled: string[] = [];
+  // Matchery na kolumnie-dyskryminatorze z operatorem — dopasowanie zgodne z
+  // semantyką classify (per-op), nie po podciągu (krótka wartość reguły „k" nie
+  // „zjada" już nierozpoznanych wartości).
+  const matchers: Array<{ op: string; values: string[] }> = [];
   for (const rule of profile.classify ?? []) {
-    for (const m of (rule.when ?? []) as Array<{ col: ColRef; values?: string[] }>) {
-      if (JSON.stringify(m.col) === JSON.stringify(col) && Array.isArray(m.values)) {
-        for (const v of m.values) handled.push(v.toLowerCase());
+    for (const m of (rule.when ?? []) as Array<{ col: ColRef; op?: string; values?: string[] }>) {
+      if (JSON.stringify(m.col) === JSON.stringify(col)) {
+        matchers.push({
+          op: m.op ?? '',
+          values: Array.isArray(m.values) ? m.values.map((v) => v.toLowerCase()) : [],
+        });
       }
     }
   }
   const isHandled = (cell: string) => {
     const lc = cell.toLowerCase();
-    return handled.some((h) => lc === h || lc.includes(h) || h.includes(lc));
+    return matchers.some(({ op, values }) => {
+      switch (op) {
+        case 'equals':
+        case 'oneOf':
+          return values.includes(lc);
+        case 'startsWith':
+          return values.some((v) => v && lc.startsWith(v));
+        case 'contains':
+          return values.some((v) => v && lc.includes(v));
+        case 'notEmpty':
+          return lc.length > 0;
+        default:
+          return false; // regex i inne — nie uznajemy za obsłużone
+      }
+    });
   };
 
   const out = new Set<string>();

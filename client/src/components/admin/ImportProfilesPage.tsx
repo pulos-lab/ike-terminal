@@ -15,6 +15,7 @@ import {
   buildSkipGroups,
   inferDiscriminatorCol,
   mappedClasses,
+  rowAnnotations,
   unhandledDiscriminatorValues,
   type FieldStatus,
 } from '@/lib/admin-review';
@@ -290,6 +291,8 @@ function ReviewDialog({
 
   const p = data?.profile;
   const profileJson = editedJson ?? (p ? JSON.stringify(p.profile, null, 2) : '');
+  // Klasa per wiersz próbki (zip pozycyjny) — do kolumny „Typ" + wyróżnienia skipów.
+  const sampleAnnos = data?.dryRun?.ok ? rowAnnotations(data.dryRun.rowTraces ?? []) : [];
 
   // Reverse-map: profil → draft formularza (gdy się da). Profile zbyt złożone
   // (regex/oneOf) → ok:false → wymuszamy edytor JSON. Przy zmianie wersji (Fix 2)
@@ -430,6 +433,9 @@ function ReviewDialog({
                           <th className="border-b border-border px-1.5 py-1 text-right font-normal text-muted-foreground">
                             #
                           </th>
+                          <th className="whitespace-nowrap border-b border-l border-border px-2 py-1 text-left font-semibold">
+                            Typ
+                          </th>
                           {p.headerNames.map((h, i) => (
                             <th
                               key={i}
@@ -441,21 +447,39 @@ function ReviewDialog({
                         </tr>
                       </thead>
                       <tbody>
-                        {p.sampleRows.map((row, ri) => (
-                          <tr key={ri} className="odd:bg-muted/30">
-                            <td className="px-1.5 py-0.5 text-right text-muted-foreground">
-                              {ri + 1}
-                            </td>
-                            {p.headerNames.map((_, ci) => (
-                              <td
-                                key={ci}
-                                className="whitespace-nowrap border-l border-border/50 px-2 py-0.5"
-                              >
-                                {row[ci] ?? ''}
+                        {p.sampleRows.map((row, ri) => {
+                          const anno = sampleAnnos[ri];
+                          return (
+                            <tr
+                              key={ri}
+                              className={`odd:bg-muted/30${anno?.isSkip ? ' text-muted-foreground' : ''}`}
+                            >
+                              <td className="px-1.5 py-0.5 text-right text-muted-foreground">
+                                {ri + 1}
                               </td>
-                            ))}
-                          </tr>
-                        ))}
+                              <td className="whitespace-nowrap border-l border-border/50 px-2 py-0.5">
+                                {anno?.isSkip ? (
+                                  <span className="text-warning">
+                                    pominięto
+                                    {anno.skipReason
+                                      ? `: ${SKIP_REASON_LABELS[anno.skipReason]}`
+                                      : ''}
+                                  </span>
+                                ) : (
+                                  (anno?.label ?? '')
+                                )}
+                              </td>
+                              {p.headerNames.map((_, ci) => (
+                                <td
+                                  key={ci}
+                                  className="whitespace-nowrap border-l border-border/50 px-2 py-0.5"
+                                >
+                                  {row[ci] ?? ''}
+                                </td>
+                              ))}
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
