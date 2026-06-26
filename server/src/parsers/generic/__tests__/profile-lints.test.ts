@@ -204,3 +204,34 @@ describe('lintProfile — statyczne info', () => {
     expect(warnings).toHaveLength(0);
   });
 });
+
+describe('lintProfile — akcje korporacyjne (Faza 4)', () => {
+  it('corporate-action-skipped z licznikiem, gdy reguła pomija akcję korporacyjną', () => {
+    const profile = tradeProfile({
+      classify: [
+        {
+          id: 'corp',
+          when: [{ col: { name: 'strona' }, op: 'equals', values: ['SPLIT'] }],
+          emit: 'skip',
+          skipReason: 'corporate_action',
+        },
+        { id: 'trade', when: [{ col: { name: 'data' }, op: 'notEmpty' }], emit: 'trade' },
+      ],
+    });
+    const csv =
+      `${TRADE_HEADER}\n` +
+      `01.03.2026 10:00:00;KGHM;PLKGHM000017;SPLIT;10;150,50;PLN\n` +
+      `02.03.2026 10:00:00;KGHM;PLKGHM000017;K;10;150,50;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    const lints = lintProfile(profile, out);
+    const corp = lints.find((l) => l.code === 'corporate-action-skipped');
+    expect(corp?.count).toBe(1);
+    // corporate_action jest łagodne → NIE podbija high-skip-rate.
+    expect(lints.map((l) => l.code)).not.toContain('high-skip-rate');
+  });
+
+  it('brak lintu, gdy nic nie pominięto jako akcja korporacyjna', () => {
+    const csv = `${TRADE_HEADER}\n01.03.2026 10:00:00;KGHM;PLKGHM000017;K;10;150,50;PLN`;
+    expect(lintCodes(tradeProfile(), csv)).not.toContain('corporate-action-skipped');
+  });
+});
