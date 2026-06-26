@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import type {
@@ -18,7 +18,13 @@ import {
   unhandledDiscriminatorValues,
   type FieldStatus,
 } from '@/lib/admin-review';
-import { ROW_CLASS_LABELS } from '@/lib/generic-profile-builder';
+import {
+  ROW_CLASS_LABELS,
+  buildProfileFromDraft,
+  draftFromProfile,
+  type ProfileDraft,
+} from '@/lib/generic-profile-builder';
+import { MappingEditor } from '@/components/import/generic/MappingEditor';
 import { SKIP_REASON_LABELS } from '@/lib/import-labels';
 import {
   Table,
@@ -230,10 +236,12 @@ function ReviewDialog({
   const [note, setNote] = useState('');
   const [editedJson, setEditedJson] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [editMode, setEditMode] = useState<'visual' | 'json'>('visual');
+  const [draft, setDraft] = useState<ProfileDraft | null>(null);
+  const [draftErrors, setDraftErrors] = useState<string[]>([]);
   const [copiedSample, setCopiedSample] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
-  const editorRef = useRef<HTMLDetailsElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-import-profile', profileId],
@@ -283,6 +291,26 @@ function ReviewDialog({
   const p = data?.profile;
   const profileJson = editedJson ?? (p ? JSON.stringify(p.profile, null, 2) : '');
 
+  // Reverse-map: profil → draft formularza (gdy się da). Profile zbyt złożone
+  // (regex/oneOf) → ok:false → wymuszamy edytor JSON. Przy zmianie wersji (Fix 2)
+  // p się zmienia → draft i tryb przeliczają się od nowa.
+  const reverse = useMemo(
+    () =>
+      p
+        ? draftFromProfile(p.profile, {
+            headers: p.headerNames,
+            delimiter: p.delimiter,
+            headerRowIndex: 0,
+          })
+        : null,
+    [p],
+  );
+  useEffect(() => {
+    setDraft(reverse?.ok ? (reverse.draft ?? null) : null);
+    setEditMode(reverse?.ok ? 'visual' : 'json');
+    setDraftErrors([]);
+  }, [reverse]);
+
   const handleSaveEdit = () => {
     setEditError(null);
     try {
@@ -292,8 +320,19 @@ function ReviewDialog({
     }
   };
 
+  const handleSaveVisual = () => {
+    if (!draft) return;
+    setDraftErrors([]);
+    const built = buildProfileFromDraft(draft);
+    if (!built.ok) {
+      setDraftErrors(built.errors ?? ['Nie udało się zbudować profilu.']);
+      return;
+    }
+    saveEdit.mutate(built.profile);
+  };
+
   const jumpToEditor = () => {
-    setEditorOpen(true);
+    setEditMode('json');
     setTimeout(
       () => editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }),
       0,
@@ -465,31 +504,89 @@ function ReviewDialog({
               />
             )}
 
-            <details
-              ref={editorRef}
-              open={editorOpen}
-              onToggle={(e) => setEditorOpen((e.currentTarget as HTMLDetailsElement).open)}
-            >
-              <summary className="cursor-pointer text-xs font-semibold">
-                Profil (JSON) — edytuj, aby zapisać korektę jako nową wersję
-              </summary>
-              <textarea
-                className="mt-2 w-full h-64 rounded border bg-background p-2 font-mono text-[11px] leading-relaxed"
-                value={profileJson}
-                onChange={(e) => setEditedJson(e.target.value)}
-                spellCheck={false}
-              />
-              {editError && <p className="mt-1 text-xs text-destructive">{editError}</p>}
-              <Button
-                size="sm"
-                variant="outline"
-                className="mt-2 h-8 text-xs"
-                disabled={editedJson === null || saveEdit.isPending}
-                onClick={handleSaveEdit}
-              >
-                {saveEdit.isPending ? 'Zapisywanie…' : 'Zapisz korektę (nowa wersja pending)'}
-              </Button>
-            </details>
+            <div ref={editorRef} className="rounded-md border p-3">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="text-xs font-semibold">Popraw mapowanie</span>
+                <div className="ml-auto flex gap-1">
+                  <Button
+                    size="sm"
+                    variant={editMode === 'visual' ? 'default' : 'outline'}
+                    className="h-6 text-[11px]"
+                    disabled={!reverse?.ok}
+                    onClick={() => setEditMode('visual')}
+                  >
+                    Wizualnie
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={editMode === 'json' ? 'default' : 'outline'}
+                    className="h-6 text-[11px]"
+                    onClick={() => setEditMode('json')}
+                  >
+                    JSON
+                  </Button>
+                </div>
+              </div>
+
+              {reverse && !reverse.ok && (
+                <p className="mb-2 text-xs text-warning">
+                  Tego profilu nie da się edytować wizualnie
+                  {reverse.reason ? ` (${reverse.reason})` : ''} — użyj edytora JSON.
+                </p>
+              )}
+              {editMode === 'visual' && reverse?.ok && reverse.lossy.length > 0 && (
+                <p className="mb-2 text-xs text-warning">
+                  Uwaga: edytor nie pokazuje niektórych elementów profilu, które przepadną po
+                  zapisie wizualnym: {reverse.lossy.join(', ')}. Jeśli chcesz je zachować, edytuj w
+                  JSON.
+                </p>
+              )}
+
+              {editMode === 'visual' && draft ? (
+                <>
+                  <MappingEditor
+                    draft={draft}
+                    sampleRows={p.sampleRows ?? []}
+                    onChange={setDraft}
+                  />
+                  {draftErrors.length > 0 && (
+                    <ul className="mt-2 list-disc pl-4 text-xs text-destructive">
+                      {draftErrors.map((e, i) => (
+                        <li key={i}>{e}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2 h-8 text-xs"
+                    disabled={saveEdit.isPending}
+                    onClick={handleSaveVisual}
+                  >
+                    {saveEdit.isPending ? 'Zapisywanie…' : 'Zapisz korektę (nowa wersja pending)'}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <textarea
+                    className="w-full h-64 rounded border bg-background p-2 font-mono text-[11px] leading-relaxed"
+                    value={profileJson}
+                    onChange={(e) => setEditedJson(e.target.value)}
+                    spellCheck={false}
+                  />
+                  {editError && <p className="mt-1 text-xs text-destructive">{editError}</p>}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2 h-8 text-xs"
+                    disabled={editedJson === null || saveEdit.isPending}
+                    onClick={handleSaveEdit}
+                  >
+                    {saveEdit.isPending ? 'Zapisywanie…' : 'Zapisz korektę (nowa wersja pending)'}
+                  </Button>
+                </>
+              )}
+            </div>
 
             {data.audit.length > 0 && (
               <details>
