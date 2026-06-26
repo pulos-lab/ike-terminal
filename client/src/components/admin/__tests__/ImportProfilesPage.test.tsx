@@ -133,7 +133,9 @@ describe('ImportProfilesPage — review', () => {
     Object.values(mockedApi).forEach((fn) => fn.mockReset());
     mockedApi.adminListImportProfiles.mockResolvedValue({ profiles: [SUMMARY] });
     mockedApi.adminGetImportProfile.mockResolvedValue(DETAIL);
-    mockedApi.adminUpdateImportProfile.mockResolvedValue({ profile: { ...SUMMARY, version: 6 } });
+    mockedApi.adminUpdateImportProfile.mockResolvedValue({
+      profile: { ...SUMMARY, id: 'p2', version: 6 },
+    });
   });
 
   it('review pokazuje rozbicie, tabelę mapowań i grupy skipów', async () => {
@@ -164,5 +166,9 @@ describe('ImportProfilesPage — review', () => {
     const added = sent.classify[sent.classify.length - 1];
     expect(added.emit).toBe('trade'); // pierwsza klasa z mapowaniem w pickerze
     expect(added.when[0].values).toContain('Card debit');
+
+    // Fix 2: dialog NIE zamyka się — pokazuje komunikat i przełącza na nową wersję.
+    expect(await screen.findByText(/Zapisano jako nową wersję v6/)).toBeInTheDocument();
+    await waitFor(() => expect(mockedApi.adminGetImportProfile).toHaveBeenCalledWith('p2'));
   });
 });

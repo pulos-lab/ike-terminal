@@ -146,6 +146,16 @@ describe('admin-review — buildMappingTables', () => {
     const cur = t.find((x) => x.emitted === 'trade')!.fields.find((f) => f.field === 'Waluta')!;
     expect(cur.status).toBe('missing');
   });
+
+  it('przykłady pól pochodzą z wierszy DANEJ klasy, nie z całej próbki', () => {
+    // SAMPLE[0]=trade (Cisco), SAMPLE[1]=dividend (Main Street). Kolumna „Name"
+    // ma obie wartości — ale tabela trade musi pokazać tylko wiersz trade.
+    const trade = tables.find((t) => t.emitted === 'trade')!;
+    expect(trade.fields.find((f) => f.field === 'Nazwa')!.examples).toEqual(['Cisco']);
+
+    const div = tables.find((t) => t.emitted === 'dividend')!;
+    expect(div.fields.find((f) => f.field === 'Ticker')!.examples).toEqual(['MAIN']);
+  });
 });
 
 describe('admin-review — akcje na skipach', () => {

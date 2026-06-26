@@ -160,6 +160,7 @@ export function ImportProfilesPage() {
             setBanner(message);
             setReviewId(null);
           }}
+          onSwitchVersion={(newId) => setReviewId(newId)}
         />
       )}
     </div>
@@ -218,10 +219,12 @@ function ReviewDialog({
   profileId,
   onClose,
   onActionDone,
+  onSwitchVersion,
 }: {
   profileId: string;
   onClose: () => void;
   onActionDone: (message: string) => void;
+  onSwitchVersion: (newId: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [note, setNote] = useState('');
@@ -229,6 +232,7 @@ function ReviewDialog({
   const [editError, setEditError] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [copiedSample, setCopiedSample] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const editorRef = useRef<HTMLDetailsElement>(null);
 
   const { data, isLoading } = useQuery({
@@ -265,7 +269,13 @@ function ReviewDialog({
     mutationFn: (profile: unknown) => api.adminUpdateImportProfile(profileId, profile),
     onSuccess: (r) => {
       invalidate();
-      onActionDone(`Zapisano korektę jako nową wersję v${r.profile.version} (oczekuje).`);
+      setEditedJson(null);
+      setEditError(null);
+      setSavedMsg(`Zapisano jako nową wersję v${r.profile.version} — przeglądasz ją poniżej.`);
+      setTimeout(() => setSavedMsg(null), 5000);
+      // Dialog zostaje OTWARTY i przełącza się na nową wersję (świeży dry-run),
+      // żeby admin mógł iterować (kolejna reguła) i na końcu zatwierdzić.
+      onSwitchVersion(r.profile.id);
     },
     onError: (err) => setEditError(err instanceof Error ? err.message : 'Błąd zapisu'),
   });
@@ -313,6 +323,12 @@ function ReviewDialog({
             wcześniejsze importy tego formatu do ponownego przetworzenia.
           </DialogDescription>
         </DialogHeader>
+
+        {savedMsg && (
+          <div className="rounded-md border border-success/30 bg-success/5 px-3 py-2 text-xs text-success">
+            {savedMsg}
+          </div>
+        )}
 
         {isLoading || !data || !p ? (
           <div className="text-sm text-muted-foreground py-8">Ładowanie...</div>

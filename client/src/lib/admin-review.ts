@@ -159,26 +159,29 @@ function colLabel(col: ColRef, headers: string[]): string {
 }
 
 interface SourceInfo {
+  kind: 'none' | 'column' | 'const' | 'regex';
   label: string;
   colIndex: number | null;
   constValue?: string;
 }
 
 function describeSource(vs: ValueSourceLike, headers: string[]): SourceInfo {
-  if (!vs) return { label: '— (brak)', colIndex: null };
+  if (!vs) return { kind: 'none', label: '— (brak)', colIndex: null };
   if (vs.kind === 'column')
     return {
+      kind: 'column',
       label: `kolumna ${colLabel(vs.col, headers)}`,
       colIndex: resolveColIndex(vs.col, headers),
     };
   if (vs.kind === 'const')
-    return { label: `stała: „${vs.value}"`, colIndex: null, constValue: vs.value };
+    return { kind: 'const', label: `stała: „${vs.value}"`, colIndex: null, constValue: vs.value };
   if (vs.kind === 'regexExtract')
     return {
+      kind: 'regex',
       label: `regex z ${colLabel(vs.col, headers)}`,
       colIndex: resolveColIndex(vs.col, headers),
     };
-  return { label: '—', colIndex: null };
+  return { kind: 'none', label: '—', colIndex: null };
 }
 
 function columnExamples(colIndex: number | null, sampleRows: string[][]): string[] {
@@ -201,8 +204,8 @@ function fieldStatus(
   reasons: SkipReason[],
   globalReasons: Set<SkipReason>,
 ): FieldStatus {
-  if (src.label.startsWith('—')) return required ? 'missing' : 'ok';
-  if (src.constValue !== undefined) return 'ok';
+  if (src.kind === 'none') return required ? 'missing' : 'ok';
+  if (src.kind === 'const') return 'ok';
   if (examples.length === 0) return 'uncertain';
   if (examples.some((e) => e.includes('***'))) return 'uncertain';
   if (reasons.some((r) => globalReasons.has(r))) return 'uncertain';
@@ -226,11 +229,24 @@ export function buildMappingTables(
   );
   const prof = profile as unknown as Record<string, Record<string, unknown> | undefined>;
 
+  // Wiersze próbki pogrupowane po klasie — po POZYCJI: k-ty rowTrace odpowiada
+  // k-temu wierszowi próbki (silnik produkuje jeden trace na wiersz, w kolejności).
+  // Dzięki temu przykłady pól pokazują wartości TEJ klasy, nie całej próbki.
+  const rowsByClass = new Map<RowClass, string[][]>();
+  rowTraces.forEach((t, k) => {
+    const row = sampleRows[k];
+    if (!row) return;
+    const arr = rowsByClass.get(t.emitted);
+    if (arr) arr.push(row);
+    else rowsByClass.set(t.emitted, [row]);
+  });
+
   const out: ClassMapping[] = [];
   for (const emitted of present) {
     const key = CLASS_TO_KEY[emitted];
     const mapping = key ? prof[key] : undefined;
     if (!mapping) continue;
+    const classRows = rowsByClass.get(emitted) ?? sampleRows;
     const specs = emitted === 'trade' ? TRADE_FIELDS : CASH_FIELDS;
     const fields: MappingField[] = [];
     for (const spec of specs) {
@@ -238,7 +254,7 @@ export function buildMappingTables(
       if (!vs && !spec.required) continue; // pole opcjonalne i niemapowane — pomiń
       const src = describeSource(vs, headerNames);
       const examples =
-        src.constValue !== undefined ? [src.constValue] : columnExamples(src.colIndex, sampleRows);
+        src.constValue !== undefined ? [src.constValue] : columnExamples(src.colIndex, classRows);
       fields.push({
         field: spec.label,
         source: src.label,
