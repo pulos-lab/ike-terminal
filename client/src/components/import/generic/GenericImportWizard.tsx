@@ -16,6 +16,7 @@ import {
   Info,
   Library,
   Loader2,
+  Pencil,
   Settings2,
   Sparkles,
 } from 'lucide-react';
@@ -31,6 +32,7 @@ import { BROKER_LABELS } from 'shared';
 import {
   adoptProfileForDocument,
   buildProfileFromDraft,
+  draftFromProfile,
   scoreDraft,
   suggestDraft,
   suggestRules,
@@ -67,6 +69,12 @@ interface SheetWork {
   analysis: GenericSheetAnalysis;
   /** Rozwiązany profil: z biblioteki (profileId) albo zbudowany (profileJson). */
   resolved?: { profileId?: string; profileJson?: unknown };
+  /**
+   * Profil w formie JSON do PONOWNEJ EDYCJI (reverse-map), gdy „Wróć do mapowania".
+   * UI-only — NIE jest wysyłany (toSheetInputs czyta tylko `resolved`). Dla AI =
+   * profileJson z odpowiedzi generatora, dla biblioteki/ręcznego = ten sam JSON.
+   */
+  source?: unknown;
 }
 
 interface Props {
@@ -129,6 +137,10 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
   /** Progresywne ujawnianie: pełny edytor i boks AI domyślnie schowane. */
   const [showAllFields, setShowAllFields] = useState(false);
   const [showAiBox, setShowAiBox] = useState(false);
+  /** Edycja istniejącego mapowania (AI/biblioteka) wczytanego przez reverse-map. */
+  const [editingSource, setEditingSource] = useState(false);
+  /** Cechy wczytanego profilu nieodwzorowane w formularzu (ostrzeżenie o utracie). */
+  const [sourceLossy, setSourceLossy] = useState<string[]>([]);
 
   /** >1 tabela → pokazuj UI per tabela (numerację, „kolejna tabela", wkład tabel). */
   const multiDoc = sheets.length > 1;
@@ -191,7 +203,10 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
       const works = toSheetWorks(result);
       // Auto-rozwiąż tabele, które mają profil w bibliotece (exact-match fingerprint).
       for (const w of works) {
-        if (w.analysis.profile) w.resolved = { profileId: w.analysis.profile.summary.id };
+        if (w.analysis.profile) {
+          w.resolved = { profileId: w.analysis.profile.summary.id };
+          w.source = w.analysis.profile.profileJson; // do edycji po „Wróć do mapowania"
+        }
       }
       setSheets(works);
 
@@ -278,7 +293,9 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
         const built = buildProfileFromDraft(draft);
         if (built.ok) {
           updated = updated.map((w, idx) =>
-            idx === i ? { ...w, resolved: { profileJson: built.profile } } : w,
+            idx === i
+              ? { ...w, resolved: { profileJson: built.profile }, source: built.profile }
+              : w,
           );
           auto.push(docLabel(a));
           i = updated.findIndex((w, idx) => idx > i && !w.resolved);
@@ -301,6 +318,36 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
     pre?: { draft: ProfileDraft; score: DraftScore },
   ) {
     const a = works[idx].analysis;
+    const meta = { headers: a.headers, delimiter: a.delimiter, headerRowIndex: a.headerRowIndex };
+
+    // Edycja istniejącego mapowania (AI/biblioteka): wczytaj profil do edytora (reverse-map).
+    const src = works[idx].source;
+    if (src !== undefined) {
+      const rev = draftFromProfile(src, meta);
+      if (rev.ok && rev.draft) {
+        setCursor(idx);
+        setDraft(rev.draft);
+        setEditingSource(true);
+        setSourceLossy(rev.lossy);
+        setShowAllFields(true);
+        setShowAiBox(false);
+        setInitialVerdict('near');
+        setMappingErrors([]);
+        setAiConsent(false);
+        setAiError(null);
+        setStep('mapping');
+        return;
+      }
+      // Zbyt złożony, by wczytać do formularza → heurystyka + ostrzeżenie o zastąpieniu.
+      setMessages((prev) => [
+        ...prev,
+        {
+          kind: 'warn',
+          text: `Nie można wczytać dotychczasowego mapowania do edytora (${rev.reason ?? 'zbyt złożone'}). Zaczniesz od nowa — poprzednie mapowanie zostanie zastąpione dopiero po zapisaniu.`,
+        },
+      ]);
+    }
+
     const { draft: d0, score } = pre ?? analyzeSheet(a);
     let draft = d0;
     // Plik operacji: zasiej tryb reguł, żeby pełny edytor nie startował pusty (P4).
@@ -318,6 +365,8 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
     }
     setCursor(idx);
     setDraft(draft);
+    setEditingSource(false);
+    setSourceLossy([]);
     setInitialVerdict(score.verdict === 'incomplete' ? 'incomplete' : 'near');
     setShowAllFields(false);
     setShowAiBox(false);
@@ -327,9 +376,16 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
     setStep('mapping');
   }
 
-  /** Zapisz rozwiązany profil bieżącej tabeli i przejdź dalej (kolejna tabela / podgląd). */
-  async function resolveAndAdvance(resolved: { profileId?: string; profileJson?: unknown }) {
-    const updated = sheets.map((w, i) => (i === cursor ? { ...w, resolved } : w));
+  /**
+   * Zapisz rozwiązany profil bieżącej tabeli i przejdź dalej (kolejna tabela / podgląd).
+   * `source` = JSON profilu do późniejszej edycji (reverse-map); domyślnie profileJson.
+   */
+  async function resolveAndAdvance(
+    resolved: { profileId?: string; profileJson?: unknown },
+    source?: unknown,
+  ) {
+    const src = source !== undefined ? source : resolved.profileJson;
+    const updated = sheets.map((w, i) => (i === cursor ? { ...w, resolved, source: src } : w));
     setSheets(updated);
     await proceedFrom(updated, cursor + 1);
   }
@@ -385,7 +441,7 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
             `mapowanie wygenerowane automatycznie (pewność ${(result.confidence * 100).toFixed(0)}%).`,
         },
       ]);
-      await resolveAndAdvance({ profileId: result.summary.id });
+      await resolveAndAdvance({ profileId: result.summary.id }, result.profileJson);
     } finally {
       if (aiTimerRef.current !== null) window.clearInterval(aiTimerRef.current);
       aiTimerRef.current = null;
@@ -516,15 +572,29 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
               </p>
             )}
 
-            {current.analysis.suggestions && current.analysis.suggestions.length > 0 && (
-              <SuggestionsBox
-                suggestions={current.analysis.suggestions}
-                onUse={handleUseSuggestion}
-              />
+            {/* Edycja istniejącego mapowania (AI/biblioteka) — baner + pełny edytor. */}
+            {editingSource && (
+              <>
+                <EditingSourceBanner lossy={sourceLossy} />
+                <MappingEditor
+                  draft={draft}
+                  sampleRows={current.analysis.sampleRows}
+                  onChange={setDraft}
+                />
+              </>
             )}
 
+            {!editingSource &&
+              current.analysis.suggestions &&
+              current.analysis.suggestions.length > 0 && (
+                <SuggestionsBox
+                  suggestions={current.analysis.suggestions}
+                  onUse={handleUseSuggestion}
+                />
+              )}
+
             {/* INCOMPLETE: nietypowy układ / plik operacji → prowadź AI (CTA niżej). */}
-            {initialVerdict === 'incomplete' && (
+            {!editingSource && initialVerdict === 'incomplete' && (
               <div className="rounded-md border border-primary/40 bg-primary/5 p-3 space-y-1">
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <Sparkles className="h-4 w-4 text-primary" />
@@ -541,7 +611,7 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
             )}
 
             {/* NEAR: karta „uzupełnij brakujące pola" — pyta tylko o luki. */}
-            {initialVerdict === 'near' && liveScore && (
+            {!editingSource && initialVerdict === 'near' && liveScore && (
               <div className="rounded-md border border-border bg-muted/30 p-3 space-y-3">
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <CheckCircle className="h-4 w-4 text-success" />
@@ -559,7 +629,7 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
             )}
 
             {/* Boks AI: prominentnie przy incomplete; przy near za cichym linkiem. */}
-            {(initialVerdict === 'incomplete' || showAiBox) && (
+            {!editingSource && (initialVerdict === 'incomplete' || showAiBox) && (
               <AiMappingBox
                 analysis={current.analysis}
                 multiDoc={multiDoc}
@@ -571,7 +641,7 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
                 onGenerate={handleGenerateAi}
               />
             )}
-            {initialVerdict === 'near' && !showAiBox && (
+            {!editingSource && initialVerdict === 'near' && !showAiBox && (
               <button
                 type="button"
                 onClick={() => setShowAiBox(true)}
@@ -582,7 +652,7 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
             )}
 
             {/* Pełny edytor — domyślnie zwinięty (progresywne ujawnianie). */}
-            {showAllFields ? (
+            {!editingSource && showAllFields && (
               <div className="space-y-2">
                 <MappingEditor
                   draft={draft}
@@ -597,7 +667,8 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
                   Ukryj wszystkie pola
                 </button>
               </div>
-            ) : (
+            )}
+            {!editingSource && !showAllFields && (
               <button
                 type="button"
                 onClick={() => setShowAllFields(true)}
@@ -620,9 +691,15 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
             )}
             <MessagesList messages={messages} />
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Anuluj
-              </Button>
+              {editingSource ? (
+                <Button variant="outline" onClick={() => void runMergedPreview(sheets)}>
+                  Wróć bez zmian
+                </Button>
+              ) : (
+                <Button variant="outline" onClick={() => onOpenChange(false)}>
+                  Anuluj
+                </Button>
+              )}
               <Button onClick={handleSheetMapped}>
                 {multiDoc && cursor < sheets.length - 1
                   ? 'Dalej (kolejna tabela)'
@@ -710,6 +787,31 @@ function pluralFields(n: number): string {
   const mod10 = n % 10;
   const mod100 = n % 100;
   return mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20) ? 'pola' : 'pól';
+}
+
+/** Baner nad edytorem przy wczytaniu istniejącego mapowania (reverse-map). */
+function EditingSourceBanner({ lossy }: { lossy: string[] }) {
+  if (lossy.length === 0) {
+    return (
+      <div className="flex items-start gap-2 rounded-md border border-info/30 bg-info/5 p-3 text-xs text-info">
+        <Pencil className="h-4 w-4 shrink-0 mt-0.5" />
+        <span>
+          Edytujesz istniejące mapowanie. Zmień, co trzeba, i kliknij „Pokaż podgląd" — albo „Wróć
+          bez zmian", by zachować je nietknięte.
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-warning">
+      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+      <span>
+        To mapowanie zawiera elementy, których formularz nie pokazuje i które{' '}
+        <span className="font-medium">przepadną po zapisaniu</span>: {lossy.join(', ')}. Jeśli nie
+        chcesz ich stracić, kliknij „Wróć bez zmian".
+      </span>
+    </div>
+  );
 }
 
 /** Boks „Podobne formaty w bibliotece" — adopcja gotowego profilu (bez AI). */
