@@ -343,6 +343,53 @@ describe('draftFromProfile — reverse-map (edycja istniejącego mapowania)', ()
     const rev = draftFromProfile(prof, META);
     expect(rev.ok).toBe(false);
   });
+
+  it('referencje kolumn po NAZWIE (profile AI) → rozwiązane na indeksy', () => {
+    const headers = ['Action', 'Time', 'Name', 'No. of shares', 'Price', 'Currency'];
+    const aiProfile = (qtyName: string) => ({
+      specVersion: 1,
+      brokerLabel: 'AI',
+      file: { delimiter: ',', headerRow: { strategy: 'first' } },
+      classify: [
+        {
+          id: 'buy',
+          when: [{ col: { name: 'Action' }, op: 'equals', values: ['Market buy'] }],
+          emit: 'trade',
+        },
+      ],
+      defaultClass: 'skip',
+      trade: {
+        date: { source: { kind: 'column', col: { name: 'Time' } }, formats: ['YYYY-MM-DD'] },
+        paperName: { kind: 'column', col: { name: 'Name' } },
+        quantity: { kind: 'column', col: { name: qtyName } },
+        price: { kind: 'column', col: { name: 'Price' } },
+        currency: { kind: 'column', col: { name: 'Currency' } },
+        side: {
+          strategy: 'column',
+          col: { name: 'Action' },
+          buyValues: ['Market buy'],
+          sellValues: ['Market sell'],
+        },
+      },
+    });
+    const rev = draftFromProfile(aiProfile('No. of shares'), {
+      headers,
+      delimiter: ',',
+      headerRowIndex: 0,
+    });
+    expect(rev.ok).toBe(true);
+    expect(rev.draft!.trade.quantityCol).toBe(3); // «No. of shares»
+    expect(rev.draft!.trade.sideCol).toBe(0); // «Action»
+    expect(rev.draft!.classify[0].colIndex).toBe(0); // reguła na «Action»
+
+    // Nazwa spoza nagłówków → nierozwiązana → ok:false (jak każda kolumna nie do odwzorowania).
+    const bad = draftFromProfile(aiProfile('Brak takiej'), {
+      headers,
+      delimiter: ',',
+      headerRowIndex: 0,
+    });
+    expect(bad.ok).toBe(false);
+  });
 });
 
 describe('adoptProfileForDocument — P1 adopcja podobnego profilu', () => {

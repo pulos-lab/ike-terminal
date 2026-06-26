@@ -171,4 +171,63 @@ describe('ImportProfilesPage — review', () => {
     expect(await screen.findByText(/Zapisano jako nową wersję v6/)).toBeInTheDocument();
     await waitFor(() => expect(mockedApi.adminGetImportProfile).toHaveBeenCalledWith('p2'));
   });
+
+  it('edytor wizualny dla profilu z indeksami; „Zapisz korektę" buduje profil i woła API', async () => {
+    // Reverse-map obsługuje profile z NUMERYCZNYMI indeksami kolumn (jak z kreatora).
+    const simpleProfile = {
+      specVersion: 1,
+      brokerLabel: 'Simple',
+      file: { delimiter: ',', headerRow: { strategy: 'first' } },
+      classify: [{ id: 'all', when: [{ col: 0, op: 'notEmpty' }], emit: 'trade' }],
+      defaultClass: 'skip',
+      trade: {
+        date: { source: { kind: 'column', col: 1 }, formats: ['YYYY-MM-DD'] },
+        paperName: { kind: 'column', col: 4 },
+        isin: { kind: 'column', col: 2 },
+        quantity: { kind: 'column', col: 5 },
+        price: { kind: 'column', col: 6 },
+        currency: { kind: 'column', col: 7 },
+        side: {
+          strategy: 'column',
+          col: 0,
+          buyValues: ['Market buy'],
+          sellValues: ['Market sell'],
+        },
+      },
+    };
+    mockedApi.adminGetImportProfile.mockResolvedValue({
+      ...DETAIL,
+      profile: { ...SUMMARY, profile: simpleProfile, sampleRows: SAMPLE },
+    });
+    renderPage();
+    fireEvent.click(await screen.findByText('Przejrzyj'));
+
+    expect(await screen.findByText('Popraw mapowanie')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Wizualnie' })).not.toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Zapisz korektę/ }));
+    await waitFor(() => expect(mockedApi.adminUpdateImportProfile).toHaveBeenCalled());
+    const [, sent] = mockedApi.adminUpdateImportProfile.mock.calls[0];
+    // buildProfileFromDraft zbudował poprawny ImportProfile (round-trip).
+    expect((sent as { specVersion?: number }).specVersion).toBe(1);
+  });
+
+  it('profil zbyt złożony (regexExtract) → edytor wizualny zablokowany, wymuszony JSON', async () => {
+    const complexProfile = {
+      ...PROFILE_JSON,
+      trade: {
+        ...PROFILE_JSON.trade,
+        paperName: { kind: 'regexExtract', col: { name: 'Name' }, pattern: '(.+)', group: 1 },
+      },
+    };
+    mockedApi.adminGetImportProfile.mockResolvedValue({
+      ...DETAIL,
+      profile: { ...SUMMARY, profile: complexProfile, sampleRows: SAMPLE },
+    });
+    renderPage();
+    fireEvent.click(await screen.findByText('Przejrzyj'));
+
+    expect(await screen.findByText(/nie da się edytować wizualnie/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Wizualnie' })).toBeDisabled();
+  });
 });

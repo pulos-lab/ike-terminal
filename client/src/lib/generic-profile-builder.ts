@@ -708,6 +708,44 @@ function columnIndexOf(source: unknown): number | undefined {
   return s && s.kind === 'column' && typeof s.col === 'number' ? s.col : undefined;
 }
 
+/** Referencja kolumny (numer LUB {name, occurrence}) → indeks; undefined gdy nierozwiązywalna. */
+function colRefToIndex(col: unknown, headers: string[]): number | undefined {
+  if (typeof col === 'number') return col >= 0 ? col : undefined;
+  const r = asRecord(col);
+  if (r && typeof r.name === 'string') {
+    let occ = typeof r.occurrence === 'number' ? r.occurrence : 0;
+    for (let i = 0; i < headers.length; i++) {
+      if (headers[i] === r.name) {
+        if (occ === 0) return i;
+        occ -= 1;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Normalizuje profil: każdą referencję kolumny po NAZWIE ({name, occurrence})
+ * zamienia na indeks (po `headers`). Profile generowane przez AI używają nazw —
+ * po tej zamianie reszta reverse-mapy (oczekująca indeksów) działa bez zmian.
+ * Nierozwiązane nazwy zostają nietknięte (helpery i tak je odrzucą → ok:false).
+ */
+function resolveColRefsToIndices(node: unknown, headers: string[]): unknown {
+  if (Array.isArray(node)) return node.map((n) => resolveColRefsToIndices(n, headers));
+  const r = asRecord(node);
+  if (!r) return node;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(r)) {
+    if (k === 'col') {
+      const idx = colRefToIndex(v, headers);
+      out[k] = idx === undefined ? v : idx;
+    } else {
+      out[k] = resolveColRefsToIndices(v, headers);
+    }
+  }
+  return out;
+}
+
 function firstDateFormat(formats: unknown): DateFormat {
   return Array.isArray(formats) && typeof formats[0] === 'string'
     ? (formats[0] as DateFormat)
@@ -820,7 +858,9 @@ export function draftFromProfile(
   meta: { headers: string[]; delimiter: string; headerRowIndex: number },
 ): ReverseMapResult {
   const lossy: string[] = [];
-  const p = asRecord(profileJson);
+  // Profile z AI używają referencji kolumn po NAZWIE — zamień na indeksy, by
+  // edytor wizualny działał (reszta reverse-mapy oczekuje indeksów).
+  const p = asRecord(resolveColRefsToIndices(profileJson, meta.headers));
   if (!p) return { ok: false, lossy, reason: 'Profil ma nieoczekiwany format.' };
 
   for (const k of Object.keys(p)) {

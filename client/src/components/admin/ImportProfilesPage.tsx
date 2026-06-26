@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import type {
@@ -15,10 +15,17 @@ import {
   buildSkipGroups,
   inferDiscriminatorCol,
   mappedClasses,
+  rowAnnotations,
   unhandledDiscriminatorValues,
   type FieldStatus,
 } from '@/lib/admin-review';
-import { ROW_CLASS_LABELS } from '@/lib/generic-profile-builder';
+import {
+  ROW_CLASS_LABELS,
+  buildProfileFromDraft,
+  draftFromProfile,
+  type ProfileDraft,
+} from '@/lib/generic-profile-builder';
+import { MappingEditor } from '@/components/import/generic/MappingEditor';
 import { SKIP_REASON_LABELS } from '@/lib/import-labels';
 import {
   Table,
@@ -230,10 +237,12 @@ function ReviewDialog({
   const [note, setNote] = useState('');
   const [editedJson, setEditedJson] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [editMode, setEditMode] = useState<'visual' | 'json'>('visual');
+  const [draft, setDraft] = useState<ProfileDraft | null>(null);
+  const [draftErrors, setDraftErrors] = useState<string[]>([]);
   const [copiedSample, setCopiedSample] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
-  const editorRef = useRef<HTMLDetailsElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-import-profile', profileId],
@@ -282,6 +291,28 @@ function ReviewDialog({
 
   const p = data?.profile;
   const profileJson = editedJson ?? (p ? JSON.stringify(p.profile, null, 2) : '');
+  // Klasa per wiersz próbki (zip pozycyjny) — do kolumny „Typ" + wyróżnienia skipów.
+  const sampleAnnos = data?.dryRun?.ok ? rowAnnotations(data.dryRun.rowTraces ?? []) : [];
+
+  // Reverse-map: profil → draft formularza (gdy się da). Profile zbyt złożone
+  // (regex/oneOf) → ok:false → wymuszamy edytor JSON. Przy zmianie wersji (Fix 2)
+  // p się zmienia → draft i tryb przeliczają się od nowa.
+  const reverse = useMemo(
+    () =>
+      p
+        ? draftFromProfile(p.profile, {
+            headers: p.headerNames,
+            delimiter: p.delimiter,
+            headerRowIndex: 0,
+          })
+        : null,
+    [p],
+  );
+  useEffect(() => {
+    setDraft(reverse?.ok ? (reverse.draft ?? null) : null);
+    setEditMode(reverse?.ok ? 'visual' : 'json');
+    setDraftErrors([]);
+  }, [reverse]);
 
   const handleSaveEdit = () => {
     setEditError(null);
@@ -292,8 +323,19 @@ function ReviewDialog({
     }
   };
 
+  const handleSaveVisual = () => {
+    if (!draft) return;
+    setDraftErrors([]);
+    const built = buildProfileFromDraft(draft);
+    if (!built.ok) {
+      setDraftErrors(built.errors ?? ['Nie udało się zbudować profilu.']);
+      return;
+    }
+    saveEdit.mutate(built.profile);
+  };
+
   const jumpToEditor = () => {
-    setEditorOpen(true);
+    setEditMode('json');
     setTimeout(
       () => editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }),
       0,
@@ -391,6 +433,9 @@ function ReviewDialog({
                           <th className="border-b border-border px-1.5 py-1 text-right font-normal text-muted-foreground">
                             #
                           </th>
+                          <th className="whitespace-nowrap border-b border-l border-border px-2 py-1 text-left font-semibold">
+                            Typ
+                          </th>
                           {p.headerNames.map((h, i) => (
                             <th
                               key={i}
@@ -402,21 +447,39 @@ function ReviewDialog({
                         </tr>
                       </thead>
                       <tbody>
-                        {p.sampleRows.map((row, ri) => (
-                          <tr key={ri} className="odd:bg-muted/30">
-                            <td className="px-1.5 py-0.5 text-right text-muted-foreground">
-                              {ri + 1}
-                            </td>
-                            {p.headerNames.map((_, ci) => (
-                              <td
-                                key={ci}
-                                className="whitespace-nowrap border-l border-border/50 px-2 py-0.5"
-                              >
-                                {row[ci] ?? ''}
+                        {p.sampleRows.map((row, ri) => {
+                          const anno = sampleAnnos[ri];
+                          return (
+                            <tr
+                              key={ri}
+                              className={`odd:bg-muted/30${anno?.isSkip ? ' text-muted-foreground' : ''}`}
+                            >
+                              <td className="px-1.5 py-0.5 text-right text-muted-foreground">
+                                {ri + 1}
                               </td>
-                            ))}
-                          </tr>
-                        ))}
+                              <td className="whitespace-nowrap border-l border-border/50 px-2 py-0.5">
+                                {anno?.isSkip ? (
+                                  <span className="text-warning">
+                                    pominięto
+                                    {anno.skipReason
+                                      ? `: ${SKIP_REASON_LABELS[anno.skipReason]}`
+                                      : ''}
+                                  </span>
+                                ) : (
+                                  (anno?.label ?? '')
+                                )}
+                              </td>
+                              {p.headerNames.map((_, ci) => (
+                                <td
+                                  key={ci}
+                                  className="whitespace-nowrap border-l border-border/50 px-2 py-0.5"
+                                >
+                                  {row[ci] ?? ''}
+                                </td>
+                              ))}
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -465,31 +528,89 @@ function ReviewDialog({
               />
             )}
 
-            <details
-              ref={editorRef}
-              open={editorOpen}
-              onToggle={(e) => setEditorOpen((e.currentTarget as HTMLDetailsElement).open)}
-            >
-              <summary className="cursor-pointer text-xs font-semibold">
-                Profil (JSON) — edytuj, aby zapisać korektę jako nową wersję
-              </summary>
-              <textarea
-                className="mt-2 w-full h-64 rounded border bg-background p-2 font-mono text-[11px] leading-relaxed"
-                value={profileJson}
-                onChange={(e) => setEditedJson(e.target.value)}
-                spellCheck={false}
-              />
-              {editError && <p className="mt-1 text-xs text-destructive">{editError}</p>}
-              <Button
-                size="sm"
-                variant="outline"
-                className="mt-2 h-8 text-xs"
-                disabled={editedJson === null || saveEdit.isPending}
-                onClick={handleSaveEdit}
-              >
-                {saveEdit.isPending ? 'Zapisywanie…' : 'Zapisz korektę (nowa wersja pending)'}
-              </Button>
-            </details>
+            <div ref={editorRef} className="rounded-md border p-3">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="text-xs font-semibold">Popraw mapowanie</span>
+                <div className="ml-auto flex gap-1">
+                  <Button
+                    size="sm"
+                    variant={editMode === 'visual' ? 'default' : 'outline'}
+                    className="h-6 text-[11px]"
+                    disabled={!reverse?.ok}
+                    onClick={() => setEditMode('visual')}
+                  >
+                    Wizualnie
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={editMode === 'json' ? 'default' : 'outline'}
+                    className="h-6 text-[11px]"
+                    onClick={() => setEditMode('json')}
+                  >
+                    JSON
+                  </Button>
+                </div>
+              </div>
+
+              {reverse && !reverse.ok && (
+                <p className="mb-2 text-xs text-warning">
+                  Tego profilu nie da się edytować wizualnie
+                  {reverse.reason ? ` (${reverse.reason})` : ''} — użyj edytora JSON.
+                </p>
+              )}
+              {editMode === 'visual' && reverse?.ok && reverse.lossy.length > 0 && (
+                <p className="mb-2 text-xs text-warning">
+                  Uwaga: edytor nie pokazuje niektórych elementów profilu, które przepadną po
+                  zapisie wizualnym: {reverse.lossy.join(', ')}. Jeśli chcesz je zachować, edytuj w
+                  JSON.
+                </p>
+              )}
+
+              {editMode === 'visual' && draft ? (
+                <>
+                  <MappingEditor
+                    draft={draft}
+                    sampleRows={p.sampleRows ?? []}
+                    onChange={setDraft}
+                  />
+                  {draftErrors.length > 0 && (
+                    <ul className="mt-2 list-disc pl-4 text-xs text-destructive">
+                      {draftErrors.map((e, i) => (
+                        <li key={i}>{e}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2 h-8 text-xs"
+                    disabled={saveEdit.isPending}
+                    onClick={handleSaveVisual}
+                  >
+                    {saveEdit.isPending ? 'Zapisywanie…' : 'Zapisz korektę (nowa wersja pending)'}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <textarea
+                    className="w-full h-64 rounded border bg-background p-2 font-mono text-[11px] leading-relaxed"
+                    value={profileJson}
+                    onChange={(e) => setEditedJson(e.target.value)}
+                    spellCheck={false}
+                  />
+                  {editError && <p className="mt-1 text-xs text-destructive">{editError}</p>}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2 h-8 text-xs"
+                    disabled={editedJson === null || saveEdit.isPending}
+                    onClick={handleSaveEdit}
+                  >
+                    {saveEdit.isPending ? 'Zapisywanie…' : 'Zapisz korektę (nowa wersja pending)'}
+                  </Button>
+                </>
+              )}
+            </div>
 
             {data.audit.length > 0 && (
               <details>
@@ -593,7 +714,9 @@ function MappingReview({
       {tables.map((t) => (
         <details key={t.emitted} open className="rounded-md border px-3 py-2">
           <summary className="cursor-pointer text-xs font-semibold">Mapowanie: {t.label}</summary>
-          <table className="mt-2 w-full text-[11px]">
+          {/* Bez w-full: tabela dopasowuje się do treści (inaczej przy szerokim oknie
+              kolumny rozjeżdżają się i powstaje pusta przerwa „Źródło"↔„Przykłady"). */}
+          <table className="mt-2 text-[11px]">
             <thead className="text-muted-foreground">
               <tr className="text-left">
                 <th className="pr-2 font-medium">Pole</th>
