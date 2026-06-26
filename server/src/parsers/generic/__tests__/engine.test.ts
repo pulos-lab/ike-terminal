@@ -807,3 +807,84 @@ describe('parseWithProfile — wolne akcje (share_in, Faza 1+2)', () => {
       expect(r.error.issues.some((i) => i.message.includes('needsNameResolution'))).toBe(true);
   });
 });
+
+describe('parseWithProfile — wykup/wezwanie (redemption, 4. PR)', () => {
+  const RED_HEADER = 'typ;data;papier;isin;ilosc;cena;kwota';
+  const redProfile = (extra: Record<string, unknown>) =>
+    ImportProfileSchema.parse({
+      specVersion: 1,
+      brokerLabel: 'Test',
+      file: { delimiter: ';', headerRow: { strategy: 'first' } },
+      classify: [
+        {
+          id: 'red',
+          when: [{ col: { name: 'typ' }, op: 'equals', values: ['WYKUP'] }],
+          emit: 'redemption',
+        },
+      ],
+      redemption: {
+        date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['YYYY-MM-DD'] },
+        paperName: { kind: 'column', col: { name: 'papier' } },
+        isin: { kind: 'column', col: { name: 'isin' } },
+        quantity: { kind: 'column', col: { name: 'ilosc' } },
+        ...extra,
+      },
+    });
+
+  it('cena jawna → syntetyczna S po tej cenie; bez kategorii bond', () => {
+    const profile = redProfile({ price: { kind: 'column', col: { name: 'cena' } } });
+    const csv = `${RED_HEADER}\nWYKUP;2026-01-10;DS1030;PL0000111456;10;101,50;`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.transactions.data).toHaveLength(1);
+    expect(out.transactions.data[0]).toMatchObject({
+      side: 'S',
+      price: 101.5,
+      value: 1015,
+      quantity: 10,
+    });
+    expect(out.transactions.data[0].category).toBeUndefined(); // NIE bond (cena to wpływy, nie %)
+    expect(out.transactions.data[0].syntheticOrigin).toContain('Wykup');
+  });
+
+  it('tylko kwota wpływów → cena = kwota/ilość, wartość = kwota', () => {
+    const profile = redProfile({ amount: { kind: 'column', col: { name: 'kwota' } } });
+    const csv = `${RED_HEADER}\nWYKUP;2026-01-10;XBTI;DE000A3GK2N1;595;;2034,56`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.transactions.data[0].side).toBe('S');
+    expect(out.transactions.data[0].value).toBeCloseTo(2034.56);
+    expect(out.transactions.data[0].price).toBeCloseTo(2034.56 / 595);
+  });
+
+  it('zła ilość → skip invalid_quantity', () => {
+    const profile = redProfile({ price: { kind: 'column', col: { name: 'cena' } } });
+    const csv = `${RED_HEADER}\nWYKUP;2026-01-10;DS1030;PL0000111456;0;101,50;`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    expect(out.transactions.data).toHaveLength(0);
+    expect(out.transactions.skipped[0].reason).toBe('invalid_quantity');
+  });
+
+  it('schema: redemption bez price i bez amount → odrzucone', () => {
+    const r = ImportProfileSchema.safeParse({
+      specVersion: 1,
+      brokerLabel: 'Test',
+      file: { delimiter: ';', headerRow: { strategy: 'first' } },
+      classify: [
+        {
+          id: 'r',
+          when: [{ col: { name: 'typ' }, op: 'equals', values: ['WYKUP'] }],
+          emit: 'redemption',
+        },
+      ],
+      redemption: {
+        date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['YYYY-MM-DD'] },
+        paperName: { kind: 'column', col: { name: 'papier' } },
+        isin: { kind: 'column', col: { name: 'isin' } },
+        quantity: { kind: 'column', col: { name: 'ilosc' } },
+      },
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues.some((i) => i.message.includes("'price'"))).toBe(true);
+  });
+});

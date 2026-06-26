@@ -254,6 +254,43 @@ export function parseWithProfile(
       continue;
     }
 
+    // Wykup/wezwanie (redemption) → syntetyczna sprzedaż. Też PRZED CASH_MAPPING_KEY.
+    if (cls.emit === 'redemption') {
+      const outcome = buildRedemption(
+        row,
+        rowNum,
+        profile.redemption,
+        resolver,
+        normalizeCurrency,
+        importBatch,
+      );
+      if (outcome.ok) {
+        transactions.push(outcome.transaction);
+        rowTraces.push({
+          row: rowNum,
+          matchedRuleId: cls.ruleId,
+          emitted: 'redemption',
+          target: 'transaction',
+          preview: {
+            data: outcome.transaction.date,
+            papier: outcome.transaction.paperName,
+            ilość: outcome.transaction.quantity,
+            cena: outcome.transaction.price,
+            wartość: outcome.transaction.value,
+          },
+        });
+      } else {
+        skippedTx.push(outcome.skipped);
+        rowTraces.push({
+          row: rowNum,
+          matchedRuleId: cls.ruleId,
+          emitted: 'redemption',
+          skipReason: outcome.skipped.reason,
+        });
+      }
+      continue;
+    }
+
     // Klasy gotówkowe.
     const mappingKey = CASH_MAPPING_KEY[cls.emit];
     const mapping = mappingKey ? (profile[mappingKey] as CashMapping | undefined) : undefined;
@@ -581,6 +618,90 @@ function buildShareMove(
       source: 'generic',
       importBatch,
       syntheticOrigin: 'Przydział akcji (import)',
+    },
+  };
+}
+
+/**
+ * Wykup / wezwanie / zapadalność (`redemption`) → syntetyczna SPRZEDAŻ: papier
+ * znika, wpływa gotówka. Mirror `buildShareMove`, ale side='S' i cena ≠ 0 (realne
+ * wpływy): z kolumny `price`, albo z `amount` (łączne wpływy) ÷ ilość. Bezstanowy —
+ * plik musi nieść ilość. BEZ kategorii `bond` (cena to wpływy/szt, nie % nominału —
+ * inaczej bondPriceMultiplier ×nominal/100 by ją zepsuł).
+ */
+function buildRedemption(
+  row: string[],
+  rowNum: number,
+  mapping: ImportProfile['redemption'],
+  resolver: ColumnResolver,
+  normalizeCurrency: (raw: string | undefined) => string,
+  importBatch: string,
+): TransactionOutcome {
+  if (!mapping) {
+    return { ok: false, skipped: { row: rowNum, reason: 'unknown_operation_type' } };
+  }
+  const paperNameRaw = resolveValueSource(mapping.paperName, row, resolver);
+  const skip = (reason: SkipReason): TransactionOutcome => ({
+    ok: false,
+    skipped: { row: rowNum, reason, paperName: paperNameRaw || undefined },
+  });
+
+  const dateRaw = resolveValueSource(mapping.date.source, row, resolver);
+  if (!dateRaw) return skip('missing_date');
+  const dateIso = resolveDate(mapping.date, row, resolver);
+  if (!dateIso) return skip('invalid_date');
+  if (!paperNameRaw) return skip('missing_name');
+
+  let isinRaw: string | undefined;
+  if (mapping.isin) {
+    isinRaw = resolveValueSource(mapping.isin, row, resolver);
+    if (!isinRaw) return skip('missing_isin');
+  }
+
+  const quantityRaw = Math.abs(resolveNumber(mapping.quantity, row, resolver));
+  const quantity = mapping.wholeShares ? Math.round(quantityRaw) : quantityRaw;
+  if (quantity <= 0) return skip('invalid_quantity');
+
+  const currencyNorm = mapping.currency
+    ? normalizeCurrency(resolveValueSource(mapping.currency, row, resolver))
+    : '';
+  const isGbx = currencyNorm === 'GBX';
+  const currency = isGbx ? 'GBP' : currencyNorm;
+
+  // Cena za sztukę: jawna kolumna albo łączne wpływy ÷ ilość. GBX (pensy) → ÷100.
+  let price = 0;
+  let value = 0;
+  if (mapping.price) {
+    const raw = Math.abs(resolveNumber(mapping.price, row, resolver));
+    price = isGbx ? raw / 100 : raw;
+    value = roundTo2(quantity * price);
+  } else if (mapping.amount) {
+    const raw = Math.abs(resolveNumber(mapping.amount, row, resolver));
+    const amount = isGbx ? raw / 100 : raw;
+    price = amount / quantity;
+    value = roundTo2(amount);
+  }
+  if (price <= 0) return skip('invalid_price');
+
+  const { isin, paperName } = applyIsinAlias(isinRaw ?? paperNameRaw, paperNameRaw);
+
+  return {
+    ok: true,
+    transaction: {
+      date: dateIso,
+      paperName,
+      isin,
+      quantity,
+      side: 'S',
+      price,
+      value,
+      commission: 0,
+      total: computeTotal('S', value, 0),
+      currency,
+      paymentCurrency: currency,
+      source: 'generic',
+      importBatch,
+      syntheticOrigin: 'Wykup/wezwanie (import)',
     },
   };
 }

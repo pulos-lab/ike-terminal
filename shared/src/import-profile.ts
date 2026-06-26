@@ -153,6 +153,7 @@ export const RowClassSchema = z.enum([
   'commission_refund',
   'capital_return',
   'share_in',
+  'redemption',
   'other',
   'skip',
 ]);
@@ -332,6 +333,29 @@ export const ShareMoveMappingSchema = z.object({
 });
 export type ShareMoveMapping = z.infer<typeof ShareMoveMappingSchema>;
 
+/**
+ * Wykup / wezwanie / zapadalność (`redemption` → syntetyczna SPRZEDAŻ): papier
+ * znika z rachunku, a w zamian wpływa gotówka. Mirror `share_in` po stronie „out",
+ * ale cena ≠ 0 — to realne wpływy. Cena za sztukę: z kolumny `price`, albo z
+ * `amount` (łączne wpływy) ÷ ilość. Bezstanowy: plik MUSI nieść ilość (inaczej
+ * potrzebny byłby openQty z historii — to robi parser wbudowany, nie silnik).
+ * NIE ustawiamy kategorii `bond` (cena to wpływy/szt, nie % nominału).
+ */
+export const RedemptionMappingSchema = z.object({
+  date: DateSpecSchema,
+  paperName: ValueSourceSchema,
+  /** Brak → pseudo-ISIN = paperName (wymaga needsNameResolution). */
+  isin: ValueSourceSchema.optional(),
+  quantity: ValueSourceSchema,
+  /** Cena za sztukę (gdy plik ją podaje). */
+  price: ValueSourceSchema.optional(),
+  /** Łączne wpływy; cena = amount ÷ ilość, gdy `price` nie podane. Wymagane gdy brak `price`. */
+  amount: ValueSourceSchema.optional(),
+  currency: ValueSourceSchema.optional(),
+  wholeShares: z.boolean().default(false),
+});
+export type RedemptionMapping = z.infer<typeof RedemptionMappingSchema>;
+
 // ── Parowanie wierszy ────────────────────────────────────────────────────────
 
 export const DividendWhtPairingSchema = z.object({
@@ -443,6 +467,7 @@ const CLASS_TO_MAPPING_KEY = {
   commission_refund: 'commissionRefund',
   capital_return: 'capitalReturn',
   share_in: 'shareIn',
+  redemption: 'redemption',
   other: 'other',
 } as const;
 
@@ -469,6 +494,7 @@ export const ImportProfileSchema = z
     commissionRefund: CashMappingSchema.optional(),
     capitalReturn: CashMappingSchema.optional(),
     shareIn: ShareMoveMappingSchema.optional(),
+    redemption: RedemptionMappingSchema.optional(),
     other: CashMappingSchema.optional(),
     pairing: PairingRulesSchema.default({}),
     /** true → brak ISIN w pliku; import-service uruchamia resolucję nazwa→ISIN (mBank path). */
@@ -506,6 +532,22 @@ export const ImportProfileSchema = z
       ctx.issues.push({
         code: 'custom',
         message: `Mapowanie 'shareIn' nie ma źródła ISIN — ustaw needsNameResolution=true`,
+        input: p,
+      });
+    }
+
+    // redemption: jak trade — ISIN albo needsNameResolution; oraz cena LUB kwota wpływów.
+    if (p.redemption && !p.redemption.isin && !p.needsNameResolution) {
+      ctx.issues.push({
+        code: 'custom',
+        message: `Mapowanie 'redemption' nie ma źródła ISIN — ustaw needsNameResolution=true`,
+        input: p,
+      });
+    }
+    if (p.redemption && !p.redemption.price && !p.redemption.amount) {
+      ctx.issues.push({
+        code: 'custom',
+        message: `Mapowanie 'redemption' wymaga 'price' (cena za sztukę) albo 'amount' (łączne wpływy)`,
         input: p,
       });
     }

@@ -100,6 +100,7 @@ export const ROW_CLASS_LABELS: Record<RowClass, string> = {
   commission_refund: 'Zwrot prowizji',
   capital_return: 'Zwrot kapitału',
   share_in: 'Przydział akcji',
+  redemption: 'Wykup / wezwanie',
   other: 'Inna operacja',
   skip: 'Pomiń wiersz',
 };
