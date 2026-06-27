@@ -654,6 +654,8 @@ export function computeClosedTrades(
   }
 
   const closedTrades: ClosedTrade[] = [];
+  // tradeGroupId round-tripów, które na koniec przetwarzania grupy zostały otwarte (qty ≠ 0).
+  const openGroupIds = new Set<string>();
 
   for (const [groupKey, txs] of byGroup) {
     const isin = txs[0].isin; // clean ISIN for display/lookup
@@ -670,8 +672,13 @@ export function computeClosedTrades(
     const entry = tickerMap.get(isin);
     // Obligacje: kursy w % nominału — P/L w walucie wymaga mnożnika nominal/100.
     const bondMult = bondPriceMultiplier(txs[0]?.category, entry?.ticker ?? txs[0]?.paperName, txs);
+    // Round-trip (epizod) — licznik rośnie za każdym razem, gdy otwieramy pozycję od zera.
+    let episodeSeq = 0;
 
     for (const tx of sorted) {
+      // Wejście w transakcję z pustymi kolejkami = początek nowego round-tripu (flat→…).
+      if (buyQueue.length === 0 && shortQueue.length === 0) episodeSeq++;
+      const tradeGroupId = `${groupKey}#${episodeSeq}`;
       if (tx.side === 'K') {
         // If there are open short positions, this buy covers them (FIFO)
         if (shortQueue.length > 0) {
@@ -737,6 +744,7 @@ export function computeClosedTrades(
             }
 
             closedTrades.push({
+              tradeGroupId,
               paperName: entry?.name || tx.paperName,
               isin,
               ticker: entry?.ticker || isin,
@@ -845,6 +853,7 @@ export function computeClosedTrades(
           }
 
           closedTrades.push({
+            tradeGroupId,
             paperName: entry?.name || tx.paperName,
             isin,
             ticker: entry?.ticker || isin,
@@ -887,6 +896,12 @@ export function computeClosedTrades(
           });
         }
       }
+    }
+
+    // Po przejściu wszystkich transakcji grupy: jeśli pozycja nie wróciła do zera,
+    // ostatni round-trip jest wciąż otwarty (częściowo zrealizowany).
+    if (buyQueue.length > 0 || shortQueue.length > 0) {
+      openGroupIds.add(`${groupKey}#${episodeSeq}`);
     }
   }
 
@@ -959,6 +974,13 @@ export function computeClosedTrades(
     if (trade.totalCost === undefined) {
       const feesTotal = (trade.fees || []).reduce((s, f) => s + f.amount, 0);
       trade.totalCost = trade.buyCommission + trade.sellCommission + feesTotal;
+    }
+  }
+
+  // Oznacz nogi należące do wciąż otwartego round-tripu (pozycja częściowo zrealizowana).
+  if (openGroupIds.size > 0) {
+    for (const trade of closedTrades) {
+      if (trade.tradeGroupId && openGroupIds.has(trade.tradeGroupId)) trade.tradeGroupOpen = true;
     }
   }
 

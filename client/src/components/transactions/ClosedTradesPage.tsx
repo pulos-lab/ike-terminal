@@ -26,7 +26,7 @@ import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { formatNumber, formatDate, formatCurrency, formatQuantity } from '@/lib/formatters';
-import { groupClosedTrades } from '@/lib/closed-trades-grouping';
+import { groupClosedTrades, type TradeGroup } from '@/lib/closed-trades-grouping';
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { ChevronRight, ChevronDown, Trash2, SlidersHorizontal } from 'lucide-react';
@@ -35,9 +35,9 @@ import type { ClosedTrade } from 'shared';
 import { ClosedPositionCardMobile } from './ClosedPositionCardMobile';
 import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 
-/** Sprzedaż wskazana do usunięcia — dane do opisu w ConfirmDeleteDialog. */
+/** Round-trip wskazany do usunięcia — może obejmować kilka transakcji sprzedaży. */
 interface DeleteSellTarget {
-  id: number;
+  ids: number[];
   ticker: string;
   sellDate: string;
   quantity: number;
@@ -128,13 +128,18 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
   const [deleteTarget, setDeleteTarget] = useState<DeleteSellTarget | null>(null);
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => api.deleteTransaction(id),
-    onSuccess: (_, id) => {
+    // Round-trip może obejmować kilka sprzedaży — usuwamy sekwencyjnie (silnik przelicza po każdej).
+    mutationFn: async (ids: number[]) => {
+      for (const id of ids) await api.deleteTransaction(id);
+    },
+    onSuccess: (_, ids) => {
       invalidatePortfolio(queryClient);
       const t = deleteTarget;
-      if (t && t.id === id) {
+      if (t) {
         toast.success(
-          `Usunięto transakcję sprzedaży ${t.ticker} — ${formatQuantity(t.quantity)} szt z ${formatDate(t.sellDate)}`,
+          ids.length > 1
+            ? `Usunięto sprzedaże ${t.ticker} (${ids.length}) — łącznie ${formatQuantity(t.quantity)} szt`
+            : `Usunięto transakcję sprzedaży ${t.ticker} — ${formatQuantity(t.quantity)} szt z ${formatDate(t.sellDate)}`,
         );
       } else {
         toast.success('Usunięto transakcję sprzedaży.');
@@ -158,15 +163,15 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
     return Array.from(set).sort((a, b) => b - a);
   }, [data]);
 
-  const filteredTrades = useMemo((): ClosedTrade[] => {
-    if (!data?.trades?.length) return [];
-    let trades = data.trades;
+  // Round-tripy (flat→flat) z całej historii — grupujemy NAJPIERW, filtrujemy po grupach,
+  // żeby filtr P/L (zysk/strata) ani daty nie rozcinał pojedynczego round-tripu.
+  const allGroups = useMemo(() => groupClosedTrades(data?.trades ?? []), [data]);
 
-    if (plFilter === 'profit') trades = trades.filter((t) => t.profitLoss > 0);
-    else if (plFilter === 'loss') trades = trades.filter((t) => t.profitLoss < 0);
-
-    if (currencyFilter !== 'ALL') trades = trades.filter((t) => t.currency === currencyFilter);
-
+  const groups = useMemo((): TradeGroup[] => {
+    let g = allGroups;
+    if (plFilter === 'profit') g = g.filter((x) => x.totalProfitLoss > 0);
+    else if (plFilter === 'loss') g = g.filter((x) => x.totalProfitLoss < 0);
+    if (currencyFilter !== 'ALL') g = g.filter((x) => x.currency === currencyFilter);
     if (dateRange !== 'ALL') {
       let fromDate: string | undefined;
       let toDate: string | undefined;
@@ -177,16 +182,14 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
         fromDate = `${dateRange}-01-01`;
         toDate = `${dateRange}-12-31`;
       }
-      if (fromDate) trades = trades.filter((t) => t.sellDate.slice(0, 10) >= fromDate!);
-      if (toDate) trades = trades.filter((t) => t.sellDate.slice(0, 10) <= toDate!);
+      if (fromDate) g = g.filter((x) => x.sellDate.slice(0, 10) >= fromDate!);
+      if (toDate) g = g.filter((x) => x.sellDate.slice(0, 10) <= toDate!);
     }
+    return g;
+  }, [allGroups, plFilter, currencyFilter, dateRange, customFrom, customTo]);
 
-    return trades;
-  }, [data, plFilter, currencyFilter, dateRange, customFrom, customTo]);
-
-  // Grupowanie per sprzedaż (klucz zawiera sellTransactionId) + P/L % ważony kosztem
-  // nabycia — czysta funkcja z testami w client/src/lib/closed-trades-grouping.ts.
-  const groups = useMemo(() => groupClosedTrades(filteredTrades), [filteredTrades]);
+  // Liczba nóg (transakcji) w przefiltrowanych grupach — do nagłówka.
+  const filteredLegCount = useMemo(() => groups.reduce((s, g) => s + g.trades.length, 0), [groups]);
 
   const plSummary = useMemo(() => {
     const map = new Map<
@@ -225,7 +228,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
             Historia zamkniętych pozycji (FIFO)
             {groups.length > 0 && (
               <span className="ml-2 text-muted-foreground font-normal">
-                ({groups.length} pozycji, {filteredTrades.length} transakcji
+                ({groups.length} pozycji, {filteredLegCount} transakcji
                 {isFiltered && ` z ${totalTrades}`})
               </span>
             )}
@@ -488,7 +491,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                     onToggle={() => toggleGroup(group.key)}
                     onDelete={() =>
                       setDeleteTarget({
-                        id: group.sellTransactionId,
+                        ids: group.sellTransactionIds,
                         ticker: group.ticker,
                         sellDate: group.sellDate,
                         quantity: group.totalQuantity,
@@ -562,16 +565,16 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                               {trade.holdingDays}d
                             </TableCell>
                             <TableCell>
-                              {trade.sellSource === 'manual' && (
+                              {group.everyManual && (
                                 <Button
                                   size="icon-xs"
                                   variant="ghost"
                                   onClick={() =>
                                     setDeleteTarget({
-                                      id: trade.sellTransactionId,
-                                      ticker: trade.ticker,
-                                      sellDate: trade.sellDate,
-                                      quantity: trade.quantity,
+                                      ids: group.sellTransactionIds,
+                                      ticker: group.ticker,
+                                      sellDate: group.sellDate,
+                                      quantity: group.totalQuantity,
                                     })
                                   }
                                   disabled={deleteMutation.isPending}
@@ -591,6 +594,9 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                       const sameBuyDate =
                         group.minBuyDate.slice(0, 10) === group.maxBuyDate.slice(0, 10);
                       const sameBuyPrice = group.minBuyPrice === group.maxBuyPrice;
+                      const sameSellDate =
+                        group.minSellDate.slice(0, 10) === group.sellDate.slice(0, 10);
+                      const sameSellPrice = group.minSellPrice === group.maxSellPrice;
 
                       return (
                         <Fragment key={group.key}>
@@ -640,11 +646,15 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                 ? formatNumber(group.minBuyPrice)
                                 : `${formatNumber(group.minBuyPrice)} – ${formatNumber(group.maxBuyPrice)}`}
                             </TableCell>
-                            <TableCell className="text-muted-foreground">
-                              {formatDate(group.sellDate)}
+                            <TableCell className="text-muted-foreground text-sm">
+                              {sameSellDate
+                                ? formatDate(group.sellDate)
+                                : `${formatDate(group.minSellDate)} – ${formatDate(group.sellDate)}`}
                             </TableCell>
-                            <TableCell className="text-right">
-                              {formatNumber(group.sellPrice)}
+                            <TableCell className="text-right text-sm">
+                              {sameSellPrice
+                                ? formatNumber(group.sellPrice)
+                                : `${formatNumber(group.minSellPrice)} – ${formatNumber(group.maxSellPrice)}`}
                             </TableCell>
                             <TableCell
                               className={`text-right font-medium ${plColor(group.weightedProfitLossPct)}`}
@@ -661,14 +671,14 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                               {group.avgHoldingDays}d
                             </TableCell>
                             <TableCell>
-                              {group.sellSource === 'manual' && (
+                              {group.everyManual && (
                                 <Button
                                   size="icon-xs"
                                   variant="ghost"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setDeleteTarget({
-                                      id: group.sellTransactionId,
+                                      ids: group.sellTransactionIds,
                                       ticker: group.ticker,
                                       sellDate: group.sellDate,
                                       quantity: group.totalQuantity,
@@ -774,10 +784,12 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
       <ConfirmDeleteDialog
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.ids)}
         description={
           deleteTarget
-            ? `Usunąć transakcję sprzedaży ${deleteTarget.ticker} — ${formatQuantity(deleteTarget.quantity)} szt z ${formatDate(deleteTarget.sellDate)}? Pozycja wróci do otwartych.`
+            ? deleteTarget.ids.length > 1
+              ? `Usunąć ${deleteTarget.ids.length} transakcje sprzedaży ${deleteTarget.ticker} (łącznie ${formatQuantity(deleteTarget.quantity)} szt)? Pozycja wróci do otwartych.`
+              : `Usunąć transakcję sprzedaży ${deleteTarget.ticker} — ${formatQuantity(deleteTarget.quantity)} szt z ${formatDate(deleteTarget.sellDate)}? Pozycja wróci do otwartych.`
             : ''
         }
         loading={deleteMutation.isPending}

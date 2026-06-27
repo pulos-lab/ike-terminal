@@ -228,6 +228,15 @@ export interface ClosedTrade {
   fxRateOpen?: number;
   /** Kurs waluta→PLN użyty dla nogi zamknięcia (1 dla PLN). */
   fxRateClose?: number;
+  /**
+   * Identyfikator round-tripu (epizodu pozycji flat→flat). Wszystkie nogi jednego cyklu
+   * otwarcie → pełne zamknięcie dzielą ten sam id. Dzięki temu partial fille jednego zlecenia
+   * oraz dokupienia/odsprzedaże tej samej pozycji liczą się jako JEDNA transakcja w win rate
+   * i są zwijane do jednego wiersza w UI. Nowy epizod zaczyna się, gdy pozycja otwiera się od zera.
+   */
+  tradeGroupId?: string;
+  /** true gdy round-trip nie wrócił jeszcze do zera (pozycja wciąż częściowo otwarta). */
+  tradeGroupOpen?: boolean;
 }
 
 export interface DividendRecord {

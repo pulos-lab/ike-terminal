@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computePositionMetrics } from '../portfolio-engine.js';
+import { computePositionMetrics, computeClosedTrades } from '../portfolio-engine.js';
 import type { Transaction } from 'shared';
 
 function makeTx(
@@ -98,5 +98,54 @@ describe('computePositionMetrics', () => {
     const txs = [makeTx({ side: 'K', quantity: 10, price: 100, currency: 'USD' })];
     const result = computePositionMetrics(txs);
     expect(result.buyCurrency).toBe('USD');
+  });
+});
+
+describe('computeClosedTrades — round-tripy (tradeGroupId)', () => {
+  const NO_MAP = new Map();
+
+  it('partial fille jednego zlecenia (1 kupno → 2 sprzedaże) = JEDEN round-trip', () => {
+    const txs = [
+      makeTx({ side: 'K', quantity: 100, price: 10, date: '2024-01-01' }),
+      makeTx({ side: 'S', quantity: 40, price: 12, date: '2024-02-01T10:00:00' }),
+      makeTx({ side: 'S', quantity: 60, price: 11, date: '2024-02-01T10:00:05' }),
+    ];
+    const trades = computeClosedTrades(txs, NO_MAP);
+    const ids = new Set(trades.map((t) => t.tradeGroupId));
+    expect(ids.size).toBe(1);
+    // Pozycja domknięta do zera → żadna noga nie jest oznaczona jako otwarta.
+    expect(trades.every((t) => !t.tradeGroupOpen)).toBe(true);
+  });
+
+  it('scale-in (2 kupna) + jedna sprzedaż = JEDEN round-trip mimo 2 nóg FIFO', () => {
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 10, date: '2024-01-01' }),
+      makeTx({ side: 'K', quantity: 10, price: 20, date: '2024-01-15' }),
+      makeTx({ side: 'S', quantity: 20, price: 15, date: '2024-02-01' }),
+    ];
+    const trades = computeClosedTrades(txs, NO_MAP);
+    expect(trades).toHaveLength(2); // FIFO rozbija po lotach kupna
+    expect(new Set(trades.map((t) => t.tradeGroupId)).size).toBe(1);
+  });
+
+  it('pozycja zamknięta do zera i otwarta ponownie = DWA round-tripy', () => {
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 10, date: '2024-01-01' }),
+      makeTx({ side: 'S', quantity: 10, price: 12, date: '2024-02-01' }),
+      makeTx({ side: 'K', quantity: 10, price: 11, date: '2024-03-01' }),
+      makeTx({ side: 'S', quantity: 10, price: 9, date: '2024-04-01' }),
+    ];
+    const trades = computeClosedTrades(txs, NO_MAP);
+    expect(new Set(trades.map((t) => t.tradeGroupId)).size).toBe(2);
+  });
+
+  it('pozycja częściowo zrealizowana (kupno 100, sprzedaż 40) → tradeGroupOpen', () => {
+    const txs = [
+      makeTx({ side: 'K', quantity: 100, price: 10, date: '2024-01-01' }),
+      makeTx({ side: 'S', quantity: 40, price: 12, date: '2024-02-01' }),
+    ];
+    const trades = computeClosedTrades(txs, NO_MAP);
+    expect(trades).toHaveLength(1);
+    expect(trades[0].tradeGroupOpen).toBe(true);
   });
 });

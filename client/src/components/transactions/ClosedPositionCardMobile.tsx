@@ -4,28 +4,7 @@ import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { formatCurrency, formatDate, formatNumber, formatQuantity } from '@/lib/formatters';
 import { ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
-import type { ClosedTrade, RecordSource } from 'shared';
-
-interface TradeGroup {
-  key: string;
-  ticker: string;
-  paperName: string;
-  sellDate: string;
-  sellPrice: number;
-  currency: string;
-  totalQuantity: number;
-  totalProfitLoss: number;
-  totalCost: number;
-  weightedProfitLossPct: number;
-  minBuyDate: string;
-  maxBuyDate: string;
-  minBuyPrice: number;
-  maxBuyPrice: number;
-  avgHoldingDays: number;
-  sellTransactionId: number;
-  sellSource: RecordSource;
-  trades: ClosedTrade[];
-}
+import type { TradeGroup } from '@/lib/closed-trades-grouping';
 
 interface Props {
   group: TradeGroup;
@@ -60,9 +39,11 @@ export function ClosedPositionCardMobile({
   isDeleting,
 }: Props) {
   const isMulti = group.trades.length > 1;
-  const isManual = group.sellSource === 'manual';
+  const isManual = group.everyManual;
   const sameBuyDate = group.minBuyDate.slice(0, 10) === group.maxBuyDate.slice(0, 10);
   const sameBuyPrice = group.minBuyPrice === group.maxBuyPrice;
+  const sameSellDate = group.minSellDate.slice(0, 10) === group.sellDate.slice(0, 10);
+  const sameSellPrice = group.minSellPrice === group.maxSellPrice;
   const anyShort = group.trades.some((t) => t.isShort);
   const allShort = group.trades.every((t) => t.isShort);
   const shortCount = group.trades.filter((t) => t.isShort).length;
@@ -74,10 +55,16 @@ export function ClosedPositionCardMobile({
   const buyPriceLabel = sameBuyPrice
     ? formatNumber(group.minBuyPrice)
     : `${formatNumber(group.minBuyPrice)}–${formatNumber(group.maxBuyPrice)}`;
+  const sellDateLabel = sameSellDate
+    ? formatDate(group.sellDate)
+    : `${formatDate(group.minSellDate)} – ${formatDate(group.sellDate)}`;
+  const sellPriceLabel = sameSellPrice
+    ? formatNumber(group.sellPrice)
+    : `${formatNumber(group.minSellPrice)}–${formatNumber(group.maxSellPrice)}`;
 
-  // Wartości obliczane z lotów (multi-lot ma różne ceny zakupu na lot)
+  // Wartości obliczane z lotów (multi-lot ma różne ceny zakupu/sprzedaży na nogę)
   const costBasis = group.trades.reduce((s, t) => s + t.quantity * t.buyPrice, 0);
-  const grossRevenue = group.totalQuantity * group.sellPrice;
+  const grossRevenue = group.trades.reduce((s, t) => s + t.quantity * t.sellPrice, 0);
 
   const commission = group.trades.reduce((s, t) => s + t.buyCommission + t.sellCommission, 0);
   const fees = group.trades.flatMap((t) => t.fees ?? []);
@@ -140,10 +127,7 @@ export function ClosedPositionCardMobile({
           <SectionTitle>Transakcja</SectionTitle>
           <Row label="Ilość" value={`${formatQuantity(group.totalQuantity)} szt.`} />
           <Row label="Cena kupna" value={`${buyPriceLabel} ${group.currency}`} />
-          <Row
-            label="Cena sprzedaży"
-            value={`${formatNumber(group.sellPrice)} ${group.currency}`}
-          />
+          <Row label="Cena sprzedaży" value={`${sellPriceLabel} ${group.currency}`} />
           {group.totalCost > 0 && (
             <Row
               label="Prowizja"
@@ -183,7 +167,7 @@ export function ClosedPositionCardMobile({
 
           <SectionTitle>Czas</SectionTitle>
           <Row label="Data kupna" value={buyDateLabel} />
-          <Row label="Data sprzedaży" value={formatDate(group.sellDate)} />
+          <Row label="Data sprzedaży" value={sellDateLabel} />
           <Row label="Czas posiadania" value={`${group.avgHoldingDays}d`} />
 
           <SectionTitle>Wartości</SectionTitle>

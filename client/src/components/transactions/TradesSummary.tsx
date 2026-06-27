@@ -5,6 +5,7 @@ import { QUERY_KEYS } from '@/lib/query-keys';
 import { formatPLN, formatNumber } from '@/lib/formatters';
 import { plColor } from '@/components/ui/pl-badge';
 import { cn } from '@/lib/utils';
+import { groupClosedTrades, lotCostBasis } from '@/lib/closed-trades-grouping';
 import type { Position } from 'shared';
 
 interface Props {
@@ -214,8 +215,11 @@ function ClosedTilesView({
   });
 
   const stats = useMemo(() => {
-    let trades = data?.trades || [];
-    // Apply the same date filter used by ClosedTradesPage (file linie ~124-148)
+    // Zwijamy nogi FIFO w round-tripy (epizody flat→flat) — partial fille i dokupienia
+    // tej samej pozycji liczą się jako JEDNA transakcja (win rate, liczniki).
+    let groups = groupClosedTrades(data?.trades || []);
+    // Filtr dat po dacie DOMKNIĘCIA round-tripu — grupujemy najpierw, potem filtrujemy,
+    // żeby round-trip ze sprzedażami po obu stronach granicy nie został rozcięty.
     if (dateRange !== 'ALL') {
       let fromDate: string | undefined;
       let toDate: string | undefined;
@@ -226,37 +230,47 @@ function ClosedTilesView({
         fromDate = `${dateRange}-01-01`;
         toDate = `${dateRange}-12-31`;
       }
-      if (fromDate) trades = trades.filter((t) => t.sellDate.slice(0, 10) >= fromDate!);
-      if (toDate) trades = trades.filter((t) => t.sellDate.slice(0, 10) <= toDate!);
+      if (fromDate) groups = groups.filter((g) => g.sellDate.slice(0, 10) >= fromDate!);
+      if (toDate) groups = groups.filter((g) => g.sellDate.slice(0, 10) <= toDate!);
     }
     // Suma w PLN: serwer przelicza każdą nogę po kursie z jej dnia (profitLossPln)
-    // i zwraca costBasisPln (z nominałem obligacji / notionalem CFD). Pozycje bez
-    // kursu pomijamy i raportujemy w sub zamiast sumować surowe kwoty jak złotówki.
+    // i zwraca costBasisPln (z nominałem obligacji / notionalem CFD). Round-trip z choć
+    // jedną nogą bez kursu pomijamy w całości i raportujemy w sub (spójne z licznikiem pozycji).
     let totalPnl = 0;
     let totalCost = 0;
     let unconvertible = 0;
-    for (const t of trades) {
-      const pln = t.profitLossPln ?? (t.currency === 'PLN' ? t.profitLoss : null);
-      if (pln == null) {
+    for (const g of groups) {
+      let gPnl = 0;
+      let gCost = 0;
+      let convertible = true;
+      for (const t of g.trades) {
+        const pln = t.profitLossPln ?? (t.currency === 'PLN' ? t.profitLoss : null);
+        if (pln == null) {
+          convertible = false;
+          break;
+        }
+        gPnl += pln;
+        gCost += t.costBasisPln ?? (t.currency === 'PLN' ? lotCostBasis(t) : 0);
+      }
+      if (!convertible) {
         unconvertible += 1;
         continue;
       }
-      totalPnl += pln;
-      totalCost +=
-        t.costBasisPln ??
-        (t.currency === 'PLN' ? (t.buyPrice ?? 0) * (t.quantity ?? 0) + (t.buyCommission ?? 0) : 0);
+      totalPnl += gPnl;
+      totalCost += gCost;
     }
     const pnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;
-    const profitable = trades.filter((t) => t.profitLoss > 0).length;
-    const losers = trades.filter((t) => t.profitLoss < 0).length;
-    const winRate = trades.length > 0 ? (profitable / trades.length) * 100 : 0;
-    const holdDays = trades.map((t) => t.holdingDays).filter((d) => d >= 0);
+    // Win/loss per round-trip: znak zagregowanego P/L grupy (w walucie instrumentu).
+    const profitable = groups.filter((g) => g.totalProfitLoss > 0).length;
+    const losers = groups.filter((g) => g.totalProfitLoss < 0).length;
+    const winRate = groups.length > 0 ? (profitable / groups.length) * 100 : 0;
+    const holdDays = groups.map((g) => g.avgHoldingDays).filter((d) => d >= 0);
     const avgHold = holdDays.length > 0 ? holdDays.reduce((s, d) => s + d, 0) / holdDays.length : 0;
     const minHold = holdDays.length > 0 ? Math.min(...holdDays) : 0;
     const maxHold = holdDays.length > 0 ? Math.max(...holdDays) : 0;
-    const uniqueTickers = new Set(trades.map((t) => t.ticker)).size;
+    const uniqueTickers = new Set(groups.map((g) => g.ticker)).size;
     return {
-      count: trades.length,
+      count: groups.length,
       uniqueTickers,
       totalPnl,
       pnlPct,
