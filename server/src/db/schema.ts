@@ -92,6 +92,32 @@ export function initSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_splits_isin ON stock_splits(isin);
 
+    -- Spin-offy zastosowane do portfela. Zamrożony jest allocation_pct (jedyna
+    -- wielkość zależna od cen rynkowych); ilości silnik wylicza na bieżąco
+    -- z transakcji. UNIQUE = idempotencja auto-aplikacji (race-safe przez
+    -- ON CONFLICT DO NOTHING w repo). status: applied | skipped_broker | reverted.
+    CREATE TABLE IF NOT EXISTS spin_offs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      parent_isin TEXT NOT NULL,
+      parent_ticker TEXT NOT NULL,
+      child_isin TEXT NOT NULL,
+      child_ticker TEXT NOT NULL,
+      child_name TEXT,
+      ex_date TEXT NOT NULL,
+      ratio REAL NOT NULL,
+      allocation_pct REAL NOT NULL,
+      child_qty REAL NOT NULL,
+      currency TEXT NOT NULL,
+      parent_price_used REAL,
+      child_price_used REAL,
+      status TEXT NOT NULL DEFAULT 'applied',
+      source TEXT NOT NULL DEFAULT 'map',
+      applied_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(parent_isin, ex_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_spinoffs_child ON spin_offs(child_isin);
+
     -- Rejestr podatków transakcyjnych (Degiro stamp duty / FTT) doliczonych do
     -- prowizji transakcji. Klucz unikalny czyni doliczanie idempotentnym —
     -- reimport tego samego Account.csv nie zwiększy prowizji drugi raz.

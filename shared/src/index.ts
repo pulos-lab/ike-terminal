@@ -6,6 +6,7 @@ export * from './cfd-ticker-map.js';
 export * from './bond-map.js';
 export * from './ike-ikze-limits.js';
 export * from './tender-offers-map.js';
+export * from './spin-offs-map.js';
 export * from './ipo-subscriptions-map.js';
 export * from './isin-aliases-map.js';
 export * from './constants.js';

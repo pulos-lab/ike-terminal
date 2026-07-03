@@ -446,6 +446,46 @@ export interface StockSplitInput {
   ratio: number;
 }
 
+// ============ Spin-off Types ============
+
+/**
+ * Spin-off zastosowany (lub świadomie pominięty) w danym portfelu — wiersz tabeli
+ * `spin_offs`. Zamrożony jest WYŁĄCZNIE `allocationPct` (+ ceny audytowe) — jedyna
+ * wielkość zależna od cen rynkowych, więc późniejsze zmiany cache'u cen nie mogą
+ * wstecznie zmienić wyniku. Ilości silnik wylicza na bieżąco z transakcji
+ * (edycje historii rodzica propagują się poprawnie); `childQty` to audyt/UI.
+ */
+export interface AppliedSpinOff {
+  id?: number;
+  parentIsin: string;
+  parentTicker: string;
+  childIsin: string;
+  childTicker: string;
+  childName?: string;
+  /** ISO YYYY-MM-DD — ex/distribution date. */
+  exDate: string;
+  /** Liczba akcji dziecka za 1 akcję rodzica. */
+  ratio: number;
+  /** ZAMROŻONY udział kosztu rodzica przeniesiony na dziecko (0..1). */
+  allocationPct: number;
+  /** Ilość dziecka w chwili zastosowania (audyt/dedup/UI; silnik liczy na żywo). */
+  childQty: number;
+  /** Waluta lotów rodzica (dla opisu; przy mieszanych walutach — dominująca). */
+  currency: string;
+  /** Audyt: cena rodzica użyta do alokacji (post-ex close lub pre-ex fallback). */
+  parentPriceUsed?: number;
+  /** Audyt: pierwsza cena notowań dziecka użyta do alokacji. */
+  childPriceUsed?: number;
+  /**
+   * applied — syntetyczna pozycja dziecka aktywna;
+   * skipped_broker — broker sam zaksięgował akcje dziecka (realne wiersze wygrywają);
+   * reverted — cofnięty przez użytkownika (tombstone blokujący ponowną auto-aplikację).
+   */
+  status: 'applied' | 'skipped_broker' | 'reverted';
+  source: 'map' | 'table' | 'manual';
+  appliedAt?: string;
+}
+
 // ============ Price Types ============
 
 /**
@@ -490,6 +530,12 @@ export interface TransactionInput {
   /** Kurs wymiany broker'a: 1 unit `currency` = `fxRate` × `paymentCurrency`. */
   fxRate?: number;
   category?: InstrumentCategory;
+  /**
+   * Potwierdzenie użytkownika, że świadomie dodaje transakcję na walor będący
+   * dzieckiem zastosowanego spin-offu (pozycja mogła już powstać automatycznie).
+   * Bez tego pola serwer odpowiada `{ requiresConfirmation: true, warning }`.
+   */
+  confirmSpinOff?: boolean;
 }
 
 // ============ Import Parse Types ============
@@ -645,6 +691,18 @@ export interface RecentSplit {
   ratio: number;
 }
 
+/** Spin-off z ostatnich 30 dni — GET /portfolio/positions zwraca do notyfikacji UI. */
+export interface RecentSpinOff {
+  parentIsin: string;
+  parentTicker: string;
+  childIsin: string;
+  childTicker: string;
+  exDate: string;
+  ratio: number;
+  /** Udział kosztu rodzica przeniesiony na dziecko (0..1) — do tekstu tooltipa. */
+  allocationPct: number;
+}
+
 export interface PortfolioPositionsResponse {
   positions: Position[];
   cashPositions: CashPosition[];
@@ -652,6 +710,7 @@ export interface PortfolioPositionsResponse {
   stocksValuePln: number;
   cashValuePln: number;
   recentSplits: RecentSplit[];
+  recentSpinOffs: RecentSpinOff[];
   /** Waluta bazowa portfela (np. 'PLN' dla Bossa, 'USD' dla XTB USD sub-account). */
   baseCurrency: string;
 }
