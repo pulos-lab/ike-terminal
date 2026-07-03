@@ -11,6 +11,7 @@ import type {
   FxExchangeRecord,
   CashFlowRecord,
   DetectedSplit,
+  AppliedSpinOff,
   FxImpact,
   FxImpactCurrencyEntry,
 } from 'shared';
@@ -30,8 +31,19 @@ import {
   isPlausibleSplitRatio,
   snapToKnownRatio,
 } from './split-detector.js';
+import {
+  applySpinOffs,
+  filterDetectedSplitsForSpinOffs,
+  type SpinOffGuardEvent,
+} from './spin-off-transform.js';
 import { getDb } from '../db/connection.js';
-import { BENCHMARKS, DEFAULT_FX_PLN, findBondByTicker, inferBondNominal } from 'shared';
+import {
+  BENCHMARKS,
+  DEFAULT_FX_PLN,
+  findBondByTicker,
+  inferBondNominal,
+  SPIN_OFF_MAP,
+} from 'shared';
 import type { InstrumentCategory } from 'shared';
 
 // ============ Bond Helpers ============
@@ -355,16 +367,30 @@ export async function computeOpenPositions(
      */
     skipSplitDetection?: boolean;
   },
+  spinOffs: AppliedSpinOff[] = [],
 ): Promise<{ positions: Position[]; totalValuePln: number; detectedSplits: DetectedSplit[] }> {
+  // Guard C: znane spin-offy odrzucają detekcje splitów będące ich artefaktem
+  // (spadek kursu rodzica po ex wygląda jak reverse split; sprzedaż dziecka bez
+  // syntetycznego zakupu w surowym strumieniu wygląda jak mismatch ilości).
+  const spinOffGuard: SpinOffGuardEvent[] = [...spinOffs, ...SPIN_OFF_MAP];
+
   // Lightweight split detection: for each ISIN, fetch the provider price on the
   // earliest transaction date and compare. This catches splits even if the user
   // hasn't visited the dashboard yet (which runs the full history-based detection).
-  const priceSplits = opts?.skipSplitDetection
-    ? []
-    : await detectSplitsFromTransactions(transactions, tickerMap, splits);
+  const priceSplits = filterDetectedSplitsForSpinOffs(
+    opts?.skipSplitDetection
+      ? []
+      : await detectSplitsFromTransactions(transactions, tickerMap, splits),
+    spinOffGuard,
+    'price',
+  );
 
   // Additional detection: sell quantity exceeding accumulated buys
-  const qtySplits = detectSplitFromQuantityMismatch(transactions);
+  const qtySplits = filterDetectedSplitsForSpinOffs(
+    detectSplitFromQuantityMismatch(transactions),
+    spinOffGuard,
+    'quantity',
+  );
   const qtySplitsAsDetected: DetectedSplit[] = qtySplits
     .filter((qs) => !splits.some((s) => s.isin === qs.isin)) // skip already known
     .map((qs) => {
@@ -382,8 +408,13 @@ export async function computeOpenPositions(
 
   const allSplits = mergeDetectedSplits(splits, [...priceSplits, ...qtySplitsAsDetected]);
 
-  // Adjust transactions for stock splits (quantity/price correction)
-  const adjustedTxs = adjustTransactionsForSplits(transactions, allSplits);
+  // Adjust transactions for stock splits (quantity/price correction),
+  // then apply spin-offs (child injection + parent basis reduction)
+  const adjustedTxs = applySpinOffs(
+    adjustTransactionsForSplits(transactions, allSplits),
+    spinOffs,
+    allSplits,
+  );
 
   // Group by ISIN
   const byIsin = new Map<string, Transaction[]>();
@@ -640,9 +671,15 @@ export function computeClosedTrades(
   tickerMap: Map<string, TickerMapEntry>,
   operations?: CashOperation[],
   splits: DetectedSplit[] = [],
+  spinOffs: AppliedSpinOff[] = [],
 ): ClosedTrade[] {
-  // Adjust transactions for stock splits (quantity/price correction)
-  const adjustedTxs = adjustTransactionsForSplits(transactions, splits);
+  // Adjust transactions for stock splits (quantity/price correction),
+  // then apply spin-offs — sprzedaż dziecka musi FIFO-wać z wstrzykniętym kosztem
+  const adjustedTxs = applySpinOffs(
+    adjustTransactionsForSplits(transactions, splits),
+    spinOffs,
+    splits,
+  );
 
   // Group transactions by ISIN (or ISIN + positionId for CFD to prevent mixing overlapping positions)
   const byGroup = new Map<string, Transaction[]>();
@@ -1389,6 +1426,7 @@ export async function computePortfolioHistory(
    *  Dla portfeli walutowych (np. XTB USD sub-konto): 'USD' → MWR/TWR liczone
    *  w USD, bez FX noise z wahań USD/PLN. */
   baseCurrency: string = 'PLN',
+  spinOffs: AppliedSpinOff[] = [],
 ): Promise<{
   history: PortfolioHistoryPoint[];
   metrics: PortfolioMetrics;
@@ -1495,6 +1533,11 @@ export async function computePortfolioHistory(
   // Get unique ISINs that were ever held (ISINs don't change with split adjustment)
   const allIsins = new Set<string>();
   for (const tx of transactions) allIsins.add(tx.isin);
+  // Dzieci spin-offów nie mają realnych transakcji — bez dopisania tu ich ISIN-ów
+  // wycena dzienna nie dostałaby cen historycznych (forward-fill z ceny kosztowej).
+  for (const so of spinOffs) {
+    if (so.status === 'applied' && allIsins.has(so.parentIsin)) allIsins.add(so.childIsin);
+  }
 
   // Fetch historical prices for all tickers + FX
   const tickersToFetch: Array<{ isin: string; ticker: string; source: string; currency: string }> =
@@ -1590,8 +1633,16 @@ export async function computePortfolioHistory(
   // Detekcję pomijamy dla ISIN-ów z zapisanymi splitami (realne daty z bazy
   // mają pierwszeństwo), a heurystycznym wykryciom nadajemy realne daty z Yahoo.
   const savedSplitIsins = new Set(splits.map((s) => s.isin));
-  const heuristicSplits = detectSplits(transactions, historicalPrices, tickerMap).filter(
-    (s) => !savedSplitIsins.has(s.isin),
+  // Guard C: filtr PRZED resolveSplitEventDates — spadek kursu rodzica po spin-offie
+  // (albo ułamkowy "split" publikowany przez Yahoo dla spin-offu) nie może wejść
+  // jako fałszywy reverse split; oszczędza też zbędny strzał o eventy do Yahoo.
+  const historySpinOffGuard: SpinOffGuardEvent[] = [...spinOffs, ...SPIN_OFF_MAP];
+  const heuristicSplits = filterDetectedSplitsForSpinOffs(
+    detectSplits(transactions, historicalPrices, tickerMap).filter(
+      (s) => !savedSplitIsins.has(s.isin),
+    ),
+    historySpinOffGuard,
+    'price',
   );
   const newlyDetected = await resolveSplitEventDates(heuristicSplits, tickerMap);
   const allSplits = mergeDetectedSplits(splits, newlyDetected);
@@ -1599,7 +1650,13 @@ export async function computePortfolioHistory(
   // Adjust transactions for splits: convert pre-split transactions to post-split scale
   // (quantity * ratio, price / ratio). Provider prices are already split-adjusted, so
   // after this adjustment, everything is in the same (post-split) scale.
-  const adjustedTxs = adjustTransactionsForSplits(transactions, allSplits);
+  // Then apply spin-offs (child injection + parent basis reduction) — cash-flow
+  // loop above iterates RAW transactions, so the synthetic child never touches cash.
+  const adjustedTxs = applySpinOffs(
+    adjustTransactionsForSplits(transactions, allSplits),
+    spinOffs,
+    allSplits,
+  );
 
   // Overwrite transaction date prices with adjusted tx prices (same currency only).
   // This ensures exact match on transaction dates even if provider data differs slightly.

@@ -69,6 +69,7 @@ import {
   buildHistoryView,
   buildPositionsView,
   loadSplitsForEngine,
+  loadSpinOffsForEngine,
 } from '../services/portfolio-views.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { searchTickers, fetchYahooTickerName } from '../services/ticker-search.js';
@@ -98,7 +99,8 @@ router.get(
     const tickerMap = getTickerMap(pid);
     const operations = getAllOperations(pid);
     const savedSplits = loadSplitsForEngine(pid);
-    const trades = computeClosedTrades(transactions, tickerMap, operations, savedSplits);
+    const spinOffs = loadSpinOffsForEngine(pid);
+    const trades = computeClosedTrades(transactions, tickerMap, operations, savedSplits, spinOffs);
     await annotateClosedTradesPln(trades);
     res.json({ trades });
   }),
@@ -225,11 +227,17 @@ router.get(
     const transactions = getAllTransactions(pid);
     const tickerMap = getTickerMap(pid);
     const splits = loadSplitsForEngine(pid);
+    const spinOffs = loadSpinOffsForEngine(pid);
     // skipSplitDetection: ten endpoint nie persystuje wykrytych splitów —
     // detekcję robi (i zapisuje) /positions w swoim dobowym oknie skanu.
-    const { positions } = await computeOpenPositions(transactions, tickerMap, splits, undefined, {
-      skipSplitDetection: true,
-    });
+    const { positions } = await computeOpenPositions(
+      transactions,
+      tickerMap,
+      splits,
+      undefined,
+      { skipSplitDetection: true },
+      spinOffs,
+    );
 
     const today = new Date().toISOString().split('T')[0];
     const upcoming: UpcomingDividend[] = [];
@@ -882,6 +890,8 @@ router.get(
       'yahoo', // default benchmark, doesn't matter for cash flow
       savedSplits,
       baseCurrency,
+      undefined,
+      loadSpinOffsForEngine(pid),
     );
 
     const cashFlow = computeCashFlow(operations, history, dailyFxRates, baseCurrency);
@@ -976,6 +986,7 @@ router.get(
 
     // KROK 2: history (close-of-day, dla wykresu/XIRR) + positions (LIVE, dla wartości
     // pokazywanej na ekranie) lecą równolegle. Positions dostaje pre-fetched FX.
+    const spinOffs = loadSpinOffsForEngine(pid);
     const [{ metrics }, { positions, totalValuePln: stocksValuePln }] = await Promise.all([
       computePortfolioHistoryMemoized(
         pid,
@@ -986,12 +997,19 @@ router.get(
         'yahoo', // benchmark ticker nie wpływa na metrics
         savedSplits,
         baseCurrency,
+        undefined,
+        spinOffs,
       ),
       // skipSplitDetection: /metrics ignoruje detectedSplits — sieciowy skan
       // robi (i zapisuje) wyłącznie /positions w dobowym oknie.
-      computeOpenPositions(transactions, tickerMap, savedSplits, fxRatesObj, {
-        skipSplitDetection: true,
-      }),
+      computeOpenPositions(
+        transactions,
+        tickerMap,
+        savedSplits,
+        fxRatesObj,
+        { skipSplitDetection: true },
+        spinOffs,
+      ),
     ]);
 
     // KROK 3: foreignExposures (NATIVE) i exposurePlnByCurrency (z tych samych

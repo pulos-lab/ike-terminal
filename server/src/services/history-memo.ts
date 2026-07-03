@@ -25,7 +25,13 @@
  * Memo obsługuje wyłącznie pełny zakres dat (startDate/endDate = undefined) —
  * dokładnie tak wołają je endpointy dashboardu (klient sam filtruje zakres).
  */
-import type { Transaction, CashOperation, TickerMapEntry, DetectedSplit } from 'shared';
+import type {
+  Transaction,
+  CashOperation,
+  TickerMapEntry,
+  DetectedSplit,
+  AppliedSpinOff,
+} from 'shared';
 import { computePortfolioHistory } from './portfolio-engine.js';
 import { getPortfolioDataVersion } from '../db/data-version.js';
 
@@ -38,8 +44,9 @@ const MAX_MEMO_ENTRIES = 8;
  * Wersja logiki silnika w kluczu memo — podbij przy zmianie SPOSOBU liczenia historii
  * bez zmiany danych w DB (dataVersion tego nie wykryje, a memo in-memory przeżywa
  * hot-reload tsx watch). v2: wycena obligacji przez mnożnik nominal/100.
+ * v3: transformacja spin-offów (applySpinOffs) w strumieniu transakcji.
  */
-const ENGINE_VERSION = 2;
+const ENGINE_VERSION = 3;
 
 const memo = new Map<string, Promise<HistoryResult>>();
 
@@ -64,6 +71,9 @@ export function computePortfolioHistoryMemoized(
   splits: DetectedSplit[] = [],
   baseCurrency: string = 'PLN',
   computeFn: ComputeHistoryFn = computePortfolioHistory,
+  // Spin-offy nie wchodzą do klucza memo z tego samego powodu co splits:
+  // każda ich mutacja przechodzi przez applier/routes, które bumpują dataVersion.
+  spinOffs: AppliedSpinOff[] = [],
 ): Promise<HistoryResult> {
   const today = new Date().toISOString().split('T')[0];
   const key = [
@@ -94,6 +104,7 @@ export function computePortfolioHistoryMemoized(
     undefined,
     splits,
     baseCurrency,
+    spinOffs,
   ).catch((err) => {
     // Nie cache'ujemy błędów — kolejny request spróbuje od nowa
     memo.delete(key);
