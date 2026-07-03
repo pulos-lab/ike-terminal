@@ -232,7 +232,8 @@ export function listProfileBatches(portfolioId: string): ProfileBatchRow[] {
     .prepare(
       `SELECT id, profile_id, profile_version, portfolio_id, import_batch, file_name,
               needs_reimport, imported_at
-       FROM profile_import_batches WHERE portfolio_id = ? ORDER BY imported_at DESC`,
+       FROM profile_import_batches WHERE portfolio_id = ?
+       ORDER BY imported_at DESC, id DESC`,
     )
     .all(portfolioId) as Array<{
     id: number;
