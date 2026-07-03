@@ -30,6 +30,7 @@ import {
 } from '../db/ticker-map-repo.js';
 import { resolveSector } from '../services/sector-resolver.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
+import { getSpinOffs, updateSpinOffStatus } from '../db/spin-offs-repo.js';
 import type {
   DividendInput,
   DepositInput,
@@ -1275,6 +1276,7 @@ router.post(
       paymentCurrency,
       fxRate,
       category,
+      confirmSpinOff,
     } = req.body as TransactionInput;
     if (!date || !ticker || !side || !quantity || price == null) {
       return res.status(400).json({ error: 'Wymagane pola: date, ticker, side, quantity, price' });
@@ -1337,6 +1339,39 @@ router.post(
 
       upsertTickerMapEntry(newEntry, pid);
       entry = newEntry;
+    }
+
+    // Miękkie ostrzeżenie: walor jest dzieckiem zastosowanego spin-offu — pozycja
+    // mogła już powstać automatycznie (syntetyczny zakup z alokacją kosztu), więc
+    // ręczne dopisanie zakupu może podwoić akcje. 200 + requiresConfirmation
+    // (nie 4xx): ApiError klienta niesie tylko message+status, a to nie jest błąd.
+    // Retry z confirmSpinOff=true przechodzi normalnie.
+    if (!confirmSpinOff && side === 'K') {
+      const spinOffMatch = getSpinOffs(pid).find(
+        (s) =>
+          s.status === 'applied' &&
+          (s.childIsin === entry!.isin || s.childTicker.toUpperCase() === ticker.toUpperCase()),
+      );
+      if (spinOffMatch) {
+        return res.json({
+          requiresConfirmation: true,
+          warning: {
+            kind: 'spinoff_child',
+            message:
+              `${spinOffMatch.childTicker} to spółka wydzielona ze ${spinOffMatch.parentTicker} ` +
+              `(spin-off ${spinOffMatch.ratio}:1, ex ${spinOffMatch.exDate}). Pozycja ` +
+              `${spinOffMatch.childQty} szt. została już utworzona automatycznie — ręczne ` +
+              `dodanie zakupu może podwoić akcje. Kontynuować?`,
+            spinOff: {
+              id: spinOffMatch.id,
+              parentTicker: spinOffMatch.parentTicker,
+              childTicker: spinOffMatch.childTicker,
+              exDate: spinOffMatch.exDate,
+              childQty: spinOffMatch.childQty,
+            },
+          },
+        });
+      }
     }
 
     const quoteCurrency = entry.currency;
@@ -1661,6 +1696,34 @@ router.delete(
       return res.status(404).json({ error: 'Split nie znaleziony' });
     }
     // Usunięty split zmienia korektę transakcji → unieważnij memo historii
+    bumpPortfolioDataVersion(pid);
+    res.json({ success: true });
+  }),
+);
+
+// ============ Spin-offs ============
+
+// GET /api/portfolio/spin-offs — zastosowane/pominięte/cofnięte spin-offy portfela
+router.get(
+  '/spin-offs',
+  asyncHandler((req, res) => {
+    res.json({ spinOffs: getSpinOffs(req.portfolioId) });
+  }),
+);
+
+// DELETE /api/portfolio/spin-offs/:id — soft revert. Transformacja pomija wiersze
+// nie-'applied', więc pozycja dziecka znika a koszt rodzica wraca; tombstone
+// 'reverted' blokuje ponowną auto-aplikację przy kolejnym skanie.
+router.delete(
+  '/spin-offs/:id',
+  asyncHandler((req, res) => {
+    const pid = req.portfolioId;
+    const id = parseInt(req.params.id);
+    const updated = updateSpinOffStatus(pid, id, 'reverted');
+    if (!updated) {
+      return res.status(404).json({ error: 'Spin-off nie znaleziony' });
+    }
+    // Cofnięty spin-off zmienia strumień transakcji → unieważnij memo historii
     bumpPortfolioDataVersion(pid);
     res.json({ success: true });
   }),

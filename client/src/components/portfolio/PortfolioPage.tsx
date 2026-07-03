@@ -31,7 +31,7 @@ import {
   formatPLN,
   formatQuantity,
 } from '@/lib/formatters';
-import { Eye, EyeOff, AlertTriangle } from 'lucide-react';
+import { Eye, EyeOff, AlertTriangle, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioDiversification } from './PortfolioDiversification';
 import { PortfolioPositionCardMobile } from './PortfolioPositionCardMobile';
@@ -132,6 +132,32 @@ export function PortfolioPage() {
     return map;
   }, [data?.recentSplits]);
 
+  // Spin-offy: badge przy pozycji DZIECKA (skąd wzięły się akcje) + subtelny
+  // marker przy RODZICU (koszt nabycia proporcjonalnie obniżony).
+  const recentSpinOffChildMap = useMemo(() => {
+    const map = new Map<
+      string,
+      { parentTicker: string; exDate: string; ratio: number; allocationPct: number }
+    >();
+    for (const s of data?.recentSpinOffs ?? []) {
+      map.set(s.childIsin, {
+        parentTicker: s.parentTicker,
+        exDate: s.exDate,
+        ratio: s.ratio,
+        allocationPct: s.allocationPct,
+      });
+    }
+    return map;
+  }, [data?.recentSpinOffs]);
+
+  const recentSpinOffParentMap = useMemo(() => {
+    const map = new Map<string, { childTicker: string; exDate: string }>();
+    for (const s of data?.recentSpinOffs ?? []) {
+      map.set(s.parentIsin, { childTicker: s.childTicker, exDate: s.exDate });
+    }
+    return map;
+  }, [data?.recentSpinOffs]);
+
   const cashPositions = data?.cashPositions ?? [];
 
   // Columns before "Wartość (PLN)": Ticker, Nazwa, Ilość, [Śr. cena], Prowizje, Kurs, [Zmiana]
@@ -209,6 +235,7 @@ export function PortfolioPage() {
                     baseCurrency={baseCurrency}
                     useNativeCcy={useNativeCcy}
                     splitInfo={recentSplitMap.get(pos.isin)}
+                    spinOffInfo={recentSpinOffChildMap.get(pos.isin)}
                     isExpanded={expandedPositions.has(pos.isin)}
                     onToggle={() => togglePosition(pos.isin)}
                   />
@@ -282,6 +309,39 @@ export function PortfolioPage() {
                                     Spółka przeszła {isReverse ? 'reverse split' : 'split'} {label}{' '}
                                     w dniu {split.date}. Ilość i cena zostały automatycznie
                                     skorygowane.
+                                  </TooltipContent>
+                                </Tooltip>
+                              );
+                            })()}
+                          {recentSpinOffChildMap.has(pos.isin) &&
+                            (() => {
+                              const so = recentSpinOffChildMap.get(pos.isin)!;
+                              return (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <AlertTriangle className="h-4 w-4 text-amber-500 inline ml-1 cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right" className="max-w-[300px]">
+                                    Ta pozycja powstała z wydzielenia ze spółki {so.parentTicker}{' '}
+                                    (spin-off {so.ratio}:1, ex {so.exDate}). Koszt nabycia (
+                                    {(so.allocationPct * 100).toFixed(1)}% kosztu spółki
+                                    macierzystej) został przeniesiony automatycznie.
+                                  </TooltipContent>
+                                </Tooltip>
+                              );
+                            })()}
+                          {recentSpinOffParentMap.has(pos.isin) &&
+                            (() => {
+                              const so = recentSpinOffParentMap.get(pos.isin)!;
+                              return (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="h-4 w-4 text-muted-foreground inline ml-1 cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right" className="max-w-[300px]">
+                                    Ze spółki wydzielono {so.childTicker} (spin-off, ex {so.exDate})
+                                    — koszt nabycia został proporcjonalnie obniżony o część
+                                    przeniesioną na nową pozycję.
                                   </TooltipContent>
                                 </Tooltip>
                               );

@@ -25,8 +25,9 @@ import { QUERY_KEYS, invalidatePortfolio } from '@/lib/query-keys';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { formatNumber } from '@/lib/formatters';
 import { useFormValidation, type FieldErrors } from '@/lib/use-form-validation';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import type { SpinOffChildWarning } from 'shared';
 
 /**
  * Dialog ręcznego dodawania transakcji (kupno / sprzedaż dowolnego tickera).
@@ -71,6 +72,9 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
   const [paymentCurrency, setPaymentCurrency] = useState<string>('auto');
   const [fxRate, setFxRate] = useState('');
   const [category, setCategory] = useState<'stock' | 'etf' | 'cfd' | 'bond'>('stock');
+  /** Ostrzeżenie z serwera: ticker jest dzieckiem zastosowanego spin-offu —
+   *  pozycja mogła już powstać automatycznie; wymagamy jawnego potwierdzenia. */
+  const [spinOffWarning, setSpinOffWarning] = useState<SpinOffChildWarning | null>(null);
 
   const { data: pricesData } = useQuery({
     queryKey: QUERY_KEYS.livePrices,
@@ -111,6 +115,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     setPaymentCurrency('auto');
     setFxRate('');
     setCategory('stock');
+    setSpinOffWarning(null);
     resetValidation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -199,7 +204,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
   }, [effectiveQuote, effectivePayment, pricesData, showFxRate]);
 
   const createMut = useMutation({
-    mutationFn: () => {
+    mutationFn: (opts?: { confirmSpinOff?: boolean }) => {
       const fxNum = parseFloat(fxRate);
       const commInput = parseFloat(commission) || 0;
       // Pole prowizji jest w paymentCurrency gdy ≠ quote. Backend oczekuje w walucie notowania
@@ -217,9 +222,16 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
         paymentCurrency: paymentCurrency !== 'auto' ? paymentCurrency : undefined,
         fxRate: showFxRate && fxNum > 0 ? fxNum : undefined,
         category,
+        confirmSpinOff: opts?.confirmSpinOff,
       });
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // Miękkie ostrzeżenie (200 + requiresConfirmation): walor jest dzieckiem
+      // spin-offu — pokazujemy panel potwierdzenia zamiast zamykać dialog.
+      if (data.requiresConfirmation) {
+        setSpinOffWarning(data.warning);
+        return;
+      }
       invalidatePortfolio(qc);
       toast.success(
         `Dodano ${side === 'K' ? 'kupno' : 'sprzedaż'} ${ticker}: ${quantity} @ ${price}`,
@@ -410,14 +422,44 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
           )}
         </div>
 
+        {spinOffWarning && (
+          <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+            <div className="flex gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+              <p>{spinOffWarning.message}</p>
+            </div>
+          </div>
+        )}
+
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={createMut.isPending}>
+          <Button
+            variant="outline"
+            onClick={spinOffWarning ? () => setSpinOffWarning(null) : onClose}
+            disabled={createMut.isPending}
+          >
             Anuluj
           </Button>
-          <Button onClick={submitGuard(() => createMut.mutate())} disabled={createMut.isPending}>
-            {createMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            Dodaj
-          </Button>
+          {spinOffWarning ? (
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setSpinOffWarning(null);
+                createMut.mutate({ confirmSpinOff: true });
+              }}
+              disabled={createMut.isPending}
+            >
+              {createMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Dodaj mimo to
+            </Button>
+          ) : (
+            <Button
+              onClick={submitGuard(() => createMut.mutate(undefined))}
+              disabled={createMut.isPending}
+            >
+              {createMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Dodaj
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -16,11 +16,20 @@ interface SplitInfo {
   date: string;
 }
 
+interface SpinOffInfo {
+  parentTicker: string;
+  exDate: string;
+  ratio: number;
+  allocationPct: number;
+}
+
 interface Props {
   position: Position;
   baseCurrency: string;
   useNativeCcy: boolean;
   splitInfo?: SplitInfo;
+  /** Pozycja powstała z wydzielenia (spin-off) — badge wyjaśniający pochodzenie akcji. */
+  spinOffInfo?: SpinOffInfo;
   isExpanded: boolean;
   onToggle: () => void;
 }
@@ -39,6 +48,7 @@ export function PortfolioPositionCardMobile({
   baseCurrency,
   useNativeCcy,
   splitInfo,
+  spinOffInfo,
   isExpanded,
   onToggle,
 }: Props) {
@@ -90,6 +100,22 @@ export function PortfolioPositionCardMobile({
                 <TooltipContent side="bottom" className="max-w-[260px]">
                   Spółka przeszła {isReverseSplit ? 'reverse split' : 'split'} {splitLabel} w dniu{' '}
                   {splitInfo.date}. Ilość i cena zostały automatycznie skorygowane.
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {spinOffInfo && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <AlertTriangle
+                    className="h-3.5 w-3.5 text-amber-500 shrink-0 cursor-help"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-[280px]">
+                  Ta pozycja powstała z wydzielenia ze spółki {spinOffInfo.parentTicker} (spin-off{' '}
+                  {spinOffInfo.ratio}:1, ex {spinOffInfo.exDate}). Koszt nabycia (
+                  {(spinOffInfo.allocationPct * 100).toFixed(1)}% kosztu spółki macierzystej) został
+                  przeniesiony automatycznie.
                 </TooltipContent>
               </Tooltip>
             )}

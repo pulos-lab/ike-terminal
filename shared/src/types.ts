@@ -691,6 +691,28 @@ export interface RecentSplit {
   ratio: number;
 }
 
+/** Ostrzeżenie POST /transactions: walor jest dzieckiem zastosowanego spin-offu. */
+export interface SpinOffChildWarning {
+  kind: 'spinoff_child';
+  message: string;
+  spinOff: {
+    id?: number;
+    parentTicker: string;
+    childTicker: string;
+    exDate: string;
+    childQty: number;
+  };
+}
+
+/**
+ * Odpowiedź POST /portfolio/transactions: `{ id }` przy zapisie albo
+ * `{ requiresConfirmation, warning }` (HTTP 200) gdy walor jest dzieckiem
+ * spin-offu a request nie miał `confirmSpinOff` — retry z flagą przechodzi.
+ */
+export type CreateTransactionResult =
+  | { id: number; requiresConfirmation?: undefined }
+  | { requiresConfirmation: true; warning: SpinOffChildWarning };
+
 /** Spin-off z ostatnich 30 dni — GET /portfolio/positions zwraca do notyfikacji UI. */
 export interface RecentSpinOff {
   parentIsin: string;
