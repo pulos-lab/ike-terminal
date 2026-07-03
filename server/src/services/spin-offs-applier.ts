@@ -27,6 +27,7 @@ import { fetchYahooPrice, fetchYahooHistoryDirect } from './yahoo-finance.js';
 import { fetchYahooTickerName } from './ticker-search.js';
 import { adjustTransactionsForSplits } from './split-detector.js';
 import { parentSharesAtExDate } from './spin-off-transform.js';
+import { getSpinoffEventsService } from './spinoff-events.js';
 
 /** Okno dopasowania realnych transakcji dziecka wokół ex-date (dni). */
 const BROKER_DEDUP_WINDOW_DAYS = 14;
@@ -77,9 +78,31 @@ function realChildBuyQty(
   return sum;
 }
 
-/** Kandydaci zdarzeń dla portfela: mapa statyczna (Faza 3 dokłada tabelę spinoff_events). */
-function collectCandidates(override?: SpinOffMapEntry[]): SpinOffMapEntry[] {
-  return override ?? SPIN_OFF_MAP;
+type Candidate = SpinOffMapEntry & { origin: 'map' | 'table' };
+
+/**
+ * Kandydaci zdarzeń: mapa statyczna ∪ globalna tabela spinoff_events (scraper,
+ * lazy refresh ≤1×/24h wewnątrz serwisu). Przy duplikacie (rodzic, exDate)
+ * wygrywa mapa — ręcznie kurowany wpis może korygować dane scrapera
+ * (np. costAllocPct). Awaria tabeli degraduje do samej mapy.
+ */
+async function collectCandidates(override?: SpinOffMapEntry[]): Promise<Candidate[]> {
+  if (override) return override.map((e) => ({ ...e, origin: 'map' as const }));
+
+  let tableEvents: SpinOffMapEntry[] = [];
+  try {
+    tableEvents = await getSpinoffEventsService().getEvents();
+  } catch (err) {
+    console.warn('[spin-offs] Tabela spinoff_events niedostępna — działa sama mapa:', err);
+  }
+
+  const mapKeys = new Set(SPIN_OFF_MAP.map((e) => `${e.parentTicker.toUpperCase()}|${e.exDate}`));
+  return [
+    ...SPIN_OFF_MAP.map((e) => ({ ...e, origin: 'map' as const })),
+    ...tableEvents
+      .filter((e) => !mapKeys.has(`${e.parentTicker.toUpperCase()}|${e.exDate}`))
+      .map((e) => ({ ...e, origin: 'table' as const })),
+  ];
 }
 
 /** Znajdź wpis rodzica w ticker_map portfela (po ISIN gdy znany, inaczej po tickerze). */
@@ -170,7 +193,7 @@ export async function applyPendingSpinOffs(
   // ── Aplikacja nowych zdarzeń ──
   const adjustedTxs = adjustTransactionsForSplits(transactions, savedSplits);
 
-  for (const candidate of collectCandidates(candidatesOverride)) {
+  for (const candidate of await collectCandidates(candidatesOverride)) {
     // Tania bramka 1: zdarzenie z przyszłości
     if (candidate.exDate > today) continue;
 
@@ -222,7 +245,7 @@ export async function applyPendingSpinOffs(
         childQty: expectedChildQty,
         currency,
         status: 'skipped_broker',
-        source: 'map',
+        source: candidate.origin,
       });
       if (inserted) bumpPortfolioDataVersion(pid);
       continue;
@@ -296,7 +319,7 @@ export async function applyPendingSpinOffs(
       parentPriceUsed,
       childPriceUsed,
       status: 'applied',
-      source: 'map',
+      source: candidate.origin,
     };
     const inserted = insertSpinOff(pid, row);
     if (inserted) {
