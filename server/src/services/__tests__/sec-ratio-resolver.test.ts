@@ -60,6 +60,16 @@ describe('extractRatioFromFiling', () => {
     expect(extractRatioFromFiling(FILING_8K_1TO1, EVENT)).toBe(1);
   });
 
+  it('DOSŁOWNE brzmienie komunikatu SPGI→MBGL (real-world): "for every share" bez liczby → 1', () => {
+    // Cytat z ogłoszenia S&P Global z 2026-05-21 (IR + 8-K) — mianownik
+    // domyślny, bo po "for every" nie ma liczby.
+    const verbatim =
+      '<p>S&P Global shareholders will receive one share of Mobility Global common stock ' +
+      'for every share of S&P Global common stock held at the close of business on the ' +
+      'record date of June 15, 2026.</p>';
+    expect(extractRatioFromFiling(verbatim, EVENT)).toBe(1);
+  });
+
   it('10-12B dziecka: 1 za 4 (ratio 0.25) — kontekst po tickerze dziecka', () => {
     const event = {
       parentTicker: 'PRNT',
