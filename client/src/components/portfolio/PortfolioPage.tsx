@@ -158,6 +158,16 @@ export function PortfolioPage() {
     return map;
   }, [data?.recentSpinOffs]);
 
+  // Spin-offy wykryte przez scraper, ale czekające na ratio z SEC (klucz: ticker
+  // rodzica — zdarzenia z tabeli globalnej nie znają ISIN-ów portfela)
+  const pendingRatioMap = useMemo(() => {
+    const map = new Map<string, { childTicker: string; exDate: string }>();
+    for (const s of data?.pendingRatioSpinOffs ?? []) {
+      map.set(s.parentTicker.toUpperCase(), { childTicker: s.childTicker, exDate: s.exDate });
+    }
+    return map;
+  }, [data?.pendingRatioSpinOffs]);
+
   const cashPositions = data?.cashPositions ?? [];
 
   // Columns before "Wartość (PLN)": Ticker, Nazwa, Ilość, [Śr. cena], Prowizje, Kurs, [Zmiana]
@@ -342,6 +352,23 @@ export function PortfolioPage() {
                                     Ze spółki wydzielono {so.childTicker} (spin-off, ex {so.exDate})
                                     — koszt nabycia został proporcjonalnie obniżony o część
                                     przeniesioną na nową pozycję.
+                                  </TooltipContent>
+                                </Tooltip>
+                              );
+                            })()}
+                          {!recentSpinOffParentMap.has(pos.isin) &&
+                            pendingRatioMap.has(pos.ticker.toUpperCase()) &&
+                            (() => {
+                              const so = pendingRatioMap.get(pos.ticker.toUpperCase())!;
+                              return (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="h-4 w-4 text-muted-foreground inline ml-1 cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right" className="max-w-[300px]">
+                                    Wykryto spin-off {so.childTicker} (ex {so.exDate}) — czekam na
+                                    potwierdzenie ratio dystrybucji z oficjalnych filingów SEC.
+                                    Pozycja spółki wydzielonej pojawi się automatycznie.
                                   </TooltipContent>
                                 </Tooltip>
                               );

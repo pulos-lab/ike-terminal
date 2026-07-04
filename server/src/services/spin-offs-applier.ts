@@ -100,9 +100,35 @@ async function collectCandidates(override?: SpinOffMapEntry[]): Promise<Candidat
   return [
     ...SPIN_OFF_MAP.map((e) => ({ ...e, origin: 'map' as const })),
     ...tableEvents
+      // Twarda bramka: zdarzenie bez dodatniego ratio nie jest kandydatem
+      // (serwis zwraca tylko kompletne wiersze, ale filtr jest defensywny —
+      // błędne ratio = błędna liczba akcji w portfelu).
+      .filter((e) => e.ratio > 0)
       .filter((e) => !mapKeys.has(`${e.parentTicker.toUpperCase()}|${e.exDate}`))
       .map((e) => ({ ...e, origin: 'table' as const })),
   ];
+}
+
+/**
+ * Zdarzenia wykryte przez scraper, ale czekające na ratio z SEC — do sygnalizacji
+ * w UI przy rodzicach obecnych w portfelu. Czysty odczyt z DB (bez sieci).
+ */
+export function getPendingRatioSpinOffs(
+  tickerMap: Map<string, TickerMapEntry>,
+): Array<{ parentTicker: string; childTicker: string; exDate: string }> {
+  try {
+    const held = new Set([...tickerMap.values()].map((e) => e.ticker.toUpperCase()));
+    return getSpinoffEventsService()
+      .getPendingRatioEvents()
+      .filter((e) => held.has(e.parentTicker.toUpperCase()))
+      .map((e) => ({
+        parentTicker: e.parentTicker,
+        childTicker: e.childTicker,
+        exDate: e.exDate,
+      }));
+  } catch {
+    return [];
+  }
 }
 
 /** Znajdź wpis rodzica w ticker_map portfela (po ISIN gdy znany, inaczej po tickerze). */

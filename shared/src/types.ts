@@ -713,6 +713,16 @@ export type CreateTransactionResult =
   | { id: number; requiresConfirmation?: undefined }
   | { requiresConfirmation: true; warning: SpinOffChildWarning };
 
+/**
+ * Spin-off wykryty przez scraper, ale czekający na ratio dystrybucji z SEC —
+ * sygnalizowany przy rodzicu w portfelu ("czekam na ratio"), bez akcji usera.
+ */
+export interface PendingRatioSpinOff {
+  parentTicker: string;
+  childTicker: string;
+  exDate: string;
+}
+
 /** Spin-off z ostatnich 30 dni — GET /portfolio/positions zwraca do notyfikacji UI. */
 export interface RecentSpinOff {
   parentIsin: string;
@@ -733,6 +743,8 @@ export interface PortfolioPositionsResponse {
   cashValuePln: number;
   recentSplits: RecentSplit[];
   recentSpinOffs: RecentSpinOff[];
+  /** Wykryte spin-offy rodziców z portfela czekające na ratio z SEC. */
+  pendingRatioSpinOffs: PendingRatioSpinOff[];
   /** Waluta bazowa portfela (np. 'PLN' dla Bossa, 'USD' dla XTB USD sub-account). */
   baseCurrency: string;
 }

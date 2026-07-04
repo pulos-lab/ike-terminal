@@ -22,7 +22,7 @@ import {
   detectBaseCurrency,
 } from './portfolio-engine.js';
 import { computePortfolioHistoryMemoized } from './history-memo.js';
-import { applyPendingSpinOffs } from './spin-offs-applier.js';
+import { applyPendingSpinOffs, getPendingRatioSpinOffs } from './spin-offs-applier.js';
 
 /**
  * Widoki portfela (historia zwrotów, otwarte pozycje) wyciągnięte z handlerów
@@ -275,6 +275,9 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     cashValuePln,
     recentSplits,
     recentSpinOffs,
+    // Wykryte, ale czekające na ratio z SEC (czysty odczyt z DB — refresh
+    // tabeli zdarzeń wykonał się już w applierze powyżej)
+    pendingRatioSpinOffs: getPendingRatioSpinOffs(tickerMap),
     baseCurrency,
   };
 }

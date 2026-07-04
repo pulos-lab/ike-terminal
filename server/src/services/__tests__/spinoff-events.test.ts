@@ -1,47 +1,25 @@
 import { describe, it, expect, vi } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import {
   parseUsDate,
-  parseSpinoffRatio,
-  parseSpinoffParentTicker,
   parseStockanalysisSpinoffs,
   createSpinoffEventsService,
 } from '../spinoff-events.js';
 
-// Fixture kontraktujący parser: tabela [Date | Symbol | Company Name] w formacie
-// stron akcji stockanalysis.com. Wiersze 3-5 są celowo niejednoznaczne
-// (brak tickera rodzica / brak ratio) — muszą zostać POMINIĘTE, nie zgadnięte.
-const FIXTURE_HTML = `
-<html><body>
-<main>
-<table>
-  <thead>
-    <tr><th>Date</th><th>Symbol</th><th>Company Name</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Jul 1, 2026</td><td>MBGL</td>
-      <td>Mobility Global Inc., spun off from S&amp;P Global (SPGI), 1 share of MBGL for every 1 share of SPGI held</td>
-    </tr>
-    <tr>
-      <td>Apr 17, 2026</td><td>CQNT</td>
-      <td>Creotech Quantum, spun off from CRI, distribution ratio of 1:4</td>
-    </tr>
-    <tr>
-      <td>Mar 5, 2026</td><td>XYZ</td>
-      <td>XYZ Corp, spun off from Some Parent Company, 1 share for every 2 shares</td>
-    </tr>
-    <tr>
-      <td>Feb 2, 2026</td><td>NORAT</td>
-      <td>NoRatio Inc., spun off from Parent Co (PRNT)</td>
-    </tr>
-    <tr>
-      <td>Jan 1, 1999</td><td>OLD</td>
-      <td>Ancient Corp, spun off from OLDP, 1 share for every 1 share</td>
-    </tr>
-  </tbody>
-</table>
-</main>
-</body></html>`;
+// Fixture = PRZYCIĘTY FRAGMENT REALNEGO HTML-a strony stockanalysis.com
+// (Recent Stock Spinoffs, dostarczony przez użytkownika 2026-07): kolumny
+// [Date | Parent | New Stock | Parent Company | New Company], markup SvelteKit
+// SSR z szumem komentarzy <!--[!--> i tickerami jako linki lub goły tekst.
+const FIXTURE_HTML = fs.readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '__fixtures__',
+    'stockanalysis-spinoffs.html',
+  ),
+  'utf-8',
+);
 
 const NOW = new Date('2026-07-03T12:00:00Z');
 
@@ -55,51 +33,32 @@ describe('parseUsDate', () => {
   });
 });
 
-describe('parseSpinoffRatio', () => {
-  it('wzorce "for every" / "ratio of X:Y" / "X-for-Y"', () => {
-    expect(parseSpinoffRatio('1 share of MBGL for every 1 share of SPGI held')).toBe(1);
-    expect(parseSpinoffRatio('one share for each share held')).toBe(1);
-    expect(parseSpinoffRatio('1 share for every 4 shares')).toBe(0.25);
-    expect(parseSpinoffRatio('distribution ratio of 1:4')).toBe(0.25);
-    expect(parseSpinoffRatio('2-for-1 distribution')).toBe(2);
-  });
-
-  it('brak jednoznacznego wzorca → null (nie zgadujemy)', () => {
-    expect(parseSpinoffRatio('will spin off its mobility unit')).toBeNull();
-    expect(parseSpinoffRatio('')).toBeNull();
-  });
-});
-
-describe('parseSpinoffParentTicker', () => {
-  it('ticker w nawiasie po nazwie lub goły ticker', () => {
-    expect(parseSpinoffParentTicker('spun off from S&P Global (SPGI), 1 share')).toBe('SPGI');
-    expect(parseSpinoffParentTicker('spun off from CRI, ratio of 1:4')).toBe('CRI');
-  });
-
-  it('sama nazwa spółki (bez tickera) → null', () => {
-    expect(parseSpinoffParentTicker('spun off from Some Parent Company, 1 share')).toBeNull();
-  });
-});
-
-describe('parseStockanalysisSpinoffs', () => {
-  it('wyciąga tylko jednoznaczne wiersze; niejednoznaczne i przeterminowane pomija', () => {
+describe('parseStockanalysisSpinoffs — realny markup', () => {
+  it('wyciąga zdarzenia z realnej tabeli (tickery z linków i gołego tekstu), ratio=null', () => {
     const { events, skipped } = parseStockanalysisSpinoffs(FIXTURE_HTML, NOW);
 
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(4);
     expect(events[0]).toMatchObject({
       parentTicker: 'SPGI',
       childTicker: 'MBGL',
+      parentName: 'S&p Global Inc',
+      childName: 'Mobility Global Inc',
       exDate: '2026-07-01',
-      ratio: 1,
+      ratio: null,
     });
     expect(events[1]).toMatchObject({
-      parentTicker: 'CRI',
-      childTicker: 'CQNT',
-      exDate: '2026-04-17',
-      ratio: 0.25,
+      parentTicker: 'HON',
+      childTicker: 'HONA',
+      exDate: '2026-06-29',
     });
-    // XYZ (rodzic bez tickera) + NORAT (bez ratio) + OLD (rok 1999 poza oknem)
-    expect(skipped).toBe(3);
+    expect(events[2]).toMatchObject({ parentTicker: 'FDX', childTicker: 'FDXF' });
+    // ENVI — ticker rodzica jako goły tekst (bez linku), dziecko jako link
+    expect(events[3]).toMatchObject({
+      parentTicker: 'ENVI',
+      childTicker: 'NVRI',
+      childName: 'Enviri Corp',
+    });
+    expect(skipped).toBe(0);
   });
 
   it('brak tabeli / pusty HTML → zero zdarzeń, zero wyjątków', () => {
@@ -108,24 +67,75 @@ describe('parseStockanalysisSpinoffs', () => {
       skipped: 0,
     });
   });
+
+  it('wiersz z datą poza oknem wiarygodności jest pomijany', () => {
+    const html = FIXTURE_HTML.replace('Jul 1, 2026', 'Jul 1, 1999');
+    const { events, skipped } = parseStockanalysisSpinoffs(html, NOW);
+    expect(events).toHaveLength(3);
+    expect(skipped).toBe(1);
+  });
 });
 
 describe('createSpinoffEventsService', () => {
-  it('refresh zapisuje zdarzenia, getEvents zwraca kandydatów; kolejne wywołanie bez sieci', async () => {
-    const fetchFn = vi
+  const mockPageFetch = (html: string) =>
+    vi.fn().mockResolvedValue(new Response(html, { status: 200 })) as unknown as typeof fetch;
+
+  it('refresh zapisuje zdarzenia bez ratio; getEvents zwraca tylko kompletne; pending widoczne', async () => {
+    const fetchFn = mockPageFetch(FIXTURE_HTML);
+    // Resolver zna ratio tylko dla SPGI→MBGL
+    const ratioResolver = vi
       .fn()
-      .mockResolvedValue(new Response(FIXTURE_HTML, { status: 200 })) as unknown as typeof fetch;
-    const service = createSpinoffEventsService({ fetchFn, dbFile: ':memory:', now: () => NOW });
+      .mockImplementation(async (e: { parentTicker: string }) =>
+        e.parentTicker === 'SPGI'
+          ? { ratio: 1, sourceUrl: 'https://www.sec.gov/Archives/edgar/data/x/8k.htm' }
+          : null,
+      );
+    const service = createSpinoffEventsService({
+      fetchFn,
+      dbFile: ':memory:',
+      now: () => NOW,
+      ratioResolver,
+    });
 
     const events = await service.getEvents();
-    expect(events).toHaveLength(2);
-    expect(events[0].parentTicker).toBe('SPGI');
-    expect(events[0].childTicker).toBe('MBGL');
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    // Tylko SPGI→MBGL ma ratio → jedyny kandydat appliera
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ parentTicker: 'SPGI', childTicker: 'MBGL', ratio: 1 });
+    expect(events[0].source).toContain('sec.gov');
 
-    // Świeże dane (last_success < 24h) → bez kolejnego strzału
+    // Pozostałe zdarzenia czekają na ratio — widoczne dla UI
+    const pending = service.getPendingRatioEvents();
+    expect(pending.map((p) => p.parentTicker).sort()).toEqual(['ENVI', 'FDX', 'HON']);
+
+    // Świeże dane (last_success < 24h) → bez kolejnego strzału do strony
     await service.getEvents();
     expect(fetchFn).toHaveBeenCalledTimes(1);
+    service.close();
+  });
+
+  it('kolejny refresh NIE nadpisuje rozwiązanego ratio NULL-em', async () => {
+    let clock = NOW.getTime();
+    const fetchFn = mockPageFetch(FIXTURE_HTML);
+    let resolverKnows = true;
+    const ratioResolver = vi
+      .fn()
+      .mockImplementation(async (e: { parentTicker: string }) =>
+        resolverKnows && e.parentTicker === 'SPGI' ? { ratio: 1, sourceUrl: 'sec' } : null,
+      );
+    const service = createSpinoffEventsService({
+      fetchFn,
+      dbFile: ':memory:',
+      now: () => new Date(clock),
+      ratioResolver,
+    });
+
+    await service.getEvents(); // SPGI dostaje ratio=1
+    resolverKnows = false; // SEC "przestaje odpowiadać"
+    clock += 25 * 60 * 60 * 1000; // wymuś kolejny refresh (upsert wierszy)
+
+    const events = await service.getEvents();
+    expect(events).toHaveLength(1); // ratio SPGI przeżyło upsert
+    expect(events[0].ratio).toBe(1);
     service.close();
   });
 
@@ -135,20 +145,22 @@ describe('createSpinoffEventsService', () => {
       if (fail) throw new Error('network down');
       return new Response(FIXTURE_HTML, { status: 200 });
     }) as unknown as typeof fetch;
+    const ratioResolver = vi.fn().mockResolvedValue({ ratio: 1, sourceUrl: 'sec' });
 
     let clock = NOW.getTime();
     const service = createSpinoffEventsService({
       fetchFn,
       dbFile: ':memory:',
       now: () => new Date(clock),
+      ratioResolver,
     });
 
-    await service.getEvents(); // sukces → 2 zdarzenia
+    await service.getEvents(); // sukces → 4 zdarzenia z ratio
     fail = true;
     clock += 25 * 60 * 60 * 1000; // dane stały się stale (>24h)
 
     const events = await service.getEvents(); // refresh pada → stare wiersze
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(4);
     const callsAfterFail = (fetchFn as ReturnType<typeof vi.fn>).mock.calls.length;
 
     await service.getEvents(); // <1h od porażki → bez kolejnej próby
@@ -159,5 +171,39 @@ describe('createSpinoffEventsService', () => {
     await service.getEvents();
     expect((fetchFn as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFail + 1);
     service.close();
+  });
+
+  it('przebudowuje tabelę ze starego kształtu (ratio NOT NULL) bez wyjątku', async () => {
+    // Symulacja dev-bazy sprzed kalibracji: plik tymczasowy z legacy schematem
+    const os = await import('os');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ike-spinoff-legacy-'));
+    const dbFile = path.join(tmp, 'price_history.db');
+    const Database = (await import('better-sqlite3')).default;
+    const legacy = new Database(dbFile);
+    legacy.exec(`
+      CREATE TABLE spinoff_events (
+        parent_ticker TEXT NOT NULL,
+        child_ticker TEXT NOT NULL,
+        child_name TEXT,
+        ex_date TEXT NOT NULL,
+        ratio REAL NOT NULL,
+        source_url TEXT,
+        fetched_at TEXT NOT NULL,
+        PRIMARY KEY (parent_ticker, ex_date)
+      );
+    `);
+    legacy.close();
+
+    const service = createSpinoffEventsService({
+      fetchFn: mockPageFetch(FIXTURE_HTML),
+      dbFile,
+      now: () => NOW,
+      ratioResolver: vi.fn().mockResolvedValue(null),
+    });
+    const events = await service.getEvents(); // nie rzuca; nowy kształt działa
+    expect(events).toHaveLength(0); // resolver nic nie zna → wszystko pending
+    expect(service.getPendingRatioEvents()).toHaveLength(4);
+    service.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
   });
 });

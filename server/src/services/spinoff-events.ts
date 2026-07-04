@@ -4,16 +4,18 @@
  * `gpw-dividend-calendar.ts`: lazy refresh ≤1×/24h za współdzielonym in-flight
  * promise, przy porażce stare wiersze zostają a retry następuje najwcześniej po 1h.
  *
- * Zasada pełnej automatyki bez ludzkiej weryfikacji ⇒ do tabeli trafiają WYŁĄCZNIE
- * wiersze z jednoznacznym ratio i tickerem rodzica (lepiej pominąć niż zmyślić) —
- * pominięcia są logowane. Dalsze guardy stoją w applierze (dziecko musi się
- * resolwować u dostawcy cen, alokacja z realnych cen z clampem, rodzic musi być
- * w portfelu na ex-date), więc nawet błędny wiersz nie wyczaruje pozycji z niczego.
+ * Struktura źródła (skalibrowana na REALNYM HTML-u strony, fixture w testach):
+ * tabela [Date | Parent | New Stock | Parent Company | New Company] — tickery
+ * rodzica i dziecka w dedykowanych kolumnach (link `/stocks/<t>/` albo goły
+ * tekst), markup SvelteKit SSR z szumem komentarzy `<!--[!-->` (cheerio .text()
+ * go ignoruje). Strona NIE podaje ratio dystrybucji.
  *
- * Format źródła: strona roczna stockanalysis.com/actions/spinoffs/<rok>/ z tabelą
- * [Date | Symbol | Company Name | ...tekst akcji]. Parser jest kontraktowany
- * fixture'em w testach; struktura żywej strony może dryfować — degradacja to
- * zero kandydatów (mapa statyczna działa dalej), nigdy błędne dane.
+ * Ratio uzupełnia osobny krok: `sec-ratio-resolver` (EDGAR full-text search po
+ * formularzach 8-K rodzica i 10-12B dziecka — oficjalne filingi zawierają wprost
+ * "1 share of X for every Y shares"). Do czasu jednoznacznego ratio zdarzenie ma
+ * `ratio = NULL` i NIE jest kandydatem do aplikacji (getEvents zwraca tylko
+ * kompletne wiersze; getPendingRatioEvents służy sygnalizacji w UI). Lepiej
+ * czekać niż zgadywać — błędne ratio = błędna liczba akcji w portfelu.
  */
 import * as cheerio from 'cheerio';
 import Database from 'better-sqlite3';
@@ -21,16 +23,28 @@ import fs from 'fs';
 import path from 'path';
 import { config } from '../config.js';
 import type { SpinOffMapEntry } from 'shared';
+import { resolveSpinoffRatioFromSec, type SecRatioResolution } from './sec-ratio-resolver.js';
 
 // ── Typy ────────────────────────────────────────────────────────────────────
 
 export interface SpinoffEventRow {
   parentTicker: string;
+  parentName: string | null;
   childTicker: string;
   childName: string | null;
   exDate: string; // YYYY-MM-DD
-  ratio: number; // akcje dziecka za 1 akcję rodzica
-  sourceUrl: string | null;
+  /** Akcje dziecka za 1 akcję rodzica; null = jeszcze nierozwiązane (SEC). */
+  ratio: number | null;
+  /** Skąd pochodzi ratio (URL filingu SEC) — audyt. */
+  ratioSourceUrl: string | null;
+}
+
+/** Zdarzenie wykryte, ale czekające na ratio — do sygnalizacji w UI/logach. */
+export interface SpinoffPendingEvent {
+  parentTicker: string;
+  childTicker: string;
+  childName: string | null;
+  exDate: string;
 }
 
 // ── Parser (czysta funkcja, bez I/O) ────────────────────────────────────────
@@ -62,56 +76,14 @@ export function parseUsDate(text: string): string | null {
   return `${us[3]}-${month}-${us[2].padStart(2, '0')}`;
 }
 
-/**
- * Wyciąga ratio (akcje dziecka za 1 akcję rodzica) z tekstu opisu akcji.
- * Obsługiwane wzorce (case-insensitive):
- *  - "1 share ... for every 4 shares"  → 0.25
- *  - "ratio of 1:4" / "1-for-4"        → 0.25
- *  - "one share for each share"        → 1
- * Brak jednoznacznego wzorca → null (wiersz zostanie pominięty).
- */
-export function parseSpinoffRatio(text: string): number | null {
-  const t = text.toLowerCase().replace(/\s+/g, ' ');
-
-  // "X share(s) ... for every/each Y share(s)"
-  const forEvery = t.match(
-    /(\d+(?:\.\d+)?|one) shares? [^.]*?for (?:every|each) (\d+(?:\.\d+)?|one)? ?shares?/,
-  );
-  if (forEvery) {
-    const num = forEvery[1] === 'one' ? 1 : parseFloat(forEvery[1]);
-    const den = !forEvery[2] || forEvery[2] === 'one' ? 1 : parseFloat(forEvery[2]);
-    if (num > 0 && den > 0) return num / den;
-  }
-
-  // "ratio of X:Y" / "X-for-Y"
-  const pair = t.match(/(?:ratio of |)(\d+(?:\.\d+)?)\s*(?::|-for-)\s*(\d+(?:\.\d+)?)/);
-  if (pair) {
-    const num = parseFloat(pair[1]);
-    const den = parseFloat(pair[2]);
-    if (num > 0 && den > 0) return num / den;
-  }
-
-  return null;
-}
+const TICKER_RE = /^[A-Z0-9]{1,6}(?:\.[A-Z]{1,3})?$/;
 
 /**
- * Wyciąga ticker rodzica z tekstu opisu ("spun off from S&P Global (SPGI)" /
- * "spun off from SPGI"). Wymagany jawny ticker (UPPERCASE 1-6 znaków, opcjonalny
- * suffix .XX) — sama nazwa spółki jest niejednoznaczna i wiersz odpada.
- */
-export function parseSpinoffParentTicker(text: string): string | null {
-  const m = text.match(/spun off from [^(.]*\(([A-Z0-9]{1,6}(?:\.[A-Z]{1,3})?)\)/i);
-  if (m) return m[1].toUpperCase();
-  const bare = text.match(/spun off from ([A-Z0-9]{1,6}(?:\.[A-Z]{1,3})?)(?:\s|,|\.|$)/);
-  if (bare) return bare[1].toUpperCase();
-  return null;
-}
-
-/**
- * Parsuje roczną stronę spin-offów. Szuka pierwszej tabeli z nagłówkami
- * zawierającymi "date" i "symbol"; kolumna symbolu = ticker DZIECKA (nowy walor),
- * tekst wiersza (nazwa/akcja) niesie rodzica i ratio. Wiersze bez jednoznacznego
- * (parent, ratio, date) są pomijane i zliczane w `skipped`.
+ * Parsuje stronę spin-offów stockanalysis. Tabela rozpoznawana po nagłówkach
+ * zawierających "date" + "parent" + "new stock"; indeksy kolumn po nazwach.
+ * Wiersze bez poprawnej daty/tickerów lub z datą poza oknem wiarygodności
+ * (±2 lata) są pomijane i zliczane w `skipped`. Ratio NIE występuje na stronie —
+ * wszystkie zdarzenia wychodzą z `ratio: null` (uzupełnia je sec-ratio-resolver).
  */
 export function parseStockanalysisSpinoffs(
   html: string,
@@ -128,7 +100,11 @@ export function parseStockanalysisSpinoffs(
       .find('th')
       .map((__, th) => $(th).text().trim().toLowerCase())
       .get();
-    if (headers.some((h) => h.includes('date')) && headers.some((h) => h.includes('symbol'))) {
+    if (
+      headers.some((h) => h.includes('date')) &&
+      headers.some((h) => h === 'parent' || h === 'old symbol') &&
+      headers.some((h) => h.includes('new stock') || h.includes('new symbol'))
+    ) {
       table = $(el) as cheerio.Cheerio<never>;
     }
   });
@@ -139,19 +115,23 @@ export function parseStockanalysisSpinoffs(
     .map((_, th) => $(th).text().trim().toLowerCase())
     .get();
   const dateIdx = headers.findIndex((h) => h.includes('date'));
-  const symbolIdx = headers.findIndex((h) => h.includes('symbol'));
+  const parentIdx = headers.findIndex((h) => h === 'parent' || h === 'old symbol');
+  const childIdx = headers.findIndex((h) => h.includes('new stock') || h.includes('new symbol'));
+  const parentNameIdx = headers.findIndex((h) => h.includes('parent company'));
+  const childNameIdx = headers.findIndex((h) => h.includes('new company'));
 
   const nowYear = now.getFullYear();
 
   ($(table) as ReturnType<typeof $>).find('tbody tr, tr').each((_, tr) => {
     const cells = $(tr).find('td');
-    if (cells.length <= Math.max(dateIdx, symbolIdx)) return; // nagłówek/uszkodzony
+    if (cells.length <= Math.max(dateIdx, parentIdx, childIdx)) return; // nagłówek
 
+    // .text() zjada linki <a> i komentarze SSR — zostaje czysty ticker/tekst
     const exDate = parseUsDate($(cells[dateIdx]).text());
-    const childTicker = $(cells[symbolIdx]).text().trim().toUpperCase();
-    const rowText = $(tr).text().replace(/\s+/g, ' ').trim();
+    const parentTicker = $(cells[parentIdx]).text().trim().toUpperCase();
+    const childTicker = $(cells[childIdx]).text().trim().toUpperCase();
 
-    if (!exDate || !childTicker || !/^[A-Z0-9.]{1,10}$/.test(childTicker)) {
+    if (!exDate || !TICKER_RE.test(parentTicker) || !TICKER_RE.test(childTicker)) {
       skipped++;
       return;
     }
@@ -162,27 +142,17 @@ export function parseStockanalysisSpinoffs(
       return;
     }
 
-    const parentTicker = parseSpinoffParentTicker(rowText);
-    const ratio = parseSpinoffRatio(rowText);
-    if (!parentTicker || ratio === null) {
-      skipped++; // niejednoznaczne — lepiej pominąć niż zmyślić
-      return;
-    }
-
-    const childName =
-      cells.length > symbolIdx + 1
-        ? $(cells[symbolIdx + 1])
-            .text()
-            .trim() || null
-        : null;
+    const nameAt = (idx: number): string | null =>
+      idx >= 0 && cells.length > idx ? $(cells[idx]).text().trim() || null : null;
 
     events.push({
       parentTicker,
+      parentName: nameAt(parentNameIdx),
       childTicker,
-      childName,
+      childName: nameAt(childNameIdx),
       exDate,
-      ratio,
-      sourceUrl: null,
+      ratio: null,
+      ratioSourceUrl: null,
     });
   });
 
@@ -200,26 +170,39 @@ const USER_AGENT =
 const FETCH_TIMEOUT_MS = 15_000;
 const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // ≤1×/24h
 const RETRY_INTERVAL_MS = 60 * 60 * 1000; // po awarii: ponów najwcześniej po 1h
+/** Maks. liczba zdarzeń, dla których jeden refresh próbuje rozwiązać ratio z SEC. */
+const MAX_RATIO_LOOKUPS_PER_REFRESH = 5;
 
 export interface SpinoffEventsServiceOptions {
   fetchFn?: typeof fetch;
   dbFile?: string;
   now?: () => Date;
+  /** Wstrzykiwalny resolver ratio (testy); default: SEC EDGAR. */
+  ratioResolver?: (event: {
+    parentTicker: string;
+    parentName: string | null;
+    childTicker: string;
+    childName: string | null;
+    exDate: string;
+  }) => Promise<SecRatioResolution | null>;
 }
 
 export interface SpinoffEventsService {
-  /** Zwraca zdarzenia jako wpisy kandydatów appliera (source='table'). */
+  /** Kompletne zdarzenia (z ratio) jako kandydaci appliera. Lazy refresh ≤1×/24h. */
   getEvents(): Promise<SpinOffMapEntry[]>;
+  /** Zdarzenia czekające na ratio — czysty odczyt z DB (bez sieci). */
+  getPendingRatioEvents(): SpinoffPendingEvent[];
   close(): void;
 }
 
 interface EventDbRow {
   parent_ticker: string;
+  parent_name: string | null;
   child_ticker: string;
   child_name: string | null;
   ex_date: string;
-  ratio: number;
-  source_url: string | null;
+  ratio: number | null;
+  ratio_source_url: string | null;
 }
 
 export function createSpinoffEventsService(
@@ -228,6 +211,8 @@ export function createSpinoffEventsService(
   const fetchFn = options.fetchFn ?? fetch;
   const now = options.now ?? (() => new Date());
   const dbFile = options.dbFile ?? path.join(config.dataDir, 'price_history.db');
+  const ratioResolver =
+    options.ratioResolver ?? ((event) => resolveSpinoffRatioFromSec(event, fetchFn));
 
   let db: Database.Database | null = null;
   let inFlightRefresh: Promise<void> | null = null;
@@ -240,14 +225,28 @@ export function createSpinoffEventsService(
       }
       db = new Database(dbFile);
       db.pragma('journal_mode = WAL');
+      // Wczesny kształt tabeli (gałąź przed-deployowa) miał ratio NOT NULL i brak
+      // kolumn nazw/źródła — to tabela-cache, więc przy wykryciu starego kształtu
+      // po prostu przebudowujemy (dane odtworzy najbliższy refresh).
+      const cols = db.prepare(`PRAGMA table_info(spinoff_events)`).all() as Array<{
+        name: string;
+        notnull: number;
+      }>;
+      const ratioCol = cols.find((c) => c.name === 'ratio');
+      const isLegacyShape =
+        cols.length > 0 && (ratioCol?.notnull === 1 || !cols.some((c) => c.name === 'parent_name'));
+      if (isLegacyShape) {
+        db.exec('DROP TABLE IF EXISTS spinoff_events;');
+      }
       db.exec(`
         CREATE TABLE IF NOT EXISTS spinoff_events (
           parent_ticker TEXT NOT NULL,
+          parent_name TEXT,
           child_ticker TEXT NOT NULL,
           child_name TEXT,
           ex_date TEXT NOT NULL,
-          ratio REAL NOT NULL,
-          source_url TEXT,
+          ratio REAL,
+          ratio_source_url TEXT,
           fetched_at TEXT NOT NULL,
           PRIMARY KEY (parent_ticker, ex_date)
         );
@@ -275,6 +274,57 @@ export function createSpinoffEventsService(
       .run(key, isoTimestamp);
   }
 
+  /** Krok 2 refreshu: uzupełnij ratio z SEC dla wierszy z ratio IS NULL. */
+  async function resolveMissingRatios(): Promise<void> {
+    const pending = getDb()
+      .prepare(
+        `SELECT parent_ticker, parent_name, child_ticker, child_name, ex_date
+         FROM spinoff_events WHERE ratio IS NULL
+         ORDER BY ex_date DESC LIMIT ?`,
+      )
+      .all(MAX_RATIO_LOOKUPS_PER_REFRESH) as Array<{
+      parent_ticker: string;
+      parent_name: string | null;
+      child_ticker: string;
+      child_name: string | null;
+      ex_date: string;
+    }>;
+
+    for (const row of pending) {
+      try {
+        const resolved = await ratioResolver({
+          parentTicker: row.parent_ticker,
+          parentName: row.parent_name,
+          childTicker: row.child_ticker,
+          childName: row.child_name,
+          exDate: row.ex_date,
+        });
+        if (resolved) {
+          getDb()
+            .prepare(
+              `UPDATE spinoff_events SET ratio = ?, ratio_source_url = ?
+               WHERE parent_ticker = ? AND ex_date = ?`,
+            )
+            .run(resolved.ratio, resolved.sourceUrl, row.parent_ticker, row.ex_date);
+          console.log(
+            `[spinoff-events] Ratio ${row.parent_ticker}→${row.child_ticker}: ` +
+              `${resolved.ratio} (źródło: ${resolved.sourceUrl})`,
+          );
+        } else {
+          console.log(
+            `[spinoff-events] Ratio ${row.parent_ticker}→${row.child_ticker}: brak ` +
+              `jednoznacznego wyniku w SEC — zdarzenie czeka (retry przy kolejnym refreshu)`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `[spinoff-events] Ratio lookup ${row.parent_ticker}→${row.child_ticker} padł:`,
+          err,
+        );
+      }
+    }
+  }
+
   async function doRefresh(): Promise<void> {
     setState('last_attempt', now().toISOString());
 
@@ -292,8 +342,7 @@ export function createSpinoffEventsService(
       events = parsed.events;
       if (parsed.skipped > 0) {
         console.log(
-          `[spinoff-events] ${url}: ${events.length} zdarzeń, ${parsed.skipped} wierszy ` +
-            `pominiętych (brak jednoznacznego rodzica/ratio — celowo nie zgadujemy)`,
+          `[spinoff-events] ${url}: ${events.length} zdarzeń, ${parsed.skipped} wierszy pominiętych`,
         );
       }
     } catch (err) {
@@ -302,29 +351,30 @@ export function createSpinoffEventsService(
       return;
     }
 
-    // Merge (INSERT OR REPLACE) zamiast delete-all: zdarzenia z poprzedniego roku
-    // pozostają dostępne na przełomie lat; okno wiarygodności filtruje przy odczycie.
+    // Upsert NIE nadpisuje już rozwiązanego ratio (strona go nie zna — nadpisanie
+    // cofałoby wynik resolvera SEC do NULL-a przy każdym refreshu).
     const database = getDb();
     const fetchedAt = now().toISOString();
     const insert = database.prepare(
-      `INSERT OR REPLACE INTO spinoff_events
-         (parent_ticker, child_ticker, child_name, ex_date, ratio, source_url, fetched_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO spinoff_events
+         (parent_ticker, parent_name, child_ticker, child_name, ex_date, ratio,
+          ratio_source_url, fetched_at)
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)
+       ON CONFLICT(parent_ticker, ex_date) DO UPDATE SET
+         parent_name = excluded.parent_name,
+         child_ticker = excluded.child_ticker,
+         child_name = excluded.child_name,
+         fetched_at = excluded.fetched_at`,
     );
     database.transaction(() => {
       for (const e of events) {
-        insert.run(
-          e.parentTicker,
-          e.childTicker,
-          e.childName,
-          e.exDate,
-          e.ratio,
-          e.sourceUrl ?? `${SPINOFFS_URL_BASE}/${year}/`,
-          fetchedAt,
-        );
+        insert.run(e.parentTicker, e.parentName, e.childTicker, e.childName, e.exDate, fetchedAt);
       }
     })();
     setState('last_success', fetchedAt);
+
+    // Krok 2: SEC ratio dla zdarzeń bez ratio (awarie nie psują refreshu)
+    await resolveMissingRatios();
   }
 
   function refresh(): Promise<void> {
@@ -336,11 +386,12 @@ export function createSpinoffEventsService(
     return inFlightRefresh;
   }
 
-  function loadEvents(): SpinOffMapEntry[] {
+  function loadCompleteEvents(): SpinOffMapEntry[] {
     const rows = getDb()
       .prepare(
-        `SELECT parent_ticker, child_ticker, child_name, ex_date, ratio, source_url
-         FROM spinoff_events`,
+        `SELECT parent_ticker, parent_name, child_ticker, child_name, ex_date, ratio,
+                ratio_source_url
+         FROM spinoff_events WHERE ratio IS NOT NULL AND ratio > 0`,
       )
       .all() as EventDbRow[];
     return rows.map((r) => ({
@@ -348,8 +399,8 @@ export function createSpinoffEventsService(
       childTicker: r.child_ticker,
       childName: r.child_name ?? undefined,
       exDate: r.ex_date,
-      ratio: r.ratio,
-      source: r.source_url ?? undefined,
+      ratio: r.ratio!,
+      source: r.ratio_source_url ?? undefined,
     }));
   }
 
@@ -365,7 +416,26 @@ export function createSpinoffEventsService(
       if (isStale && canAttempt) {
         await refresh();
       }
-      return loadEvents();
+      return loadCompleteEvents();
+    },
+    getPendingRatioEvents(): SpinoffPendingEvent[] {
+      const rows = getDb()
+        .prepare(
+          `SELECT parent_ticker, child_ticker, child_name, ex_date
+           FROM spinoff_events WHERE ratio IS NULL`,
+        )
+        .all() as Array<{
+        parent_ticker: string;
+        child_ticker: string;
+        child_name: string | null;
+        ex_date: string;
+      }>;
+      return rows.map((r) => ({
+        parentTicker: r.parent_ticker,
+        childTicker: r.child_ticker,
+        childName: r.child_name,
+        exDate: r.ex_date,
+      }));
     },
     close(): void {
       db?.close();
