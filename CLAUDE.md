@@ -18,8 +18,8 @@ Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i st
 - `client/src/components/` — strony i komponenty React (`dashboard`, `portfolio`, `transactions`, `dividends`, `currency`, `cash`, `corrections-and-costs`, `admin`, `auth`, `landing`, `layout`, `shared`, `ui`)
 - `server/src/routes/` — endpointy API: `portfolios`, `portfolio`, `prices`, `import`, `bug-reports`, `share` (CRUD publicznego linku), `public-share` (widok publiczny bez auth)
 - `server/src/parsers/` — parsery brokerów: `bossa-transactions`, `bossa-operations`, `mbank-transactions`, `degiro-transactions`, `degiro-operations`, `xtb-transactions` (XLSX) + `registry`, `encoding`, `utils`, `__tests__/`
-- `server/src/services/` — logika biznesowa: `portfolio-engine`, `history-memo` (cache computePortfolioHistory, wersjonowanie w `db/data-version`), `price-cache`, `history-cache`, `isin-resolver`, `sector-resolver`, `ticker-search`, `dividend-scanner`, `dividend-estimate`, `gpw-dividend-calendar` (kalendarz dywidend GPW/NC ze stockwatch+biznesradar, lazy refresh 24h), `split-detector`, `payment-currency-reconciler`, `benchmark-updater`, `import-service`, `yahoo-finance`, `yahoo-auth`, `stooq` + `__tests__/`
-- `shared/src/` — typy, stałe, mapy: `ticker-map`, `nc-ticker-map`, `cfd-ticker-map`, `bond-map` (+ `bond-map-data` generowany scraperem z obligacje.pl: ~930 obligacji Catalyst z ISIN/nominałem/zapadalnością), `gpw-sector-map`, `gics-to-stockwatch`, `isin-aliases-map`, `ipo-subscriptions-map`, `tender-offers-map`, `ike-ikze-limits`
+- `server/src/services/` — logika biznesowa: `portfolio-engine`, `history-memo` (cache computePortfolioHistory, wersjonowanie w `db/data-version`), `price-cache`, `history-cache`, `isin-resolver`, `sector-resolver`, `ticker-search`, `dividend-scanner`, `dividend-estimate`, `gpw-dividend-calendar` (kalendarz dywidend GPW/NC ze stockwatch+biznesradar, lazy refresh 24h), `split-detector`, `spin-off-transform` + `spin-offs-applier` + `spinoff-events` + `sec-ratio-resolver` (patrz „Spin-offy" niżej), `payment-currency-reconciler`, `benchmark-updater`, `import-service`, `yahoo-finance`, `yahoo-auth`, `stooq` + `__tests__/`
+- `shared/src/` — typy, stałe, mapy: `ticker-map`, `nc-ticker-map`, `cfd-ticker-map`, `bond-map` (+ `bond-map-data` generowany scraperem z obligacje.pl: ~930 obligacji Catalyst z ISIN/nominałem/zapadalnością), `gpw-sector-map`, `gics-to-stockwatch`, `isin-aliases-map`, `ipo-subscriptions-map`, `tender-offers-map`, `spin-offs-map` (znane spin-offy, seed SPGI→MBGL; nadrzędne nad scraperem), `ike-ikze-limits`
 - `data/` — bazy SQLite (per portfel + `price_history.db` + `auth.db`)
 - `Import/` — pliki CSV/XLSX użytkownika (IKE/, IKZE/, Degiro/)
 
@@ -65,6 +65,15 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
   - `LLM_BASE_URL` — endpoint OpenAI-compatible, domyślnie `https://api.mistral.ai/v1` (Mistral: EU); DeepSeek tylko przez hosta EU (Scaleway/OVH) — **bezpośrednie `api.deepseek.com` jest zablokowane w kodzie** (dane poza EU)
   - `LLM_MODEL` (domyślnie `mistral-medium-latest` — wynik dry-runu na realnych plikach; `mistral-small` zawodzi na DEGIRO i plikach operacji), `LLM_MODEL_FALLBACK` (opcjonalny mocniejszy model na drugą rundę po odmowie, np. `mistral-large-latest`), `LLM_TIMEOUT_MS` (domyślnie 120000)
   - `GENERIC_IMPORT_LLM_DAILY_LIMIT` (domyślnie 20; ≤0 = bez limitu) — anty-spam: dzienny limit generacji AI per użytkownik (każdy NOWY fingerprint = płatne wywołanie LLM; trafienie w bibliotekę nie liczy się). Liczy PRÓBY (licznik w pamięci) + max z utrwalonych sukcesów w `import_profiles` (przeżywa restart); przekroczenie → 429, UI proponuje mapowanie ręczne. `services/llm-quota.ts`
+
+## Spin-offy (wydzielenia spółek) — automatyczne
+- **Zasada**: rodzic w portfelu + nadejście ex-date → aplikacja SAMA tworzy pozycję dziecka i proporcjonalnie obniża koszt rodzica (zero akcji użytkownika, zero zatwierdzeń)
+- **Silnik**: `spin-off-transform.ts` — czysta transformacja compute-time (lustro `adjustTransactionsForSplits`, te same 3 choke pointy: positions/closed-trades/history). Syntetyczny zakup dziecka ma `total=0` (cash-neutralny — oba tory cash liczą z `tx.total`); loty rodzica trzymane na ex dostają cenę ×(1-frac), lot częściowo sprzedany przed ex dzielony na części A/B (zero wpływu na historyczne closed trades). NIC nie jest zapisywane do tabeli `transactions`
+- **Alokacja kosztu**: `frac = childMkt/(parentMkt+childMkt)` z cen w dniu ex (zgodnie z zasadą proporcjonalną art. 24 ust. 8 PIT), ZAMROŻONA per portfel w tabeli `spin_offs` (`UNIQUE(parent_isin, ex_date)`); ilości silnik liczy na żywo z transakcji. Statusy: `applied` / `skipped_broker` (broker sam zaksięgował dziecko — realne wiersze wygrywają) / `reverted` (tombstone, DELETE w API = dokładne cofnięcie)
+- **Źródła zdarzeń**: statyczna `shared/spin-offs-map.ts` (nadrzędna, override przez `costAllocPct`) ∪ tabela `spinoff_events` w price_history.db zasilana scraperem stockanalysis.com (lazy ≤1×/24h; strona NIE podaje ratio) + **ratio z SEC EDGAR** (`sec-ratio-resolver.ts`: full-text search 8-K rodzica/10-12B dziecka, strict-wzorce z kontekstem spółek, konflikt→null; env `SEC_CONTACT` do User-Agent). Zdarzenie bez ratio NIE aplikuje się (badge „czekam na ratio" przy rodzicu)
+- **Guardy**: wykluczenie fałszywej detekcji splitu na rodzicu (okno ±30 dni od ex), clamp alokacji [0.001,0.9], defer+backoff 1h gdy dziecko bez notowań, idempotencja przez ON CONFLICT DO NOTHING, bump `dataVersion` tylko przy realnej mutacji
+- **UI**: badge przy dziecku (skąd akcje, % kosztu) i rodzicu; miękki warning przy ręcznym dodaniu transakcji na dziecko (`requiresConfirmation` → retry z `confirmSpinOff`)
+- **Diagnostyka po deployu**: `npm run check:spinoff-sources -w server` (żywy test discovery+SEC; sandbox dev blokuje sieć — transport weryfikowany właśnie tym skryptem)
 
 ## Źródła cen — priorytety
 
@@ -126,4 +135,5 @@ Zunifikowana taksonomia: 8 nadsektorów × 40 podsektorów ze stockwatch.pl/gpw/
 - `npm run seed -w server` — seed bazy danych
 - `npm run scrape:gpw-sectors -w server` — regeneracja `gpw-sector-map.ts` ze stockwatch.pl
 - `npm run scrape:catalyst-bonds -w server` — regeneracja `bond-map-data.ts` z obligacje.pl (~6 min; gpwcatalyst.pl blokuje boty WAF-em)
+- `npm run check:spinoff-sources -w server` — żywa diagnostyka źródeł spin-offów (stockanalysis + SEC EDGAR; `--all` = ratio dla wszystkich zdarzeń)
 - `start.command` — alternatywny skrypt startowy (kill portów + start + open browser)
