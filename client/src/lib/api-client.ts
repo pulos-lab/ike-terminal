@@ -1,6 +1,7 @@
 import type {
   CashFlowResponse,
   ClosedTradesResponse,
+  CreateTransactionResult,
   DepositsResponse,
   DividendsResponse,
   FeesResponse,
@@ -192,8 +193,10 @@ export const api = {
     paymentCurrency?: string;
     fxRate?: number;
     category?: string;
+    /** Potwierdzenie dodania waloru będącego dzieckiem zastosowanego spin-offu. */
+    confirmSpinOff?: boolean;
   }) =>
-    request<{ id: number }>('/portfolio/transactions', {
+    request<CreateTransactionResult>('/portfolio/transactions', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

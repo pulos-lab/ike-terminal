@@ -3,6 +3,7 @@ import {
   DEFAULT_FX_PLN,
   type BenchmarkKey,
   type DetectedSplit,
+  type AppliedSpinOff,
   type PortfolioHistoryResponse,
   type PortfolioPositionsResponse,
 } from 'shared';
@@ -10,6 +11,7 @@ import { getAllTransactions } from '../db/transactions-repo.js';
 import { getAllOperations, getMetadata, setMetadata } from '../db/operations-repo.js';
 import { getTickerMap, getAllTickers, updateTickerSectors } from '../db/ticker-map-repo.js';
 import { getSplits, upsertSplits } from '../db/splits-repo.js';
+import { getSpinOffs } from '../db/spin-offs-repo.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { invalidateCachedPrices } from './history-cache.js';
 import { fetchFxRate } from './yahoo-finance.js';
@@ -20,6 +22,7 @@ import {
   detectBaseCurrency,
 } from './portfolio-engine.js';
 import { computePortfolioHistoryMemoized } from './history-memo.js';
+import { applyPendingSpinOffs, getPendingRatioSpinOffs } from './spin-offs-applier.js';
 
 /**
  * Widoki portfela (historia zwrotów, otwarte pozycje) wyciągnięte z handlerów
@@ -40,6 +43,13 @@ export function loadSplitsForEngine(pid: string): DetectedSplit[] {
     providerPrice: 0,
     source: s.source,
   }));
+}
+
+/** Load spin-offs from DB for the engine. Repo zwraca kształt silnika wprost;
+ *  wiersze nie-'applied' filtruje sama transformacja (guard splitów potrzebuje
+ *  też tombstone'ów, więc lista jest pełna). */
+export function loadSpinOffsForEngine(pid: string): AppliedSpinOff[] {
+  return getSpinOffs(pid);
 }
 
 /** In-memory flag: per-portfolio dedupe dla lazy-sector-backfill.
@@ -120,6 +130,12 @@ export async function buildHistoryView(
 
   const savedSplits = loadSplitsForEngine(pid);
 
+  // Auto-aplikacja zaległych spin-offów PRZED liczeniem — bump wersji wewnątrz
+  // appliera odświeża klucz memo jeszcze w tym samym requeście, a wynik od razu
+  // zawiera pozycję dziecka. Guard detekcji splitów widzi świeże wiersze.
+  await applyPendingSpinOffs(pid, transactions, tickerMap, savedSplits);
+  const spinOffs = loadSpinOffsForEngine(pid);
+
   const baseCurrency = detectBaseCurrency(operations);
 
   // Always compute full history – client filters & rebases by date range.
@@ -135,6 +151,8 @@ export async function buildHistoryView(
     benchConfig.source,
     savedSplits,
     baseCurrency,
+    undefined,
+    spinOffs,
   );
 
   if (result.detectedSplits.length > 0) {
@@ -156,6 +174,11 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
   // odświeżeniu widoku.
   void lazyBackfillSectors(pid);
 
+  // Auto-aplikacja zaległych spin-offów PRZED liczeniem pozycji — response
+  // z tego samego requestu pokazuje już pozycję dziecka. Awaitowane celowo.
+  await applyPendingSpinOffs(pid, transactions, tickerMap, savedSplits);
+  const spinOffs = loadSpinOffsForEngine(pid);
+
   // Sieciowa detekcja splitów (cache-bypass do Yahoo) odpala się raz na dobę
   // per portfel — wykrycia są persystowane, więc częstszy skan tylko mnoży
   // niecache'owane requesty (ryzyko rate-limitu) bez nowych informacji.
@@ -166,9 +189,14 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     positions,
     totalValuePln: stocksValuePln,
     detectedSplits,
-  } = await computeOpenPositions(transactions, tickerMap, savedSplits, undefined, {
-    skipSplitDetection: !splitScanDue,
-  });
+  } = await computeOpenPositions(
+    transactions,
+    tickerMap,
+    savedSplits,
+    undefined,
+    { skipSplitDetection: !splitScanDue },
+    spinOffs,
+  );
   if (splitScanDue) {
     setMetadata(pid, 'last_split_scan', todayStr);
   }
@@ -219,6 +247,24 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     .filter((s) => s.date >= weekAgoStr)
     .map((s) => ({ isin: s.isin, ticker: s.ticker, date: s.date, ratio: s.ratio }));
 
+  // Recent spin-offs (30 dni — rzadsze niż splity, a wyjaśnienie skąd wzięła
+  // się nowa pozycja powinno wisieć dłużej; okno pokrywa też odroczoną
+  // aplikację kilka dni po ex)
+  const monthAgo = new Date();
+  monthAgo.setDate(monthAgo.getDate() - 30);
+  const monthAgoStr = monthAgo.toISOString().split('T')[0];
+  const recentSpinOffs = spinOffs
+    .filter((s) => s.status === 'applied' && s.exDate >= monthAgoStr)
+    .map((s) => ({
+      parentIsin: s.parentIsin,
+      parentTicker: s.parentTicker,
+      childIsin: s.childIsin,
+      childTicker: s.childTicker,
+      exDate: s.exDate,
+      ratio: s.ratio,
+      allocationPct: s.allocationPct,
+    }));
+
   const baseCurrency = detectBaseCurrency(operations);
 
   return {
@@ -228,6 +274,10 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     stocksValuePln,
     cashValuePln,
     recentSplits,
+    recentSpinOffs,
+    // Wykryte, ale czekające na ratio z SEC (czysty odczyt z DB — refresh
+    // tabeli zdarzeń wykonał się już w applierze powyżej)
+    pendingRatioSpinOffs: getPendingRatioSpinOffs(tickerMap),
     baseCurrency,
   };
 }

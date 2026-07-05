@@ -10,6 +10,7 @@
     "scrape:gpw-sectors": "tsx scripts/scrape-gpw-sectors.ts",
     "scrape:catalyst-bonds": "tsx scripts/scrape-catalyst-bonds.ts",
     "compare:generic": "tsx scripts/compare-generic-import.ts",
+    "check:spinoff-sources": "tsx scripts/check-spinoff-sources.ts",
     "fix:nc": "tsx src/scripts/fix-nc-misidentification.ts",
     "fix:tickers": "tsx src/scripts/fix-tickers.ts",
     "audit:tickers": "tsx src/scripts/audit-ticker-map.ts",
