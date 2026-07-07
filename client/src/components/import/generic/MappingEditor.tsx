@@ -16,7 +16,7 @@ import {
   type DraftClassifyRule,
   type ProfileDraft,
 } from '@/lib/generic-profile-builder';
-import { ColumnSelect, DateFormatSelect, Field } from './mapping-fields';
+import { ColumnSelect, DateFormatHint, DateFormatSelect, Field } from './mapping-fields';
 
 /**
  * Edytor mapowania kolumn — ręczna ścieżka kreatora importu uniwersalnego.
@@ -226,6 +226,11 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
                 value={draft.trade.dateFormat}
                 onValue={(v) => setTrade({ dateFormat: v })}
               />
+              <DateFormatHint
+                sampleRows={colProps.sampleRows}
+                col={draft.trade.dateCol}
+                format={draft.trade.dateFormat}
+              />
             </Field>
             <Field label="Nazwa papieru / ticker">
               <ColumnSelect
@@ -376,6 +381,11 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
               <DateFormatSelect
                 value={draft.cash.dateFormat}
                 onValue={(v) => setCash({ dateFormat: v })}
+              />
+              <DateFormatHint
+                sampleRows={colProps.sampleRows}
+                col={draft.cash.dateCol}
+                format={draft.cash.dateFormat}
               />
             </Field>
             <Field label="Kwota (ze znakiem)">

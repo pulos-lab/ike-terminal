@@ -556,10 +556,7 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
         </DialogHeader>
 
         {(step === 'analyzing' || step === 'previewing' || step === 'importing') && (
-          <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            {stepLabel[step]}
-          </div>
+          <BusySpinner key={step} label={stepLabel[step]} />
         )}
 
         {step === 'mapping' && draft && current && (
@@ -702,7 +699,7 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
               )}
               <Button onClick={handleSheetMapped}>
                 {multiDoc && cursor < sheets.length - 1
-                  ? 'Dalej (kolejna tabela)'
+                  ? `Dalej — tabela ${cursor + 2}/${sheets.length}`
                   : 'Pokaż podgląd'}
               </Button>
             </div>
@@ -951,6 +948,36 @@ function AiMappingBox({
           AI analizuje strukturę i sprawdza wynik na realnej próbce. Proste formaty zajmują ok.
           minuty; przy złożonych model dostaje feedback i poprawia mapowanie — to może potrwać do
           kilku minut. Możesz nie zamykać tego okna i poczekać.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Spinner kroków analyzing/previewing/importing. Po SLOW_HINT_MS dopisuje, że
+ * operacja trwa dłużej niż zwykle — bez tego wiszący serwer wygląda identycznie
+ * jak normalna praca. Montowany z `key={step}`, więc licznik startuje od zera
+ * na każdym kroku.
+ */
+const SLOW_HINT_MS = 20_000;
+
+function BusySpinner({ label }: { label: string }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSlow(true), SLOW_HINT_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return (
+    <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
+      <div className="flex items-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        {label}
+      </div>
+      {slow && (
+        <p className="text-xs">
+          Trwa to dłużej niż zwykle — możesz jeszcze poczekać albo zamknąć okno i spróbować
+          ponownie.
         </p>
       )}
     </div>

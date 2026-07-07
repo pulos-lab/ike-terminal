@@ -217,13 +217,22 @@ describe('selfCheck — deterministyczna ocena profilu', () => {
     expect(check.topReasons.join(',')).toContain('invalid_price');
   });
 
-  it('śmieci w walucie (nieznany kod ISO) → niska pewność mimo poprawnych kwot', () => {
+  it('śmieci w walucie (regex łapie fragmenty tickerów) → niska pewność mimo poprawnych kwot', () => {
     // Realny przypadek z dry-runu: regex wyciągał fragmenty tickerów ("IMI",
     // "SAC") do waluty — kwoty się zgadzały, więc bez sanity-checku walut
-    // profil dostawał pewność 1.
+    // profil dostawał pewność 1. Sygnaturą śmieci jest WIELE RÓŻNYCH kodów
+    // spoza listy znanych walut (tu: OPT/KGH/PKN z ISIN-ów).
     const garbageCurrencyProfile = {
       ...GOOD_PROFILE,
-      trade: { ...GOOD_PROFILE.trade, currency: { kind: 'const', value: 'IMI' } },
+      trade: {
+        ...GOOD_PROFILE.trade,
+        currency: {
+          kind: 'regexExtract',
+          col: { name: 'ISIN code' },
+          pattern: '^PL([A-Z]{3})',
+          group: 1,
+        },
+      },
     };
     const validation = validateImportProfile(garbageCurrencyProfile);
     expect(validation.ok).toBe(true);
@@ -231,6 +240,20 @@ describe('selfCheck — deterministyczna ocena profilu', () => {
     const check = selfCheck(CSV, validation.profile);
     expect(check.confidence).toBeLessThan(0.8);
     expect(check.topReasons.join(',')).toContain('suspicious_currency');
+  });
+
+  it('spójny kod spoza listy znanych walut (egzotyczna waluta) → bez kary', () => {
+    // 1–2 spójne nieznane kody to zwykle prawdziwa, egzotyczna waluta —
+    // fałszywe odrzucanie takich profili było gorsze niż ryzyko.
+    const exoticCurrencyProfile = {
+      ...GOOD_PROFILE,
+      trade: { ...GOOD_PROFILE.trade, currency: { kind: 'const', value: 'VND' } },
+    };
+    const validation = validateImportProfile(exoticCurrencyProfile);
+    expect(validation.ok).toBe(true);
+    if (!validation.ok) return;
+    const check = selfCheck(CSV, validation.profile);
+    expect(check.confidence).toBe(1);
   });
 });
 

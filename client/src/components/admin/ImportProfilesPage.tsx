@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import type {
   AdminProfileSummary,
@@ -318,8 +319,10 @@ function ReviewDialog({
     setEditError(null);
     try {
       saveEdit.mutate(JSON.parse(profileJson));
-    } catch {
-      setEditError('To nie jest poprawny JSON.');
+    } catch (err) {
+      // Komunikat parsera wskazuje pozycję błędu — bez niego szukanie literówki
+      // w długim profilu to zgadywanka.
+      setEditError(`To nie jest poprawny JSON: ${(err as Error).message}`);
     }
   };
 
@@ -559,11 +562,14 @@ function ReviewDialog({
                 </p>
               )}
               {editMode === 'visual' && reverse?.ok && reverse.lossy.length > 0 && (
-                <p className="mb-2 text-xs text-warning">
-                  Uwaga: edytor nie pokazuje niektórych elementów profilu, które przepadną po
-                  zapisie wizualnym: {reverse.lossy.join(', ')}. Jeśli chcesz je zachować, edytuj w
-                  JSON.
-                </p>
+                <div className="mb-2 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 p-3 text-xs">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
+                  <p>
+                    Edytor wizualny nie pokazuje niektórych elementów profilu — po zapisie wizualnym{' '}
+                    <strong>przepadną</strong>: {reverse.lossy.join(', ')}. Jeśli chcesz je
+                    zachować, edytuj w JSON.
+                  </p>
+                </div>
               )}
 
               {editMode === 'visual' && draft ? (

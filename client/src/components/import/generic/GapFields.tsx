@@ -9,7 +9,7 @@ import {
 import { CheckCircle2 } from 'lucide-react';
 import type { DraftScore, ProfileDraft, ScoredField } from '@/lib/generic-profile-builder';
 import { suggestSideValues } from '@/lib/generic-profile-builder';
-import { ColumnSelect, DateFormatSelect, Field } from './mapping-fields';
+import { ColumnSelect, DateFormatHint, DateFormatSelect, Field } from './mapping-fields';
 
 /**
  * Karta „uzupełnij brakujące pola" (gałąź NEAR kreatora). Pokazuje TYLKO pola,
@@ -77,6 +77,11 @@ export function GapFields({ draft, sampleRows, score, onChange }: Props) {
                   <DateFormatSelect
                     value={draft.trade.dateFormat}
                     onValue={(v) => setTrade({ dateFormat: v })}
+                  />
+                  <DateFormatHint
+                    sampleRows={sampleRows}
+                    col={draft.trade.dateCol}
+                    format={draft.trade.dateFormat}
                   />
                 </Field>
               </div>
