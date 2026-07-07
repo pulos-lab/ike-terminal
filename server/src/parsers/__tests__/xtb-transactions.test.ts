@@ -375,6 +375,53 @@ describe('parseXtbFile — detekcja waluty z |Amount| vs qty×cena', () => {
     expect(tx.fxRate).toBeCloseTo((3918.85 + 2249.35) / (64 * 26.07), 5);
   });
 
+  it('partial fille zamykane w tej samej sekundzie: każda sprzedaż konsumuje WŁASNY close trade (FIFO)', async () => {
+    // Scenariusz BABA z realnego pliku: 2 sprzedaże "CLOSE BUY 2/4" pod tym samym
+    // kluczem symbol|czas, każda z własnym wierszem close trade. Sumowanie P/L
+    // pod kluczem wliczałoby obu sprzedażom łączny P/L → kursy 2.92/2.69 zamiast ~3.66.
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'close trade',
+        time: t,
+        comment: 'Profit of position #315689317',
+        symbol: 'BABA.US',
+        amount: -432.07,
+      },
+      {
+        id: 2,
+        type: 'Stock sale',
+        time: t,
+        comment: 'CLOSE BUY 2/4 @ 222.03',
+        symbol: 'BABA.US',
+        amount: 2057.02,
+      },
+      {
+        id: 3,
+        type: 'close trade',
+        time: t,
+        comment: 'Profit of position #321161138',
+        symbol: 'BABA.US',
+        amount: -330.2,
+      },
+      {
+        id: 4,
+        type: 'Stock sale',
+        time: t,
+        comment: 'CLOSE BUY 2/4 @ 222.03',
+        symbol: 'BABA.US',
+        amount: 1955.15,
+      },
+    ]);
+    const { transactions } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const sells = transactions.data.filter((x) => x.side === 'S');
+    expect(sells).toHaveLength(2);
+    // FIFO: pierwsza sprzedaż bierze pierwszy P/L, druga — drugi.
+    expect(sells[0].fxRate).toBeCloseTo((2057.02 - 432.07) / (2 * 222.03), 4); // ≈3.659
+    expect(sells[1].fxRate).toBeCloseTo((1955.15 - 330.2) / (2 * 222.03), 4); // ≈3.659
+    expect(sells.every((s) => s.currency === 'USD')).toBe(true);
+  });
+
   it('sprzedaż bez close trade po kupnie FX: etykieta z pamięci symbolu, fxRate undefined', async () => {
     const buf = await buildXtbXlsx([
       {

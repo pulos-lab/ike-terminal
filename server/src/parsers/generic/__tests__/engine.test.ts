@@ -726,23 +726,40 @@ describe('parseWithProfile — quoteCurrencyFromSettlement', () => {
     expect(tx.fxRate).toBeUndefined();
   });
 
-  it('sprzedaż + trade_close_pl: kurs z (|kwota| + P/L)/(qty×cena); P/L sumowany per klucz', () => {
-    // Wiersz P/L PRZED sprzedażą i drugi PO niej — pre-pass zbiera oba (suma 500).
+  it('sprzedaż + trade_close_pl: kurs z (|kwota| + P/L)/(qty×cena); wiersz P/L może być PO sprzedaży', () => {
+    // Pre-pass zbiera wiersze P/L niezależnie od kolejności w pliku.
     const csv = [
       QCS_HEADER,
-      'closepl;05.03.2024 10:00:00;PLTR.US;;;300,00',
       'S;05.03.2024 10:00:00;PLTR.US;10;30,00;740,00',
-      'closepl;05.03.2024 10:00:00;PLTR.US;;;200,00',
+      'closepl;05.03.2024 10:00:00;PLTR.US;;;460,00',
     ].join('\n');
     const out = parseWithProfile(csv, qcsProfile(), BATCH);
     expect(out.transactions.data).toHaveLength(1);
     const tx = out.transactions.data[0];
     expect(tx.side).toBe('S');
     expect(tx.currency).toBe('USD');
-    // (740 + 500) / (10×30) = 4.133333
-    expect(tx.fxRate).toBeCloseTo(4.133333, 5);
+    // (740 + 460) / (10×30) = 4.0
+    expect(tx.fxRate).toBeCloseTo(4.0, 5);
     // Wiersze closepl skonsumowane — nie emitują operacji ani skipów.
     expect(out.operations.data).toHaveLength(0);
+  });
+
+  it('partial fille w tej samej sekundzie: każda sprzedaż konsumuje WŁASNY wiersz P/L (FIFO)', () => {
+    // Dwa partial fille pod wspólnym kluczem (symbol|data|czas), każdy z własnym
+    // P/L. Sumowanie pod kluczem wliczałoby obu sprzedażom łączny P/L
+    // ((740+2120)/300 ≈ 9.53 dla obu); FIFO daje 4.0 i 8.0.
+    const csv = [
+      QCS_HEADER,
+      'closepl;05.03.2024 10:00:00;PLTR.US;;;460,00',
+      'closepl;05.03.2024 10:00:00;PLTR.US;;;1660,00',
+      'S;05.03.2024 10:00:00;PLTR.US;10;30,00;740,00',
+      'S;05.03.2024 10:00:00;PLTR.US;10;30,00;740,00',
+    ].join('\n');
+    const out = parseWithProfile(csv, qcsProfile(), BATCH);
+    const sells = out.transactions.data.filter((t) => t.side === 'S');
+    expect(sells).toHaveLength(2);
+    expect(sells[0].fxRate).toBeCloseTo((740 + 460) / 300, 5); // 4.0
+    expect(sells[1].fxRate).toBeCloseTo((740 + 1660) / 300, 5); // 8.0
   });
 
   it('sprzedaż bez sparowanego P/L dziedziczy etykietę z kupna, bez fxRate', () => {

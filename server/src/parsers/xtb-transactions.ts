@@ -670,18 +670,34 @@ export async function parseXtbFile(
     }
   }
 
-  // ── Pre-pass: Build close trade P/L lookup for old-format sale fallback ──
-  // "close trade" rows contain P/L amounts; paired with "Stock sale" Amount we can derive sale price
-  const closeTradePL = new Map<string, number>(); // "SYMBOL|ISO_TIME" → P/L amount
+  // ── Pre-pass: Build close trade P/L lookup (old-format fallback + detekcja FX) ──
+  // "close trade" rows contain P/L amounts; paired with "Stock sale" Amount we can
+  // derive sale price / implied FX. LISTA per klucz, konsumowana FIFO (takeClosePl):
+  // partial fille zamykane w tej samej sekundzie mają ten sam klucz, a każdy ma
+  // WŁASNY wiersz close trade — sumowanie pod kluczem wliczałoby każdej sprzedaży
+  // cały P/L (np. BABA 2×"CLOSE BUY 2/4" dawało kursy 2.92/2.69 zamiast ~3.66).
+  const closeTradePL = new Map<string, number[]>(); // "SYMBOL|ISO_TIME" → [P/L, …]
   for (const raw of rawRows) {
     if (raw.type === 'close trade' && raw.symbol) {
       const isoTime = parseXtbTime(raw.time);
       if (isoTime) {
         const key = `${raw.symbol}|${isoTime}`;
-        closeTradePL.set(key, (closeTradePL.get(key) || 0) + raw.amount);
+        const list = closeTradePL.get(key);
+        if (list) list.push(raw.amount);
+        else closeTradePL.set(key, [raw.amount]);
       }
     }
   }
+  const closeTradeCursor = new Map<string, number>();
+  /** Zdejmij kolejny niezużyty P/L pod kluczem (FIFO, jak prowizje). */
+  const takeClosePl = (key: string): number | undefined => {
+    const list = closeTradePL.get(key);
+    if (!list) return undefined;
+    const i = closeTradeCursor.get(key) ?? 0;
+    if (i >= list.length) return undefined;
+    closeTradeCursor.set(key, i + 1);
+    return list[i];
+  };
 
   // ── Pass 1: Build transactions from Stock purchase / Stock sale ──
   const transactions: Transaction[] = [];
@@ -805,7 +821,9 @@ export async function parseXtbFile(
         // Use buy qty from the corresponding Stock purchase and derive price from Amount + close trade P/L
         const buyQty = lastBuyQty.get(raw.symbol);
         const plKey = `${raw.symbol}|${isoTime}`;
-        const pl = closeTradePL.get(plKey);
+        // Konsumujemy P/L dopiero gdy buyQty jest znane — nieudany fallback nie
+        // może zjeść wiersza close trade innemu partial fillowi pod tym kluczem.
+        const pl = buyQty && buyQty > 0 ? takeClosePl(plKey) : undefined;
         if (buyQty && buyQty > 0 && pl !== undefined) {
           // Guards: cena wyprowadzana z (|Amount| + P/L) / qty — każdy składnik
           // musi być policzalny, inaczej NaN/Infinity trafiłoby do outputu.
@@ -858,7 +876,7 @@ export async function parseXtbFile(
           qty,
           price,
           amountAbs: Math.abs(raw.amount),
-          closePl: closeTradePL.get(`${raw.symbol}|${isoTime}`),
+          closePl: takeClosePl(`${raw.symbol}|${isoTime}`),
           ids,
           accountCurrency,
           symbolFx,

@@ -124,10 +124,11 @@ export function parseWithProfile(
   // ── Pre-pass: mapa P/L wierszy 'trade_close_pl' (pairing.tradeClosePl) ──
   // Wiersz P/L bywa w pliku PO sprzedaży — mapa musi istnieć zanim zbudujemy
   // transakcje, stąd osobny przebieg (klasyfikacja liczona 2× tylko przy
-  // włączonym parowaniu). Kwoty pod tym samym kluczem SUMUJĄ się (partial
-  // fille) — lustro closeTradePL parsera wbudowanego XTB.
+  // włączonym parowaniu). LISTA per klucz, konsumowana FIFO przez kolejne
+  // sprzedaże — partial fille zamykane w tej samej sekundzie mają wspólny
+  // klucz, ale każdy własny wiersz P/L (lustro takeClosePl parsera XTB).
   const closePlPairing = profile.pairing.tradeClosePl;
-  const closePlByKey = new Map<string, number>();
+  const closePlByKey = new Map<string, number[]>();
   if (closePlPairing && profile.trade) {
     for (let i = headerIdx + 1; i < rows.length; i++) {
       const row = rows[i].map((c) => String(c ?? ''));
@@ -139,12 +140,19 @@ export function parseWithProfile(
       if (key === null) continue;
       const amount = resolveNumber(closePlPairing.amount, row, resolver);
       if (!Number.isFinite(amount)) continue;
-      closePlByKey.set(key, (closePlByKey.get(key) ?? 0) + amount);
+      const list = closePlByKey.get(key);
+      if (list) list.push(amount);
+      else closePlByKey.set(key, [amount]);
     }
   }
   // Pamięć decyzji walutowej per symbol (quoteCurrencyFromSettlement) — sprzedaż
   // bez sparowanego P/L dziedziczy etykietę z wcześniejszych wierszy symbolu.
-  const symbolFxMemory = new Map<string, { foreign: boolean; currency: string }>();
+  // Jeden stan na całe parsowanie: kursor FIFO P/L musi przetrwać między wierszami.
+  const fxDetectState: FxDetectState = {
+    closePlByKey,
+    closePlCursor: new Map(),
+    symbolFx: new Map(),
+  };
 
   // Bufory parowania.
   const pendingDividends: PendingCashRow[] = [];
@@ -217,7 +225,7 @@ export function parseWithProfile(
         resolver,
         normalizeCurrency,
         importBatch,
-        { closePlByKey, symbolFx: symbolFxMemory },
+        fxDetectState,
       );
       if (outcome.ok) {
         transactions.push(outcome.transaction);
@@ -427,8 +435,20 @@ function buildTradePairKey(
 
 /** Stan detekcji walut współdzielony między wierszami jednego parsowania. */
 interface FxDetectState {
-  closePlByKey: Map<string, number>;
+  closePlByKey: Map<string, number[]>;
+  /** Kursor FIFO per klucz — każda sprzedaż konsumuje kolejny wiersz P/L. */
+  closePlCursor: Map<string, number>;
   symbolFx: Map<string, { foreign: boolean; currency: string }>;
+}
+
+/** Zdejmij kolejny niezużyty P/L pod kluczem (FIFO — lustro takeClosePl z XTB). */
+function takeClosePl(state: FxDetectState, key: string): number | undefined {
+  const list = state.closePlByKey.get(key);
+  if (!list) return undefined;
+  const i = state.closePlCursor.get(key) ?? 0;
+  if (i >= list.length) return undefined;
+  state.closePlCursor.set(key, i + 1);
+  return list[i];
 }
 
 type SettlementDecision =
@@ -463,7 +483,7 @@ function detectSettlementCurrency(args: {
       settleValue = amountAbs;
     } else if (profile.pairing.tradeClosePl) {
       const key = buildTradePairKey(profile.pairing.tradeClosePl.matchBy, row, profile, resolver);
-      const pl = key !== null ? state.closePlByKey.get(key) : undefined;
+      const pl = key !== null ? takeClosePl(state, key) : undefined;
       if (pl !== undefined && Number.isFinite(pl) && amountAbs + pl > 0) {
         settleValue = amountAbs + pl;
       }
