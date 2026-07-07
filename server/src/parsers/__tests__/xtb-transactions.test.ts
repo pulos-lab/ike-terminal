@@ -295,3 +295,282 @@ describe('parseXtbFile — prowizje przy dwóch trade-ach w tej samej sekundzie'
     expect(transactions.data[0].commission).toBe(3);
   });
 });
+
+// ── Detekcja waluty notowania z kwoty rozliczenia (konto PLN + instrument USD) ──
+
+describe('parseXtbFile — detekcja waluty z |Amount| vs qty×cena', () => {
+  const t = '05/03/2024 10:00:00';
+
+  it('kupno USD z konta PLN: currency z suffixu, fxRate implikowany, cena w USD', async () => {
+    // EIMI-like: 83 szt @ 45.73 USD, debet PLN = 83×45.73×3.6995
+    const amountPln = -(83 * 45.73 * 3.6995);
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: t,
+        comment: 'OPEN BUY 83 @ 45.73',
+        symbol: 'EIMI.US',
+        amount: amountPln,
+      },
+    ]);
+    const { transactions, warnings } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    expect(transactions.data).toHaveLength(1);
+    const tx = transactions.data[0];
+    expect(tx.currency).toBe('USD');
+    expect(tx.paymentCurrency).toBe('PLN');
+    expect(tx.price).toBe(45.73); // NIE przeliczona
+    expect(tx.value).toBeCloseTo(83 * 45.73, 2);
+    expect(tx.fxRate).toBeCloseTo(3.6995, 4);
+    // total × fxRate odtwarza debet PLN z pliku
+    expect(tx.total * tx.fxRate!).toBeCloseTo(Math.abs(amountPln), 0);
+    expect(warnings?.some((w) => w.includes('EIMI.US → USD'))).toBe(true);
+  });
+
+  it('ratio ≈ 1 (ISAC.UK na koncie USD): status quo — waluta konta, bez fxRate', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: t,
+        comment: 'OPEN BUY 2 @ 104.46',
+        symbol: 'ISAC.UK',
+        amount: -208.92,
+      },
+    ]);
+    const { transactions } = await parseXtbFile(buf, 'b1', 'USD_12345_test.xlsx');
+    const tx = transactions.data[0];
+    expect(tx.currency).toBe('USD');
+    expect(tx.paymentCurrency).toBe('USD');
+    expect(tx.fxRate).toBeUndefined();
+  });
+
+  it('sprzedaż z wierszem close trade: kurs z (|Amount| + P/L) / (qty×cena)', async () => {
+    // Realne liczby PLTR: sprzedaż 64 @ 26.07 USD; Amount = zwrócony nominał
+    // 3918.85 PLN, P/L = 2249.35 PLN → kurs 6168.20/1668.48 ≈ 3.6969
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'close trade',
+        time: t,
+        comment: 'Profit of position #312803969',
+        symbol: 'PLTR.US',
+        amount: 2249.35,
+      },
+      {
+        id: 2,
+        type: 'Stock sale',
+        time: t,
+        comment: 'CLOSE BUY 64 @ 26.07',
+        symbol: 'PLTR.US',
+        amount: 3918.85,
+      },
+    ]);
+    const { transactions } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    expect(transactions.data).toHaveLength(1);
+    const tx = transactions.data[0];
+    expect(tx.side).toBe('S');
+    expect(tx.currency).toBe('USD');
+    expect(tx.price).toBe(26.07);
+    expect(tx.fxRate).toBeCloseTo((3918.85 + 2249.35) / (64 * 26.07), 5);
+  });
+
+  it('sprzedaż bez close trade po kupnie FX: etykieta z pamięci symbolu, fxRate undefined', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: '01/03/2024 10:00:00',
+        comment: 'OPEN BUY 64 @ 16.00',
+        symbol: 'PLTR.US',
+        amount: -(64 * 16 * 3.8),
+      },
+      {
+        id: 2,
+        type: 'Stock sale',
+        time: t,
+        comment: 'CLOSE BUY 64 @ 26.07',
+        symbol: 'PLTR.US',
+        amount: 3891.2, // zwrócony nominał otwarcia, BEZ wiersza close trade
+      },
+    ]);
+    const { transactions, warnings } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const sell = transactions.data.find((x) => x.side === 'S')!;
+    expect(sell.currency).toBe('USD');
+    expect(sell.paymentCurrency).toBe('PLN');
+    expect(sell.fxRate).toBeUndefined();
+    expect(warnings?.some((w) => w.includes('close trade') && w.includes('PLTR.US'))).toBe(true);
+  });
+
+  it('partial fill: ratio liczony z ilości częściowej z regexa', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: t,
+        comment: 'OPEN BUY 33/60 @ 35.560',
+        symbol: 'ANR.US',
+        amount: -(33 * 35.56 * 4.2),
+      },
+    ]);
+    const { transactions } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const tx = transactions.data[0];
+    expect(tx.quantity).toBe(33);
+    expect(tx.currency).toBe('USD');
+    expect(tx.fxRate).toBeCloseTo(4.2, 4);
+  });
+
+  it('prowizja (waluta konta) przeliczona na walutę notowania przez fxRate', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: t,
+        comment: 'OPEN BUY 10 @ 20.00',
+        symbol: 'PLTR.US',
+        amount: -(10 * 20 * 3.7),
+      },
+      { id: 2, type: 'commission', time: t, comment: 'prowizja', symbol: 'PLTR.US', amount: -7.4 },
+    ]);
+    const { transactions } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const tx = transactions.data[0];
+    expect(tx.fxRate).toBeCloseTo(3.7, 4);
+    expect(tx.commission).toBeCloseTo(2, 2); // 7.40 PLN / 3.70 = 2.00 USD
+    expect(tx.total).toBeCloseTo(200 + 2, 2);
+  });
+
+  it('stary format: kupno przez commission-fallback też przechodzi detekcję FX', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: t,
+        comment: 'Order #123 cash stock purchase', // nieparsowalny — qty/cena z prowizji
+        symbol: 'PLTR.US',
+        amount: -(80 * 19.32 * 4.0),
+      },
+      {
+        id: 2,
+        type: 'commission',
+        time: t,
+        comment: 'BUY 80 @ 19.32',
+        symbol: 'PLTR.US',
+        amount: -3,
+      },
+    ]);
+    const { transactions } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const tx = transactions.data[0];
+    expect(tx.quantity).toBe(80);
+    expect(tx.currency).toBe('USD');
+    expect(tx.fxRate).toBeCloseTo(4.0, 4);
+  });
+
+  it('stary format: sprzedaż-fallback (cena z kwot konta) zostaje w walucie konta + warning o mieszanych legach', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: '01/03/2024 10:00:00',
+        comment: 'OPEN BUY 80 @ 19.32',
+        symbol: 'PLTR.US',
+        amount: -(80 * 19.32 * 4.0),
+      },
+      {
+        id: 2,
+        type: 'close trade',
+        time: t,
+        comment: 'Profit of position #1',
+        symbol: 'PLTR.US',
+        amount: 500,
+      },
+      {
+        id: 3,
+        type: 'Stock sale',
+        time: t,
+        comment: 'Return position #1 open nominal value', // nieparsowalny → fallback
+        symbol: 'PLTR.US',
+        amount: 6182.4,
+      },
+    ]);
+    const { transactions, warnings } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const sell = transactions.data.find((x) => x.side === 'S')!;
+    expect(sell.currency).toBe('PLN'); // cena wyprowadzona z kwot konta
+    expect(sell.price).toBeCloseTo((6182.4 + 500) / 80, 2);
+    expect(sell.fxRate).toBeUndefined();
+    expect(warnings?.some((w) => w.includes('mieszane') && w.includes('PLTR.US'))).toBe(true);
+  });
+
+  it('nowy format bez mapy tickerów + FX: cena przeliczona na walutę konta + warning', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: t,
+        comment: 'OPEN BUY 10 @ 45.73',
+        symbol: 'Some Foreign Company', // brak suffixu i brak Closed Positions
+        amount: -1830.0,
+      },
+    ]);
+    const { transactions, warnings } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const tx = transactions.data[0];
+    expect(tx.currency).toBe('PLN');
+    expect(tx.fxRate).toBeUndefined();
+    expect(tx.price).toBeCloseTo(183.0, 2); // 1830 / 10 — spójne z gotówką
+    expect(tx.value).toBeCloseTo(1830.0, 2);
+    expect(warnings?.some((w) => w.includes('przeliczono na walutę konta'))).toBe(true);
+  });
+
+  it('Amount = 0: status quo (waluta konta) + warning o braku weryfikacji', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: t,
+        comment: 'OPEN BUY 10 @ 20.00',
+        symbol: 'PLTR.US',
+        amount: 0,
+      },
+    ]);
+    const { transactions, warnings } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const tx = transactions.data[0];
+    expect(tx.currency).toBe('PLN');
+    expect(tx.fxRate).toBeUndefined();
+    expect(warnings?.some((w) => w.includes('bez kwoty rozliczenia'))).toBe(true);
+  });
+
+  it('anomalia: suffix = waluta konta, a kwoty mówią co innego → status quo + warning', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: t,
+        comment: 'OPEN BUY 50 @ 34.19',
+        symbol: 'DNP.PL',
+        amount: -(50 * 34.19 * 3.7), // nie zgadza się mimo .PL na koncie PLN
+      },
+    ]);
+    const { transactions, warnings } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const tx = transactions.data[0];
+    expect(tx.currency).toBe('PLN');
+    expect(tx.fxRate).toBeUndefined();
+    expect(warnings?.some((w) => w.includes('odbiega od ilość×cena'))).toBe(true);
+  });
+
+  it('GBP z wykrytym FX: warning o weryfikacji jednostki (GBp vs GBP)', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: t,
+        comment: 'OPEN BUY 10 @ 51.32',
+        symbol: 'EIMI.UK',
+        amount: -(10 * 51.32 * 3.75), // klasa USD na LSE — etykieta GBP z suffixu
+      },
+    ]);
+    const { transactions, warnings } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const tx = transactions.data[0];
+    expect(tx.currency).toBe('GBP'); // etykieta pierwszego rzutu; relabel po resolwerze
+    expect(tx.fxRate).toBeCloseTo(3.75, 4);
+    expect(warnings?.some((w) => w.includes('GBp'))).toBe(true);
+  });
+});

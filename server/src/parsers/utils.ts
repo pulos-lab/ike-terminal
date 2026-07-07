@@ -57,6 +57,15 @@ export function roundTo2(n: number): number {
 }
 
 /**
+ * Zaokrąglenie implikowanego kursu FX (|kwota rozliczenia| / (ilość×cena)) do
+ * wspólnej liczby miejsc. Parser XTB i silnik generic MUSZĄ używać tej samej
+ * funkcji — identyczny wynik jest warunkiem parytetu compare:generic.
+ */
+export function roundFxRate(rate: number): number {
+  return Math.round(rate * 1e6) / 1e6;
+}
+
+/**
  * Total transakcji wg konwencji K/S: kupno powiększa wartość o prowizję,
  * sprzedaż ją pomniejsza. Zaokrąglone do 2 miejsc (waluta).
  */
