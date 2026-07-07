@@ -5,8 +5,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import type { DateFormat } from 'shared';
-import { DATE_FORMATS } from '@/lib/generic-profile-builder';
+import { DATE_FORMATS, dateFormatMatchesSamples } from '@/lib/generic-profile-builder';
 
 /**
  * Współdzielone kontrolki mapowania kolumn — używane przez pełny `MappingEditor`
@@ -96,5 +97,34 @@ export function DateFormatSelect({
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+/**
+ * Walidacja formatu daty NA ŻYWO względem (zredagowanej) próbki — zły wybór
+ * jest widoczny od razu, a nie dopiero w podglądzie po rundtripie na serwer.
+ * Nic nie pokazuje, gdy nie ma czego ocenić (brak kolumny/pusta próbka).
+ */
+export function DateFormatHint({
+  sampleRows,
+  col,
+  format,
+}: {
+  sampleRows: string[][];
+  col: number;
+  format: DateFormat;
+}) {
+  const matches = dateFormatMatchesSamples(sampleRows, col, format);
+  if (matches === null) return null;
+  return matches ? (
+    <p className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+      <CheckCircle2 className="h-3 w-3 text-success" aria-hidden />
+      Pasuje do dat w pliku
+    </p>
+  ) : (
+    <p className="inline-flex items-center gap-1 text-[11px] text-warning">
+      <AlertTriangle className="h-3 w-3" aria-hidden />
+      Daty w pliku nie wyglądają na ten format — sprawdź przykład przy kolumnie
+    </p>
   );
 }

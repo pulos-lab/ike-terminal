@@ -34,14 +34,6 @@ import { createConcurrencyLimiter } from './concurrency.js';
 const MAX_ATTEMPTS = 3;
 const MIN_CONFIDENCE = 0.8;
 /**
- * Self-check na realnej historii (cap jak digesty). Wcześniej pierwsze 300
- * linii — dla pliku sortowanego po dacie to same stare dane, więc rzadkie
- * typy operacji z długich historii nie były oceniane i błędne mapowanie
- * mogło przejść niezauważone. Koszt parsowania pomijalny przy sporadycznej
- * generacji; pełna historia daje wiarygodny confidence.
- */
-const SELF_CHECK_LINES = 8000;
-/**
  * Górny rozmiar próbki wysyłanej do LLM. Próbka jest WARSTWOWA (≥1 wiersz na
  * distinct typ kolumny-dyskryminatora), więc musi pomieścić długi ogon typów
  * (np. ~16 typów XTB w 20-letniej historii) z zapasem; koszt tokenów pomijalny.
@@ -49,9 +41,11 @@ const SELF_CHECK_LINES = 8000;
 const SAMPLE_ROWS = 40;
 
 /**
- * Kody walut uznawane za wiarygodne w self-checku. Lista celowo szeroka —
- * fałszywy alarm na egzotycznej walucie obniży confidence i wymusi retry,
- * ale nie przepuści profilu wpisującego w walutę fragmenty tickerów.
+ * Kody walut uznawane za wiarygodne w self-checku. Lista celowo szeroka, ale
+ * NIE jest twardym warunkiem: 1–2 spójne kody spoza listy (egzotyczna, lecz
+ * prawdziwa waluta) nie obniżają confidence. Dopiero WIELE różnych nieznanych
+ * kodów zdradza profil wpisujący w walutę fragmenty tickerów (realny przypadek
+ * z dry-runu: "IMI"/"SAC" z końcówek nazw).
  */
 const KNOWN_CURRENCIES = new Set([
   'PLN',
@@ -187,8 +181,12 @@ async function runGeneration(
     jsonSchema = undefined;
   }
 
-  // Self-check na prefiksie realnego pliku (lokalnie).
-  const selfCheckContent = content.split('\n').slice(0, SELF_CHECK_LINES).join('\n');
+  // Self-check na CAŁYM realnym pliku (lokalnie). Wcześniej prefiks (300, potem
+  // 8000 linii) — dla historii sortowanej po dacie rzadkie typy operacji z końca
+  // pliku nie były oceniane i błędne mapowanie przechodziło z zawyżonym
+  // confidence. Multer i tak ogranicza plik do 5 MB, a generacja jest
+  // sporadyczna — koszt parsowania całości jest pomijalny.
+  const selfCheckContent = content;
 
   const primary = await runAttempts(undefined);
   if (primary) return primary;
@@ -381,12 +379,28 @@ export function selfCheck(content: string, profile: ImportProfile): SelfCheckRes
 
   // Sanity-check walut WYEMITOWANYCH rekordów: profil potrafi przejść walidację
   // i cross-check kwot, a mimo to wpisywać w walutę śmieci z regexa (realny
-  // przypadek z dry-runu: "IMI"/"SAC" z końcówek tickerów). Nieznany kod
-  // waluty = pominięcie problemowe — obniża confidence jak złe mapowanie.
-  const suspiciousCurrency = [
+  // przypadek z dry-runu: "IMI"/"SAC" z końcówek tickerów). Podejrzane są:
+  // wartości niepasujące do wzorca ISO 4217 (na pewno śmieć) oraz ≥3 RÓŻNE
+  // kody spoza KNOWN_CURRENCIES (regex łapiący fragmenty tickerów produkuje
+  // wiele różnych kodów; 1–2 spójne nieznane kody to zwykle prawdziwa
+  // egzotyczna waluta i nie karzemy za nią profilu).
+  const emittedCurrencies = [
     ...output.transactions.data.map((t) => t.currency),
     ...output.operations.data.map((o) => o.currency),
-  ].filter((c) => c && !KNOWN_CURRENCIES.has(c.toUpperCase())).length;
+  ].filter((c): c is string => Boolean(c));
+  const malformedCurrency = emittedCurrencies.filter(
+    (c) => !/^[A-Z]{3}$/.test(c.toUpperCase()),
+  ).length;
+  const unknownByCode = new Map<string, number>();
+  for (const c of emittedCurrencies) {
+    const code = c.toUpperCase();
+    if (/^[A-Z]{3}$/.test(code) && !KNOWN_CURRENCIES.has(code)) {
+      unknownByCode.set(code, (unknownByCode.get(code) ?? 0) + 1);
+    }
+  }
+  const unknownVaried =
+    unknownByCode.size >= 3 ? [...unknownByCode.values()].reduce((a, b) => a + b, 0) : 0;
+  const suspiciousCurrency = malformedCurrency + unknownVaried;
 
   const problematic = problematicSkips.length + suspiciousCurrency;
   const reasons = topSkipReasons(problematicSkips);

@@ -159,6 +159,52 @@ export function detectDateFormat(samples: string[]): DateFormat {
   return 'YYYY-MM-DD';
 }
 
+/** Struktura wartości per format — do walidacji wyboru użytkownika na żywo. */
+const DATE_FORMAT_CHECK_RES: Record<DateFormat, RegExp> = {
+  'YYYY-MM-DD': /^\d{4}-\d{1,2}-\d{1,2}(?!\d)/,
+  'DD.MM.YYYY': /^\d{1,2}\.\d{1,2}\.\d{4}(?!\d)/,
+  'DD-MM-YYYY': /^\d{1,2}-\d{1,2}-\d{4}(?!\d)/,
+  'DD/MM/YYYY': /^\d{1,2}\/\d{1,2}\/\d{4}(?!\d)/,
+  'MM/DD/YYYY': /^\d{1,2}\/\d{1,2}\/\d{4}(?!\d)/,
+  'YYYY.MM.DD': /^\d{4}\.\d{1,2}\.\d{1,2}(?!\d)/,
+  'YYYY/MM/DD': /^\d{4}\/\d{1,2}\/\d{1,2}(?!\d)/,
+  'DD.MM.YY': /^\d{1,2}\.\d{1,2}\.\d{2}(?!\d)/,
+  'DD/MM/YY': /^\d{1,2}\/\d{1,2}\/\d{2}(?!\d)/,
+  'DD-MMM-YYYY': /^\d{1,2}-\p{L}{3,}-\d{4}/u,
+  'DD MMM YYYY': /^\d{1,2} \p{L}{3,} \d{4}/u,
+  'MMM DD, YYYY': /^\p{L}{3,} \d{1,2}, \d{4}/u,
+};
+
+/** Dla formatów ze slashem struktura nie rozstrzyga DD/MM vs MM/DD — patrzymy w wartości. */
+function dateComponentsPlausible(format: DateFormat, value: string): boolean {
+  const [a, b] = value.split('/').map((p) => Number(p));
+  if (format === 'DD/MM/YYYY' || format === 'DD/MM/YY') return !(b > 12);
+  if (format === 'MM/DD/YYYY') return !(a > 12);
+  return true;
+}
+
+/**
+ * Czy daty w próbce pasują do wybranego formatu — walidacja NA ŻYWO w kreatorze
+ * (wcześniej zły format wychodził dopiero w podglądzie, po rundtripie na serwer).
+ * null = brak danych do oceny (nie pokazujemy nic); true/false = ✓/ostrzeżenie.
+ */
+export function dateFormatMatchesSamples(
+  sampleRows: string[][],
+  col: number,
+  format: DateFormat,
+): boolean | null {
+  if (col < 0) return null;
+  const values = distinctValues(sampleRows, col).map((v) => v.trim());
+  if (values.length === 0) return null;
+  const re = DATE_FORMAT_CHECK_RES[format];
+  // Strukturalnie: większość wystarczy — próbka bywa zaszumiona (podsumowania).
+  const structural = values.filter((v) => re.test(v));
+  if (structural.length < Math.ceil(values.length / 2)) return false;
+  // Ale JEDNA data z „miesiącem" > 12 to nie szum, tylko dowód złego formatu
+  // (np. 15/03 nie może być MM/DD) — rozstrzyga DD/MM vs MM/DD.
+  return structural.every((v) => dateComponentsPlausible(format, v));
+}
+
 // Rozpoznanie kupna/sprzedaży po TOKENACH (nie zakotwiczone) — brokerzy często
 // prefiksują, np. „Market buy", „Stock sale", więc rozbijamy wartość na słowa.
 const BUY_TOKENS = new Set(['k', 'b', 'buy', 'kupno', 'nabycie', 'zakup', 'purchase', 'open']);
