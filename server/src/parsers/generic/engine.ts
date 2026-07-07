@@ -458,6 +458,13 @@ function buildTransaction(
     : undefined;
   const paymentCurrency = explicitPaymentCurrency ?? currency;
   const fxRateRaw = trade.fxRate ? resolveNumber(trade.fxRate, row, resolver) : 0;
+  // Konwencja kanoniczna Transaction.fxRate = payment-per-quote; kolumny brokerów
+  // w odwrotnej konwencji (DEGIRO "Kurs wymiany") profil oznacza fxRateDirection
+  // i silnik odwraca — dla GBX z mnożnikiem 100 (kolumna w pensach, cena już w GBP).
+  let fxRate = fxRateRaw > 0 ? fxRateRaw : undefined;
+  if (fxRate !== undefined && trade.fxRateDirection === 'quotePerPayment') {
+    fxRate = (isGbx ? 100 : 1) / fxRate;
+  }
 
   return {
     ok: true,
@@ -473,7 +480,7 @@ function buildTransaction(
       total,
       currency,
       paymentCurrency,
-      fxRate: fxRateRaw > 0 ? fxRateRaw : undefined,
+      fxRate,
       category,
       source: 'generic',
       importBatch,

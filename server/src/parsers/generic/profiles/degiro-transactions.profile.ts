@@ -56,6 +56,9 @@ export const DEGIRO_TRANSACTIONS_PROFILE: ImportProfile = ImportProfileSchema.pa
     currency: { kind: 'column', col: 8, fallback: 'EUR' },
     paymentCurrency: { kind: 'const', value: 'EUR' },
     fxRate: { kind: 'column', col: { name: 'Kurs wymiany' } },
+    // Kolumna DEGIRO jest quote-per-payment (4.3127 PLN za 1 EUR) — silnik odwraca
+    // do kanonicznej konwencji payment-per-quote (parytet z parserem wbudowanym).
+    fxRateDirection: 'quotePerPayment',
     side: { strategy: 'signedQuantity', col: { name: 'Liczba' } },
   },
 } satisfies Record<string, unknown>);

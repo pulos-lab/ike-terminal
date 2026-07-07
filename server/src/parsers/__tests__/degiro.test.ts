@@ -95,6 +95,30 @@ describe('parseDegiroTransactions — GBX', () => {
     expect(data[0].total).toBe(12345);
   });
 
+  it('odwraca "Kurs wymiany" do konwencji payment-per-quote (EUR za 1 GBP, z mnożnikiem GBX)', () => {
+    // Realne wiersze DEGIRO: "Kurs wymiany" to quote-per-payment (87.0405 GBX za 1 EUR).
+    // Cena/value konwertowane do GBP, więc fxRate = 100/87.0405 ≈ 1.1489 EUR za 1 GBP;
+    // total × fxRate musi odtworzyć kwotę EUR z pliku (887.86).
+    const csv = txCsv([
+      '26-02-2021,09:49,ROLLS-ROYCE HOLDINGS PLC,GB00B63H8491,LSE,AQXE,-700,"110,4000",GBX,"77280,00",GBX,"887,86","87,0405","-0,89","-4,44","EUR","882,53",EUR,xyz',
+    ]);
+    const { data } = parseDegiroTransactions(csv, 'batch-1');
+    expect(data).toHaveLength(1);
+    expect(data[0].fxRate).toBeCloseTo(100 / 87.0405, 8);
+    expect(data[0].total * data[0].fxRate!).toBeCloseTo(887.86, 1);
+  });
+
+  it('odwraca "Kurs wymiany" dla walut bez pensów (PLN: 4.3127 → ~0.2319 EUR za 1 PLN)', () => {
+    const csv = txCsv([
+      '27-03-2024,11:41,ML SYSTEM SA,PLMLSTM00015,WSE,XWAR,-70,"43,7000",PLN,"3059,00",PLN,"709,30","4,3127","0,00",,"EUR","709,30",EUR,abc',
+    ]);
+    const { data } = parseDegiroTransactions(csv, 'batch-1');
+    expect(data).toHaveLength(1);
+    expect(data[0].currency).toBe('PLN');
+    expect(data[0].fxRate).toBeCloseTo(1 / 4.3127, 8);
+    expect(data[0].total * data[0].fxRate!).toBeCloseTo(709.3, 1);
+  });
+
   it('strona K/S z znaku Liczba, fractional shares zachowane', () => {
     const csv = txCsv([
       '05-02-2024,10:30,APPLE INC,US0378331005,NASDAQ,XNAS,"0,3069","494,15",USD,"151,65",USD,"140,00","0,9230",,"-1,00","EUR","-141,00",EUR,abc',

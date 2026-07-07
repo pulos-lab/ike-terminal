@@ -379,4 +379,26 @@ export function initSchema(db: Database.Database): void {
       new Date().toISOString(),
     );
   }
+
+  // Ujednolicenie konwencji fxRate — parser DEGIRO zapisywał surowy "Kurs wymiany"
+  // (quote per payment, np. 4.3127 PLN za 1 EUR), podczas gdy kanoniczna konwencja
+  // Transaction.fxRate to payment-per-quote (1 quote = fxRate × payment) — konsumowana
+  // przez payment-currency-reconciler i UI. Inwersja istniejących wierszy DEGIRO.
+  // GBX: kolumna DEGIRO jest w pensach za EUR (~87), a price/value trzymamy w GBP —
+  // stąd 100/x dla currency='GBP' (LSE w eksportach DEGIRO kwotuje zawsze w GBX).
+  // Flaga gwarantuje jednorazowość (podwójna inwersja odtworzyłaby błąd w innej skali).
+  const fxConventionFlag = db
+    .prepare('SELECT value FROM portfolio_metadata WHERE key = ?')
+    .get('fxrate_convention_a_done') as any;
+  if (!fxConventionFlag) {
+    db.exec(`
+      UPDATE transactions
+      SET fx_rate = CASE WHEN currency = 'GBP' THEN 100.0 / fx_rate ELSE 1.0 / fx_rate END
+      WHERE source = 'degiro' AND fx_rate > 0;
+    `);
+    db.prepare('INSERT OR REPLACE INTO portfolio_metadata (key, value) VALUES (?, ?)').run(
+      'fxrate_convention_a_done',
+      new Date().toISOString(),
+    );
+  }
 }

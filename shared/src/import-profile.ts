@@ -274,6 +274,13 @@ export const TradeMappingSchema = z.object({
   paymentCurrency: ValueSourceSchema.optional(),
   /** Kurs wymiany broker'a — silnik pomija wartości ≤ 0 (brak przewalutowania). */
   fxRate: ValueSourceSchema.optional(),
+  /**
+   * Konwencja kolumny kursu. Kanoniczna dla Transaction.fxRate jest 'paymentPerQuote'
+   * (1 jednostka quote = fxRate × payment) — brak pola = ta konwencja, bez inwersji.
+   * DEGIRO "Kurs wymiany" to 'quotePerPayment' (np. 4.3127 PLN za 1 EUR) — silnik
+   * odwraca przy budowie transakcji (dla GBX z mnożnikiem 100, bo cena pensy→GBP).
+   */
+  fxRateDirection: z.enum(['paymentPerQuote', 'quotePerPayment']).optional(),
   side: SideRuleSchema,
   category: CategoryRulesSchema.optional(),
 });

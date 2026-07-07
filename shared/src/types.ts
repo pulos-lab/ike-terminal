@@ -51,7 +51,14 @@ export interface Transaction {
    * Opcjonalne dla backward compat ze starymi rekordami; fallback = `currency`.
    */
   paymentCurrency?: string;
-  /** Kurs wymiany user'a: paymentCurrency × fxRate ≈ quote currency amount. */
+  /**
+   * Kurs wymiany rozliczenia: 1 jednostka `currency` (quote) = fxRate × `paymentCurrency`
+   * (np. quote USD, payment PLN → fxRate ≈ 4.00). Kanoniczna konwencja w całym repo
+   * ("payment per quote") — konsumują ją payment-currency-reconciler (total × fxRate = kwota
+   * w paymentCurrency), TradesFeed i AddTransactionDialog. Parsery zapisujące kurs z pliku
+   * brokera w odwrotnej konwencji (DEGIRO "Kurs wymiany" = quote per payment) MUSZĄ go
+   * odwrócić przed zapisem.
+   */
   fxRate?: number;
   category?: InstrumentCategory;
   source: RecordSource;
