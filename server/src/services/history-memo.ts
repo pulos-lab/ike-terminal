@@ -45,8 +45,9 @@ const MAX_MEMO_ENTRIES = 8;
  * bez zmiany danych w DB (dataVersion tego nie wykryje, a memo in-memory przeżywa
  * hot-reload tsx watch). v2: wycena obligacji przez mnożnik nominal/100.
  * v3: transformacja spin-offów (applySpinOffs) w strumieniu transakcji.
+ * v4: cash flow transakcji księgowany w paymentCurrency (fxRate brokera / kurs dzienny).
  */
-const ENGINE_VERSION = 3;
+const ENGINE_VERSION = 4;
 
 const memo = new Map<string, Promise<HistoryResult>>();
 

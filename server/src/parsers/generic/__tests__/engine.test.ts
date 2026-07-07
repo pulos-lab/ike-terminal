@@ -651,3 +651,189 @@ describe('parseDateWithFormats', () => {
     expect(parseDateWithFormats('5 Foo 2024', ['DD MMM YYYY'])).toBeNull();
   });
 });
+
+// ── quoteCurrencyFromSettlement + pairing.tradeClosePl (wzorzec XTB) ─────────
+
+const QCS_HEADER = 'typ;data;papier;ilosc;cena;kwota';
+
+function qcsProfile(overrides: Record<string, unknown> = {}): ImportProfile {
+  return ImportProfileSchema.parse({
+    specVersion: 1,
+    brokerLabel: 'Test-XTB-like',
+    file: { delimiter: ';', headerRow: { strategy: 'first' } },
+    classify: [
+      {
+        id: 'closepl',
+        when: [{ col: { name: 'typ' }, op: 'equals', values: ['closepl'] }],
+        emit: 'trade_close_pl',
+      },
+      {
+        id: 'trade',
+        when: [{ col: { name: 'typ' }, op: 'oneOf', values: ['K', 'S'] }],
+        emit: 'trade',
+      },
+    ],
+    defaultClass: 'skip',
+    trade: {
+      date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['DD.MM.YYYY'] },
+      paperName: { kind: 'column', col: { name: 'papier' } },
+      quantity: { kind: 'column', col: { name: 'ilosc' } },
+      price: { kind: 'column', col: { name: 'cena' } },
+      currency: { kind: 'const', value: 'PLN' },
+      paymentCurrency: { kind: 'const', value: 'PLN' },
+      quoteCurrencyFromSettlement: {
+        settlementAmount: { kind: 'column', col: { name: 'kwota' } },
+        tolerance: 0.02,
+        suffixCurrency: { US: 'USD', PL: 'PLN' },
+        suffixFallback: 'USD',
+        unlabeledFallback: 'convertToSettlement',
+      },
+      side: {
+        strategy: 'column',
+        col: { name: 'typ' },
+        buyValues: ['K'],
+        sellValues: ['S'],
+      },
+    },
+    pairing: {
+      tradeClosePl: {
+        amount: { kind: 'column', col: { name: 'kwota' } },
+        matchBy: ['ticker', 'date', 'time'],
+      },
+    },
+    needsNameResolution: true,
+    ...overrides,
+  });
+}
+
+describe('parseWithProfile — quoteCurrencyFromSettlement', () => {
+  it('kupno FX: |kwota|/(qty×cena) ≉ 1 → waluta z sufiksu + fxRate, cena bez zmian', () => {
+    const csv = `${QCS_HEADER}\nK;05.03.2024 10:00:00;PLTR.US;10;20,00;-740,00`;
+    const out = parseWithProfile(csv, qcsProfile(), BATCH);
+    const tx = out.transactions.data[0];
+    expect(tx.currency).toBe('USD');
+    expect(tx.paymentCurrency).toBe('PLN');
+    expect(tx.price).toBe(20);
+    expect(tx.value).toBe(200);
+    expect(tx.fxRate).toBeCloseTo(3.7, 6);
+  });
+
+  it('kupno ratio ≈ 1 → mapowanie currency profilu bez zmian, bez fxRate', () => {
+    const csv = `${QCS_HEADER}\nK;05.03.2024 10:00:00;CDR.PL;10;100,00;-1000,00`;
+    const out = parseWithProfile(csv, qcsProfile(), BATCH);
+    const tx = out.transactions.data[0];
+    expect(tx.currency).toBe('PLN');
+    expect(tx.fxRate).toBeUndefined();
+  });
+
+  it('sprzedaż + trade_close_pl: kurs z (|kwota| + P/L)/(qty×cena); wiersz P/L może być PO sprzedaży', () => {
+    // Pre-pass zbiera wiersze P/L niezależnie od kolejności w pliku.
+    const csv = [
+      QCS_HEADER,
+      'S;05.03.2024 10:00:00;PLTR.US;10;30,00;740,00',
+      'closepl;05.03.2024 10:00:00;PLTR.US;;;460,00',
+    ].join('\n');
+    const out = parseWithProfile(csv, qcsProfile(), BATCH);
+    expect(out.transactions.data).toHaveLength(1);
+    const tx = out.transactions.data[0];
+    expect(tx.side).toBe('S');
+    expect(tx.currency).toBe('USD');
+    // (740 + 460) / (10×30) = 4.0
+    expect(tx.fxRate).toBeCloseTo(4.0, 5);
+    // Wiersze closepl skonsumowane — nie emitują operacji ani skipów.
+    expect(out.operations.data).toHaveLength(0);
+  });
+
+  it('partial fille w tej samej sekundzie: każda sprzedaż konsumuje WŁASNY wiersz P/L (FIFO)', () => {
+    // Dwa partial fille pod wspólnym kluczem (symbol|data|czas), każdy z własnym
+    // P/L. Sumowanie pod kluczem wliczałoby obu sprzedażom łączny P/L
+    // ((740+2120)/300 ≈ 9.53 dla obu); FIFO daje 4.0 i 8.0.
+    const csv = [
+      QCS_HEADER,
+      'closepl;05.03.2024 10:00:00;PLTR.US;;;460,00',
+      'closepl;05.03.2024 10:00:00;PLTR.US;;;1660,00',
+      'S;05.03.2024 10:00:00;PLTR.US;10;30,00;740,00',
+      'S;05.03.2024 10:00:00;PLTR.US;10;30,00;740,00',
+    ].join('\n');
+    const out = parseWithProfile(csv, qcsProfile(), BATCH);
+    const sells = out.transactions.data.filter((t) => t.side === 'S');
+    expect(sells).toHaveLength(2);
+    expect(sells[0].fxRate).toBeCloseTo((740 + 460) / 300, 5); // 4.0
+    expect(sells[1].fxRate).toBeCloseTo((740 + 1660) / 300, 5); // 8.0
+  });
+
+  it('sprzedaż bez sparowanego P/L dziedziczy etykietę z kupna, bez fxRate', () => {
+    const csv = [
+      QCS_HEADER,
+      'K;01.03.2024 10:00:00;PLTR.US;10;16,00;-608,00', // ratio 3.8 → FX
+      'S;05.03.2024 10:00:00;PLTR.US;10;26,00;608,00', // nominał, brak closepl
+    ].join('\n');
+    const out = parseWithProfile(csv, qcsProfile(), BATCH);
+    const sell = out.transactions.data.find((t) => t.side === 'S')!;
+    expect(sell.currency).toBe('USD');
+    expect(sell.fxRate).toBeUndefined();
+  });
+
+  it('symbol bez etykiety (nazwa spółki) + FX → cena przeliczona na walutę konta', () => {
+    const csv = `${QCS_HEADER}\nK;05.03.2024 10:00:00;Firma Zagraniczna;10;45,73;-1830,00`;
+    const out = parseWithProfile(csv, qcsProfile(), BATCH);
+    const tx = out.transactions.data[0];
+    expect(tx.currency).toBe('PLN');
+    expect(tx.fxRate).toBeUndefined();
+    expect(tx.price).toBeCloseTo(183, 5);
+    expect(tx.value).toBeCloseTo(1830, 2);
+  });
+
+  it('symbolCurrency (mapa dokładnego symbolu) wygrywa nad fallbackiem', () => {
+    const profile = qcsProfile();
+    profile.trade!.quoteCurrencyFromSettlement!.symbolCurrency = {
+      'Firma Zagraniczna': 'USD',
+    };
+    const csv = `${QCS_HEADER}\nK;05.03.2024 10:00:00;Firma Zagraniczna;10;45,73;-1830,00`;
+    const out = parseWithProfile(csv, qcsProfile({ trade: profile.trade }), BATCH);
+    const tx = out.transactions.data[0];
+    expect(tx.currency).toBe('USD');
+    expect(tx.price).toBeCloseTo(45.73, 2);
+    expect(tx.fxRate).toBeCloseTo(4.001749, 5);
+  });
+
+  it('nazwa z kropką ("ABC S.A.") nie wpada w fallback sufiksu — przeliczenie na walutę konta', () => {
+    const csv = `${QCS_HEADER}\nK;05.03.2024 10:00:00;ABC S.A.;10;45,73;-1830,00`;
+    const out = parseWithProfile(csv, qcsProfile(), BATCH);
+    const tx = out.transactions.data[0];
+    expect(tx.currency).toBe('PLN');
+    expect(tx.price).toBeCloseTo(183, 5);
+  });
+
+  it('zod: trade_close_pl w klasyfikacji bez pairing.tradeClosePl → błąd walidacji', () => {
+    expect(() => qcsProfile({ pairing: {} })).toThrow();
+  });
+
+  it('zod: tolerance > 0.2 odrzucona', () => {
+    const p = qcsProfile();
+    expect(() =>
+      ImportProfileSchema.parse({
+        ...p,
+        trade: {
+          ...p.trade,
+          quoteCurrencyFromSettlement: {
+            ...p.trade!.quoteCurrencyFromSettlement,
+            tolerance: 0.5,
+          },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('fxRateDirection quotePerPayment: kurs kolumnowy odwrócony do payment-per-quote', () => {
+    const profile = tradeProfile();
+    profile.trade!.paymentCurrency = { kind: 'const', value: 'EUR' };
+    profile.trade!.fxRate = { kind: 'const', value: '4,3127' };
+    profile.trade!.fxRateDirection = 'quotePerPayment';
+    const csv = `${TRADE_HEADER}\n01.03.2026;MLSYSTEM;PLMLSTM00015;K;70;43,70;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    const tx = out.transactions.data[0];
+    expect(tx.fxRate).toBeCloseTo(1 / 4.3127, 8);
+    expect(tx.total * tx.fxRate!).toBeCloseTo(709.3, 1);
+  });
+});

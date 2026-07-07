@@ -58,6 +58,7 @@ import {
 } from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
 import { reconcilePaymentCurrencies } from './payment-currency-reconciler.js';
+import { reconcileQuoteCurrencies } from './quote-currency-reconciler.js';
 import { getDb } from '../db/connection.js';
 
 // ─── File classification ─────────────────────────────────────────────────────
@@ -529,6 +530,13 @@ async function importBinary(
     txResult.data.length > 0
       ? await resolveUnknownIsins(txResult.data, pid)
       : { resolved: [], unresolved: [] };
+
+  // Po resolwerze ticker_map ma walutę notowania z Yahoo — uzgadniamy etykietę
+  // `currency` transakcji z wykrytym przewalutowaniem (parser nadał ją z suffixu
+  // symbolu, który bywa mylący: ISAC.UK/EIMI.UK to klasy USD). Samoograniczające
+  // (tylko fxRate>0 + mismatch), więc wołane bezwarunkowo.
+  const quoteRecon = reconcileQuoteCurrencies(pid);
+  parserWarnings.push(...quoteRecon.warnings);
 
   const unresolvedVisible = unresolved.filter((u) => {
     const isinTxs = txResult.data.filter((t) => t.isin === u.isin);

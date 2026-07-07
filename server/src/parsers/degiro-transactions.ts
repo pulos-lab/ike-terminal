@@ -160,7 +160,11 @@ export function parseDegiroTransactions(
       // reconcilePaymentCurrencies() (symulacja salda walut).
       // Z wyłączonym auto-FX user może trzymać PLN/USD i płacić
       // bezpośrednio z salda danej waluty.
-      fxRate: fxRateRaw > 0 ? fxRateRaw : undefined, // z NEW format "Kurs wymiany"; undefined dla OLD format
+      // "Kurs wymiany" DEGIRO to quote-per-payment (np. 4.3127 PLN za 1 EUR) — odwrotność
+      // kanonicznej konwencji fxRate (1 quote = fxRate × payment, patrz Transaction.fxRate).
+      // Dla GBX kolumna jest w pensach za EUR (np. 87.04), a price/value konwertujemy do GBP,
+      // więc kurs odwracamy z mnożnikiem ×100 (EUR za GBP), żeby total × fxRate = kwota EUR.
+      fxRate: fxRateRaw > 0 ? (isGbx ? 100 : 1) / fxRateRaw : undefined,
       source: 'degiro',
       importBatch,
     });

@@ -1,4 +1,5 @@
 import { ImportProfileSchema, type ImportProfile } from 'shared';
+import { SUFFIX_CURRENCY } from '../../xtb-transactions.js';
 
 /**
  * Golden profil: XTB — arkusz "Cash Operations" (format NOWY, eksporty
@@ -15,7 +16,11 @@ import { ImportProfileSchema, type ImportProfile } from 'shared';
  *   "BUY 0.3069 @ 494.15" → quantity/price przez regexExtract (jeden wzorzec
  *   łapie OPEN/CLOSE — sprzedaż XTB też pisze "BUY" w komentarzu),
  * - strona K/S z kolumny Type (Stock purchase/Stock sale),
- * - value/total wyliczane z qty×price (kwota w Amount to rozliczenie konta),
+ * - value/total wyliczane z qty×price; kwota w Amount (rozliczenie konta)
+ *   zasila quoteCurrencyFromSettlement — detekcję waluty notowania z
+ *   |Amount|/(qty×price) (konto PLN + instrument USD: cena w Comment jest
+ *   w USD); wiersze "close trade" (P/L) parowane ze sprzedażą przez
+ *   pairing.tradeClosePl, bo Amount sprzedaży to zwrócony nominał otwarcia,
  * - Instrument = pełna NAZWA spółki (nie ticker) → pseudo-ISIN = nazwa
  *   + needsNameResolution (ścieżka mBank),
  * - dywidenda ↔ withholding tax parowane po (Instrument, data, czas) — klucz
@@ -31,8 +36,9 @@ import { ImportProfileSchema, type ImportProfile } from 'shared';
  * GRANICE SPEC (świadome, zostają w parserze wbudowanym):
  * - wiersze "commission" parowane FIFO do transakcji po (symbol, czas) —
  *   deklaratywnie niewykonalne; w nowym formacie akcje/ETF mają prowizję 0,
- * - mapowanie nazwa→ticker oraz kategoria stock/etf/cfd z arkusza Closed
- *   Positions (cross-sheet lookup),
+ * - mapowanie nazwa→ticker, kategoria stock/etf/cfd ORAZ mapa symbol→waluta
+ *   notowania (options.symbolCurrency) z arkusza Closed Positions
+ *   (cross-sheet lookup — harness buduje ją i wstrzykuje do profilu),
  * - translacja sufiksów XTB→Yahoo ("MSFT.US"→"MSFT", "CDR.PL"→"CDR.WA") —
  *   mapa krajów, nie regex,
  * - CFD z arkusza Closed Positions (syntetyczne pary K+S),
@@ -40,7 +46,12 @@ import { ImportProfileSchema, type ImportProfile } from 'shared';
  */
 export function buildXtbCashOperationsProfile(
   accountCurrency: string,
-  options: { hasTickerColumn?: boolean } = {},
+  options: {
+    hasTickerColumn?: boolean;
+    /** Mapa dokładny symbol → waluta notowania dla wariantu z nazwami spółek
+     *  (harness buduje ją cross-sheet z Closed Positions — poza spec v1). */
+    symbolCurrency?: Record<string, string>;
+  } = {},
 ): ImportProfile {
   const TYPE = { name: 'Type' } as const;
   const SYMBOL = options.hasTickerColumn
@@ -66,11 +77,19 @@ export function buildXtbCashOperationsProfile(
       },
     },
     classify: [
-      // Wpisy techniczne: "close trade" to księgowanie P/L sparowane ze sprzedażą,
-      // "commission"/"Sec Fee" parser wbudowany dokleja do transakcji (FIFO).
+      // "close trade" niesie P/L zamknięcia — parowany ze sprzedażą przez
+      // pairing.tradeClosePl (wartość sprzedaży w walucie konta = |Amount| + P/L,
+      // wsad do detekcji quoteCurrencyFromSettlement). Sam nic nie emituje.
+      {
+        id: 'close-trade-pl',
+        when: [{ col: TYPE, op: 'equals', values: ['close trade'] }],
+        emit: 'trade_close_pl',
+      },
+      // Wpisy techniczne: "commission"/"Sec Fee" parser wbudowany dokleja do
+      // transakcji (FIFO) — deklaratywnie niewykonalne, zostają poza profilem.
       {
         id: 'technical',
-        when: [{ col: TYPE, op: 'oneOf', values: ['close trade', 'commission', 'Sec Fee'] }],
+        when: [{ col: TYPE, op: 'oneOf', values: ['commission', 'Sec Fee'] }],
         emit: 'skip',
         skipReason: 'settlement_record',
       },
@@ -144,6 +163,21 @@ export function buildXtbCashOperationsProfile(
       },
       currency: { kind: 'const', value: accountCurrency },
       paymentCurrency: { kind: 'const', value: accountCurrency },
+      // Detekcja waluty notowania z kwoty rozliczenia — lustro parsera
+      // wbudowanego (konto PLN + instrument USD: cena w Comment jest w USD,
+      // Amount w PLN). Etykieta z sufiksu symbolu (wariant Ticker) albo z mapy
+      // symbolCurrency (harness, cross-sheet); nazwy bez etykiety → cena
+      // przeliczana na walutę konta.
+      quoteCurrencyFromSettlement: {
+        settlementAmount: { kind: 'column', col: { name: 'Amount' } },
+        tolerance: 0.02,
+        // Silnik stosuje sufiks tylko dla wzorca ticker.XX — bezpieczne także
+        // w wariancie z nazwami spółek (nazwy nie mają sufiksu kraju).
+        suffixCurrency: { ...SUFFIX_CURRENCY },
+        suffixFallback: 'USD',
+        ...(options.symbolCurrency ? { symbolCurrency: options.symbolCurrency } : {}),
+        unlabeledFallback: 'convertToSettlement',
+      },
       side: {
         strategy: 'column',
         col: TYPE,
@@ -161,6 +195,12 @@ export function buildXtbCashOperationsProfile(
     other: cashWithTicker,
     pairing: {
       dividendWht: { matchBy: ['ticker', 'date', 'time'], windowDays: 0, handling: 'subtract' },
+      // Klucz jak `symbol|isoTime` parsera wbudowanego; kwoty P/L pod tym samym
+      // kluczem sumują się (partial fille).
+      tradeClosePl: {
+        amount: { kind: 'column', col: { name: 'Amount' } },
+        matchBy: ['ticker', 'date', 'time'],
+      },
     },
     needsNameResolution: true,
   } satisfies Record<string, unknown>);

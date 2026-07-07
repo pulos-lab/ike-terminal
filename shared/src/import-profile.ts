@@ -136,6 +136,9 @@ export type Condition = z.infer<typeof ConditionSchema>;
  *   trade_fee        → 'trade_fee' (koszt przypięty do pozycji: swap/rollover/tax IFTT)
  *   commission_refund→ 'commission_refund'
  *   capital_return   → 'capital_return'
+ *   trade_close_pl   → wiersz P/L zamknięcia (XTB "close trade") — konsumowany
+ *                      przez pairing.tradeClosePl do detekcji waluty sprzedaży,
+ *                      sam nic nie emituje
  *   other            → 'other' (zachowuje cashflow nierozpoznanych operacji)
  *   skip             → wiersz pominięty (podsumowania, rozliczenia techniczne)
  */
@@ -152,6 +155,7 @@ export const RowClassSchema = z.enum([
   'trade_fee',
   'commission_refund',
   'capital_return',
+  'trade_close_pl',
   'other',
   'skip',
 ]);
@@ -274,6 +278,44 @@ export const TradeMappingSchema = z.object({
   paymentCurrency: ValueSourceSchema.optional(),
   /** Kurs wymiany broker'a — silnik pomija wartości ≤ 0 (brak przewalutowania). */
   fxRate: ValueSourceSchema.optional(),
+  /**
+   * Konwencja kolumny kursu. Kanoniczna dla Transaction.fxRate jest 'paymentPerQuote'
+   * (1 jednostka quote = fxRate × payment) — brak pola = ta konwencja, bez inwersji.
+   * DEGIRO "Kurs wymiany" to 'quotePerPayment' (np. 4.3127 PLN za 1 EUR) — silnik
+   * odwraca przy budowie transakcji (dla GBX z mnożnikiem 100, bo cena pensy→GBP).
+   */
+  fxRateDirection: z.enum(['paymentPerQuote', 'quotePerPayment']).optional(),
+  /**
+   * Detekcja waluty NOTOWANIA z kwoty rozliczenia (wzorzec XTB): cena w pliku
+   * jest w walucie notowania instrumentu, a kolumna kwoty w walucie konta.
+   * Stosunek |kwota|/(ilość×cena) ≈ 1 → notowanie w walucie konta (mapowanie
+   * `currency` bez zmian); wyraźnie inny → cena w walucie obcej, a stosunek
+   * staje się fxRate (payment-per-quote). Dla sprzedaży kwota to zwrócony
+   * nominał otwarcia — wymaga pairing.tradeClosePl (wartość = |kwota| + P/L);
+   * sprzedaż bez sparowanego P/L dziedziczy decyzję z wcześniejszych wierszy
+   * tego symbolu (bez fxRate — silnik portfela użyje kursu dziennego).
+   */
+  quoteCurrencyFromSettlement: z
+    .object({
+      /** Kwota rozliczenia na koncie (kolumna Amount) — waluta konta. */
+      settlementAmount: ValueSourceSchema,
+      /** |stosunek − 1| ≤ tolerance → notowanie w walucie konta. */
+      tolerance: z.number().positive().max(0.2).default(0.02),
+      /** Etykieta waluty przy wykrytym FX: mapa sufiksu po ostatniej kropce
+       *  symbolu → ISO ("US" → "USD"). Etykieta jest pierwszym rzutem —
+       *  po imporcie koryguje ją reconcileQuoteCurrencies wg notowań. */
+      suffixCurrency: z.record(z.string().min(1).max(4), z.string().min(3).max(8)).optional(),
+      /** Sufiks spoza mapy → ta waluta (odpowiednik fallbacku USD parsera XTB). */
+      suffixFallback: z.string().min(3).max(8).optional(),
+      /** Mapa dokładnego symbolu → ISO — dla plików z nazwami spółek zamiast
+       *  tickerów (harness buduje ją cross-sheet z Closed Positions). */
+      symbolCurrency: z.record(z.string().min(1).max(120), z.string().min(3).max(8)).optional(),
+      /** FX wykryty, ale symbol bez etykiety:
+       *  'convertToSettlement' → cena = kwota/ilość w walucie konta (spójność z gotówką);
+       *  'keep' → status quo (mapowanie `currency` profilu, bez fxRate). */
+      unlabeledFallback: z.enum(['convertToSettlement', 'keep']).default('convertToSettlement'),
+    })
+    .optional(),
   side: SideRuleSchema,
   category: CategoryRulesSchema.optional(),
 });
@@ -335,9 +377,27 @@ export const FxLegsPairingSchema = z.object({
   rateSource: ValueSourceSchema.optional(),
 });
 
+/**
+ * Parowanie wiersza P/L zamknięcia (klasa 'trade_close_pl', XTB "close trade")
+ * ze sprzedażą. Kwota Amount sprzedaży XTB to zwrócony NOMINAŁ otwarcia —
+ * dopiero |Amount| + P/L daje wartość sprzedaży w walucie konta, potrzebną
+ * detekcji quoteCurrencyFromSettlement. Klucz obu stron budowany z TYCH SAMYCH
+ * źródeł mapowania trade (paperName/isin/data), więc strony liczą go identycznie.
+ */
+export const TradeClosePlPairingSchema = z.object({
+  /** Kolumna kwoty P/L wiersza close trade (waluta konta, ze znakiem). */
+  amount: ValueSourceSchema,
+  matchBy: z
+    .array(z.enum(['isin', 'ticker', 'date', 'time']))
+    .min(1)
+    .max(4)
+    .default(['ticker', 'date', 'time']),
+});
+
 export const PairingRulesSchema = z.object({
   dividendWht: DividendWhtPairingSchema.optional(),
   fxLegs: FxLegsPairingSchema.optional(),
+  tradeClosePl: TradeClosePlPairingSchema.optional(),
 });
 export type PairingRules = z.infer<typeof PairingRulesSchema>;
 
@@ -449,10 +509,12 @@ export const ImportProfileSchema = z
     const p = ctx.value;
 
     // Każda klasa emitowana przez classify/defaultClass musi mieć sekcję mapowania.
+    // Wyjątek: 'trade_close_pl' nie ma własnej sekcji — jego mapowanie żyje w
+    // pairing.tradeClosePl (osobny guard niżej).
     const emitted = new Set<string>(p.classify.map((r) => r.emit));
     if (p.defaultClass !== 'skip') emitted.add(p.defaultClass);
     for (const cls of emitted) {
-      if (cls === 'skip') continue;
+      if (cls === 'skip' || cls === 'trade_close_pl') continue;
       const key = CLASS_TO_MAPPING_KEY[cls as keyof typeof CLASS_TO_MAPPING_KEY];
       if (!(p as Record<string, unknown>)[key]) {
         ctx.issues.push({
@@ -474,6 +536,24 @@ export const ImportProfileSchema = z
 
     // fx_leg BEZ pairing.fxLegs = jednowierszowe operacje FX (kurs/para z mapowania fxLeg);
     // Z pairing.fxLegs = nogi debet/kredyt parowane przez silnik. Oba warianty poprawne.
+
+    // trade_close_pl bez reguł parowania = wiersze skonsumowane w próżnię.
+    if (emitted.has('trade_close_pl') && !p.pairing.tradeClosePl) {
+      ctx.issues.push({
+        code: 'custom',
+        message:
+          `Klasyfikacja emituje 'trade_close_pl', ale brakuje 'pairing.tradeClosePl' — ` +
+          `dodaj reguły parowania albo sklasyfikuj wiersz jako 'skip'`,
+        input: p,
+      });
+    }
+    if (p.pairing.tradeClosePl && !p.trade) {
+      ctx.issues.push({
+        code: 'custom',
+        message: `'pairing.tradeClosePl' wymaga mapowania 'trade' (klucz budowany z jego źródeł)`,
+        input: p,
+      });
+    }
 
     // withholding_tax bez reguł parowania → podatki wpadną w fee; wymagamy jawnej decyzji.
     if (emitted.has('withholding_tax') && !p.pairing.dividendWht) {

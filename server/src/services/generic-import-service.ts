@@ -43,6 +43,7 @@ import {
 import { classifyFile } from './import-service.js';
 import { redactSampleRows } from './sample-redactor.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
+import { reconcileQuoteCurrencies } from './quote-currency-reconciler.js';
 import { generateProfileFromContent } from './profile-generator.js';
 import { notifyNewImportProfile } from './admin-notifications.js';
 import {
@@ -756,13 +757,18 @@ async function runImportDocuments(args: {
     unresolvedVisible = resolution.unresolved.filter((u) => Math.abs(openNet(u.isin)) > 0.001);
   }
 
+  // Po resolwerze: uzgodnij etykietę waluty notowania transakcji z wykrytym
+  // przewalutowaniem (quoteCurrencyFromSettlement) z walutą z ticker_map —
+  // jak w importBinary (etykieta z sufiksu bywa mylna, np. klasy USD na LSE).
+  const quoteRecon = reconcileQuoteCurrencies(pid);
+
   const allSkipped: SkippedRow[] = [
     ...parsed.flatMap((p) => p.output.transactions.skipped),
     ...parsed.flatMap((p) => p.output.operations.skipped),
     ...txDuplicates,
     ...opsDuplicates,
   ];
-  const allWarnings = parsed.flatMap((p) => p.output.warnings);
+  const allWarnings = [...parsed.flatMap((p) => p.output.warnings), ...quoteRecon.warnings];
   const duplicatesSkipped = txDuplicates.length + opsDuplicates.length;
   const orphanedSells = detectOrphanedSells(pid);
   const primary = parsed[0].table.profileRow;

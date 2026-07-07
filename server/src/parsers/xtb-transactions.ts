@@ -7,7 +7,7 @@ import type {
   InstrumentCategory,
 } from 'shared';
 import { findCfdTicker } from 'shared';
-import { roundTo2 } from './utils.js';
+import { roundTo2, roundFxRate } from './utils.js';
 
 /** Infer CFD category from instrument name using static CFD_TICKER_MAP.
  *  Used as fallback when Closed Positions sheet is missing. */
@@ -55,7 +55,10 @@ const SEC_FEE_RE = /Sec Fee adj (\S+) (\d{8})/;
 
 // ── Currency mapping ────────────────────────────────────────────────────────
 
-const SUFFIX_CURRENCY: Record<string, string> = {
+/** Mapa suffix kraju → waluta notowania. Eksportowana: profil generyczny XTB
+ *  (xtb-cash-operations.profile) deklaruje ją w quoteCurrencyFromSettlement —
+ *  identyczna etykieta pierwszego rzutu to warunek parytetu compare:generic. */
+export const SUFFIX_CURRENCY: Record<string, string> = {
   PL: 'PLN',
   US: 'USD',
   NL: 'EUR',
@@ -181,13 +184,18 @@ function resolveSymbolIdentifiers(
   tickerLookup?: Map<string, string>,
   unknownSuffixes?: Set<string>,
   unknownNames?: Set<string>,
-): { paperName: string; isin: string; currency: string } {
+): { paperName: string; isin: string; currency: string; placeholder: boolean } {
   if (symbol.includes('.') && /\.\w{2}$/.test(symbol)) {
     // Old format: ticker.COUNTRY (e.g., "JSW.PL", "PLTR.US")
     const yahooTicker = xtbToYahooTicker(symbol);
     const badSuffix = unknownSuffixOf(symbol);
     if (badSuffix && unknownSuffixes) unknownSuffixes.add(badSuffix);
-    return { paperName: yahooTicker, isin: yahooTicker, currency: instrumentCurrency(symbol) };
+    return {
+      paperName: yahooTicker,
+      isin: yahooTicker,
+      currency: instrumentCurrency(symbol),
+      placeholder: false,
+    };
   }
   // New format: full company name — try Closed Positions ticker lookup first
   const cpTicker = tickerLookup?.get(symbol);
@@ -195,11 +203,151 @@ function resolveSymbolIdentifiers(
     const yahooTicker = xtbToYahooTicker(cpTicker);
     const badSuffix = unknownSuffixOf(cpTicker);
     if (badSuffix && unknownSuffixes) unknownSuffixes.add(badSuffix);
-    return { paperName: yahooTicker, isin: yahooTicker, currency: instrumentCurrency(cpTicker) };
+    return {
+      paperName: yahooTicker,
+      isin: yahooTicker,
+      currency: instrumentCurrency(cpTicker),
+      placeholder: false,
+    };
   }
   // Fallback: use company name as placeholder
   if (unknownNames) unknownNames.add(symbol);
-  return { paperName: symbol, isin: symbol, currency: 'PLN' };
+  return { paperName: symbol, isin: symbol, currency: 'PLN', placeholder: true };
+}
+
+// ── Detekcja waluty notowania z kwoty rozliczenia ───────────────────────────
+//
+// Empiria (realne pliki XTB): cena w komentarzu ("OPEN BUY 83 @ 45.73") jest
+// ZAWSZE w walucie NOTOWANIA instrumentu, a kolumna Amount ZAWSZE w walucie
+// konta — konto PLN kupujące ETF w USD dostaje cenę w USD i debet w PLN.
+// Stosunek |Amount|/(qty×price) ≈ 1 → notowanie w walucie konta; wyraźnie
+// inny → instrument kwotowany w walucie obcej, a stosunek JEST implikowanym
+// kursem rozliczenia (konwencja payment-per-quote, jak Transaction.fxRate).
+// Dla sprzedaży Amount to zwrócony nominał OTWARCIA (wartość kupna) — wartość
+// sprzedaży w walucie konta = |Amount| + P/L z wiersza "close trade".
+//
+// Suffix symbolu daje tylko ETYKIETĘ pierwszego rzutu (bywa mylący: ISAC.UK /
+// EIMI.UK to klasy USD na LSE) — po imporcie reconcileQuoteCurrencies koryguje
+// etykietę do waluty notowania z Yahoo (ticker_map); kwoty i kurs zostają.
+
+/** |implied − 1| ≤ tolerancja → cena w walucie konta. Empirycznie stosunki
+ *  same-currency mieszczą się w 0.995–1.0, a najbliższy realny kurs pary to
+ *  ~1.05 (EUR/USD). Pary w okolicach parytetu (EUR/USD 2022) mogą wpaść w
+ *  tolerancję — wtedy kwoty są niemal identyczne i błąd wyceny ~0. */
+const FX_DETECT_TOLERANCE = 0.02;
+
+interface TradeCurrencyDecision {
+  currency: string;
+  paymentCurrency: string;
+  fxRate?: number;
+  /** Cena po ewentualnym przeliczeniu na walutę konta (nieznany instrument nowego formatu). */
+  price: number;
+}
+
+/** Kolektory ostrzeżeń detekcji — agregowane do pojedynczych warningów na końcu parsowania. */
+interface FxDetectCollectors {
+  /** symbol → etykieta waluty + implikowany kurs pierwszej transakcji + licznik. */
+  impliedFx: Map<string, { currency: string; rate: number; count: number }>;
+  noAmount: Set<string>;
+  anomalies: Set<string>;
+  convertedToAccount: Set<string>;
+  gbpUnits: Set<string>;
+  salesWithoutPl: Set<string>;
+  mixedLegs: Set<string>;
+}
+
+function newFxDetectCollectors(): FxDetectCollectors {
+  return {
+    impliedFx: new Map(),
+    noAmount: new Set(),
+    anomalies: new Set(),
+    convertedToAccount: new Set(),
+    gbpUnits: new Set(),
+    salesWithoutPl: new Set(),
+    mixedLegs: new Set(),
+  };
+}
+
+function resolveTradeCurrency(args: {
+  side: 'K' | 'S';
+  symbol: string;
+  qty: number;
+  price: number;
+  /** |Amount| wiersza transakcji (waluta konta). */
+  amountAbs: number;
+  /** P/L z wiersza "close trade" (tylko sprzedaż; undefined gdy brak pary). */
+  closePl: number | undefined;
+  ids: { currency: string; placeholder: boolean };
+  accountCurrency: string;
+  /** Pamięć decyzji per symbol — sprzedaż bez close trade dziedziczy etykietę z kupna. */
+  symbolFx: Map<string, { foreign: boolean; currency: string }>;
+  collectors: FxDetectCollectors;
+}): TradeCurrencyDecision {
+  const { side, symbol, qty, price, amountAbs, closePl, ids, accountCurrency } = args;
+  const sameCurrency: TradeCurrencyDecision = {
+    currency: accountCurrency,
+    paymentCurrency: accountCurrency,
+    price,
+  };
+
+  // Kwota rozliczenia w walucie konta odpowiadająca qty×price.
+  let settleValue: number | null = null;
+  if (!(amountAbs > 0)) {
+    args.collectors.noAmount.add(symbol);
+  } else if (side === 'K') {
+    settleValue = amountAbs;
+  } else if (closePl !== undefined && Number.isFinite(closePl)) {
+    const v = amountAbs + closePl;
+    if (v > 0) settleValue = v;
+  }
+
+  if (settleValue === null) {
+    if (side === 'S' && amountAbs > 0) {
+      // Sprzedaż bez wiersza close trade — stosunek niepoliczalny (Amount to
+      // nominał otwarcia). Etykietę dziedziczymy z wcześniejszych transakcji
+      // symbolu; kursu nie zgadujemy (silnik użyje kursu dziennego).
+      const prev = args.symbolFx.get(symbol);
+      if (prev?.foreign) {
+        args.collectors.salesWithoutPl.add(symbol);
+        return { currency: prev.currency, paymentCurrency: accountCurrency, price };
+      }
+    }
+    return sameCurrency;
+  }
+
+  const implied = settleValue / (qty * price);
+  if (Math.abs(implied - 1) <= FX_DETECT_TOLERANCE) {
+    args.symbolFx.set(symbol, { foreign: false, currency: accountCurrency });
+    return sameCurrency;
+  }
+
+  // Stosunek wyraźnie ≠ 1 → cena w walucie obcej.
+  if (ids.placeholder) {
+    // Nowy format bez mapy tickerów — waluta notowania nieznana. Przeliczamy
+    // cenę na walutę konta z kwoty rozliczenia (wartości spójne z gotówką).
+    args.collectors.convertedToAccount.add(symbol);
+    return {
+      currency: accountCurrency,
+      paymentCurrency: accountCurrency,
+      price: settleValue / qty,
+    };
+  }
+  if (ids.currency === accountCurrency) {
+    // Suffix twierdzi, że notowanie = waluta konta, a kwoty mówią co innego —
+    // anomalia danych; zostawiamy status quo i prosimy o weryfikację.
+    args.collectors.anomalies.add(symbol);
+    return sameCurrency;
+  }
+
+  const fxRate = roundFxRate(implied);
+  args.symbolFx.set(symbol, { foreign: true, currency: ids.currency });
+  const agg = args.collectors.impliedFx.get(symbol);
+  if (agg) agg.count++;
+  else args.collectors.impliedFx.set(symbol, { currency: ids.currency, rate: fxRate, count: 1 });
+  // GBP z wykrytym FX: Yahoo kwotuje część LSE w pensach (GBp) — bez danych
+  // empirycznych nie kodujemy translacji, tylko prosimy o weryfikację jednostki.
+  if (ids.currency === 'GBP') args.collectors.gbpUnits.add(symbol);
+  return { currency: ids.currency, paymentCurrency: accountCurrency, fxRate, price };
 }
 
 // ── Date parsing ────────────────────────────────────────────────────────────
@@ -522,18 +670,34 @@ export async function parseXtbFile(
     }
   }
 
-  // ── Pre-pass: Build close trade P/L lookup for old-format sale fallback ──
-  // "close trade" rows contain P/L amounts; paired with "Stock sale" Amount we can derive sale price
-  const closeTradePL = new Map<string, number>(); // "SYMBOL|ISO_TIME" → P/L amount
+  // ── Pre-pass: Build close trade P/L lookup (old-format fallback + detekcja FX) ──
+  // "close trade" rows contain P/L amounts; paired with "Stock sale" Amount we can
+  // derive sale price / implied FX. LISTA per klucz, konsumowana FIFO (takeClosePl):
+  // partial fille zamykane w tej samej sekundzie mają ten sam klucz, a każdy ma
+  // WŁASNY wiersz close trade — sumowanie pod kluczem wliczałoby każdej sprzedaży
+  // cały P/L (np. BABA 2×"CLOSE BUY 2/4" dawało kursy 2.92/2.69 zamiast ~3.66).
+  const closeTradePL = new Map<string, number[]>(); // "SYMBOL|ISO_TIME" → [P/L, …]
   for (const raw of rawRows) {
     if (raw.type === 'close trade' && raw.symbol) {
       const isoTime = parseXtbTime(raw.time);
       if (isoTime) {
         const key = `${raw.symbol}|${isoTime}`;
-        closeTradePL.set(key, (closeTradePL.get(key) || 0) + raw.amount);
+        const list = closeTradePL.get(key);
+        if (list) list.push(raw.amount);
+        else closeTradePL.set(key, [raw.amount]);
       }
     }
   }
+  const closeTradeCursor = new Map<string, number>();
+  /** Zdejmij kolejny niezużyty P/L pod kluczem (FIFO, jak prowizje). */
+  const takeClosePl = (key: string): number | undefined => {
+    const list = closeTradePL.get(key);
+    if (!list) return undefined;
+    const i = closeTradeCursor.get(key) ?? 0;
+    if (i >= list.length) return undefined;
+    closeTradeCursor.set(key, i + 1);
+    return list[i];
+  };
 
   // ── Pass 1: Build transactions from Stock purchase / Stock sale ──
   const transactions: Transaction[] = [];
@@ -553,6 +717,9 @@ export async function parseXtbFile(
   const sellBySymbolDate = new Map<string, number>();
   // Track buy qty per symbol for old-format sale fallback
   const lastBuyQty = new Map<string, number>();
+  // Detekcja waluty notowania z kwoty rozliczenia (patrz resolveTradeCurrency)
+  const fxCollectors = newFxDetectCollectors();
+  const symbolFx = new Map<string, { foreign: boolean; currency: string }>();
 
   for (const raw of rawRows) {
     if (raw.type === 'Stock purchase') {
@@ -592,7 +759,22 @@ export async function parseXtbFile(
       }
 
       const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames);
-      const value = roundTo2(qty * price);
+      // Waluta z kwoty rozliczenia: |Amount| ≈ qty×price → notowanie w walucie
+      // konta (m.in. ISAC.UK na koncie USD); wyraźny rozjazd → cena w walucie
+      // obcej, stosunek = implikowany kurs (payment-per-quote).
+      const decision = resolveTradeCurrency({
+        side: 'K',
+        symbol: raw.symbol,
+        qty,
+        price,
+        amountAbs: Math.abs(raw.amount),
+        closePl: undefined,
+        ids,
+        accountCurrency,
+        symbolFx,
+        collectors: fxCollectors,
+      });
+      const value = roundTo2(qty * decision.price);
       const category =
         categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol) ?? 'stock';
 
@@ -603,18 +785,13 @@ export async function parseXtbFile(
         isin: ids.isin,
         quantity: qty,
         side: 'K',
-        price,
+        price: decision.price,
         value,
         commission: 0,
         total: value,
-        // XTB model: jedno sub-konto = jedna waluta. XLSX raportuje CENY I KWOTY
-        // w walucie konta, nawet dla instrumentów notowanych natywnie gdzie indziej
-        // (np. ISAC.UK to USD Acc share class — cena w USD mimo suffixu .UK).
-        // Ustawienie currency z suffixu symbolu prowadziło do rozjazdu z Yahoo
-        // quote.currency (zapisanym w tickerMap) i powodowało, że engine skipował
-        // transakcje w cash-flow oraz wpisywał bilans do fantomowej waluty.
-        currency: accountCurrency,
-        paymentCurrency: accountCurrency,
+        currency: decision.currency,
+        paymentCurrency: decision.paymentCurrency,
+        fxRate: decision.fxRate,
         category,
         source: 'xtb',
         importBatch,
@@ -632,6 +809,10 @@ export async function parseXtbFile(
       let price: number;
 
       const match = SELL_RE.exec(raw.comment);
+      // Ścieżka fallbacku wyprowadza cenę z (|Amount|+P/L)/qty — czyli w walucie
+      // KONTA (nie notowania); detekcja waluty jest wtedy pomijana.
+      let priceInAccountCurrency = false;
+
       if (match) {
         qty = parseFloat(match[1]);
         price = parseFloat(match[2]);
@@ -640,7 +821,9 @@ export async function parseXtbFile(
         // Use buy qty from the corresponding Stock purchase and derive price from Amount + close trade P/L
         const buyQty = lastBuyQty.get(raw.symbol);
         const plKey = `${raw.symbol}|${isoTime}`;
-        const pl = closeTradePL.get(plKey);
+        // Konsumujemy P/L dopiero gdy buyQty jest znane — nieudany fallback nie
+        // może zjeść wiersza close trade innemu partial fillowi pod tym kluczem.
+        const pl = buyQty && buyQty > 0 ? takeClosePl(plKey) : undefined;
         if (buyQty && buyQty > 0 && pl !== undefined) {
           // Guards: cena wyprowadzana z (|Amount| + P/L) / qty — każdy składnik
           // musi być policzalny, inaczej NaN/Infinity trafiłoby do outputu.
@@ -662,6 +845,7 @@ export async function parseXtbFile(
             txSkipped.push({ row: raw.rowNum, reason: 'invalid_price', paperName: raw.symbol });
             continue;
           }
+          priceInAccountCurrency = true;
         } else {
           txSkipped.push({ row: raw.rowNum, reason: 'unparseable_comment', paperName: raw.symbol });
           continue;
@@ -678,7 +862,28 @@ export async function parseXtbFile(
       }
 
       const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames);
-      const value = roundTo2(qty * price);
+      let decision: TradeCurrencyDecision;
+      if (priceInAccountCurrency) {
+        // Cena wyprowadzona z kwot konta — wartości spójne z gotówką w walucie
+        // konta. Gdy kupna tego symbolu wykryto jako FX, legi FIFO będą w
+        // mieszanych walutach — sygnalizujemy zamiast zgadywać kurs.
+        decision = { currency: accountCurrency, paymentCurrency: accountCurrency, price };
+        if (symbolFx.get(raw.symbol)?.foreign) fxCollectors.mixedLegs.add(raw.symbol);
+      } else {
+        decision = resolveTradeCurrency({
+          side: 'S',
+          symbol: raw.symbol,
+          qty,
+          price,
+          amountAbs: Math.abs(raw.amount),
+          closePl: takeClosePl(`${raw.symbol}|${isoTime}`),
+          ids,
+          accountCurrency,
+          symbolFx,
+          collectors: fxCollectors,
+        });
+      }
+      const value = roundTo2(qty * decision.price);
       const category =
         categoryMap.get(raw.symbol) ?? inferCategoryFromSymbol(raw.symbol) ?? 'stock';
 
@@ -689,13 +894,13 @@ export async function parseXtbFile(
         isin: ids.isin,
         quantity: qty,
         side: 'S',
-        price,
+        price: decision.price,
         value,
         commission: 0,
         total: value,
-        // XTB model: cena i kwota w walucie konta (patrz komentarz w Stock purchase).
-        currency: accountCurrency,
-        paymentCurrency: accountCurrency,
+        currency: decision.currency,
+        paymentCurrency: decision.paymentCurrency,
+        fxRate: decision.fxRate,
         category,
         source: 'xtb',
         importBatch,
@@ -728,13 +933,16 @@ export async function parseXtbFile(
           : undefined;
       if (idx !== undefined) {
         commissionCursor.set(key, (commissionCursor.get(key) ?? 0) + 1);
-        const fee = Math.abs(raw.amount);
-        transactions[idx].commission = roundTo2(transactions[idx].commission + fee);
-        transactions[idx].total = roundTo2(
-          transactions[idx].side === 'K'
-            ? transactions[idx].value + transactions[idx].commission
-            : transactions[idx].value - transactions[idx].commission,
-        );
+        const tx = transactions[idx];
+        // Prowizja (Amount) jest w walucie KONTA; value/total transakcji przy
+        // wykrytym FX są w walucie notowania — przeliczamy przez implikowany
+        // kurs, żeby commission/total były jednorodne walutowo.
+        const fee =
+          tx.fxRate && tx.fxRate > 0
+            ? roundTo2(Math.abs(raw.amount) / tx.fxRate)
+            : Math.abs(raw.amount);
+        tx.commission = roundTo2(tx.commission + fee);
+        tx.total = roundTo2(tx.side === 'K' ? tx.value + tx.commission : tx.value - tx.commission);
       } else {
         unmatchedFees.push(raw);
       }
@@ -755,9 +963,14 @@ export async function parseXtbFile(
       const key = `${symbol}|${feeDate}`;
       const idx = sellBySymbolDate.get(key);
       if (idx !== undefined) {
-        const fee = Math.abs(raw.amount);
-        transactions[idx].commission = roundTo2(transactions[idx].commission + fee);
-        transactions[idx].total = roundTo2(transactions[idx].value - transactions[idx].commission);
+        const tx = transactions[idx];
+        // Sec Fee w walucie konta → przeliczenie na walutę notowania jak prowizja.
+        const fee =
+          tx.fxRate && tx.fxRate > 0
+            ? roundTo2(Math.abs(raw.amount) / tx.fxRate)
+            : Math.abs(raw.amount);
+        tx.commission = roundTo2(tx.commission + fee);
+        tx.total = roundTo2(tx.value - tx.commission);
       } else {
         unmatchedFees.push(raw);
       }
@@ -1032,6 +1245,57 @@ export async function parseXtbFile(
     );
   }
 
+  // ── Warningi detekcji waluty notowania (resolveTradeCurrency) ──────────
+  if (fxCollectors.impliedFx.size > 0) {
+    const list = [...fxCollectors.impliedFx.entries()]
+      .map(([sym, i]) => `${sym} → ${i.currency} @ ~${i.rate.toFixed(4)} (${i.count}×)`)
+      .sort()
+      .join(', ');
+    warnings.push(
+      `Instrumenty notowane w innej walucie niż konto (${accountCurrency}) — kurs rozliczenia ` +
+        `implikowany z kwot XTB: ${list}. Ceny i wartości transakcji pozostają w walucie notowania; ` +
+        `etykieta waluty zostanie uzgodniona z notowaniem po imporcie.`,
+    );
+  }
+  if (fxCollectors.salesWithoutPl.size > 0) {
+    warnings.push(
+      `Sprzedaże bez wiersza "close trade" — walutę notowania przyjęto z wcześniejszych transakcji, ` +
+        `a kurs rozliczenia zostanie policzony z kursu dziennego: ` +
+        `${[...fxCollectors.salesWithoutPl].sort().join(', ')}.`,
+    );
+  }
+  if (fxCollectors.noAmount.size > 0) {
+    warnings.push(
+      `Wiersze transakcji bez kwoty rozliczenia (Amount) — walutę konta przyjęto bez weryfikacji: ` +
+        `${[...fxCollectors.noAmount].sort().join(', ')}.`,
+    );
+  }
+  if (fxCollectors.anomalies.size > 0) {
+    warnings.push(
+      `Kwota rozliczenia wyraźnie odbiega od ilość×cena mimo notowania w walucie konta: ` +
+        `${[...fxCollectors.anomalies].sort().join(', ')} — zweryfikuj te transakcje.`,
+    );
+  }
+  if (fxCollectors.convertedToAccount.size > 0) {
+    warnings.push(
+      `Instrumenty bez mapy tickerów z cenami w walucie obcej — ceny przeliczono na walutę konta ` +
+        `z kwoty rozliczenia: ${[...fxCollectors.convertedToAccount].sort().join(', ')}.`,
+    );
+  }
+  if (fxCollectors.gbpUnits.size > 0) {
+    warnings.push(
+      `Instrumenty GBP z wykrytym przewalutowaniem: ${[...fxCollectors.gbpUnits].sort().join(', ')} — ` +
+        `zweryfikuj jednostkę notowania (GBp/pensy vs GBP; Yahoo kwotuje część LSE w pensach).`,
+    );
+  }
+  if (fxCollectors.mixedLegs.size > 0) {
+    warnings.push(
+      `Stary format XTB: sprzedaż rozliczona w walucie konta po kupnie w walucie obcej ` +
+        `(mieszane waluty legów FIFO): ${[...fxCollectors.mixedLegs].sort().join(', ')} — ` +
+        `zweryfikuj zamknięte pozycje tych instrumentów.`,
+    );
+  }
+
   // Raw rows whose `type` matched no dispatch branch: per-row skipped entry
   // (reason 'unknown_type', paperName niesie nazwę typu + symbol, żeby user mógł
   // odnaleźć wiersze w pliku) + jeden zagregowany warning z listą typów.
@@ -1184,7 +1448,14 @@ function readNum(v: any): number {
  *   Type=SELL (short): S @ OpenTime/OpenPrice  +  K @ CloseTime/ClosePrice
  *
  * Commission is attached to the closing transaction.
- * Swap + Rollover are read directly from Closed Positions sheet columns. */
+ * Swap + Rollover are read directly from Closed Positions sheet columns.
+ *
+ * ZNANE OGRANICZENIE (świadomie poza zakresem fixu walut): ceny open/close CFD
+ * kwotowanych natywnie w innej walucie (np. GOLD w USD na koncie PLN) raportujemy
+ * w walucie konta bez detekcji z kwot — arkusz Closed Positions nie ma kolumny
+ * rozliczenia per leg, a wynik pozycji i tak liczymy z Gross P/L (kolumna w
+ * walucie konta, cfdGrossProfit), więc skutek błędnej etykiety jest ograniczony
+ * do wyceny historycznej legów. */
 function extractCfdTransactions(
   wb: ExcelJS.Workbook,
   accountCurrency: string,
