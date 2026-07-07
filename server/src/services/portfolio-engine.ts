@@ -1522,13 +1522,9 @@ export async function computePortfolioHistory(
     map.set(date, (map.get(date) || 0) + op.amount);
   }
 
-  // Transaction cash impacts (per currency)
-  for (const tx of transactions) {
-    const date = tx.date.split('T')[0];
-    const map = getCashFlowMap(tx.currency);
-    const impact = tx.side === 'K' ? -tx.total : tx.total;
-    map.set(date, (map.get(date) || 0) + impact);
-  }
+  // Transaction cash impacts — księgowane PO fetchu historii FX (pętla niżej, za
+  // await Promise.all), bo rozliczenie w paymentCurrency bez kursu brokera wymaga
+  // dziennego kursu historycznego.
 
   // Get unique ISINs that were ever held (ISINs don't change with split adjustment)
   const allIsins = new Set<string>();
@@ -1589,7 +1585,12 @@ export async function computePortfolioHistory(
   }
   const allCurrencies = new Set<string>();
   for (const op of operations) allCurrencies.add(normalizeCurrency(op.currency));
-  for (const tx of transactions) allCurrencies.add(normalizeCurrency(tx.currency));
+  for (const tx of transactions) {
+    allCurrencies.add(normalizeCurrency(tx.currency));
+    // Waluta rozliczenia — księgowanie cash flow po stronie payment wymaga pary FX
+    // także wtedy, gdy żadna pozycja nie jest w niej kwotowana.
+    if (tx.paymentCurrency) allCurrencies.add(normalizeCurrency(tx.paymentCurrency));
+  }
   // Also include currencies from ticker map (stock prices in foreign currency)
   for (const entry of tickerMap.values()) {
     if (entry.currency) allCurrencies.add(normalizeCurrency(entry.currency));
@@ -1627,6 +1628,55 @@ export async function computePortfolioHistory(
   }
 
   await Promise.all(fetchPromises);
+
+  // ── Transaction cash impacts — księgowane w walucie ROZLICZENIA ──
+  // Historycznie total szedł zawsze w tx.currency (walucie notowania), co dla kupna
+  // zagranicznego z konta PLN tworzyło fantomowe ujemne saldo quote (np. −3795 USD),
+  // a wpłacony PLN zostawał nietknięty — rewaluacja fantomu dziennym kursem
+  // przekłamywała ekspozycję FX portfela. Reguły:
+  //   payment == quote           → jak dotąd: ±total w tx.currency,
+  //   fxRate transakcji (>0)     → ±total×fxRate w paymentCurrency (kurs brokera,
+  //                                konwencja payment-per-quote),
+  //   inaczej                    → ±total×(quotePLN/paymentPLN) po dziennym kursie
+  //                                z pobranej historii (forward-fill ≤ data) — m.in.
+  //                                mBank (payment=PLN bez kursu w CSV),
+  //   brak kursów w historii     → fallback do starego zachowania (quote currency).
+  // Pętla działa na RAW transactions (syntetyczne dzieci spin-offów nie dotykają cash).
+  const fxPlnAt = (cur: string, date: string): number | null => {
+    if (cur === 'PLN') return 1;
+    const map = historicalPrices.get(`${cur}PLN=X`);
+    if (!map || map.size === 0) return null;
+    const exact = map.get(date);
+    if (exact !== undefined) return exact;
+    let best: string | null = null;
+    for (const d of map.keys()) {
+      if (d <= date && (best === null || d > best)) best = d;
+    }
+    return best !== null ? (map.get(best) ?? null) : null;
+  };
+  for (const tx of transactions) {
+    const date = tx.date.split('T')[0];
+    const sign = tx.side === 'K' ? -1 : 1;
+    const quoteCcy = normalizeCurrency(tx.currency);
+    const payCcy = normalizeCurrency(tx.paymentCurrency || tx.currency);
+    let bookCcy = tx.currency;
+    let amount = tx.total;
+    if (payCcy !== quoteCcy) {
+      if (tx.fxRate && tx.fxRate > 0) {
+        bookCcy = payCcy;
+        amount = roundTo2(tx.total * tx.fxRate);
+      } else {
+        const quotePln = fxPlnAt(quoteCcy, date);
+        const payPln = fxPlnAt(payCcy, date);
+        if (quotePln !== null && payPln !== null && payPln > 0) {
+          bookCcy = payCcy;
+          amount = roundTo2((tx.total * quotePln) / payPln);
+        }
+      }
+    }
+    const map = getCashFlowMap(bookCcy);
+    map.set(date, (map.get(date) || 0) + sign * amount);
+  }
 
   // Detect stock splits by comparing transaction prices with provider prices.
   // Merge with any previously saved/manual splits passed in.
@@ -2206,10 +2256,20 @@ export function computeCashBalances(
     add(op.currency, op.amount);
   }
 
-  // Transactions: buy = cash outflow, sell = cash inflow
+  // Transactions: buy = cash outflow, sell = cash inflow.
+  // Rozliczenie w innej walucie ze znanym kursem brokera → księgujemy po stronie
+  // paymentCurrency (spójnie z computePortfolioHistory). Bez fxRate (np. mBank)
+  // zostaje waluta notowania — funkcja jest synchroniczna i nie ma dostępu do
+  // dziennych kursów historycznych; rozbieżność wobec historii świadoma (follow-up:
+  // przekazanie lookupu kursów).
   for (const tx of transactions) {
-    const impact = tx.side === 'K' ? -tx.total : tx.total;
-    add(tx.currency, impact);
+    const sign = tx.side === 'K' ? -1 : 1;
+    const payCcy = (tx.paymentCurrency || tx.currency).toUpperCase();
+    if (payCcy !== tx.currency.toUpperCase() && tx.fxRate && tx.fxRate > 0) {
+      add(payCcy, sign * roundTo2(tx.total * tx.fxRate));
+    } else {
+      add(tx.currency, sign * tx.total);
+    }
   }
 
   // Remove currencies with negligible balances (< 0.01)
