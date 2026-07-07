@@ -55,7 +55,10 @@ const SEC_FEE_RE = /Sec Fee adj (\S+) (\d{8})/;
 
 // ── Currency mapping ────────────────────────────────────────────────────────
 
-const SUFFIX_CURRENCY: Record<string, string> = {
+/** Mapa suffix kraju → waluta notowania. Eksportowana: profil generyczny XTB
+ *  (xtb-cash-operations.profile) deklaruje ją w quoteCurrencyFromSettlement —
+ *  identyczna etykieta pierwszego rzutu to warunek parytetu compare:generic. */
+export const SUFFIX_CURRENCY: Record<string, string> = {
   PL: 'PLN',
   US: 'USD',
   NL: 'EUR',

@@ -13,7 +13,7 @@ import type {
 } from 'shared';
 import { applyIsinAlias, isBondInstrument } from 'shared';
 import type { OperationsParseResult, TransactionsParseResult } from '../registry.js';
-import { computeTotal, parseNumber, roundTo2, validateTradeFields } from '../utils.js';
+import { computeTotal, parseNumber, roundFxRate, roundTo2, validateTradeFields } from '../utils.js';
 import { classifyRow, evalCondition } from './classification.js';
 import { pairDividendsWithWht, pairFxLegs, type PendingCashRow } from './pairing.js';
 import {
@@ -121,6 +121,31 @@ export function parseWithProfile(
   const rowTraces: RowTrace[] = [];
   const warnings: string[] = [];
 
+  // ── Pre-pass: mapa P/L wierszy 'trade_close_pl' (pairing.tradeClosePl) ──
+  // Wiersz P/L bywa w pliku PO sprzedaży — mapa musi istnieć zanim zbudujemy
+  // transakcje, stąd osobny przebieg (klasyfikacja liczona 2× tylko przy
+  // włączonym parowaniu). Kwoty pod tym samym kluczem SUMUJĄ się (partial
+  // fille) — lustro closeTradePL parsera wbudowanego XTB.
+  const closePlPairing = profile.pairing.tradeClosePl;
+  const closePlByKey = new Map<string, number>();
+  if (closePlPairing && profile.trade) {
+    for (let i = headerIdx + 1; i < rows.length; i++) {
+      const row = rows[i].map((c) => String(c ?? ''));
+      if (profile.file.footerStop && evalCondition(profile.file.footerStop, row, resolver)) break;
+      if (profile.file.skipRows.some((cond) => evalCondition(cond, row, resolver))) continue;
+      const cls = classifyRow(profile.classify, profile.defaultClass, row, resolver);
+      if (cls.emit !== 'trade_close_pl') continue;
+      const key = buildTradePairKey(closePlPairing.matchBy, row, profile, resolver);
+      if (key === null) continue;
+      const amount = resolveNumber(closePlPairing.amount, row, resolver);
+      if (!Number.isFinite(amount)) continue;
+      closePlByKey.set(key, (closePlByKey.get(key) ?? 0) + amount);
+    }
+  }
+  // Pamięć decyzji walutowej per symbol (quoteCurrencyFromSettlement) — sprzedaż
+  // bez sparowanego P/L dziedziczy etykietę z wcześniejszych wierszy symbolu.
+  const symbolFxMemory = new Map<string, { foreign: boolean; currency: string }>();
+
   // Bufory parowania.
   const pendingDividends: PendingCashRow[] = [];
   const pendingWht: PendingCashRow[] = [];
@@ -178,6 +203,12 @@ export function parseWithProfile(
       continue;
     }
 
+    if (cls.emit === 'trade_close_pl') {
+      // Skonsumowany przez pairing.tradeClosePl w pre-passie — nic nie emituje.
+      rowTraces.push({ row: rowNum, matchedRuleId: cls.ruleId, emitted: 'trade_close_pl' });
+      continue;
+    }
+
     if (cls.emit === 'trade') {
       const outcome = buildTransaction(
         row,
@@ -186,6 +217,7 @@ export function parseWithProfile(
         resolver,
         normalizeCurrency,
         importBatch,
+        { closePlByKey, symbolFx: symbolFxMemory },
       );
       if (outcome.ok) {
         transactions.push(outcome.transaction);
@@ -364,6 +396,118 @@ type TransactionOutcome =
   | { ok: true; transaction: Transaction }
   | { ok: false; skipped: SkippedRow; warning?: string };
 
+/** Klucz parowania trade ↔ close-P/L z pól matchBy — komponenty rozwiązywane
+ *  z ŹRÓDEŁ mapowania trade (paperName/isin/date), więc wiersz sprzedaży i
+ *  wiersz P/L liczą go identycznie. null, gdy któregoś komponentu brak. */
+function buildTradePairKey(
+  matchBy: ReadonlyArray<'isin' | 'ticker' | 'date' | 'time'>,
+  row: string[],
+  profile: ImportProfile,
+  resolver: ColumnResolver,
+): string | null {
+  const trade = profile.trade!;
+  const parts: string[] = [];
+  for (const k of matchBy) {
+    if (k === 'ticker') {
+      const v = resolveValueSource(trade.paperName, row, resolver);
+      if (!v) return null;
+      parts.push(v);
+    } else if (k === 'isin') {
+      const v = trade.isin ? resolveValueSource(trade.isin, row, resolver) : undefined;
+      if (!v) return null;
+      parts.push(v);
+    } else {
+      const iso = resolveDate(trade.date, row, resolver);
+      if (!iso) return null;
+      parts.push(k === 'date' ? iso.slice(0, 10) : iso);
+    }
+  }
+  return parts.join('|');
+}
+
+/** Stan detekcji walut współdzielony między wierszami jednego parsowania. */
+interface FxDetectState {
+  closePlByKey: Map<string, number>;
+  symbolFx: Map<string, { foreign: boolean; currency: string }>;
+}
+
+type SettlementDecision =
+  | { kind: 'same' } // notowanie w walucie konta — mapowanie currency bez zmian
+  | { kind: 'foreign'; currency: string; fxRate?: number }
+  | { kind: 'convert'; price: number }; // etykieta nieznana — cena przeliczona na walutę konta
+
+/** Detekcja waluty notowania z kwoty rozliczenia — lustro resolveTradeCurrency
+ *  z parsera wbudowanego XTB (identyczne progi i zaokrąglenie fxRate =
+ *  warunek parytetu compare:generic). */
+function detectSettlementCurrency(args: {
+  qcs: NonNullable<NonNullable<ImportProfile['trade']>['quoteCurrencyFromSettlement']>;
+  side: 'K' | 'S';
+  paperName: string;
+  quantity: number;
+  price: number;
+  baseCurrency: string;
+  row: string[];
+  profile: ImportProfile;
+  resolver: ColumnResolver;
+  state: FxDetectState;
+}): SettlementDecision {
+  const { qcs, side, paperName, quantity, price, baseCurrency, row, profile, resolver, state } =
+    args;
+  const amountAbs = Math.abs(resolveNumber(qcs.settlementAmount, row, resolver));
+
+  // Kwota rozliczenia odpowiadająca qty×price: kupno — |Amount|; sprzedaż —
+  // |Amount| (zwrócony nominał otwarcia) + P/L z pairing.tradeClosePl.
+  let settleValue: number | null = null;
+  if (amountAbs > 0) {
+    if (side === 'K') {
+      settleValue = amountAbs;
+    } else if (profile.pairing.tradeClosePl) {
+      const key = buildTradePairKey(profile.pairing.tradeClosePl.matchBy, row, profile, resolver);
+      const pl = key !== null ? state.closePlByKey.get(key) : undefined;
+      if (pl !== undefined && Number.isFinite(pl) && amountAbs + pl > 0) {
+        settleValue = amountAbs + pl;
+      }
+    }
+  }
+
+  if (settleValue === null) {
+    if (side === 'S' && amountAbs > 0) {
+      const prev = state.symbolFx.get(paperName);
+      if (prev?.foreign) return { kind: 'foreign', currency: prev.currency };
+    }
+    return { kind: 'same' };
+  }
+
+  const implied = settleValue / (quantity * price);
+  if (Math.abs(implied - 1) <= qcs.tolerance) {
+    state.symbolFx.set(paperName, { foreign: false, currency: baseCurrency });
+    return { kind: 'same' };
+  }
+
+  // Etykieta waluty obcej: dokładny symbol → sufiks kraju → fallback. Ścieżka
+  // sufiksowa tylko dla wzorca ticker.XX (jak parser wbudowany, /\.\w{2}$/) —
+  // nazwa spółki z kropką ("ABC S.A.") nie może wpaść w fallback sufiksu.
+  let label = qcs.symbolCurrency?.[paperName];
+  if (!label && /\.\w{2}$/.test(paperName)) {
+    const suffix = paperName.slice(paperName.lastIndexOf('.') + 1).toUpperCase();
+    label = qcs.suffixCurrency?.[suffix] ?? qcs.suffixFallback;
+  }
+  if (label && label.toUpperCase() === baseCurrency) {
+    // Anomalia: etykieta twierdzi "waluta konta", a kwoty mówią co innego —
+    // status quo (lustro ścieżki anomalii parsera wbudowanego).
+    return { kind: 'same' };
+  }
+  if (!label) {
+    return qcs.unlabeledFallback === 'keep'
+      ? { kind: 'same' }
+      : { kind: 'convert', price: settleValue / quantity };
+  }
+
+  const currency = label.toUpperCase();
+  state.symbolFx.set(paperName, { foreign: true, currency });
+  return { kind: 'foreign', currency, fxRate: roundFxRate(implied) };
+}
+
 function buildTransaction(
   row: string[],
   rowNum: number,
@@ -371,6 +515,7 @@ function buildTransaction(
   resolver: ColumnResolver,
   normalizeCurrency: (raw: string | undefined) => string,
   importBatch: string,
+  fxState: FxDetectState,
 ): TransactionOutcome {
   const trade = profile.trade!; // superRefine schematu gwarantuje obecność
 
@@ -409,8 +554,37 @@ function buildTransaction(
   const currency = isGbx ? 'GBP' : currencyNorm;
 
   const priceRaw = Math.abs(resolveNumber(trade.price, row, resolver));
-  const price = isGbx ? priceRaw / 100 : priceRaw;
+  let price = isGbx ? priceRaw / 100 : priceRaw;
   if (price <= 0) return skip('invalid_price');
+
+  // Detekcja waluty notowania z kwoty rozliczenia (wzorzec XTB — patrz spec
+  // quoteCurrencyFromSettlement). Może nadpisać etykietę waluty (foreign),
+  // dodać fxRate albo przeliczyć cenę na walutę konta (etykieta nieznana).
+  let effectiveCurrency = currency;
+  let detectedFxRate: number | undefined;
+  let fxDetected = false;
+  if (trade.quoteCurrencyFromSettlement) {
+    const d = detectSettlementCurrency({
+      qcs: trade.quoteCurrencyFromSettlement,
+      side,
+      paperName: paperNameRaw,
+      quantity,
+      price,
+      baseCurrency: currency,
+      row,
+      profile,
+      resolver,
+      state: fxState,
+    });
+    if (d.kind === 'foreign') {
+      effectiveCurrency = d.currency;
+      detectedFxRate = d.fxRate;
+      fxDetected = true;
+    } else if (d.kind === 'convert') {
+      price = d.price;
+      fxDetected = true;
+    }
+  }
 
   // Aliasy ISIN (zdarzenia korporacyjne, np. redomiciliacja) — broker-niezależne.
   // Dla pseudo-ISIN-ów (= paperName) mapa kluczowana prawdziwymi ISIN-ami nie trafi → no-op.
@@ -436,7 +610,10 @@ function buildTransaction(
   // Cross-check mapowania kolumn: wartość z CSV powinna odpowiadać qty×cena.
   // Pomijamy dla obligacji (kurs w % nominału — wartość liczona inaczej) oraz gdy
   // value jest wyliczane (tożsamość). Tolerancja: max(0.05, 1% wartości).
-  if (trade.value && category !== 'bond') {
+  // Przy wykrytym FX (quoteCurrencyFromSettlement) cross-check pomijamy —
+  // kolumna wartości jest wtedy w walucie konta, a qty×cena w walucie
+  // notowania; rozjazd jest oczekiwany, nie błędny.
+  if (trade.value && category !== 'bond' && !fxDetected) {
     const expected = quantity * price;
     if (Math.abs(value - expected) > Math.max(0.05, 0.01 * Math.max(value, expected))) {
       return skip(
@@ -465,6 +642,9 @@ function buildTransaction(
   if (fxRate !== undefined && trade.fxRateDirection === 'quotePerPayment') {
     fxRate = (isGbx ? 100 : 1) / fxRate;
   }
+  // Kurs implikowany z detekcji wygrywa z mapowaniem kolumnowym (jeśli profil
+  // miałby oba, detekcja jest świeższą informacją z tego samego wiersza).
+  if (detectedFxRate !== undefined) fxRate = detectedFxRate;
 
   return {
     ok: true,
@@ -478,7 +658,7 @@ function buildTransaction(
       value,
       commission,
       total,
-      currency,
+      currency: effectiveCurrency,
       paymentCurrency,
       fxRate,
       category,

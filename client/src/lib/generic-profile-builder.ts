@@ -99,6 +99,9 @@ export const ROW_CLASS_LABELS: Record<RowClass, string> = {
   trade_fee: 'Koszt pozycji (swap)',
   commission_refund: 'Zwrot prowizji',
   capital_return: 'Zwrot kapitału',
+  // Poza RULE_CLASSES: kreator ręczny nie konfiguruje pairing.tradeClosePl —
+  // klasa używana przez profile golden/AI (XTB), etykieta tylko do podglądu.
+  trade_close_pl: 'P/L zamknięcia (parowany ze sprzedażą)',
   other: 'Inna operacja',
   skip: 'Pomiń wiersz',
 };

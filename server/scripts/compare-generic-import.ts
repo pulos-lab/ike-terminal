@@ -32,7 +32,7 @@ import { isBossaFormat, parseBossaTransactions } from '../src/parsers/bossa-tran
 import { isBossaOperationsFormat, parseBossaOperations } from '../src/parsers/bossa-operations.js';
 import { isDegiroFormat, parseDegiroTransactions } from '../src/parsers/degiro-transactions.js';
 import { isDegiroAccountFormat, parseDegiroOperations } from '../src/parsers/degiro-operations.js';
-import { isXtbFormat, parseXtbFile } from '../src/parsers/xtb-transactions.js';
+import { isXtbFormat, parseXtbFile, SUFFIX_CURRENCY } from '../src/parsers/xtb-transactions.js';
 import { cellToString, loadXlsxSheets } from '../src/parsers/xlsx-to-csv.js';
 import { parseWithProfile } from '../src/parsers/generic/engine.js';
 import { GenericParseError } from '../src/parsers/generic/value-parsers.js';
@@ -167,8 +167,10 @@ function xtbTickerToYahoo(symbol: string): string {
   return suffix !== undefined ? symbol.slice(0, dot) + suffix : symbol.slice(0, dot);
 }
 
-async function xtbNameToTickerMap(buffer: Buffer): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+async function xtbNameToTickerMap(
+  buffer: Buffer,
+): Promise<Map<string, { yahoo: string; xtb: string }>> {
+  const map = new Map<string, { yahoo: string; xtb: string }>();
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer as unknown as ArrayBuffer);
   const ws = wb.worksheets.find((w) => w.name.toUpperCase().includes('CLOSED POSITION'));
@@ -189,7 +191,10 @@ async function xtbNameToTickerMap(buffer: Buffer): Promise<Map<string, string>> 
     }
     const name = cells[nameCol];
     const ticker = cells[tickerCol];
-    if (name && ticker && !map.has(name)) map.set(name, xtbTickerToYahoo(ticker));
+    // Surowy ticker XTB (ETL.FR) zostaje obok formy Yahoo (ETL.PA) — waluta
+    // notowania mapuje się z sufiksu XTB (jak instrumentCurrency w parserze).
+    if (name && ticker && !map.has(name))
+      map.set(name, { yahoo: xtbTickerToYahoo(ticker), xtb: ticker });
   });
   return map;
 }
@@ -213,7 +218,24 @@ async function compareXtbFile(file: string, rel: string): Promise<void> {
   // Instrument (nazwa) — inny fingerprint → inny wariant profilu (zgodnie z projektem).
   const headerLine = csv.split('\n').find((l) => l.includes('Type') && l.includes('Time')) ?? '';
   const hasTickerColumn = headerLine.split(';').some((c) => c.trim() === 'Ticker');
-  const goldenProfile = buildXtbCashOperationsProfile(accountCurrency, { hasTickerColumn });
+  // Wariant z nazwami spółek: etykietę waluty przy wykrytym FX profil bierze
+  // z mapy symbol→waluta zbudowanej cross-sheet z Closed Positions (lustro
+  // tickerLookup parsera wbudowanego; cross-sheet = poza spec v1, jak nameMap).
+  const nameMapForCurrency = hasTickerColumn
+    ? new Map<string, { yahoo: string; xtb: string }>()
+    : await xtbNameToTickerMap(buffer);
+  const symbolCurrency: Record<string, string> = {};
+  for (const [name, ticker] of nameMapForCurrency) {
+    // Waluta z SUROWEGO sufiksu XTB (ETL.FR → EUR), nie z formy Yahoo (ETL.PA)
+    // — lustro instrumentCurrency(cpTicker) parsera wbudowanego.
+    const dot = ticker.xtb.lastIndexOf('.');
+    const suffix = dot === -1 ? '' : ticker.xtb.slice(dot + 1).toUpperCase();
+    symbolCurrency[name] = SUFFIX_CURRENCY[suffix] ?? 'USD';
+  }
+  const goldenProfile = buildXtbCashOperationsProfile(accountCurrency, {
+    hasTickerColumn,
+    ...(Object.keys(symbolCurrency).length > 0 ? { symbolCurrency } : {}),
+  });
   if (hasTickerColumn) {
     console.log('  ℹ️  Wariant nagłówka z kolumną Ticker — profil czyta symbole z Ticker');
   }
@@ -235,7 +257,7 @@ async function compareXtbFile(file: string, rel: string): Promise<void> {
   }
   const mapName = (n: string) => {
     const fromSheet = nameMap.get(n);
-    if (fromSheet) return fromSheet;
+    if (fromSheet) return fromSheet.yahoo;
     return /\.[A-Za-z]{2}$/.test(n) ? xtbTickerToYahoo(n) : n;
   };
   const mappedTx = generic.transactions.data.map((t) => ({
