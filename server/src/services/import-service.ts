@@ -637,7 +637,11 @@ async function importCombinedFiles(
     ...insertedTxDuplicates,
     ...insertedOpsDuplicates,
   ];
-  const orphanedSells = detectOrphanedSells(pid);
+  // detectOrphanedSells liczy surowe sumy K/S — sprzedaż po splicie "przekracza" kupno
+  // sprzed splitu. Dla ISIN-ów ze splitem zapisanym w tym imporcie (realne ex-daty z
+  // wyciągu) korektę robi silnik, więc warning byłby fałszywym alarmem.
+  const splitIsins = new Set(allSplits.map((s) => s.isin));
+  const orphanedSells = detectOrphanedSells(pid).filter((o) => !splitIsins.has(o.isin));
 
   return {
     success: true,

@@ -30,7 +30,7 @@ import {
 } from '../db/ticker-map-repo.js';
 import { resolveSector } from '../services/sector-resolver.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
-import { getOptionContractsMap } from '../db/option-contracts-repo.js';
+import { getOptionContractsMap, upsertOptionContracts } from '../db/option-contracts-repo.js';
 import { getSpinOffs, updateSpinOffStatus } from '../db/spin-offs-repo.js';
 import type {
   DividendInput,
@@ -64,7 +64,15 @@ import {
   computeFifoMatching,
   computeSmartDeletePlan,
 } from '../services/portfolio-engine.js';
-import { BENCHMARKS, type BenchmarkKey, findBondByTicker, inferBondNominal } from 'shared';
+import {
+  BENCHMARKS,
+  type BenchmarkKey,
+  findBondByTicker,
+  inferBondNominal,
+  toOccTicker,
+  toOptionPseudoIsin,
+  optionDisplayName,
+} from 'shared';
 import { computePortfolioHistoryMemoized } from '../services/history-memo.js';
 import { annotateClosedTradesPln, summarizeDividendsInPln } from '../services/fx-history.js';
 import {
@@ -1286,13 +1294,87 @@ router.post(
       paymentCurrency,
       fxRate,
       category,
+      option,
       confirmSpinOff,
     } = req.body as TransactionInput;
-    if (!date || !ticker || !side || !quantity || price == null) {
+    if (!date || (!ticker && !option) || !side || !quantity || price == null) {
       return res.status(400).json({ error: 'Wymagane pola: date, ticker, side, quantity, price' });
     }
     if (side !== 'K' && side !== 'S') {
       return res.status(400).json({ error: 'Pole side musi być K lub S' });
+    }
+
+    // Opcje: kontrakt identyfikowany parametrami (underlying/strike/expiry/typ), nie tickerem.
+    // Generujemy ticker OCC + pseudo-ISIN i seedujemy option_contracts + ticker_map —
+    // dokładnie jak ścieżka importu IBKR, więc wycena live z Yahoo działa od razu.
+    // Sprzedaż bez wcześniejszego kupna = otwarcie pozycji krótkiej (silnik to wspiera).
+    if (category === 'option') {
+      if (
+        !option ||
+        !option.underlying?.trim() ||
+        !option.expiry ||
+        !option.strike ||
+        option.strike <= 0 ||
+        (option.optionType !== 'C' && option.optionType !== 'P')
+      ) {
+        return res.status(400).json({
+          error:
+            'Dla opcji wymagane są parametry kontraktu: underlying, strike > 0, expiry, optionType (C/P)',
+        });
+      }
+      const parsed = {
+        underlying: option.underlying.trim().toUpperCase(),
+        expiry: option.expiry,
+        strike: option.strike,
+        optionType: option.optionType,
+      };
+      const multiplier = option.multiplier && option.multiplier > 0 ? option.multiplier : 100;
+      const occTicker = toOccTicker(parsed);
+      const pseudoIsin = toOptionPseudoIsin(parsed);
+      const optCurrency = (overrideCurrency || 'USD').toUpperCase();
+      const optEntry: TickerMapEntry = {
+        isin: pseudoIsin,
+        ticker: occTicker,
+        name: optionDisplayName(parsed),
+        exchange: 'OTHER',
+        currency: optCurrency,
+        priceSource: 'yahoo',
+      };
+      upsertTickerMapEntry(optEntry, pid);
+      upsertOptionContracts(pid, [
+        {
+          isin: pseudoIsin,
+          occTicker,
+          underlying: parsed.underlying,
+          expiry: parsed.expiry,
+          strike: parsed.strike,
+          optionType: parsed.optionType,
+          multiplier,
+          currency: optCurrency,
+        },
+      ]);
+
+      const value = quantity * price * multiplier;
+      const comm = commission || 0;
+      const id = insertTransaction(
+        {
+          date,
+          paperName: optEntry.name,
+          isin: pseudoIsin,
+          quantity,
+          side,
+          price,
+          value: Math.round(value * 100) / 100,
+          commission: comm,
+          total: Math.round((side === 'K' ? value + comm : value - comm) * 100) / 100,
+          currency: optCurrency,
+          paymentCurrency: paymentCurrency || optCurrency,
+          category: 'option',
+          source: 'manual',
+        },
+        pid,
+      );
+      return res.json({ id });
     }
 
     // Look up ticker in ticker_map

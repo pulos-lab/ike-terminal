@@ -193,6 +193,14 @@ export const api = {
     paymentCurrency?: string;
     fxRate?: number;
     category?: string;
+    /** Parametry kontraktu opcyjnego — wymagane dla category='option' (backend generuje ticker OCC). */
+    option?: {
+      underlying: string;
+      strike: number;
+      expiry: string;
+      optionType: 'C' | 'P';
+      multiplier?: number;
+    };
     /** Potwierdzenie dodania waloru będącego dzieckiem zastosowanego spin-offu. */
     confirmSpinOff?: boolean;
   }) =>

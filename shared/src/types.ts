@@ -586,6 +586,21 @@ export interface TransactionInput {
   fxRate?: number;
   category?: InstrumentCategory;
   /**
+   * Parametry kontraktu — wymagane gdy `category === 'option'`. Backend generuje z nich
+   * ticker OCC + pseudo-ISIN `OPT:{OCC}` i zapisuje kontrakt w `option_contracts`
+   * (identycznie jak import IBKR). `ticker` w body jest wtedy ignorowany.
+   * Cena transakcji = premia per akcja; wartość = qty × premia × multiplier.
+   */
+  option?: {
+    underlying: string;
+    strike: number;
+    /** YYYY-MM-DD */
+    expiry: string;
+    optionType: 'C' | 'P';
+    /** Domyślnie 100. */
+    multiplier?: number;
+  };
+  /**
    * Potwierdzenie użytkownika, że świadomie dodaje transakcję na walor będący
    * dzieckiem zastosowanego spin-offu (pozycja mogła już powstać automatycznie).
    * Bez tego pola serwer odpowiada `{ requiresConfirmation: true, warning }`.
