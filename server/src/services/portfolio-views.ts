@@ -52,6 +52,46 @@ export function loadSpinOffsForEngine(pid: string): AppliedSpinOff[] {
   return getSpinOffs(pid);
 }
 
+/**
+ * Spin-offy do badge'a "skąd wzięła się ta pozycja" (30 dni — rzadsze niż
+ * splity, wyjaśnienie powinno wisieć dłużej). Okno liczone od ex-date LUB od
+ * ZASTOSOWANIA: zdarzenie dodane do mapy po miesiącach (Syn2bio: ex 2026-04-02,
+ * wpis w mapie 2026-07-08) aplikuje się długo po ex — pozycja dziecka pojawia
+ * się użytkownikowi dopiero przy aplikacji i wtedy badge musi być widoczny.
+ * Eksport dla testów; `now` wstrzykiwane wyłącznie testowo.
+ */
+export function selectRecentSpinOffs(
+  spinOffs: AppliedSpinOff[],
+  now: Date = new Date(),
+): Array<{
+  parentIsin: string;
+  parentTicker: string;
+  childIsin: string;
+  childTicker: string;
+  exDate: string;
+  ratio: number;
+  allocationPct: number;
+}> {
+  const monthAgo = new Date(now);
+  monthAgo.setDate(monthAgo.getDate() - 30);
+  const monthAgoStr = monthAgo.toISOString().split('T')[0];
+  return spinOffs
+    .filter(
+      (s) =>
+        s.status === 'applied' &&
+        (s.exDate >= monthAgoStr || (s.appliedAt ?? '').slice(0, 10) >= monthAgoStr),
+    )
+    .map((s) => ({
+      parentIsin: s.parentIsin,
+      parentTicker: s.parentTicker,
+      childIsin: s.childIsin,
+      childTicker: s.childTicker,
+      exDate: s.exDate,
+      ratio: s.ratio,
+      allocationPct: s.allocationPct,
+    }));
+}
+
 /** In-memory flag: per-portfolio dedupe dla lazy-sector-backfill.
  *  Uruchamiamy backfill tylko raz per proces na portfel — wystarczy żeby
  *  nadrobić brakujące sektory po upgradzie kodu. Yahoo assetProfile i tak
@@ -247,23 +287,7 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     .filter((s) => s.date >= weekAgoStr)
     .map((s) => ({ isin: s.isin, ticker: s.ticker, date: s.date, ratio: s.ratio }));
 
-  // Recent spin-offs (30 dni — rzadsze niż splity, a wyjaśnienie skąd wzięła
-  // się nowa pozycja powinno wisieć dłużej; okno pokrywa też odroczoną
-  // aplikację kilka dni po ex)
-  const monthAgo = new Date();
-  monthAgo.setDate(monthAgo.getDate() - 30);
-  const monthAgoStr = monthAgo.toISOString().split('T')[0];
-  const recentSpinOffs = spinOffs
-    .filter((s) => s.status === 'applied' && s.exDate >= monthAgoStr)
-    .map((s) => ({
-      parentIsin: s.parentIsin,
-      parentTicker: s.parentTicker,
-      childIsin: s.childIsin,
-      childTicker: s.childTicker,
-      exDate: s.exDate,
-      ratio: s.ratio,
-      allocationPct: s.allocationPct,
-    }));
+  const recentSpinOffs = selectRecentSpinOffs(spinOffs);
 
   const baseCurrency = detectBaseCurrency(operations);
 
