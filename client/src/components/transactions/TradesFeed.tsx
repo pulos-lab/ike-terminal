@@ -29,7 +29,7 @@ import { DeleteTransactionDialog } from './DeleteTransactionDialog';
 import { cn } from '@/lib/utils';
 import { Search, Info, Pencil, Trash2, Check, X, Loader2 } from 'lucide-react';
 import type { TransactionWithMeta } from 'shared';
-import { displayOptionTicker } from 'shared';
+import { TickerLabel } from '@/components/ui/ticker-label';
 
 // useSyncExternalStore na matchMedia — idiomatic React 18. Tailwind md: breakpoint = 768px.
 // Renderujemy TYLKO jeden widok (desktop ALBO mobile), a nie oba z display hacks — eliminuje
@@ -327,9 +327,7 @@ export const TradesFeed = memo(function TradesFeed() {
                   className="flex flex-col gap-2 rounded-xl bg-card border border-primary/40 p-3"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="font-mono font-semibold text-sm">
-                      {displayOptionTicker(tx.ticker)}
-                    </span>
+                    <TickerLabel ticker={tx.ticker} className="font-mono font-semibold text-sm" />
                     <span className="text-[10px] text-muted-foreground">Edycja</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -481,9 +479,7 @@ export const TradesFeed = memo(function TradesFeed() {
                 <SideChip side={tx.side} size="lg" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 mb-0.5">
-                    <span className="font-mono font-semibold text-sm">
-                      {displayOptionTicker(tx.ticker)}
-                    </span>
+                    <TickerLabel ticker={tx.ticker} className="font-mono font-semibold text-sm" />
                     {tx.syntheticOrigin && <SyntheticOriginTooltip origin={tx.syntheticOrigin} />}
                     {autoFx ? (
                       <Tooltip delayDuration={150}>
@@ -786,7 +782,7 @@ const NormalRow = memo(function NormalRow({ tx, onEdit, onDelete }: NormalRowPro
       <td className="py-2.5 pr-4 text-muted-foreground tabular-nums">{formatDate(tx.date)}</td>
       <td className="py-2.5 pr-4 font-mono font-semibold">
         <span className="inline-flex items-center gap-1">
-          {displayOptionTicker(tx.ticker)}
+          <TickerLabel ticker={tx.ticker} />
           {tx.syntheticOrigin && <SyntheticOriginTooltip origin={tx.syntheticOrigin} />}
         </span>
       </td>
@@ -883,7 +879,7 @@ function EditRow({
         />
       </td>
       <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">
-        {displayOptionTicker(tx.ticker)}
+        <TickerLabel ticker={tx.ticker} />
       </td>
       <td className="py-2 pr-4">
         <Select
