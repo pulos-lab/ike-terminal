@@ -10,6 +10,8 @@ process.env.DATA_DIR = tmpDir;
 
 // ── Mocki sieci ──
 const mockHistoryDirect = vi.fn<(ticker: string, date: string) => Promise<number | null>>();
+const mockHistory =
+  vi.fn<(ticker: string, start: string) => Promise<Array<{ date: string; close: number }>>>();
 const mockYahooPrice = vi.fn();
 const mockTickerName = vi.fn();
 
@@ -19,6 +21,9 @@ vi.mock('../yahoo-finance.js', async (importOriginal) => {
     ...orig,
     fetchYahooPrice: (...args: unknown[]) => mockYahooPrice(...args),
     fetchYahooHistoryDirect: (ticker: string, date: string) => mockHistoryDirect(ticker, date),
+    // Fallback firstCloseAfter (dziecko debiutuje po ex) — bez mocka test
+    // strzelałby w prawdziwe Yahoo i znajdował realne notowania.
+    fetchYahooHistory: (ticker: string, start: string) => mockHistory(ticker, start),
   };
 });
 vi.mock('../ticker-search.js', async (importOriginal) => {
@@ -97,11 +102,13 @@ beforeEach(() => {
   pid = `test-spinoff-${++pidCounter}`;
   applier._resetSpinOffDeferrals();
   mockHistoryDirect.mockReset();
+  mockHistory.mockReset();
   mockYahooPrice.mockReset();
   mockTickerName.mockReset();
   mockYahooPrice.mockResolvedValue({ price: 41, currency: 'USD' });
   mockTickerName.mockResolvedValue('Mobility Global Inc.');
   mockHistoryDirect.mockImplementation(async (ticker) => (ticker === 'SPGI' ? 455 : 41));
+  mockHistory.mockResolvedValue([]);
 });
 
 describe('applyPendingSpinOffs', () => {
@@ -179,6 +186,46 @@ describe('applyPendingSpinOffs', () => {
       [CANDIDATE],
     );
     expect(appliedNow).toHaveLength(1);
+  });
+
+  it('dziecko debiutuje PO dniu ex (wzorzec GPW): frakcja z pierwszego notowania dziecka i kursu rodzica z tej samej sesji', async () => {
+    // Syn2bio/Creotech Quantum: debiut ~2 tygodnie po ex — fetchYahooHistoryDirect
+    // (okno 5 dni) nie widzi dziecka; fallback bierze pierwszy close ≤30 dni po ex
+    // i kurs rodzica z TEGO SAMEGO dnia.
+    const txs = [makeTx({ side: 'K', quantity: 10, price: 500 })];
+    mockHistoryDirect.mockImplementation(async (ticker, date) => {
+      if (ticker !== 'SPGI') return null; // dziecko: brak notowań przy ex
+      return date === '2026-07-15' ? 440 : 455; // rodzic: kurs w dniu debiutu dziecka vs ex
+    });
+    mockHistory.mockImplementation(async (ticker) =>
+      ticker === 'MBGL' ? [{ date: '2026-07-15', close: 110 }] : [],
+    );
+
+    const { appliedNow } = await applier.applyPendingSpinOffs(
+      pid,
+      txs,
+      makeTickerMap(),
+      [],
+      [CANDIDATE],
+    );
+
+    expect(appliedNow).toHaveLength(1);
+    const row = repo.getSpinOffs(pid)[0];
+    // frac = 110 / (440 + 110) = 0.2 — oba kursy z sesji debiutu (post-ex)
+    expect(row.allocationPct).toBeCloseTo(0.2, 10);
+    expect(row.parentPriceUsed).toBe(440);
+    expect(row.childPriceUsed).toBe(110);
+  });
+
+  it('dziecko bez notowań w oknie 30 dni po ex → nadal defer (zero częściowych zapisów)', async () => {
+    const txs = [makeTx({ side: 'K', quantity: 10, price: 500 })];
+    mockHistoryDirect.mockImplementation(async (ticker) => (ticker === 'SPGI' ? 455 : null));
+    mockHistory.mockImplementation(
+      async (ticker) => (ticker === 'MBGL' ? [{ date: '2026-08-15', close: 110 }] : []), // 45 dni po ex
+    );
+
+    await applier.applyPendingSpinOffs(pid, txs, makeTickerMap(), [], [CANDIDATE]);
+    expect(repo.getSpinOffs(pid)).toHaveLength(0);
   });
 
   it('backoff: po porażce kolejne wywołanie nie strzela do sieci przed upływem godziny', async () => {

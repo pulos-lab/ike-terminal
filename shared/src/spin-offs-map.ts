@@ -54,6 +54,39 @@ export const SPIN_OFF_MAP: SpinOffMapEntry[] = [
       'https://www.stocktitan.net/news/MBGL/s-p-global-inc-completes-separation-of-mobility-global-5afoiq33kysk.html',
     note: 'S&P Global wydzielenie segmentu Mobility, dystrybucja 1:1',
   },
+  // Synektik — wydzielenie działalności kardioznacznika (radiofarmaceutyk) do
+  // Syn2bio S.A. Ostatnia sesja Z prawem: 2026-04-01; dzień referencyjny 04-07;
+  // rejestracja akcji na rachunkach 04-15; debiut S2B na GPW ~04-16. Parytet 1:1.
+  // BEZ parentIsin: portfele XTB mają pseudo-ISIN ('SNT.WA'), a lookup przy
+  // zdefiniowanym parentIsin porównuje wyłącznie ISIN-y — dopasowanie po tickerze
+  // działa dla wszystkich brokerów (resolver normalizuje do SNT.WA).
+  {
+    parentTicker: 'SNT.WA',
+    childTicker: 'S2B.WA',
+    childIsin: 'PLSNBIO00013',
+    childName: 'Syn2bio S.A. (spin-off Synektik)',
+    exDate: '2026-04-02',
+    ratio: 1,
+    source:
+      'https://www.stockwatch.pl/wiadomosci/synektik-podzial-syn2bio-debiut-gpw-kwiecien-2026,akcje,369199',
+    note: 'Podział Synektika: 1 akcja Syn2bio za 1 akcję Synektik; debiut S2B 2026-04-16',
+  },
+  // Creotech Instruments — wydzielenie segmentu technologii kwantowych do
+  // Creotech Quantum S.A. (akcje serii B 1:1). Ostatnia sesja Z prawem:
+  // 2026-04-02 (czwartek); 04-03 Wielki Piątek i 04-06 Poniedziałek Wielkanocny
+  // to dni bez sesji, więc pierwsza sesja bez prawa = 2026-04-07. Dzień
+  // referencyjny 04-08; debiut CRQ na GPW 2026-04-17.
+  {
+    parentTicker: 'CRI.WA',
+    childTicker: 'CRQ.WA',
+    childIsin: 'PLCTHQM00018',
+    childName: 'Creotech Quantum S.A. (spin-off Creotech Instruments)',
+    exDate: '2026-04-07',
+    ratio: 1,
+    source:
+      'https://www.stockwatch.pl/wiadomosci/creotech-quantum-debiut-gpw-2026-podzial-creotech-instruments,akcje,369527',
+    note: 'Podział Creotech Instruments: 1 akcja Creotech Quantum serii B za 1 akcję CRI',
+  },
 ];
 
 /**
