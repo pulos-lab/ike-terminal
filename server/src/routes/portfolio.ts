@@ -30,6 +30,7 @@ import {
 } from '../db/ticker-map-repo.js';
 import { resolveSector } from '../services/sector-resolver.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
+import { getOptionContractsMap } from '../db/option-contracts-repo.js';
 import { getSpinOffs, updateSpinOffStatus } from '../db/spin-offs-repo.js';
 import type {
   DividendInput,
@@ -101,7 +102,14 @@ router.get(
     const operations = getAllOperations(pid);
     const savedSplits = loadSplitsForEngine(pid);
     const spinOffs = loadSpinOffsForEngine(pid);
-    const trades = computeClosedTrades(transactions, tickerMap, operations, savedSplits, spinOffs);
+    const trades = computeClosedTrades(
+      transactions,
+      tickerMap,
+      operations,
+      savedSplits,
+      spinOffs,
+      getOptionContractsMap(pid),
+    );
     await annotateClosedTradesPln(trades);
     res.json({ trades });
   }),
@@ -236,7 +244,7 @@ router.get(
       tickerMap,
       splits,
       undefined,
-      { skipSplitDetection: true },
+      { skipSplitDetection: true, optionContracts: getOptionContractsMap(pid) },
       spinOffs,
     );
 
@@ -893,6 +901,7 @@ router.get(
       baseCurrency,
       undefined,
       loadSpinOffsForEngine(pid),
+      getOptionContractsMap(pid),
     );
 
     const cashFlow = computeCashFlow(operations, history, dailyFxRates, baseCurrency);
@@ -1000,6 +1009,7 @@ router.get(
         baseCurrency,
         undefined,
         spinOffs,
+        getOptionContractsMap(pid),
       ),
       // skipSplitDetection: /metrics ignoruje detectedSplits — sieciowy skan
       // robi (i zapisuje) wyłącznie /positions w dobowym oknie.
@@ -1008,7 +1018,7 @@ router.get(
         tickerMap,
         savedSplits,
         fxRatesObj,
-        { skipSplitDetection: true },
+        { skipSplitDetection: true, optionContracts: getOptionContractsMap(pid) },
         spinOffs,
       ),
     ]);

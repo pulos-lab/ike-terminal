@@ -84,7 +84,7 @@ export function mapIbkrStatement(
   for (const trade of statement.trades) {
     rowNum++;
     if (trade.codes.includes('Ca')) {
-      skipped.push({ row: rowNum, reason: 'invalid_data', paperName: trade.symbol });
+      skipped.push({ row: rowNum, reason: 'unknown_type', paperName: trade.symbol });
       warnings.push(`IBKR: pominięto anulowaną transakcję ${trade.symbol} (${trade.dateTime})`);
       continue;
     }
@@ -93,7 +93,7 @@ export function mapIbkrStatement(
       continue;
     }
     if (trade.quantity === 0) {
-      skipped.push({ row: rowNum, reason: 'zero_quantity', paperName: trade.symbol });
+      skipped.push({ row: rowNum, reason: 'invalid_quantity', paperName: trade.symbol });
       continue;
     }
 
@@ -104,20 +104,20 @@ export function mapIbkrStatement(
       case 'Equity and Index Options': {
         const tx = mapOptionTrade(trade, warnings);
         if (tx) transactions.push(tx);
-        else skipped.push({ row: rowNum, reason: 'invalid_data', paperName: trade.symbol });
+        else skipped.push({ row: rowNum, reason: 'unknown_type', paperName: trade.symbol });
         break;
       }
       case 'Bonds': {
         const tx = mapBondTrade(trade, bondBySymbol, warnings);
         if (tx) transactions.push(tx);
-        else skipped.push({ row: rowNum, reason: 'invalid_data', paperName: trade.symbol });
+        else skipped.push({ row: rowNum, reason: 'unknown_type', paperName: trade.symbol });
         break;
       }
       case 'Forex':
         mapForexTrade(trade, operations, warnings, importBatch);
         break;
       default:
-        skipped.push({ row: rowNum, reason: 'invalid_data', paperName: trade.symbol });
+        skipped.push({ row: rowNum, reason: 'unknown_type', paperName: trade.symbol });
         warnings.push(
           `IBKR: nieobsługiwana kategoria aktywów "${trade.assetClass}" (${trade.symbol}) — wiersz pominięty`,
         );
