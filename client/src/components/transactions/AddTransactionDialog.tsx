@@ -409,13 +409,14 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
                 Ticker serii Catalyst (np. DS1030), cena w % wartości nominalnej (np. 98,50)
               </p>
             )}
-            {isOption && (
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Wartość = liczba kontraktów × premia za akcję × 100. Sprzedaż bez wcześniejszego
-                kupna otwiera pozycję krótką (wystawienie opcji).
-              </p>
-            )}
           </div>
+
+          {isOption && (
+            <p className="md:col-span-2 -mt-1 text-[11px] text-muted-foreground">
+              Wartość = liczba kontraktów × premia za akcję × 100. Sprzedaż bez wcześniejszego kupna
+              otwiera pozycję krótką (wystawienie opcji).
+            </p>
+          )}
 
           {isOption && (
             <>
