@@ -132,6 +132,22 @@ export function initSchema(db: Database.Database): void {
       UNIQUE(isin, tax_date, description, amount)
     );
 
+    -- Metadane kontraktów opcyjnych (import IBKR / ręczne dodanie). Instrument w
+    -- transactions/ticker_map identyfikowany pseudo-ISIN-em 'OPT:{ticker OCC}';
+    -- parametry kontraktu są per kontrakt (nie per transakcja), stąd osobna tabela.
+    CREATE TABLE IF NOT EXISTS option_contracts (
+      isin TEXT PRIMARY KEY,
+      occ_ticker TEXT NOT NULL,
+      underlying TEXT NOT NULL,
+      expiry TEXT NOT NULL,
+      strike REAL NOT NULL,
+      option_type TEXT NOT NULL CHECK(option_type IN ('C','P')),
+      multiplier REAL NOT NULL DEFAULT 100,
+      listing_exch TEXT,
+      currency TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS portfolio_snapshots (
       date TEXT PRIMARY KEY,
       total_value_pln REAL NOT NULL,
