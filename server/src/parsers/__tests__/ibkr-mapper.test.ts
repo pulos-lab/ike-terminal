@@ -281,17 +281,17 @@ describe('mapowanie operacji gotówkowych', () => {
     expect(accrued).toMatchObject({ amount: -23.75, ticker: 'T 2 7/8 05/15/32' });
   });
 
-  it('odsetki margin i stock borrow → fee; SYEP → other+interest', () => {
+  it('odsetki margin i stock borrow → fee z subkindem; SYEP → other+lending_income', () => {
     const { operations } = parse();
     expect(
       operations.find((o) => o.description.includes('Odsetki od kredytu (margin)')),
-    ).toMatchObject({ operationType: 'fee', amount: -2.34 });
+    ).toMatchObject({ operationType: 'fee', subkind: 'margin_interest', amount: -2.34 });
     expect(
       operations.find((o) => o.description.includes('Opłata za pożyczenie akcji')),
-    ).toMatchObject({ operationType: 'fee', amount: -0.04 });
+    ).toMatchObject({ operationType: 'fee', subkind: 'borrow_fee', amount: -0.04 });
     expect(operations.find((o) => o.description.includes('SYEP'))).toMatchObject({
       operationType: 'other',
-      subkind: 'interest',
+      subkind: 'lending_income',
       amount: 4.17,
     });
   });
@@ -300,6 +300,7 @@ describe('mapowanie operacji gotówkowych', () => {
     const { operations } = parse();
     expect(operations.find((o) => o.description.includes('NYSE Level I'))).toMatchObject({
       operationType: 'fee',
+      subkind: 'market_data',
       amount: -5.82,
       currency: 'PLN',
     });

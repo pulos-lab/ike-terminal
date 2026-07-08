@@ -135,11 +135,12 @@ export function mapIbkrStatement(
     operations.push(classifyInterestRow(row, importBatch, warnings));
   }
 
-  // ── Opłaty (market data itd.) ──
+  // ── Opłaty (sekcja Fees = subskrypcje danych rynkowych i podobne) ──
   for (const row of statement.fees) {
     operations.push({
       date: row.date,
       operationType: 'fee',
+      subkind: 'market_data',
       description: row.description,
       amount: row.amount, // znak z wyciągu (koszt = ujemny)
       currency: row.currency,
@@ -175,6 +176,7 @@ export function mapIbkrStatement(
     operations.push({
       date: lastActivityDate ?? '1970-01-01',
       operationType: 'fee',
+      subkind: 'sales_tax',
       description: `Podatek VAT od opłat (Sales Tax) — suma roczna z wyciągu, ${tax.currency}`,
       amount: tax.amount,
       currency: tax.currency,
@@ -367,6 +369,7 @@ function mapForexTrade(
     operations.push({
       date,
       operationType: 'fee',
+      subkind: 'fx_commission',
       description: `Prowizja przewalutowania ${fxPair}`,
       // Prowizje forex są w walucie bazowej konta (nagłówek "Comm in PLN") — także
       // dla par bez PLN (EUR.USD); waluta bloku byłaby błędna.
@@ -526,22 +529,37 @@ function classifyInterestRow(
     };
   }
   if (/Investment Loan Interest|Debit Interest|Loan Interest/i.test(d)) {
-    return { ...base, operationType: 'fee', description: `Odsetki od kredytu (margin): ${d}` };
+    return {
+      ...base,
+      operationType: 'fee',
+      subkind: 'margin_interest',
+      description: `Odsetki od kredytu (margin): ${d}`,
+    };
   }
   if (/Borrow Fee/i.test(d)) {
     // "Stock Borrow Fees" (2021-2023) i "USD Borrow Fees" (2024+) to ten sam koszt
-    return { ...base, operationType: 'fee', description: `Opłata za pożyczenie akcji: ${d}` };
+    return {
+      ...base,
+      operationType: 'fee',
+      subkind: 'borrow_fee',
+      description: `Opłata za pożyczenie akcji: ${d}`,
+    };
   }
   if (/SYEP|Managed Securities/i.test(d)) {
     if (row.amount > 0) {
       return {
         ...base,
         operationType: 'other',
-        subkind: 'interest',
+        subkind: 'lending_income',
         description: `Przychód z pożyczania akcji (SYEP): ${d}`,
       };
     }
-    return { ...base, operationType: 'fee', description: `Opłata SYEP: ${d}` };
+    return {
+      ...base,
+      operationType: 'fee',
+      subkind: 'lending_income',
+      description: `Opłata SYEP: ${d}`,
+    };
   }
   if (/Credit Interest/i.test(d) || (/Interest/i.test(d) && row.amount > 0)) {
     return { ...base, operationType: 'other', subkind: 'interest', description: `Odsetki: ${d}` };

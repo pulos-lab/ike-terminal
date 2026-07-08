@@ -159,7 +159,24 @@ export type CashOperationSubkind =
    * ekonomicznie to przychód z trzymanej pozycji, więc wchodzi do totalDividends i panelu
    * Dywidendy (z badge "Kupon"). NIE mylić z `interest` (odsetki od salda gotówki, bez pozycji).
    */
-  | 'coupon';
+  | 'coupon'
+  /**
+   * Subkategorie kosztów brokera (operationType='fee', import IBKR) — napędzają grupowanie
+   * kafli w panelu "Korekty i koszty". Silnik traktuje je jak zwykłe `fee` (cash tak, MWR nie).
+   * - `margin_interest` — odsetki od kredytu margin (Investment/Debit Loan Interest)
+   * - `borrow_fee` — koszt pożyczenia akcji pod krótką pozycję (Stock/USD Borrow Fees)
+   * - `market_data` — subskrypcje danych rynkowych (NYSE Level I, Snapshot itd.)
+   * - `fx_commission` — prowizje przewalutowań (IdealFX)
+   * - `sales_tax` — VAT od opłat/prowizji (w wyciągu IBKR tylko agregat z Cash Report)
+   * - `lending_income` — przychód/koszt programu pożyczania akcji (SYEP); przychód idzie
+   *   z operationType='other' (dodatni cashflow), koszty z 'fee'
+   */
+  | 'margin_interest'
+  | 'borrow_fee'
+  | 'market_data'
+  | 'fx_commission'
+  | 'sales_tax'
+  | 'lending_income';
 
 export interface CashOperation {
   id?: number;
