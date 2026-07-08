@@ -23,7 +23,7 @@ import { getSpinOffs, insertSpinOff, updateSpinOffStatus } from '../db/spin-offs
 import { getTickerBySymbol, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { invalidateCachedPrices } from './history-cache.js';
-import { fetchYahooPrice, fetchYahooHistoryDirect } from './yahoo-finance.js';
+import { fetchYahooPrice, fetchYahooHistory, fetchYahooHistoryDirect } from './yahoo-finance.js';
 import { fetchYahooTickerName } from './ticker-search.js';
 import { adjustTransactionsForSplits } from './split-detector.js';
 import { parentSharesAtExDate } from './spin-off-transform.js';
@@ -51,6 +51,26 @@ function isoDaysDiff(a: string, b: string): number {
   return Math.abs(
     (new Date(`${a}T12:00:00Z`).getTime() - new Date(`${b}T12:00:00Z`).getTime()) / 86_400_000,
   );
+}
+
+/** Pierwsze notowanie tickera w oknie (fromDate, fromDate+maxDays] — dla dzieci
+ *  spin-offów debiutujących po dniu ex (wzorzec GPW). null gdy brak notowań. */
+async function firstCloseAfter(
+  ticker: string,
+  fromDate: string,
+  maxDays: number,
+): Promise<{ date: string; close: number } | null> {
+  try {
+    const history = await fetchYahooHistory(ticker, fromDate);
+    for (const point of history) {
+      if (point.date < fromDate) continue;
+      if (isoDaysDiff(point.date, fromDate) > maxDays) break;
+      if (point.close > 0) return { date: point.date, close: point.close };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -302,10 +322,26 @@ export async function applyPendingSpinOffs(
     } else {
       // Cache-bypass (jak detekcja splitów): trwały cache może trzymać ceny
       // sprzed retro-korekty Yahoo po spin-offie.
-      const [parentPx, childPx] = await Promise.all([
+      let [parentPx, childPx] = await Promise.all([
         fetchYahooHistoryDirect(parentEntry.ticker, candidate.exDate),
         fetchYahooHistoryDirect(childEntry.ticker, candidate.exDate),
       ]);
+      if (parentPx && !childPx) {
+        // Wzorzec GPW: dziecko debiutuje na giełdzie TYGODNIE po dniu ex
+        // (Syn2bio: ex 2026-04-02, debiut 04-16; Creotech Quantum: ex 04-07,
+        // debiut 04-17) — 5-dniowe okno fetchYahooHistoryDirect go nie łapie.
+        // Bierzemy PIERWSZE notowanie dziecka ≤30 dni po ex i kurs rodzica
+        // z TEGO SAMEGO dnia: oba kursy są post-ex z jednej sesji, więc
+        // frakcja childMkt/(parent+child) pozostaje wewnętrznie spójna.
+        const firstChild = await firstCloseAfter(childEntry.ticker, candidate.exDate, 30);
+        if (firstChild) {
+          const parentAtDebut = await fetchYahooHistoryDirect(parentEntry.ticker, firstChild.date);
+          if (parentAtDebut && parentAtDebut > 0) {
+            parentPx = parentAtDebut;
+            childPx = firstChild.close;
+          }
+        }
+      }
       if (!parentPx || !childPx || parentPx <= 0 || childPx <= 0) {
         deferredUntil.set(deferKey, Date.now());
         console.warn(
