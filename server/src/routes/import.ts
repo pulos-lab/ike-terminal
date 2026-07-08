@@ -24,7 +24,7 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 /** Błąd z fileFilter — rozpoznawany w error-middleware na końcu routera, mapowany na 400. */
 class UnsupportedFileTypeError extends Error {
   constructor() {
-    super('Dozwolone są tylko pliki CSV i XLSX');
+    super('Dozwolone są tylko pliki CSV, XLSX i HTML (IBKR)');
   }
 }
 
@@ -37,7 +37,9 @@ const upload = multer({
     const isXLSX =
       file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
       name.endsWith('.xlsx');
-    if (isCSV || isXLSX) {
+    // IBKR Activity Statement — HTML; treść weryfikuje detectCombinedBroker w classifyFile
+    const isHTML = file.mimetype === 'text/html' || name.endsWith('.htm') || name.endsWith('.html');
+    if (isCSV || isXLSX || isHTML) {
       cb(null, true);
     } else {
       cb(new UnsupportedFileTypeError());
