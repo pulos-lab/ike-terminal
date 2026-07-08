@@ -679,57 +679,6 @@ function AddCostDialog({
   );
 }
 
-// ─── SUMMARY CARD (zunifikowany wzorzec — spójny z Dashboard) ────────────────
-
-function SummaryCard({
-  label,
-  value,
-  currency = 'PLN',
-  subtext,
-  accent,
-  icon,
-}: {
-  label: string;
-  value: number;
-  /** ISO 4217 code (PLN, USD...) lub '' dla surowej liczby (np. count). */
-  currency?: string;
-  subtext?: string;
-  accent?: 'positive' | 'negative' | 'warning';
-  icon?: React.ReactNode;
-}) {
-  const valueColor =
-    accent === 'positive'
-      ? 'text-gain'
-      : accent === 'negative'
-        ? 'text-loss'
-        : accent === 'warning'
-          ? 'text-amber-500'
-          : '';
-  // Empty currency = count/raw number (np. "Niedomknięte" pokazuje ilość). Intl.NumberFormat
-  // wymaga validnego ISO kodu, więc fallback na toLocaleString dla raw liczb.
-  const formatted = currency ? formatCurrency(value, currency) : value.toLocaleString('pl-PL');
-  return (
-    <Card>
-      <CardHeader className="pb-1 md:pb-2 px-3 pt-3 md:px-6 md:pt-6">
-        <CardTitle className="text-[10px] md:text-xs font-medium text-muted-foreground flex items-center gap-1">
-          {icon}
-          {label}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="px-3 pb-3 md:px-6 md:pb-6">
-        <div className={`text-base md:text-2xl font-semibold tabular-nums ${valueColor}`}>
-          {formatted}
-        </div>
-        {subtext && (
-          <div className="text-[10px] md:text-xs text-muted-foreground mt-0.5 line-clamp-2">
-            {subtext}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 // ─── MAIN PAGE ───────────────────────────────────────────────────────────────
 
 export function CorrectionsAndCostsPage() {
@@ -740,6 +689,8 @@ export function CorrectionsAndCostsPage() {
   const [deletingCost, setDeletingCost] = useState<AdditionalCost | null>(null);
   const [expandedCA, toggleCA] = useToggleSet<number>();
   const [expandedCost, toggleCost] = useToggleSet<number>();
+  /** Filtr listy operacji — klik w kafel grupy zawęża historię, drugi klik czyści. */
+  const [groupFilter, setGroupFilter] = useState<CostVirtualCategory | null>(null);
 
   const {
     data: corpData,
@@ -781,7 +732,6 @@ export function CorrectionsAndCostsPage() {
 
   const actions = corpData?.actions ?? [];
   const pendingCount = corpData?.totals.pendingCount ?? 0;
-  const totalCapitalReturn = corpData?.totals.capitalReturn ?? 0;
   // Waluta bazowa portfela. Oba endpointy zwracają tę samą wartość (detectBaseCurrency),
   // ale costsData jest bardziej stabilne (zawsze są jakieś operacje). Fallback PLN.
   const baseCurrency = costsData?.baseCurrency ?? corpData?.baseCurrency ?? 'PLN';
@@ -797,16 +747,12 @@ export function CorrectionsAndCostsPage() {
   }, [actions]);
 
   const costs = costsData?.operations ?? [];
-  const costTotals = costsData?.totals ?? {
-    fees: 0,
-    commissionRefunds: 0,
-    tradeFees: 0,
-    other: 0,
-    grandTotal: 0,
-  };
-  // Grupy kosztowe (per subkind/opis) posortowane po wadze — napędzają górne kafle
-  // i mini-podsumowanie. Kafle górne pokazują NAJWIĘKSZE typy kosztów w tym portfelu.
+  // Grupy kosztowe (per subkind/opis) posortowane po wadze — kafle-filtry nad historią.
   const costGroups = useMemo(() => groupCosts(costs), [costs]);
+  const filteredCosts = useMemo(
+    () => (groupFilter ? costs.filter((c) => virtualCategory(c) === groupFilter) : costs),
+    [costs, groupFilter],
+  );
 
   const isLoading = corpLoading || costsLoading;
   const error = corpError ?? costsError;
@@ -835,229 +781,57 @@ export function CorrectionsAndCostsPage() {
 
   return (
     <div className="space-y-4">
-      {/* Top-level summary — kafle DYNAMICZNE: zwrot kapitału (jeśli występuje) +
-          największe grupy kosztów w tym portfelu (sortowanie po sumie |kwot|).
-          Portfel z marginem pokaże odsetki margin, portfel bez — np. zwroty prowizji. */}
-      {(() => {
-        const tiles: React.ReactNode[] = [];
-        if (resolved.length > 0 || totalCapitalReturn !== 0) {
-          tiles.push(
-            <SummaryCard
-              key="capital-return"
-              label="Zwrot kapitału"
-              value={totalCapitalReturn}
-              currency={baseCurrency}
-              accent="positive"
-              subtext={`${resolved.length} operacji · liczy się do MWR/TWR`}
-              icon={<Check className="h-3 w-3 text-gain" />}
-            />,
-          );
-        }
-        const maxTiles = 4;
-        for (const g of costGroups.slice(0, maxTiles - tiles.length)) {
-          const meta = COST_CATEGORY_META[g.cat];
-          const primary = primaryCurrency(g);
-          const others = [...g.byCurrency.entries()]
-            .filter(([cur]) => cur !== primary.currency)
-            .map(([cur, total]) => formatCurrency(total, cur));
-          tiles.push(
-            <SummaryCard
-              key={g.cat}
-              label={meta.label}
-              value={primary.total}
-              currency={primary.currency}
-              accent={primary.total < 0 ? 'negative' : primary.total > 0 ? 'positive' : undefined}
-              subtext={[`${g.count} operacji`, ...others].join(' · ')}
-              icon={
-                primary.total < 0 ? (
-                  <Receipt className="h-3 w-3 text-loss" />
-                ) : (
-                  <Check className="h-3 w-3 text-gain" />
-                )
-              }
-            />,
-          );
-        }
-        if (tiles.length === 0) return null;
-        return (
-          <div
-            className={`grid gap-2 md:gap-4 ${
-              tiles.length <= 2
-                ? 'grid-cols-2'
-                : tiles.length === 3
-                  ? 'grid-cols-3'
-                  : 'grid-cols-2 md:grid-cols-4'
-            }`}
-          >
-            {tiles}
-          </div>
-        );
-      })()}
-
-      {/* ─── SEKCJA GÓRNA: Zdarzenia korporacyjne ─── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Landmark className="h-4 w-4 text-primary" />
-            Zdarzenia korporacyjne
-            {pendingCount > 0 && (
-              <Badge
-                variant="outline"
-                className="bg-amber-500/10 text-amber-500 border-amber-500/30"
-              >
-                <AlertTriangle className="h-3 w-3 mr-1" />
-                {pendingCount} do domknięcia
-              </Badge>
-            )}
-            <UITooltip delayDuration={150}>
-              <UITooltipTrigger asChild>
-                <Info className="h-3 w-3 text-muted-foreground cursor-help" />
-              </UITooltipTrigger>
-              <UITooltipContent className="max-w-sm">
-                Zwroty kapitału (np. obniżenie nominału), korekty wykupu, wezwania skupu. Cash
-                wpływa na konto, pozycja akcyjna bez zmian. MWR/TWR liczy te wartości jako
-                zrealizowany zwrot z trzymania pozycji.
-              </UITooltipContent>
-            </UITooltip>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Pending (conditional — tylko gdy są) */}
-          {pending.length > 0 && (
-            <div>
-              <div className="flex items-center gap-2 mb-2 text-sm font-medium text-amber-500">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                Wymagają domknięcia ({pending.length})
-              </div>
-              <div className="md:hidden flex flex-col gap-2 mb-3">
-                {pending.map((a) => {
-                  const isExpanded = expandedCA.has(a.id);
-                  return (
-                    <ExpandableCard
-                      key={a.id}
-                      expanded={isExpanded}
-                      onToggle={() => toggleCA(a.id)}
-                      headerLeft={
-                        <>
-                          <span className="font-mono font-semibold text-sm truncate">
-                            {a.ticker ?? '—'}
-                          </span>
-                          <SubkindBadge subkind={a.subkind} />
-                        </>
-                      }
-                      headerRight={
-                        <span className="font-mono font-semibold text-sm tabular-nums shrink-0">
-                          {formatCurrency(a.amount, a.currency)}
-                        </span>
-                      }
-                      subHeader={
-                        <ExpandableCardSubRow>
-                          <span className="text-muted-foreground tabular-nums">
-                            {formatDate(a.date)}
-                          </span>
-                          <Badge variant="outline" className="text-[10px]">
-                            {a.source}
-                          </Badge>
-                        </ExpandableCardSubRow>
-                      }
-                    >
-                      <div className="text-muted-foreground">{a.description}</div>
-                      <div className="flex justify-end gap-1.5 pt-1">
-                        <Button
-                          size="sm"
-                          variant="default"
-                          className="h-7 px-2 text-xs"
-                          onClick={() => setResolving(a)}
-                        >
-                          <Briefcase className="h-3 w-3 mr-1" />
-                          Domknij
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                          onClick={() => setDeletingCA(a)}
-                        >
-                          <Trash2 className="h-3 w-3 mr-1" />
-                          Usuń
-                        </Button>
-                      </div>
-                    </ExpandableCard>
-                  );
-                })}
-              </div>
-              <div className="hidden md:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-24">Data</TableHead>
-                      <TableHead className="w-36">Typ</TableHead>
-                      <TableHead className="w-24">Ticker</TableHead>
-                      <TableHead>Opis</TableHead>
-                      <TableHead className="text-right w-32">Kwota</TableHead>
-                      <TableHead className="w-16">Źródło</TableHead>
-                      <TableHead className="text-right w-48">Akcje</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pending.map((a) => (
-                      <TableRow key={a.id}>
-                        <TableCell className="whitespace-nowrap text-sm tabular-nums">
-                          {formatDate(a.date)}
-                        </TableCell>
-                        <TableCell>
-                          <SubkindBadge subkind={a.subkind} />
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">{a.ticker ?? '—'}</TableCell>
-                        <TableCell className="text-sm">{a.description}</TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">
-                          {formatCurrency(a.amount, a.currency)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-xs">
-                            {a.source}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button size="sm" variant="default" onClick={() => setResolving(a)}>
-                            <Briefcase className="h-3 w-3 mr-1" />
-                            Domknij
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="ml-1 text-destructive hover:text-destructive"
-                            onClick={() => setDeletingCA(a)}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          )}
-
-          {/* Resolved (capital_return) */}
-          <div>
-            <div className="flex items-center gap-2 mb-2 text-sm font-medium text-gain">
-              <Check className="h-3.5 w-3.5" />
-              Zwroty kapitałowe ({resolved.length})
-            </div>
-            {resolved.length === 0 ? (
-              <EmptyState
-                className="py-6"
-                message="Brak zrealizowanych zwrotów kapitału. Pojawią się tu po imporcie historii z taką operacją."
-              />
-            ) : (
-              <>
-                <div className="md:hidden flex flex-col gap-2">
-                  {resolved.map((a) => {
+      {/* ─── SEKCJA GÓRNA: Zdarzenia korporacyjne ───
+          Bez żadnych zdarzeń (typowe dla brokerów bez polskich CA, np. IBKR) sekcja
+          zwija się do jednej linijki — pełna karta z pustym stanem przytłaczała. */}
+      {actions.length === 0 ? (
+        <Card>
+          <CardContent className="py-3 flex items-center gap-2 text-sm text-muted-foreground">
+            <Landmark className="h-4 w-4 shrink-0" />
+            <span>
+              Zdarzenia korporacyjne: brak — zwroty kapitału i wezwania skupu pojawią się tu po
+              imporcie historii z takimi operacjami.
+            </span>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Landmark className="h-4 w-4 text-primary" />
+              Zdarzenia korporacyjne
+              {pendingCount > 0 && (
+                <Badge
+                  variant="outline"
+                  className="bg-amber-500/10 text-amber-500 border-amber-500/30"
+                >
+                  <AlertTriangle className="h-3 w-3 mr-1" />
+                  {pendingCount} do domknięcia
+                </Badge>
+              )}
+              <UITooltip delayDuration={150}>
+                <UITooltipTrigger asChild>
+                  <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                </UITooltipTrigger>
+                <UITooltipContent className="max-w-sm">
+                  Zwroty kapitału (np. obniżenie nominału), korekty wykupu, wezwania skupu. Cash
+                  wpływa na konto, pozycja akcyjna bez zmian. MWR/TWR liczy te wartości jako
+                  zrealizowany zwrot z trzymania pozycji.
+                </UITooltipContent>
+              </UITooltip>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Pending (conditional — tylko gdy są) */}
+            {pending.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2 text-sm font-medium text-amber-500">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Wymagają domknięcia ({pending.length})
+                </div>
+                <div className="md:hidden flex flex-col gap-2 mb-3">
+                  {pending.map((a) => {
                     const isExpanded = expandedCA.has(a.id);
-                    const amountColor =
-                      a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : '';
                     return (
                       <ExpandableCard
                         key={a.id}
@@ -1072,9 +846,7 @@ export function CorrectionsAndCostsPage() {
                           </>
                         }
                         headerRight={
-                          <span
-                            className={`font-mono font-semibold text-sm tabular-nums shrink-0 ${amountColor}`}
-                          >
+                          <span className="font-mono font-semibold text-sm tabular-nums shrink-0">
                             {formatCurrency(a.amount, a.currency)}
                           </span>
                         }
@@ -1090,19 +862,26 @@ export function CorrectionsAndCostsPage() {
                         }
                       >
                         <div className="text-muted-foreground">{a.description}</div>
-                        {a.source === 'manual' && (
-                          <div className="flex justify-end pt-1">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                              onClick={() => setDeletingCA(a)}
-                            >
-                              <Trash2 className="h-3 w-3 mr-1" />
-                              Usuń
-                            </Button>
-                          </div>
-                        )}
+                        <div className="flex justify-end gap-1.5 pt-1">
+                          <Button
+                            size="sm"
+                            variant="default"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => setResolving(a)}
+                          >
+                            <Briefcase className="h-3 w-3 mr-1" />
+                            Domknij
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                            onClick={() => setDeletingCA(a)}
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            Usuń
+                          </Button>
+                        </div>
                       </ExpandableCard>
                     );
                   })}
@@ -1117,11 +896,11 @@ export function CorrectionsAndCostsPage() {
                         <TableHead>Opis</TableHead>
                         <TableHead className="text-right w-32">Kwota</TableHead>
                         <TableHead className="w-16">Źródło</TableHead>
-                        <TableHead className="w-10"></TableHead>
+                        <TableHead className="text-right w-48">Akcje</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {resolved.map((a) => (
+                      {pending.map((a) => (
                         <TableRow key={a.id}>
                           <TableCell className="whitespace-nowrap text-sm tabular-nums">
                             {formatDate(a.date)}
@@ -1131,11 +910,7 @@ export function CorrectionsAndCostsPage() {
                           </TableCell>
                           <TableCell className="font-mono text-xs">{a.ticker ?? '—'}</TableCell>
                           <TableCell className="text-sm">{a.description}</TableCell>
-                          <TableCell
-                            className={`text-right font-mono tabular-nums ${
-                              a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : ''
-                            }`}
-                          >
+                          <TableCell className="text-right font-mono tabular-nums">
                             {formatCurrency(a.amount, a.currency)}
                           </TableCell>
                           <TableCell>
@@ -1143,28 +918,154 @@ export function CorrectionsAndCostsPage() {
                               {a.source}
                             </Badge>
                           </TableCell>
-                          <TableCell>
-                            {a.source === 'manual' && (
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7 text-destructive"
-                                onClick={() => setDeletingCA(a)}
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            )}
+                          <TableCell className="text-right">
+                            <Button size="sm" variant="default" onClick={() => setResolving(a)}>
+                              <Briefcase className="h-3 w-3 mr-1" />
+                              Domknij
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="ml-1 text-destructive hover:text-destructive"
+                              onClick={() => setDeletingCA(a)}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                 </div>
-              </>
+              </div>
             )}
-          </div>
-        </CardContent>
-      </Card>
+
+            {/* Resolved (capital_return) */}
+            <div>
+              <div className="flex items-center gap-2 mb-2 text-sm font-medium text-gain">
+                <Check className="h-3.5 w-3.5" />
+                Zwroty kapitałowe ({resolved.length})
+              </div>
+              {resolved.length === 0 ? (
+                <EmptyState
+                  className="py-6"
+                  message="Brak zrealizowanych zwrotów kapitału. Pojawią się tu po imporcie historii z taką operacją."
+                />
+              ) : (
+                <>
+                  <div className="md:hidden flex flex-col gap-2">
+                    {resolved.map((a) => {
+                      const isExpanded = expandedCA.has(a.id);
+                      const amountColor =
+                        a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : '';
+                      return (
+                        <ExpandableCard
+                          key={a.id}
+                          expanded={isExpanded}
+                          onToggle={() => toggleCA(a.id)}
+                          headerLeft={
+                            <>
+                              <span className="font-mono font-semibold text-sm truncate">
+                                {a.ticker ?? '—'}
+                              </span>
+                              <SubkindBadge subkind={a.subkind} />
+                            </>
+                          }
+                          headerRight={
+                            <span
+                              className={`font-mono font-semibold text-sm tabular-nums shrink-0 ${amountColor}`}
+                            >
+                              {formatCurrency(a.amount, a.currency)}
+                            </span>
+                          }
+                          subHeader={
+                            <ExpandableCardSubRow>
+                              <span className="text-muted-foreground tabular-nums">
+                                {formatDate(a.date)}
+                              </span>
+                              <Badge variant="outline" className="text-[10px]">
+                                {a.source}
+                              </Badge>
+                            </ExpandableCardSubRow>
+                          }
+                        >
+                          <div className="text-muted-foreground">{a.description}</div>
+                          {a.source === 'manual' && (
+                            <div className="flex justify-end pt-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                                onClick={() => setDeletingCA(a)}
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" />
+                                Usuń
+                              </Button>
+                            </div>
+                          )}
+                        </ExpandableCard>
+                      );
+                    })}
+                  </div>
+                  <div className="hidden md:block">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-24">Data</TableHead>
+                          <TableHead className="w-36">Typ</TableHead>
+                          <TableHead className="w-24">Ticker</TableHead>
+                          <TableHead>Opis</TableHead>
+                          <TableHead className="text-right w-32">Kwota</TableHead>
+                          <TableHead className="w-16">Źródło</TableHead>
+                          <TableHead className="w-10"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {resolved.map((a) => (
+                          <TableRow key={a.id}>
+                            <TableCell className="whitespace-nowrap text-sm tabular-nums">
+                              {formatDate(a.date)}
+                            </TableCell>
+                            <TableCell>
+                              <SubkindBadge subkind={a.subkind} />
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">{a.ticker ?? '—'}</TableCell>
+                            <TableCell className="text-sm">{a.description}</TableCell>
+                            <TableCell
+                              className={`text-right font-mono tabular-nums ${
+                                a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : ''
+                              }`}
+                            >
+                              {formatCurrency(a.amount, a.currency)}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="text-xs">
+                                {a.source}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {a.source === 'manual' && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-7 w-7 text-destructive"
+                                  onClick={() => setDeletingCA(a)}
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ─── SEKCJA DOLNA: Pozostałe przepływy ─── */}
       <Card>
@@ -1196,14 +1097,28 @@ export function CorrectionsAndCostsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {/* Mini summary — dynamiczne grupy kosztów (subkind z parsera IBKR albo
-              fallback po opisie), posortowane po wadze. Kwoty per waluta — sumowanie
-              USD+PLN w jednej liczbie byłoby mylące. */}
+          {/* Kafle-grupy kosztów (subkind z parsera IBKR albo fallback po opisie),
+              posortowane po wadze. Kwoty per waluta — sumowanie USD+PLN w jednej
+              liczbie byłoby mylące. Klik = filtr historii poniżej (drugi klik czyści). */}
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
             {costGroups.map((g) => {
               const meta = COST_CATEGORY_META[g.cat];
+              const active = groupFilter === g.cat;
               return (
-                <div key={g.cat} className="rounded-lg bg-muted/30 border border-border px-3 py-2">
+                <button
+                  key={g.cat}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setGroupFilter(active ? null : g.cat)}
+                  title={
+                    active ? 'Kliknij, aby wyczyścić filtr' : 'Kliknij, aby przefiltrować historię'
+                  }
+                  className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                    active
+                      ? 'bg-primary/10 border-primary/50 ring-1 ring-primary/40'
+                      : 'bg-muted/30 border-border hover:bg-muted/60'
+                  }`}
+                >
                   <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-0.5">
                     {meta.label}
                   </p>
@@ -1212,18 +1127,30 @@ export function CorrectionsAndCostsPage() {
                     .map(([cur, total]) => (
                       <p
                         key={cur}
-                        className={`text-sm font-bold tabular-nums tracking-tight ${
-                          total < 0 ? 'text-loss' : total > 0 ? 'text-gain' : ''
+                        className={`text-sm font-semibold tabular-nums tracking-tight ${
+                          total < 0 ? 'text-loss/90' : total > 0 ? 'text-gain/90' : ''
                         }`}
                       >
                         {formatCurrency(total, cur)}
                       </p>
                     ))}
                   <p className="text-[10px] text-muted-foreground mt-0.5">{g.count} operacji</p>
-                </div>
+                </button>
               );
             })}
           </div>
+
+          {groupFilter && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>
+                Filtr: <strong>{COST_CATEGORY_META[groupFilter].label}</strong> (
+                {filteredCosts.length} z {costs.length} operacji)
+              </span>
+              <Button size="xs" variant="ghost" onClick={() => setGroupFilter(null)}>
+                Wyczyść
+              </Button>
+            </div>
+          )}
 
           {/* Historia */}
           {costs.length === 0 ? (
@@ -1234,7 +1161,7 @@ export function CorrectionsAndCostsPage() {
           ) : (
             <>
               <div className="md:hidden flex flex-col gap-2">
-                {costs.map((c) => {
+                {filteredCosts.map((c) => {
                   const isExpanded = expandedCost.has(c.id);
                   const amountColor = c.amount < 0 ? 'text-loss' : c.amount > 0 ? 'text-gain' : '';
                   const vCat = virtualCategory(c);
@@ -1305,7 +1232,7 @@ export function CorrectionsAndCostsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {costs.map((c) => (
+                    {filteredCosts.map((c) => (
                       <TableRow key={c.id}>
                         <TableCell className="whitespace-nowrap text-sm tabular-nums">
                           {formatDate(c.date)}
