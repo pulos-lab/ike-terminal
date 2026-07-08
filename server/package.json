@@ -12,6 +12,7 @@
     "compare:generic": "tsx scripts/compare-generic-import.ts",
     "check:spinoff-sources": "tsx scripts/check-spinoff-sources.ts",
     "fix:nc": "tsx src/scripts/fix-nc-misidentification.ts",
+    "fix:auto-dividend-tax": "tsx src/scripts/fix-auto-dividend-tax.ts",
     "fix:tickers": "tsx src/scripts/fix-tickers.ts",
     "audit:tickers": "tsx src/scripts/audit-ticker-map.ts",
     "diagnose:isin": "tsx src/scripts/diagnose-isin.ts",
