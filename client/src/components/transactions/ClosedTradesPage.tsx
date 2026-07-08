@@ -556,7 +556,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                     onDelete={() =>
                       setDeleteTarget({
                         ids: group.sellTransactionIds,
-                        ticker: group.ticker,
+                        ticker: group.spreadLabel ?? group.ticker,
                         sellDate: group.sellDate,
                         quantity: group.totalQuantity,
                       })
@@ -636,7 +636,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                   onClick={() =>
                                     setDeleteTarget({
                                       ids: group.sellTransactionIds,
-                                      ticker: group.ticker,
+                                      ticker: group.spreadLabel ?? group.ticker,
                                       sellDate: group.sellDate,
                                       quantity: group.totalQuantity,
                                     })
@@ -683,13 +683,21 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                 ) : (
                                   <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                                 )}
-                                <TickerLabel ticker={group.ticker} />
+                                {group.spreadLabel ? (
+                                  <span className="font-mono font-medium whitespace-nowrap">
+                                    {group.spreadLabel}
+                                  </span>
+                                ) : (
+                                  <TickerLabel ticker={group.ticker} />
+                                )}
                                 <CategoryBadge category={group.trades[0]?.category} />
                                 {group.trades.some((t) => t.isShort) && (
                                   <span className="text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
-                                    {group.trades.every((t) => t.isShort)
-                                      ? 'SHORT'
-                                      : `${group.trades.filter((t) => t.isShort).length}S`}
+                                    {group.spreadLabel
+                                      ? 'spread'
+                                      : group.trades.every((t) => t.isShort)
+                                        ? 'SHORT'
+                                        : `${group.trades.filter((t) => t.isShort).length}S`}
                                   </span>
                                 )}
                                 <span className="text-xs text-muted-foreground ml-1">
@@ -743,7 +751,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                     e.stopPropagation();
                                     setDeleteTarget({
                                       ids: group.sellTransactionIds,
-                                      ticker: group.ticker,
+                                      ticker: group.spreadLabel ?? group.ticker,
                                       sellDate: group.sellDate,
                                       quantity: group.totalQuantity,
                                     });
@@ -762,7 +770,14 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                             group.trades.map((trade, j) => (
                               <TableRow key={`${group.key}-${j}`} className="bg-muted/30">
                                 <TableCell className="font-mono text-muted-foreground pl-9 text-sm">
-                                  └ lot {j + 1}
+                                  {group.spreadLabel ? (
+                                    <span className="inline-flex items-center gap-1">
+                                      <span className="text-muted-foreground">└</span>
+                                      <TickerLabel ticker={trade.ticker} />
+                                    </span>
+                                  ) : (
+                                    `└ lot ${j + 1}`
+                                  )}
                                   {trade.isShort && (
                                     <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
                                       S
