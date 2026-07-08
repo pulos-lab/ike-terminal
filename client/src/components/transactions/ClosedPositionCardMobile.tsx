@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/comp
 import { formatCurrency, formatDate, formatNumber, formatQuantity } from '@/lib/formatters';
 import { ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 import type { TradeGroup } from '@/lib/closed-trades-grouping';
-import { displayOptionTicker } from 'shared';
+import { TickerLabel } from '@/components/ui/ticker-label';
 
 interface Props {
   group: TradeGroup;
@@ -92,9 +92,10 @@ export function ClosedPositionCardMobile({
             ) : (
               <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
             )}
-            <span className="font-mono font-semibold text-sm truncate">
-              {displayOptionTicker(group.ticker)}
-            </span>
+            <TickerLabel
+              ticker={group.ticker}
+              className="font-mono font-semibold text-sm truncate"
+            />
             <CategoryBadge category={category} />
             {anyShort && (
               <span className="text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded shrink-0">

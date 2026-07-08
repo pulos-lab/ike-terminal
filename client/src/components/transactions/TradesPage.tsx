@@ -31,6 +31,7 @@ import { SellPositionDialog } from './SellPositionDialog';
 import { toast } from 'sonner';
 import type { Position } from 'shared';
 import { displayOptionTicker } from 'shared';
+import { TickerLabel } from '@/components/ui/ticker-label';
 
 interface SellForm {
   date: string;
@@ -345,7 +346,7 @@ export function TradesPage() {
                                       ) : (
                                         <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                                       ))}
-                                    {displayOptionTicker(pos.ticker)}
+                                    <TickerLabel ticker={pos.ticker} />
                                     <CategoryBadge category={pos.category} />
                                     {isMultiLot && (
                                       <span className="text-xs text-muted-foreground ml-1">
