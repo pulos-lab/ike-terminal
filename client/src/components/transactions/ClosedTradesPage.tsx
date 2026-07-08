@@ -34,6 +34,7 @@ import { toast } from 'sonner';
 import type { ClosedTrade } from 'shared';
 import { ClosedPositionCardMobile } from './ClosedPositionCardMobile';
 import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { displayOptionTicker } from 'shared';
 
 /** Round-trip wskazany do usunięcia — może obejmować kilka transakcji sprzedaży. */
 const CATEGORY_FILTER_LABELS: Record<string, string> = {
@@ -149,8 +150,8 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
       if (t) {
         toast.success(
           ids.length > 1
-            ? `Usunięto sprzedaże ${t.ticker} (${ids.length}) — łącznie ${formatQuantity(t.quantity)} szt`
-            : `Usunięto transakcję sprzedaży ${t.ticker} — ${formatQuantity(t.quantity)} szt z ${formatDate(t.sellDate)}`,
+            ? `Usunięto sprzedaże ${displayOptionTicker(t.ticker)} (${ids.length}) — łącznie ${formatQuantity(t.quantity)} szt`
+            : `Usunięto transakcję sprzedaży ${displayOptionTicker(t.ticker)} — ${formatQuantity(t.quantity)} szt z ${formatDate(t.sellDate)}`,
         );
       } else {
         toast.success('Usunięto transakcję sprzedaży.');
@@ -589,7 +590,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                         return (
                           <TableRow key={group.key}>
                             <TableCell className="font-mono font-medium">
-                              {trade.ticker}
+                              {displayOptionTicker(trade.ticker)}
                               <CategoryBadge category={trade.category} />
                               {trade.isShort && (
                                 <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
@@ -681,7 +682,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                 ) : (
                                   <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                                 )}
-                                {group.ticker}
+                                {displayOptionTicker(group.ticker)}
                                 <CategoryBadge category={group.trades[0]?.category} />
                                 {group.trades.some((t) => t.isShort) && (
                                   <span className="text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
@@ -850,8 +851,8 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
         description={
           deleteTarget
             ? deleteTarget.ids.length > 1
-              ? `Usunąć ${deleteTarget.ids.length} transakcje sprzedaży ${deleteTarget.ticker} (łącznie ${formatQuantity(deleteTarget.quantity)} szt)? Pozycja wróci do otwartych.`
-              : `Usunąć transakcję sprzedaży ${deleteTarget.ticker} — ${formatQuantity(deleteTarget.quantity)} szt z ${formatDate(deleteTarget.sellDate)}? Pozycja wróci do otwartych.`
+              ? `Usunąć ${deleteTarget.ids.length} transakcje sprzedaży ${displayOptionTicker(deleteTarget.ticker)} (łącznie ${formatQuantity(deleteTarget.quantity)} szt)? Pozycja wróci do otwartych.`
+              : `Usunąć transakcję sprzedaży ${displayOptionTicker(deleteTarget.ticker)} — ${formatQuantity(deleteTarget.quantity)} szt z ${formatDate(deleteTarget.sellDate)}? Pozycja wróci do otwartych.`
             : ''
         }
         loading={deleteMutation.isPending}

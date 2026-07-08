@@ -30,6 +30,7 @@ import { AddTransactionDialog } from './AddTransactionDialog';
 import { SellPositionDialog } from './SellPositionDialog';
 import { toast } from 'sonner';
 import type { Position } from 'shared';
+import { displayOptionTicker } from 'shared';
 
 interface SellForm {
   date: string;
@@ -132,7 +133,9 @@ export function TradesPage() {
       }),
     onSuccess: (_data, vars) => {
       invalidatePortfolio(queryClient);
-      toast.success(`Sprzedano ${vars.form.quantity} szt ${vars.ticker} @ ${vars.form.price}`);
+      toast.success(
+        `Sprzedano ${vars.form.quantity} szt ${displayOptionTicker(vars.ticker)} @ ${vars.form.price}`,
+      );
       setSellingTicker(null);
     },
     onError: (err: Error) => errorToast('Nie udało się sprzedać', err),
@@ -342,7 +345,7 @@ export function TradesPage() {
                                       ) : (
                                         <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                                       ))}
-                                    {pos.ticker}
+                                    {displayOptionTicker(pos.ticker)}
                                     <CategoryBadge category={pos.category} />
                                     {isMultiLot && (
                                       <span className="text-xs text-muted-foreground ml-1">
@@ -432,7 +435,7 @@ export function TradesPage() {
                                     <div className="flex items-center gap-2 mb-3">
                                       <TrendingDown className="h-3.5 w-3.5 text-muted-foreground" />
                                       <span className="text-sm font-medium">
-                                        Sprzedaż {pos.ticker}
+                                        Sprzedaż {displayOptionTicker(pos.ticker)}
                                       </span>
                                     </div>
                                     <div className="flex flex-wrap items-end gap-4">

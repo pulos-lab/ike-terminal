@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { parseOccTicker, displayOptionTicker } from 'shared';
 import {
   parseOptionSymbol,
   toOccTicker,
@@ -84,5 +85,29 @@ describe('parseForexSymbol', () => {
 
   it('zwraca null dla akcji', () => {
     expect(parseForexSymbol('AAPL')).toBeNull();
+  });
+});
+
+describe('parseOccTicker / displayOptionTicker (etykiety UI)', () => {
+  it('parsuje ticker OCC z powrotem na parametry kontraktu', () => {
+    expect(parseOccTicker('OKLO271217P00015000')).toEqual({
+      underlying: 'OKLO',
+      expiry: '2027-12-17',
+      strike: 15,
+      optionType: 'P',
+    });
+    expect(parseOccTicker('LHA221216C00005600')?.strike).toBe(5.6);
+  });
+
+  it('formatuje czytelną etykietę z datą w formacie UI', () => {
+    expect(displayOptionTicker('OKLO271217P00015000')).toBe('OKLO 15 PUT 17.12.2027');
+    expect(displayOptionTicker('AAPL261218C00250000')).toBe('AAPL 250 CALL 18.12.2026');
+  });
+
+  it('zwykłe tickery przechodzą bez zmian (bezpieczny wrapper)', () => {
+    expect(displayOptionTicker('AAPL')).toBe('AAPL');
+    expect(displayOptionTicker('CDR.WA')).toBe('CDR.WA');
+    expect(displayOptionTicker('DS1030')).toBe('DS1030'); // obligacja z cyframi
+    expect(parseOccTicker('SPOT')).toBeNull();
   });
 });
