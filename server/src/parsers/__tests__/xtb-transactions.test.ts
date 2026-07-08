@@ -422,7 +422,7 @@ describe('parseXtbFile — detekcja waluty z |Amount| vs qty×cena', () => {
     expect(sells.every((s) => s.currency === 'USD')).toBe(true);
   });
 
-  it('sprzedaż bez close trade po kupnie FX: etykieta z pamięci symbolu, fxRate undefined', async () => {
+  it('sprzedaż bez close trade po kupnie FX (stary szablon): etykieta z pamięci, fxRate undefined', async () => {
     const buf = await buildXtbXlsx([
       {
         id: 1,
@@ -432,21 +432,61 @@ describe('parseXtbFile — detekcja waluty z |Amount| vs qty×cena', () => {
         symbol: 'PLTR.US',
         amount: -(64 * 16 * 3.8),
       },
+      // Obcy wiersz close trade — plik MA wiersze close trade (stary szablon,
+      // Amount sprzedaży = zwrócony nominał), ale nie dla tej sprzedaży.
       {
         id: 2,
+        type: 'close trade',
+        time: '02/03/2024 10:00:00',
+        comment: 'Profit of position #999',
+        symbol: 'INNY.US',
+        amount: 10,
+      },
+      {
+        id: 3,
         type: 'Stock sale',
         time: t,
         comment: 'CLOSE BUY 64 @ 26.07',
         symbol: 'PLTR.US',
-        amount: 3891.2, // zwrócony nominał otwarcia, BEZ wiersza close trade
+        amount: 3891.2, // zwrócony nominał otwarcia, BEZ pary close trade
       },
     ]);
     const { transactions, warnings } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
-    const sell = transactions.data.find((x) => x.side === 'S')!;
+    const sell = transactions.data.find((x) => x.side === 'S' && x.paperName.startsWith('PLTR'))!;
     expect(sell.currency).toBe('USD');
     expect(sell.paymentCurrency).toBe('PLN');
     expect(sell.fxRate).toBeUndefined();
     expect(warnings?.some((w) => w.includes('close trade') && w.includes('PLTR.US'))).toBe(true);
+  });
+
+  it('nowy szablon (zero wierszy close trade w pliku): Amount sprzedaży = pełna wartość → kurs wprost', async () => {
+    // Zweryfikowane na realnym eksporcie IKE_*: PEO 0.3507 @ 228.90 → Amount 80.28
+    // (ratio 1.0), UBI.FR 15 @ 4.000 → Amount 252.04 (ratio = EURPLN 4.20).
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock sell',
+        time: t,
+        comment: 'CLOSE BUY 15 @ 4.000',
+        symbol: 'UBI.FR',
+        amount: 252.04,
+      },
+      {
+        id: 2,
+        type: 'Stock sell',
+        time: t,
+        comment: 'CLOSE BUY 0.3507/2 @ 228.90',
+        symbol: 'PEO.PL',
+        amount: 80.28,
+      },
+    ]);
+    const { transactions } = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const ubi = transactions.data.find((x) => x.paperName.startsWith('UBI'))!;
+    expect(ubi.currency).toBe('EUR');
+    expect(ubi.fxRate).toBeCloseTo(252.04 / 60, 4); // ≈4.2007
+    const peo = transactions.data.find((x) => x.paperName.startsWith('PEO'))!;
+    expect(peo.currency).toBe('PLN'); // ratio ≈ 1 → waluta konta
+    expect(peo.fxRate).toBeUndefined();
   });
 
   it('partial fill: ratio liczony z ilości częściowej z regexa', async () => {

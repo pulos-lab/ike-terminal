@@ -475,13 +475,19 @@ function detectSettlementCurrency(args: {
     args;
   const amountAbs = Math.abs(resolveNumber(qcs.settlementAmount, row, resolver));
 
-  // Kwota rozliczenia odpowiadająca qty×price: kupno — |Amount|; sprzedaż —
-  // |Amount| (zwrócony nominał otwarcia) + P/L z pairing.tradeClosePl.
+  // Kwota rozliczenia odpowiadająca qty×price: kupno — |Amount|. Sprzedaż
+  // zależnie od szablonu: gdy plik zawiera wiersze trade_close_pl, Amount to
+  // zwrócony nominał otwarcia (stary XTB) i wartość = |Amount| + P/L z
+  // parowania; gdy w pliku nie ma ŻADNEGO wiersza P/L (nowy szablon XTB
+  // z kolumną Ticker) albo profil nie deklaruje parowania — Amount jest
+  // pełną wartością sprzedaży (lustro saleAmountIsFullValue parsera XTB).
   let settleValue: number | null = null;
   if (amountAbs > 0) {
     if (side === 'K') {
       settleValue = amountAbs;
-    } else if (profile.pairing.tradeClosePl) {
+    } else if (!profile.pairing.tradeClosePl || state.closePlByKey.size === 0) {
+      settleValue = amountAbs;
+    } else {
       const key = buildTradePairKey(profile.pairing.tradeClosePl.matchBy, row, profile, resolver);
       const pl = key !== null ? takeClosePl(state, key) : undefined;
       if (pl !== undefined && Number.isFinite(pl) && amountAbs + pl > 0) {

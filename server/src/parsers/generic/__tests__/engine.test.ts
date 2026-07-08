@@ -762,16 +762,29 @@ describe('parseWithProfile — quoteCurrencyFromSettlement', () => {
     expect(sells[1].fxRate).toBeCloseTo((740 + 1660) / 300, 5); // 8.0
   });
 
-  it('sprzedaż bez sparowanego P/L dziedziczy etykietę z kupna, bez fxRate', () => {
+  it('sprzedaż bez sparowanego P/L dziedziczy etykietę z kupna, bez fxRate (plik ze starą semantyką)', () => {
     const csv = [
       QCS_HEADER,
       'K;01.03.2024 10:00:00;PLTR.US;10;16,00;-608,00', // ratio 3.8 → FX
-      'S;05.03.2024 10:00:00;PLTR.US;10;26,00;608,00', // nominał, brak closepl
+      // Obcy wiersz P/L → plik MA wiersze closepl (Amount sprzedaży = nominał)
+      'closepl;02.03.2024 10:00:00;INNY.US;;;10,00',
+      'S;05.03.2024 10:00:00;PLTR.US;10;26,00;608,00', // nominał, brak closepl dla tej sprzedaży
     ].join('\n');
     const out = parseWithProfile(csv, qcsProfile(), BATCH);
     const sell = out.transactions.data.find((t) => t.side === 'S')!;
     expect(sell.currency).toBe('USD');
     expect(sell.fxRate).toBeUndefined();
+  });
+
+  it('plik bez ŻADNYCH wierszy closepl: Amount sprzedaży = pełna wartość → kurs wprost', () => {
+    const csv = [
+      QCS_HEADER,
+      'S;05.03.2024 10:00:00;PLTR.US;15;4,00;252,04', // USDPLN ≈ 4.2007
+    ].join('\n');
+    const out = parseWithProfile(csv, qcsProfile(), BATCH);
+    const sell = out.transactions.data[0];
+    expect(sell.currency).toBe('USD');
+    expect(sell.fxRate).toBeCloseTo(252.04 / 60, 4);
   });
 
   it('symbol bez etykiety (nazwa spółki) + FX → cena przeliczona na walutę konta', () => {

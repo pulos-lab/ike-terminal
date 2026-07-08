@@ -11,12 +11,21 @@ import { getTickerMap } from '../db/ticker-map-repo.js';
  * ten krok poprawia samą etykietę `currency`. Cena, value/total i fxRate są
  * NIETKNIĘTE: implikowany kurs liczony jest z kwot i nie zależy od etykiety.
  *
- * Kandydaci: fxRate > 0 i paymentCurrency ≠ currency (tylko wiersze z wykrytym
- * przewalutowaniem — samoograniczające, niezależne od source). GBP/GBp/GBX
- * traktujemy jako jedną rodzinę (skala pensów to inny problem — cen nie
- * przeliczamy na podstawie samej etykiety). Idempotentne: drugi przebieg nie
- * znajduje rozjazdów; updateTransaction bumpuje dataVersion.
+ * Kandydaci: paymentCurrency ≠ currency (wiersz z wykrytym przewalutowaniem),
+ * source xtb/generic. fxRate nie jest wymagany — sprzedaż bez sparowanego
+ * P/L dostaje etykietę z pamięci symbolu (suffixową) i bez relabelu zostałaby
+ * w innej walucie niż kupna tego samego ISIN-u (mieszane legi FIFO, księgowanie
+ * po złym kursie dziennym — realny przypadek: sprzedaże CNDX.UK/VUAA.UK w
+ * eksportach IKE_*). Guard source: transakcje ręczne/mBank/Bossa nie są
+ * relabelowane (currency usera/reconcilera płatności jest wiążące).
+ * GBP/GBp/GBX traktujemy jako jedną rodzinę (skala pensów to inny problem —
+ * cen nie przeliczamy na podstawie samej etykiety). Idempotentne: drugi
+ * przebieg nie znajduje rozjazdów; updateTransaction bumpuje dataVersion.
  */
+
+/** Źródła, których etykieta waluty pochodzi z heurystyki parsera (suffix),
+ *  a nie z pliku brokera czy decyzji użytkownika. */
+const RELABEL_SOURCES = new Set(['xtb', 'generic']);
 
 export interface QuoteReconcileResult {
   updatedCount: number;
@@ -38,7 +47,7 @@ export function reconcileQuoteCurrencies(portfolioId: string): QuoteReconcileRes
 
   for (const tx of transactions) {
     if (tx.id === undefined) continue;
-    if (!(tx.fxRate && tx.fxRate > 0)) continue;
+    if (!RELABEL_SOURCES.has(tx.source)) continue;
     if (!tx.paymentCurrency || tx.paymentCurrency === tx.currency) continue;
 
     const entry = tickerMap.get(tx.isin);

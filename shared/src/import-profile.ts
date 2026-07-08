@@ -290,10 +290,14 @@ export const TradeMappingSchema = z.object({
    * jest w walucie notowania instrumentu, a kolumna kwoty w walucie konta.
    * Stosunek |kwota|/(ilość×cena) ≈ 1 → notowanie w walucie konta (mapowanie
    * `currency` bez zmian); wyraźnie inny → cena w walucie obcej, a stosunek
-   * staje się fxRate (payment-per-quote). Dla sprzedaży kwota to zwrócony
-   * nominał otwarcia — wymaga pairing.tradeClosePl (wartość = |kwota| + P/L);
-   * sprzedaż bez sparowanego P/L dziedziczy decyzję z wcześniejszych wierszy
-   * tego symbolu (bez fxRate — silnik portfela użyje kursu dziennego).
+   * staje się fxRate (payment-per-quote). Semantyka kwoty przy SPRZEDAŻY
+   * zależy od szablonu: gdy plik zawiera wiersze 'trade_close_pl', kwota to
+   * zwrócony nominał otwarcia (stary XTB) i wartość = |kwota| + P/L z
+   * pairing.tradeClosePl; gdy plik nie ma ŻADNEGO wiersza P/L (nowy szablon
+   * z kolumną Ticker) albo parowanie nie jest zadeklarowane — kwota jest
+   * pełną wartością sprzedaży i stosunek liczy się wprost. Sprzedaż ze starą
+   * semantyką bez sparowanego P/L dziedziczy decyzję z wcześniejszych wierszy
+   * symbolu (bez fxRate — silnik portfela użyje kursu dziennego).
    */
   quoteCurrencyFromSettlement: z
     .object({
