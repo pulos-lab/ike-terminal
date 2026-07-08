@@ -50,12 +50,16 @@ export const NAME_ALIASES: Record<string, string> = {
 };
 
 // ============ Dividend Tax Tables ============
-// Łączna stawka podatku od dywidend dla polskiego rezydenta podatkowego
+// Łączna stawka podatku od dywidend dla polskiego rezydenta podatkowego.
+// USA: zakładamy złożony W-8BEN (stawka traktatowa 15% WHT) — Bossa, XTB i mBank
+// obsługują W-8BEN i realne wyciągi potwierdzają 15% (np. Bossa "netto ELV 85% USD",
+// XTB "MSFT.US USD WHT 15%"). Użytkownik bez W-8BEN dostaje 30% u źródła —
+// wtedy kwotę auto-dywidendy trzeba skorygować ręcznie.
 
 /** Zwykłe konto maklerskie: WHT u źródła (Poziom 1) + polski podatek (Poziom 3) */
 export const DIVIDEND_TAX_REGULAR: Record<string, number> = {
   PL: 0.19, // 0% WHT + 19% PL tax
-  US: 0.34, // 30% WHT + 4% PL tax
+  US: 0.19, // 15% WHT (W-8BEN) + 4% PL tax
   GB: 0.19, // 0% WHT + 19% PL tax
   DE: 0.304, // 26.4% WHT + 4% PL tax
   BE: 0.19, // 15% WHT + 4% PL tax
@@ -74,7 +78,7 @@ export const DIVIDEND_TAX_REGULAR: Record<string, number> = {
 /** IKE / IKZE: tylko WHT u źródła (Poziom 1), Poziom 3 = 0% */
 export const DIVIDEND_TAX_IKE_IKZE: Record<string, number> = {
   PL: 0, // 0% WHT + 0% = zwolnienie
-  US: 0.3, // 30% WHT + 0%
+  US: 0.15, // 15% WHT (W-8BEN) + 0%
   GB: 0, // 0% WHT + 0%
   DE: 0.264, // 26.4% WHT + 0%
   BE: 0.15, // 15% WHT + 0%
