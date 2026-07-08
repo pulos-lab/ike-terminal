@@ -2081,7 +2081,11 @@ export async function computePortfolioHistory(
     let stockValueBase = 0;
 
     for (const [isin, shares] of holdings) {
-      if (shares < EPSILON) continue;
+      // Pomijamy tylko pozycje PŁASKIE. Pozycje krótkie (shares < 0) MUSZĄ być wyceniane —
+      // ich ujemna wartość to zobowiązanie odkupu, które równoważy gotówkę z krótkiej
+      // sprzedaży. Wcześniejsze `shares < EPSILON` odrzucało shorty, więc wartość portfela
+      // była zawyżona o przychód z krótkiej sprzedaży (skok na wykresie na początku).
+      if (Math.abs(shares) < EPSILON) continue;
       const entry = tickerMap.get(isin);
       if (!entry) continue;
 

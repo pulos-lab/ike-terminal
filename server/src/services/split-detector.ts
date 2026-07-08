@@ -94,12 +94,28 @@ export function detectSplits(
   const splits: DetectedSplit[] = [];
   const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
 
+  // Instrumenty, na których NIGDY nie było pozycji długiej (czysty trading krótki) —
+  // split ich nie dotyczy. Bez tego realny split spółki (np. SMCI 10:1), wykryty z ceny
+  // providera (skorygowanej) vs cena transakcji short, był datowany na transakcję short
+  // i mnożył ją N-krotnie → widmowa pozycja i gigantyczny skok wyceny na wykresie.
+  const everLong = new Set<string>();
+  {
+    const net = new Map<string, number>();
+    for (const tx of sorted) {
+      const n = (net.get(tx.isin) ?? 0) + (tx.side === 'K' ? tx.quantity : -tx.quantity);
+      net.set(tx.isin, n);
+      if (n > 1e-9) everLong.add(tx.isin);
+    }
+  }
+
   // Track cumulative scaling already applied per ticker so we can detect subsequent splits
   const cumulativeRatio = new Map<string, number>();
 
   for (const tx of sorted) {
     const entry = tickerMap.get(tx.isin);
     if (!entry) continue;
+    // Pomijamy instrumenty tradowane wyłącznie krótko (patrz everLong wyżej).
+    if (!everLong.has(tx.isin)) continue;
 
     // Obligacje nie mają splitów (kursy tx i providera są w tej samej skali % nominału,
     // więc ratio ≈ 1 — guard jest defensywny, bez ryzyka fałszywych wykryć).
