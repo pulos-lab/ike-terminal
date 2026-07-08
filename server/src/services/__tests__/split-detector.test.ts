@@ -512,4 +512,42 @@ describe('detectSplitFromQuantityMismatch', () => {
     const results = detectSplitFromQuantityMismatch(txs);
     expect(results).toHaveLength(0);
   });
+
+  it('krótka sprzedaż + odkup NIE jest splitem (cena bez zawału — regresja SPOT/NET)', () => {
+    // Realny SPOT: 5 posiadanych @ ~166, sprzedaż 100 @ 113.68 (short 95), odkup 95 @ 113.63.
+    // rawRatio = 20 (plausible), ale cena NIE spadła 20× → to short, nie split.
+    const txs = [
+      makeTx({ side: 'K', quantity: 5, price: 166, date: '2022-02-15' }),
+      makeTx({ side: 'S', quantity: 100, price: 113.68, date: '2022-07-22T09:35:43' }),
+      makeTx({ side: 'K', quantity: 95, price: 113.63, date: '2022-07-22T09:36:05' }),
+    ];
+    expect(detectSplitFromQuantityMismatch(txs)).toHaveLength(0);
+  });
+
+  it('short 10:1 (NET) też odrzucony przez korroborację ceną', () => {
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 103.7, date: '2022-02-07' }),
+      makeTx({ side: 'S', quantity: 100, price: 54.49, date: '2022-07-22' }),
+      makeTx({ side: 'K', quantity: 90, price: 54.95, date: '2022-07-22' }),
+    ];
+    expect(detectSplitFromQuantityMismatch(txs)).toHaveLength(0);
+  });
+
+  it('realny split nadal wykrywany gdy cena spadła ~o ratio (20:1)', () => {
+    const txs = [
+      makeTx({ side: 'K', quantity: 5, price: 2000, date: '2022-01-01' }),
+      makeTx({ side: 'S', quantity: 100, price: 105, date: '2022-06-06' }),
+    ];
+    const r = detectSplitFromQuantityMismatch(txs);
+    expect(r).toHaveLength(1);
+    expect(r[0].ratio).toBe(20);
+  });
+
+  it('pomija opcje (category=option) — shorty opcyjne to norma', () => {
+    const txs = [
+      makeTx({ side: 'S', quantity: 100, price: 5, date: '2022-01-01', category: 'option' }),
+      makeTx({ side: 'K', quantity: 100, price: 3, date: '2022-02-01', category: 'option' }),
+    ];
+    expect(detectSplitFromQuantityMismatch(txs)).toHaveLength(0);
+  });
 });
