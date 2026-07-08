@@ -34,6 +34,7 @@ import { ExpandableCard, ExpandableCardSubRow } from '@/components/ui/expandable
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { useSortableData } from '@/hooks/useSortableData';
 import type { DividendRecord, UpcomingDividend } from 'shared';
+import { formatDividendDescription } from '@/lib/dividend-description';
 
 type BadgeVariant = ComponentProps<typeof Badge>['variant'];
 
@@ -448,7 +449,9 @@ export function DividendsPage() {
                       {hasDescription && (
                         <div className="flex justify-between gap-3 items-baseline">
                           <span className="text-muted-foreground shrink-0">Opis</span>
-                          <span className="text-right">{d.description}</span>
+                          <span className="text-right">
+                            {formatDividendDescription(d.description)}
+                          </span>
                         </div>
                       )}
                       {(d.source === 'manual' || d.source === 'auto-yahoo') && (
@@ -515,7 +518,7 @@ export function DividendsPage() {
                           {d.ticker} <CouponBadge subkind={d.subkind} />
                         </TableCell>
                         <TableCell className="text-muted-foreground text-sm">
-                          {d.description}
+                          {formatDividendDescription(d.description)}
                         </TableCell>
                         <TableCell className="text-right font-medium text-gain tabular-nums">
                           {formatNumber(d.amount)}

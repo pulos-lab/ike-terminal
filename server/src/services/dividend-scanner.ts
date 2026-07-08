@@ -35,6 +35,9 @@ export interface ScanResult {
 
 const DEFAULT_LOOKBACK_DAYS = 90;
 const PAYMENT_DATE_GRACE_DAYS = 30;
+// Próg „posiadanych akcji" na ex-date. Poniżej = reszta zmiennoprzecinkowa po pełnej
+// sprzedaży (frakcyjne akcje sięgają ~1e-4, residua FP ~1e-13 — 1e-6 rozdziela je pewnie).
+const SHARE_EPSILON = 1e-6;
 
 function getCountryFromExchange(exchange: string, ticker: string): string {
   if (exchange === 'GPW' || exchange === 'NC') return 'PL';
@@ -214,8 +217,11 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
         // daysSinceEvent >= 30 → payment certainly occurred, no calendar check needed
 
         // Prawo do dywidendy: akcje posiadane PRZED ex-date (exclusive, domyślne).
+        // Epsilon zamiast `<= 0`: pozycja kupiona i sprzedana w całości przed ex-date
+        // zostawia w sumie FIFO resztę zmiennoprzecinkową (~1e-16), która przechodziła
+        // przez `<= 0` i tworzyła widmową dywidendę 0,00 z opisem "8.88e-16 szt.".
         const shares = getSharesAtDate(adjustedTxs, isin, event.date);
-        if (shares <= 0) continue;
+        if (shares < SHARE_EPSILON) continue;
 
         // Sanity-check kwoty eventu vs bieżąca roczna stawka (cache 12h per ticker;
         // dla świeżych eventów kalendarz i tak był już pobrany wyżej).
@@ -241,8 +247,10 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
         const netAmount = roundTo2(grossAmount - taxAmount);
 
         const taxPct = Math.round(taxRate * 100);
-        const accountType = settings.isIKE || settings.isIKZE ? 'IKE/IKZE' : 'zwykłe';
-        const description = `Dywidenda ${entry.ticker} (${shares} szt. × ${event.amount} ${entry.currency}, podatek ${taxPct}% [${accountType}])`;
+        // Zwięzły opis — ticker jest w osobnej kolumnie widoku Dywidendy, a liczba akcji
+        // wynika z kwoty. Zostawiamy tylko to, czego nie widać gdzie indziej: stawkę
+        // na akcję i pobrany podatek u źródła.
+        const description = `${event.amount} ${entry.currency}/szt · podatek ${taxPct}%`;
 
         newOperations.push({
           date: event.date,
