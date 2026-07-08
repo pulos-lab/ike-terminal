@@ -157,8 +157,12 @@ export function convertClosedTradesToPln(trades: ClosedTrade[], fx: FxToPlnLooku
       continue;
     }
 
-    const openFx = fx(trade.currency, trade.buyDate);
-    const closeFx = fx(trade.currency, trade.sellDate);
+    // Kursy: preferuj DOKŁADNY kurs rozliczenia brokera z nogi transakcji
+    // (computeClosedTrades ustawia fxRateOpen/Close z tx.fxRate, gdy rozliczenie
+    // było w PLN — np. implied rate XTB z kwot); kurs dzienny rynkowy tylko jako
+    // fallback (m.in. mBank bez kursu w CSV, stare szablony XTB po stronie sprzedaży).
+    const openFx = trade.fxRateOpen ?? fx(trade.currency, trade.buyDate);
+    const closeFx = trade.fxRateClose ?? fx(trade.currency, trade.sellDate);
     if (openFx == null || closeFx == null || trade.costBasis === undefined) continue;
 
     trade.fxRateOpen = openFx;

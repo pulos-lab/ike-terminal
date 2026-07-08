@@ -694,11 +694,29 @@ export function computeClosedTrades(
   // tradeGroupId round-tripów, które na koniec przetwarzania grupy zostały otwarte (qty ≠ 0).
   const openGroupIds = new Set<string>();
 
+  // Kurs rozliczenia brokera z nogi transakcji — nadaje się do przeliczeń na PLN
+  // tylko gdy rozliczenie było w PLN (fxRate = PLN za 1 jednostkę waluty notowania;
+  // np. DEGIRO na koncie EUR ma kurs EUR-per-quote — bezużyteczny tutaj).
+  // convertClosedTradesToPln preferuje te kursy nad dzienne kursy rynkowe.
+  const legFxToPln = (tx: Transaction): number | undefined =>
+    tx.fxRate &&
+    tx.fxRate > 0 &&
+    (tx.paymentCurrency ?? tx.currency).toUpperCase() === 'PLN' &&
+    tx.currency.toUpperCase() !== 'PLN'
+      ? tx.fxRate
+      : undefined;
+
   for (const [groupKey, txs] of byGroup) {
     const isin = txs[0].isin; // clean ISIN for display/lookup
     const sorted = [...txs].sort((a, b) => a.date.localeCompare(b.date));
-    const buyQueue: Array<{ quantity: number; price: number; commission: number; date: string }> =
-      [];
+    const buyQueue: Array<{
+      quantity: number;
+      price: number;
+      commission: number;
+      date: string;
+      /** Kurs brokera → PLN nogi kupna (patrz legFxToPln). */
+      fxToPln?: number;
+    }> = [];
     const shortQueue: Array<{
       quantity: number;
       price: number;
@@ -803,6 +821,9 @@ export function computeClosedTrades(
               fees: tradeFees.length > 0 ? tradeFees : undefined,
               totalCost: sellComm + coverComm + feesTotal,
               costBasis,
+              // Short: noga otwarcia = sprzedaż (shortLot), zamknięcia = odkup (tx).
+              fxRateOpen: legFxToPln(shortLot.sellTx),
+              fxRateClose: legFxToPln(tx),
             });
 
             if (shortLot.quantity <= remaining + EPSILON) {
@@ -821,6 +842,7 @@ export function computeClosedTrades(
               price: tx.price,
               commission: tx.commission * (remaining / tx.quantity),
               date: tx.date,
+              fxToPln: legFxToPln(tx),
             });
           }
         } else {
@@ -829,6 +851,7 @@ export function computeClosedTrades(
             price: tx.price,
             commission: tx.commission,
             date: tx.date,
+            fxToPln: legFxToPln(tx),
           });
         }
       } else {
@@ -911,6 +934,10 @@ export function computeClosedTrades(
             fees: tradeFees.length > 0 ? tradeFees : undefined,
             totalCost: buyComm + sellComm + feesTotal,
             costBasis,
+            // Dokładne kursy rozliczenia brokera z nóg (jeśli znane) — preferowane
+            // nad kurs dzienny w convertClosedTradesToPln.
+            fxRateOpen: lot.fxToPln,
+            fxRateClose: legFxToPln(tx),
           });
 
           if (lot.quantity <= remaining + EPSILON) {

@@ -194,6 +194,58 @@ describe('convertClosedTradesToPln', () => {
     expect(t.profitLossPln).toBeCloseTo(250, 6);
     expect(t.costBasisPln).toBeCloseTo(2500, 6);
   });
+
+  it('preferuje kursy brokera z nóg (pre-ustawione fxRateOpen/Close) nad kurs dzienny', () => {
+    // computeClosedTrades ustawia dokładne kursy rozliczenia z tx.fxRate —
+    // stub dzienny celowo daje INNE wartości, żeby udowodnić preferencję.
+    const t = trade({
+      currency: 'USD',
+      quantity: 1,
+      buyPrice: 100,
+      sellPrice: 110,
+      profitLoss: 10,
+      costBasis: 100,
+      fxRateOpen: 3.827, // kurs brokera z nogi kupna
+      fxRateClose: 3.6969, // kurs brokera z nogi sprzedaży
+    });
+    convertClosedTradesToPln([t], fxStub({ 'USD|2025-01-10': 4.0, 'USD|2025-03-10': 4.5 }));
+    expect(t.fxRateOpen).toBe(3.827);
+    expect(t.fxRateClose).toBe(3.6969);
+    // 110×3.6969 − 100×3.8270 = 406.659 − 382.70 = 23.959
+    expect(t.profitLossPln).toBeCloseTo(110 * 3.6969 - 100 * 3.827, 6);
+    expect(t.costBasisPln).toBeCloseTo(382.7, 6);
+  });
+
+  it('kurs brokera tylko z jednej nogi: druga noga po kursie dziennym (fallback per strona)', () => {
+    // Stary szablon XTB: kupno ma implied fxRate, sprzedaż nie (brak close trade).
+    const t = trade({
+      currency: 'USD',
+      quantity: 1,
+      buyPrice: 100,
+      sellPrice: 110,
+      profitLoss: 10,
+      costBasis: 100,
+      fxRateOpen: 3.827,
+    });
+    convertClosedTradesToPln([t], fxStub({ 'USD|2025-01-10': 4.0, 'USD|2025-03-10': 4.5 }));
+    expect(t.fxRateOpen).toBe(3.827);
+    expect(t.fxRateClose).toBe(4.5); // dzienny
+    expect(t.profitLossPln).toBeCloseTo(110 * 4.5 - 100 * 3.827, 6);
+  });
+
+  it('kurs brokera z nogi + brak kursu dziennego drugiej nogi → nieprzeliczalny (bez połowicznych wyników)', () => {
+    const t = trade({
+      currency: 'USD',
+      quantity: 1,
+      buyPrice: 100,
+      sellPrice: 110,
+      profitLoss: 10,
+      costBasis: 100,
+      fxRateOpen: 3.827,
+    });
+    convertClosedTradesToPln([t], fxStub({ 'USD|2025-01-10': 4.0 })); // brak kursu sprzedaży
+    expect(t.profitLossPln).toBeUndefined();
+  });
 });
 
 describe('summarizeDividendsByCurrency', () => {

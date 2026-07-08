@@ -149,3 +149,127 @@ describe('computeClosedTrades — round-tripy (tradeGroupId)', () => {
     expect(trades[0].tradeGroupOpen).toBe(true);
   });
 });
+
+describe('computeClosedTrades — kursy brokera z nóg (fxRateOpen/Close)', () => {
+  const NO_MAP = new Map();
+
+  it('nogi z rozliczeniem PLN przenoszą tx.fxRate do fxRateOpen/Close', () => {
+    // XTB: kupno i sprzedaż USD rozliczone w PLN, dokładne kursy implied z kwot.
+    const txs = [
+      makeTx({
+        side: 'K',
+        quantity: 64,
+        price: 16,
+        date: '2024-01-01',
+        currency: 'USD',
+        paymentCurrency: 'PLN',
+        fxRate: 3.827002,
+      }),
+      makeTx({
+        side: 'S',
+        quantity: 64,
+        price: 26.07,
+        date: '2024-02-01',
+        currency: 'USD',
+        paymentCurrency: 'PLN',
+        fxRate: 3.696898,
+        id: 7,
+      }),
+    ];
+    const trades = computeClosedTrades(txs, NO_MAP);
+    expect(trades).toHaveLength(1);
+    expect(trades[0].fxRateOpen).toBeCloseTo(3.827002, 6);
+    expect(trades[0].fxRateClose).toBeCloseTo(3.696898, 6);
+  });
+
+  it('kupno z kursem + sprzedaż bez kursu → tylko fxRateOpen (druga strona z fallbacku dziennego)', () => {
+    const txs = [
+      makeTx({
+        side: 'K',
+        quantity: 10,
+        price: 16,
+        date: '2024-01-01',
+        currency: 'USD',
+        paymentCurrency: 'PLN',
+        fxRate: 3.8,
+      }),
+      makeTx({
+        side: 'S',
+        quantity: 10,
+        price: 26,
+        date: '2024-02-01',
+        currency: 'USD',
+        paymentCurrency: 'PLN',
+        id: 7,
+      }),
+    ];
+    const trades = computeClosedTrades(txs, NO_MAP);
+    expect(trades[0].fxRateOpen).toBeCloseTo(3.8, 6);
+    expect(trades[0].fxRateClose).toBeUndefined();
+  });
+
+  it('rozliczenie w walucie innej niż PLN (DEGIRO EUR) NIE ustawia kursów — kurs EUR-per-quote nie nadaje się do PLN', () => {
+    const txs = [
+      makeTx({
+        side: 'K',
+        quantity: 10,
+        price: 100,
+        date: '2024-01-01',
+        currency: 'USD',
+        paymentCurrency: 'EUR',
+        fxRate: 0.92,
+      }),
+      makeTx({
+        side: 'S',
+        quantity: 10,
+        price: 110,
+        date: '2024-02-01',
+        currency: 'USD',
+        paymentCurrency: 'EUR',
+        fxRate: 0.93,
+        id: 7,
+      }),
+    ];
+    const trades = computeClosedTrades(txs, NO_MAP);
+    expect(trades[0].fxRateOpen).toBeUndefined();
+    expect(trades[0].fxRateClose).toBeUndefined();
+  });
+
+  it('partial fill: każda para nóg dostaje kursy SWOICH transakcji', () => {
+    const txs = [
+      makeTx({
+        side: 'K',
+        quantity: 100,
+        price: 10,
+        date: '2024-01-01',
+        currency: 'USD',
+        paymentCurrency: 'PLN',
+        fxRate: 4.0,
+      }),
+      makeTx({
+        side: 'S',
+        quantity: 40,
+        price: 12,
+        date: '2024-02-01',
+        currency: 'USD',
+        paymentCurrency: 'PLN',
+        fxRate: 4.1,
+        id: 7,
+      }),
+      makeTx({
+        side: 'S',
+        quantity: 60,
+        price: 11,
+        date: '2024-03-01',
+        currency: 'USD',
+        paymentCurrency: 'PLN',
+        fxRate: 4.2,
+        id: 8,
+      }),
+    ];
+    const trades = computeClosedTrades(txs, NO_MAP);
+    expect(trades).toHaveLength(2);
+    expect(trades.every((t) => t.fxRateOpen === 4.0)).toBe(true);
+    expect(trades.map((t) => t.fxRateClose).sort()).toEqual([4.1, 4.2]);
+  });
+});

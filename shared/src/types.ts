@@ -231,9 +231,14 @@ export interface ClosedTrade {
   profitLossPln?: number;
   /** costBasis po kursie z dnia otwarcia pozycji. Dla PLN = costBasis. */
   costBasisPln?: number;
-  /** Kurs waluta→PLN użyty dla nogi otwarcia (1 dla PLN). */
+  /**
+   * Kurs waluta→PLN użyty dla nogi otwarcia (1 dla PLN). computeClosedTrades
+   * wstępnie ustawia DOKŁADNY kurs rozliczenia brokera z nogi transakcji
+   * (tx.fxRate przy paymentCurrency=PLN, np. implied rate XTB z kwot);
+   * convertClosedTradesToPln uzupełnia brakujące dziennym kursem rynkowym.
+   */
   fxRateOpen?: number;
-  /** Kurs waluta→PLN użyty dla nogi zamknięcia (1 dla PLN). */
+  /** Kurs waluta→PLN użyty dla nogi zamknięcia (1 dla PLN). Źródła jak fxRateOpen. */
   fxRateClose?: number;
   /**
    * Identyfikator round-tripu (epizodu pozycji flat→flat). Wszystkie nogi jednego cyklu
