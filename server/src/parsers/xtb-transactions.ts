@@ -544,10 +544,13 @@ function detectHeaderLayout(rows: any[][]): HeaderLayout | null {
   return null;
 }
 
-/** Fallback: extract account currency from filename prefix like "USD_52807819_..." */
+/** Fallback: extract account currency from filename prefix like "USD_52807819_..."
+ *  Prefiks IKE_/IKZE_ (eksporty kont emerytalnych, np. "IKE_51152547_...") ZAWSZE
+ *  implikuje PLN — konta IKE/IKZE są z definicji prowadzone w złotówkach. */
 function currencyFromFileName(fileName: string | undefined): string | null {
   if (!fileName) return null;
   const base = fileName.split(/[\\/]/).pop() || fileName;
+  if (/^(IKE|IKZE)_\d+_/i.test(base)) return 'PLN';
   const m = base.match(/^([A-Z]{3})_\d+_/);
   if (!m) return null;
   const cur = m[1];

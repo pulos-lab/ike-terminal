@@ -661,3 +661,48 @@ describe('parseXtbFile — detekcja waluty z |Amount| vs qty×cena', () => {
     expect(warnings?.some((w) => w.includes('GBp'))).toBe(true);
   });
 });
+
+// ── Waluta konta z prefiksu nazwy pliku ──────────────────────────────────────
+
+describe('parseXtbFile — prefiks IKE_/IKZE_ implikuje PLN', () => {
+  const t = '05/03/2024 10:00:00';
+  const NO_CURRENCY_WARNING = 'Nie wykryto waluty konta';
+
+  /** Wiersz neutralny walutowo (ratio 1) — pozwala sprawdzić samą detekcję konta. */
+  const plnBuy = {
+    id: 1,
+    type: 'Stock purchase',
+    time: t,
+    comment: 'OPEN BUY 10 @ 20.00',
+    symbol: 'CDR.PL',
+    amount: -200,
+  };
+
+  it('IKE_<numer>_ → PLN bez warninga o niewykrytej walucie', async () => {
+    const buf = await buildXtbXlsx([plnBuy]);
+    const { transactions, warnings } = await parseXtbFile(
+      buf,
+      'b1',
+      'IKE_51152547_2006-01-01_2026-07-07.xlsx',
+    );
+    expect(transactions.data[0].currency).toBe('PLN');
+    expect(warnings?.some((w) => w.includes(NO_CURRENCY_WARNING))).toBeFalsy();
+  });
+
+  it('IKZE_<numer>_ → PLN bez warninga (niezależnie od wielkości liter)', async () => {
+    const buf = await buildXtbXlsx([plnBuy]);
+    const { warnings } = await parseXtbFile(buf, 'b1', 'ikze_12345_2020-01-01.xlsx');
+    expect(warnings?.some((w) => w.includes(NO_CURRENCY_WARNING))).toBeFalsy();
+  });
+
+  it('regresja: prefiks walutowy USD_ nadal wykrywany, nieznany prefiks → PLN + warning', async () => {
+    const buf = await buildXtbXlsx([{ ...plnBuy, symbol: 'PLTR.US' }]);
+    const usd = await parseXtbFile(buf, 'b1', 'USD_12345_test.xlsx');
+    expect(usd.transactions.data[0].currency).toBe('USD');
+    expect(usd.warnings?.some((w) => w.includes(NO_CURRENCY_WARNING))).toBeFalsy();
+
+    const unknown = await parseXtbFile(await buildXtbXlsx([plnBuy]), 'b1', 'export_12345.xlsx');
+    expect(unknown.transactions.data[0].currency).toBe('PLN');
+    expect(unknown.warnings?.some((w) => w.includes(NO_CURRENCY_WARNING))).toBe(true);
+  });
+});
