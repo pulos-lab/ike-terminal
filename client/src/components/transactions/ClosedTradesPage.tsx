@@ -35,6 +35,7 @@ import type { ClosedTrade } from 'shared';
 import { ClosedPositionCardMobile } from './ClosedPositionCardMobile';
 import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { displayOptionTicker } from 'shared';
+import { TickerLabel } from '@/components/ui/ticker-label';
 
 /** Round-trip wskazany do usunięcia — może obejmować kilka transakcji sprzedaży. */
 const CATEGORY_FILTER_LABELS: Record<string, string> = {
@@ -590,7 +591,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                         return (
                           <TableRow key={group.key}>
                             <TableCell className="font-mono font-medium">
-                              {displayOptionTicker(trade.ticker)}
+                              <TickerLabel ticker={trade.ticker} />
                               <CategoryBadge category={trade.category} />
                               {trade.isShort && (
                                 <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
@@ -682,7 +683,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                 ) : (
                                   <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                                 )}
-                                {displayOptionTicker(group.ticker)}
+                                <TickerLabel ticker={group.ticker} />
                                 <CategoryBadge category={group.trades[0]?.category} />
                                 {group.trades.some((t) => t.isShort) && (
                                   <span className="text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
