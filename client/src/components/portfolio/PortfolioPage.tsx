@@ -34,6 +34,7 @@ import {
 import { Eye, EyeOff, AlertTriangle, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioDiversification } from './PortfolioDiversification';
+import { PortfolioOptionsCard } from './PortfolioOptionsCard';
 import { PortfolioPositionCardMobile } from './PortfolioPositionCardMobile';
 import { useToggleSet } from '@/hooks/useToggleSet';
 
@@ -93,26 +94,37 @@ export function PortfolioPage() {
   const baseCurrency: string = data?.baseCurrency || 'PLN';
   const useNativeCcy = baseCurrency !== 'PLN';
 
+  // Opcje mają własną kartę (inne kolumny: strike/expiry/DTE, możliwe ujemne
+  // ilości i wartości dla pozycji krótkich) — główna tabela pokazuje resztę.
+  const regularPositions = useMemo(
+    () => (data?.positions ?? []).filter((p) => p.category !== 'option'),
+    [data?.positions],
+  );
+  const optionPositions = useMemo(
+    () => (data?.positions ?? []).filter((p) => p.category === 'option'),
+    [data?.positions],
+  );
+
   const totals = useMemo(() => {
-    if (!data?.positions?.length) return null;
+    if (!regularPositions.length) return null;
     if (useNativeCcy) {
       // Sumy w walucie portfela — raw sum z pos.currentValue/profitLoss (native)
-      const totalValue = data.positions.reduce((s, p) => s + p.currentValue, 0);
-      const totalProfitLoss = data.positions.reduce((s, p) => s + p.profitLoss, 0);
+      const totalValue = regularPositions.reduce((s, p) => s + p.currentValue, 0);
+      const totalProfitLoss = regularPositions.reduce((s, p) => s + p.profitLoss, 0);
       const totalCostBasis = totalValue - totalProfitLoss;
       const totalProfitLossPct = totalCostBasis > 0 ? (totalProfitLoss / totalCostBasis) * 100 : 0;
       return {
         totalValue,
         totalProfitLoss,
         totalProfitLossPct,
-        totalValuePln: data.totalValuePln,
-        cashValuePln: data.cashValuePln,
+        totalValuePln: data!.totalValuePln,
+        cashValuePln: data!.cashValuePln,
       };
     }
     // Wiersz „Razem" musi być sumą kolumny „Wartość" nad nim, czyli samych pozycji
-    // (stocksValuePln) — totalValuePln zawiera też wolną gotówkę, która ma własną kartę.
-    const totalValue = data.stocksValuePln ?? data.totalValuePln;
-    const totalProfitLoss = data.positions.reduce((s, p) => s + p.profitLossPln, 0);
+    // z TEJ tabeli (bez opcji — mają własną kartę — i bez gotówki).
+    const totalValue = regularPositions.reduce((s, p) => s + p.currentValuePln, 0);
+    const totalProfitLoss = regularPositions.reduce((s, p) => s + p.profitLossPln, 0);
     const totalCostBasis = totalValue - totalProfitLoss;
     const totalProfitLossPct = totalCostBasis > 0 ? (totalProfitLoss / totalCostBasis) * 100 : 0;
     return {
@@ -120,9 +132,9 @@ export function PortfolioPage() {
       totalProfitLoss,
       totalProfitLossPct,
       totalValuePln: totalValue,
-      cashValuePln: data.cashValuePln,
+      cashValuePln: data!.cashValuePln,
     };
-  }, [data, useNativeCcy]);
+  }, [data, regularPositions, useNativeCcy]);
 
   const recentSplitMap = useMemo(() => {
     const map = new Map<string, { ratio: number; date: string }>();
@@ -182,10 +194,10 @@ export function PortfolioPage() {
               Otwarte pozycje
               {data && (
                 <span className="ml-2 text-muted-foreground font-normal">
-                  ({data.positions.length} pozycji |{' '}
+                  ({regularPositions.length} pozycji |{' '}
                   {useNativeCcy
                     ? formatCurrency(totals?.totalValue ?? 0, baseCurrency)
-                    : formatPLN(data.stocksValuePln ?? data.totalValuePln)}
+                    : formatPLN(totals?.totalValuePln ?? 0)}
                   )
                 </span>
               )}
@@ -235,10 +247,10 @@ export function PortfolioPage() {
         <CardContent>
           {isLoading ? (
             <LoadingSpinner />
-          ) : data?.positions?.length ? (
+          ) : regularPositions.length ? (
             <>
               <div className="md:hidden flex flex-col gap-2">
-                {data.positions.map((pos) => (
+                {regularPositions.map((pos) => (
                   <PortfolioPositionCardMobile
                     key={pos.isin}
                     position={pos}
@@ -286,7 +298,7 @@ export function PortfolioPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.positions.map((pos) => (
+                    {regularPositions.map((pos) => (
                       <TableRow key={pos.isin}>
                         <TableCell className="font-mono font-medium">
                           {pos.ticker}
@@ -463,6 +475,8 @@ export function PortfolioPage() {
         </CardContent>
       </Card>
 
+      <PortfolioOptionsCard positions={optionPositions} totalValuePln={data?.totalValuePln ?? 0} />
+
       {cashPositions.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
@@ -489,10 +503,22 @@ export function PortfolioPage() {
                     <TableCell>
                       <CcyChip ccy={cp.currency} />
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell
+                      className={`text-right tabular-nums ${cp.balance < 0 ? 'text-red-600 font-medium' : ''}`}
+                    >
                       {formatCurrency(cp.balance, cp.currency)}
+                      {cp.balance < 0 && (
+                        <span
+                          className="ml-1 text-[10px] text-muted-foreground/60"
+                          title="Ujemne saldo — kredyt margin u brokera"
+                        >
+                          ⚠
+                        </span>
+                      )}
                     </TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">
+                    <TableCell
+                      className={`text-right font-medium tabular-nums ${cp.valuePln < 0 ? 'text-red-600' : ''}`}
+                    >
                       {formatPLN(cp.valuePln)}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground tabular-nums">
@@ -506,8 +532,11 @@ export function PortfolioPage() {
         </Card>
       )}
 
-      {data && data.positions.length > 0 && (
-        <PortfolioDiversification positions={data.positions} totalValuePln={data.totalValuePln} />
+      {regularPositions.length > 0 && (
+        <PortfolioDiversification
+          positions={regularPositions}
+          totalValuePln={data?.totalValuePln ?? 0}
+        />
       )}
     </div>
   );

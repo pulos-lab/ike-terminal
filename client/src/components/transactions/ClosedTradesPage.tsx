@@ -36,6 +36,14 @@ import { ClosedPositionCardMobile } from './ClosedPositionCardMobile';
 import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 
 /** Round-trip wskazany do usunięcia — może obejmować kilka transakcji sprzedaży. */
+const CATEGORY_FILTER_LABELS: Record<string, string> = {
+  stock: 'Akcje',
+  etf: 'ETF',
+  cfd: 'CFD',
+  bond: 'Obligacje',
+  option: 'Opcje',
+};
+
 interface DeleteSellTarget {
   ids: number[];
   ticker: string;
@@ -104,6 +112,9 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
 
   const [plFilter, setPlFilter] = useState<'all' | 'profit' | 'loss'>('all');
   const [currencyFilter, setCurrencyFilter] = useState<string>('ALL');
+  // Filtr kategorii instrumentu (akcje/ETF/opcje/…) — opcje liczą się do wspólnych
+  // statystyk, ale da się je wyodrębnić.
+  const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   // Date range: use controlled props if provided, else internal state (backward compat)
   const [internalDateRange, setInternalDateRange] = useState<string>('ALL');
   const [internalCustomFrom, setInternalCustomFrom] = useState('');
@@ -156,6 +167,13 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
     return Array.from(set).sort();
   }, [data]);
 
+  const availableCategories = useMemo(() => {
+    if (!data?.trades?.length) return [];
+    const set = new Set<string>();
+    for (const trade of data.trades) set.add(trade.category ?? 'stock');
+    return Array.from(set).sort();
+  }, [data]);
+
   const availableYears = useMemo(() => {
     if (!data?.trades?.length) return [];
     const set = new Set<number>();
@@ -172,6 +190,8 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
     if (plFilter === 'profit') g = g.filter((x) => x.totalProfitLoss > 0);
     else if (plFilter === 'loss') g = g.filter((x) => x.totalProfitLoss < 0);
     if (currencyFilter !== 'ALL') g = g.filter((x) => x.currency === currencyFilter);
+    if (categoryFilter !== 'ALL')
+      g = g.filter((x) => (x.trades[0]?.category ?? 'stock') === categoryFilter);
     if (dateRange !== 'ALL') {
       let fromDate: string | undefined;
       let toDate: string | undefined;
@@ -186,7 +206,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
       if (toDate) g = g.filter((x) => x.sellDate.slice(0, 10) <= toDate!);
     }
     return g;
-  }, [allGroups, plFilter, currencyFilter, dateRange, customFrom, customTo]);
+  }, [allGroups, plFilter, currencyFilter, categoryFilter, dateRange, customFrom, customTo]);
 
   // Liczba nóg (transakcji) w przefiltrowanych grupach — do nagłówka.
   const filteredLegCount = useMemo(() => groups.reduce((s, g) => s + g.trades.length, 0), [groups]);
@@ -214,10 +234,15 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
   }, [groups]);
 
   const totalTrades = data?.trades?.length ?? 0;
-  const isFiltered = plFilter !== 'all' || currencyFilter !== 'ALL' || dateRange !== 'ALL';
+  const isFiltered =
+    plFilter !== 'all' ||
+    currencyFilter !== 'ALL' ||
+    categoryFilter !== 'ALL' ||
+    dateRange !== 'ALL';
   const activeFilterCount =
     (plFilter !== 'all' ? 1 : 0) +
     (currencyFilter !== 'ALL' ? 1 : 0) +
+    (categoryFilter !== 'ALL' ? 1 : 0) +
     (dateRange !== 'ALL' ? 1 : 0);
 
   return (
@@ -301,6 +326,27 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                               {availableCurrencies.map((c) => (
                                 <SelectItem key={c} value={c}>
                                   {c}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {availableCategories.length > 1 && (
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                            Kategoria
+                          </span>
+                          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                            <SelectTrigger className="h-9 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ALL">Wszystkie kategorie</SelectItem>
+                              {availableCategories.map((c) => (
+                                <SelectItem key={c} value={c}>
+                                  {CATEGORY_FILTER_LABELS[c] ?? c}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -419,6 +465,22 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                       {availableCurrencies.map((c) => (
                         <SelectItem key={c} value={c}>
                           {c}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {availableCategories.length > 1 && (
+                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                    <SelectTrigger className="h-7 w-[150px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">Wszystkie kategorie</SelectItem>
+                      {availableCategories.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {CATEGORY_FILTER_LABELS[c] ?? c}
                         </SelectItem>
                       ))}
                     </SelectContent>

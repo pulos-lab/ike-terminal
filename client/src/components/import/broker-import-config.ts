@@ -11,7 +11,7 @@ import type { BrokerType } from 'shared';
  */
 
 /** Brokerzy ze znanym schematem importu (osobno od ścieżki „Inny broker"). */
-export type KnownBroker = 'bossa' | 'mbank' | 'degiro' | 'xtb';
+export type KnownBroker = 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'ibkr';
 
 export type FileRole = 'transactions' | 'operations';
 
@@ -43,6 +43,7 @@ export const BROKER_TILES: Array<{ id: KnownBroker | 'generic'; tagline: string 
   { id: 'degiro', tagline: '2 pliki CSV (Transactions + Account)' },
   { id: 'mbank', tagline: '1 plik CSV (operacje opcjonalnie)' },
   { id: 'xtb', tagline: '1 plik XLSX' },
+  { id: 'ibkr', tagline: 'Pliki HTML (Activity Statement, 1 na rok)' },
   { id: 'generic', tagline: 'Inny broker — plik CSV lub XLSX' },
 ];
 
@@ -149,6 +150,26 @@ export const BROKER_IMPORT_CONFIG: Record<KnownBroker, BrokerImportConfig> = {
     ],
     formatNote: 'Format XTB: skoroszyt XLSX (Excel).',
   },
+
+  ibkr: {
+    exportSteps: [
+      'Zaloguj się do IBKR Client Portal → menu Performance & Reports → Statements.',
+      'Przy „Activity Statement" wybierz okres roczny (Annual lub Custom Date Range obejmujący cały rok) i format HTML/Download.',
+      'Pobierz osobny plik dla każdego roku. Jeśli konto było przenoszone (zmiana numeru, np. transfer rezydencji), pobierz wyciągi z obu kont.',
+      'Wgraj wszystkie pliki naraz poniżej i kliknij Importuj — transfer pozycji między kontami zostanie rozpoznany automatycznie.',
+    ],
+    files: [
+      {
+        role: 'transactions',
+        label: 'Activity Statement (HTML)',
+        accept: '.htm,.html',
+        multiple: true,
+        required: true,
+        hint: 'Roczne wyciągi Activity Statement — jeden plik na rok, z obu kont jeśli był transfer. Zawierają wszystko: akcje, opcje, obligacje, dywidendy, odsetki i opłaty.',
+      },
+    ],
+    formatNote: 'Format IBKR: HTML (Activity Statement). Obsługiwane: akcje/ETF, opcje, obligacje, forex, dywidendy z podatkiem u źródła, odsetki margin, splity i zmiany ISIN.',
+  },
 };
 
 /** Etykiety kafelków — używamy BROKER_LABELS dla znanych + własna dla 'generic'. */
@@ -156,5 +177,5 @@ export const GENERIC_TILE_LABEL = 'Inny broker';
 
 /** Czy dany id to znany broker z configiem. */
 export function isKnownBroker(id: BrokerType | 'generic' | null): id is KnownBroker {
-  return id === 'bossa' || id === 'mbank' || id === 'degiro' || id === 'xtb';
+  return id === 'bossa' || id === 'mbank' || id === 'degiro' || id === 'xtb' || id === 'ibkr';
 }
