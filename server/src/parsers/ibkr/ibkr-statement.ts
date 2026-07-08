@@ -15,6 +15,7 @@ import {
   parseCorporateActions,
   parseTransfers,
   parseTransactionsTax,
+  parseCashReportSalesTax,
 } from './sections.js';
 
 /** Detekcja formatu — stringi obecne w każdym Activity Statement (zweryfikowane 2021-2025). */
@@ -45,5 +46,6 @@ export function parseIbkrStatementHtml(html: string, warnings: string[]): IbkrSt
     corporateActions: parseCorporateActions(html),
     transfers: parseTransfers(html),
     transactionTaxes: parseTransactionsTax(html),
+    salesTax: parseCashReportSalesTax(html),
   };
 }

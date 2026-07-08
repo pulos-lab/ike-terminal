@@ -52,6 +52,12 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
    - Arkusz "Closed Positions" (opcjonalny): zamknięte CFD → para transakcji K+S, kategorie instrumentów (stock/etf/cfd)
    - Symbole XTB: suffix krajowy (CDR.PL, AAPL.US, SAP.DE) → waluta z suffixu
    - Obsługa fractional shares (np. 0.3069 @ 494.15)
+5. **Interactive Brokers (IBKR)** — roczne Activity Statements w HTML (multi-file: wszystkie roczniki i oba konta naraz; parser `server/src/parsers/ibkr/`)
+   - Sekcje HTML (`div id="tbl{Name}_?U{acct}Body"`): Trades, ContractInfo, Dividends+WHT (parowane w operację netto z nettingiem reversali), Combined Interest/Broker Fees (odsetki margin → `fee`, kupony → `dividend`+`coupon`, SYEP → `other`+`interest`), Fees, Deposits, Corporate Actions (splity → `stock_splits` z realną ex-datą; zmiany ISIN → UPDATE transakcji PRZED insertem — idempotentny re-import), Transactions Tax (FTT → prowizja), Cash Report (tylko agregat Sales Tax → `fee`)
+   - **Opcje**: kategoria `option`, pseudo-ISIN `OPT:{ticker OCC}` (helpery w `shared/src/option-symbols.ts`), metadane w tabeli `option_contracts`, wycena live przez Yahoo v8 chart po tickerze OCC (Eurex → fallback priceManual); sell-to-open = zwykła S (silnik wspiera otwarte shorty: ujemne shares/wartość); osobna karta „Opcje" w Portfelu (DTE, expiryPassed)
+   - Obligacje UST: qty normalizowane do nominał/100 (cena w % → `inferBondNominal`=100); Forex → para nóg `fx_exchange` + prowizja w walucie BAZOWEJ (nagłówek „Comm in PLN" — także dla par EUR.USD!); transfery Inter-Company między kontami POMIJANE (oba konta = jeden portfel, ciągłość kosztu z historii)
+   - **Pułapka nagłówków**: kolumny zmieniają się między blokami JEDNEJ tabeli (Forex: „Comm in PLN" vs „Comm/Fee") i między latami (ContractInfo `Underlying` od 2024; Symbol bywa listą aliasów „META, FB") — ekstraktor dzieli tabelę na segmenty per `<th>`, mapowanie zawsze po nazwach
+   - Golden test na realnych plikach (skip bez katalogu): `import/ibkr/` — uzgadnia saldo per waluta z Cash Report ±0.25
 - Auto-detekcja formatu po nagłówkach CSV/XLSX — użytkownik nie musi wskazywać brokera
 
 ### Import uniwersalny (inni brokerzy, CSV i XLSX)

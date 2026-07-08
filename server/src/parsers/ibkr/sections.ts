@@ -46,6 +46,14 @@ export function parseAccountInformation(html: string): {
 export function parseTrades(html: string, warnings: string[]): IbkrTrade[] {
   const trades: IbkrTrade[] = [];
   for (const table of extractSectionTables(html, 'Transactions')) {
+    // Kolumna prowizji zmienia nazwę między blokami tej samej tabeli:
+    // "Comm/Fee" (akcje/opcje/obligacje — prowizja w walucie bloku) vs
+    // "Comm in PLN" (Forex — prowizja ZAWSZE w walucie bazowej konta,
+    // także dla par bez PLN, np. EUR.USD pod blokiem USD).
+    const commHeader = table.headers.find((h) => h === 'Comm/Fee' || h.startsWith('Comm in '));
+    const commCurrency = commHeader?.startsWith('Comm in ')
+      ? commHeader.slice('Comm in '.length).trim()
+      : undefined;
     for (const row of table.rows) {
       const rec = cellsToRecord(table.headers, row.cells);
       const symbol = rec['Symbol'];
@@ -53,7 +61,7 @@ export function parseTrades(html: string, warnings: string[]): IbkrTrade[] {
       const quantity = parseIbkrNumber(rec['Quantity'] ?? '');
       const tPrice = parseIbkrNumber(rec['T. Price'] ?? '');
       const proceeds = parseIbkrNumber(rec['Proceeds'] ?? '');
-      const commFee = parseIbkrNumber(rec['Comm/Fee'] ?? '') ?? 0;
+      const commFee = parseIbkrNumber((commHeader ? rec[commHeader] : '') ?? '') ?? 0;
       if (!symbol || !dateTime || quantity === null || tPrice === null || proceeds === null) {
         warnings.push(`IBKR Trades: pominięto niekompletny wiersz "${row.cells.join('|')}"`);
         continue;
@@ -71,6 +79,7 @@ export function parseTrades(html: string, warnings: string[]): IbkrTrade[] {
         tPrice,
         proceeds,
         commFee,
+        commCurrency,
         codes: (rec['Code'] ?? '')
           .split(';')
           .map((c) => c.trim())
@@ -175,6 +184,27 @@ export const parseInterest = (html: string) => parseCashSection(html, 'CombInt')
 export const parseFees = (html: string) => parseCashSection(html, 'CombFees');
 export const parseBrokerFees = (html: string) => parseCashSection(html, 'BrokerFees');
 export const parseDepositsWithdrawals = (html: string) => parseCashSection(html, 'CombDepWith');
+
+/**
+ * Sales Tax (VAT od prowizji/opłat) istnieje w wyciągu WYŁĄCZNIE jako agregat
+ * w Cash Report — nie ma sekcji szczegółowej. Zwracamy sumę per waluta;
+ * mapper emituje jedną operację `fee` per waluta (data = koniec okresu wyciągu),
+ * żeby saldo gotówki zgadzało się z wyciągiem.
+ */
+export function parseCashReportSalesTax(html: string): Array<{ currency: string; amount: number }> {
+  const result: Array<{ currency: string; amount: number }> = [];
+  for (const table of extractSectionTables(html, 'CashReport')) {
+    for (const row of table.rows) {
+      // CashReport ma bloki per waluta oraz "Base Currency Summary" — bierzemy tylko
+      // bloki walutowe (ISO), inaczej zliczylibyśmy podatek drugi raz z sumy bazowej.
+      if (!row.currency || !/^[A-Z]{3}$/.test(row.currency)) continue;
+      if (row.cells[0] !== 'Sales Tax') continue;
+      const amount = parseIbkrNumber(row.cells[1] ?? '');
+      if (amount !== null && amount !== 0) result.push({ currency: row.currency, amount });
+    }
+  }
+  return result;
+}
 
 export function parseCorporateActions(html: string): IbkrCorporateActionRow[] {
   const rows: IbkrCorporateActionRow[] = [];

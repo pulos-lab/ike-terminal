@@ -61,19 +61,27 @@ export function extractSectionTables(html: string, sectionName: string): IbkrTab
     $(body)
       .find('table')
       .each((_, tableEl) => {
-        const table = extractTable($, tableEl);
-        if (table.headers.length > 0 || table.rows.length > 0) tables.push(table);
+        tables.push(...extractTable($, tableEl));
       });
   });
 
   return tables;
 }
 
-function extractTable($: cheerio.CheerioAPI, tableEl: AnyNode): IbkrTable {
+function extractTable($: cheerio.CheerioAPI, tableEl: AnyNode): IbkrTable[] {
+  const tables: IbkrTable[] = [];
   let headers: string[] = [];
-  const rows: IbkrRow[] = [];
+  let rows: IbkrRow[] = [];
   let assetClass: string | undefined;
   let currency: string | undefined;
+
+  // Nagłówki kolumn mogą się zmieniać WEWNĄTRZ jednej tabeli (Trades: blok Forex ma
+  // "Comm in PLN" zamiast "Comm/Fee") — każdy wiersz <th> zamyka bieżący segment
+  // i otwiera nowy z własnymi nagłówkami; kontekst asset-class/waluty przechodzi dalej.
+  const flushSegment = () => {
+    if (headers.length > 0 || rows.length > 0) tables.push({ headers, rows });
+    rows = [];
+  };
 
   $(tableEl)
     .find('tr')
@@ -85,8 +93,12 @@ function extractTable($: cheerio.CheerioAPI, tableEl: AnyNode): IbkrTable {
 
       const ths = $tr.children('th');
       if (ths.length > 0) {
-        // Ostatni wiersz <th> wygrywa — sekcje z wieloma tabelami mają własne nagłówki per tabela
-        headers = ths.map((_, th) => normalizeCell($(th).text())).get();
+        const newHeaders = ths.map((_, th) => normalizeCell($(th).text())).get();
+        // Powtórzony identyczny nagłówek (IBKR wstawia go przed każdą grupą) — bez splitu
+        if (JSON.stringify(newHeaders) !== JSON.stringify(headers)) {
+          flushSegment();
+          headers = newHeaders;
+        }
         return;
       }
 
@@ -113,7 +125,8 @@ function extractTable($: cheerio.CheerioAPI, tableEl: AnyNode): IbkrTable {
       rows.push({ assetClass, currency, cells });
     });
 
-  return { headers, rows };
+  flushSegment();
+  return tables;
 }
 
 /**

@@ -161,6 +161,28 @@ export function mapIbkrStatement(
     });
   }
 
+  // ── Sales Tax (VAT od opłat) — w wyciągu istnieje TYLKO jako agregat w Cash Report ──
+  // Data = ostatnia data aktywności w pliku (przybliżenie końca okresu wyciągu);
+  // jedna operacja per waluta, żeby saldo gotówki zgadzało się z wyciągiem.
+  const lastActivityDate = [
+    ...statement.trades.map((t) => t.dateTime.slice(0, 10)),
+    ...statement.depositsWithdrawals.map((r) => r.date),
+    ...statement.fees.map((r) => r.date),
+  ]
+    .sort()
+    .pop();
+  for (const tax of statement.salesTax) {
+    operations.push({
+      date: lastActivityDate ?? '1970-01-01',
+      operationType: 'fee',
+      description: `Podatek VAT od opłat (Sales Tax) — suma roczna z wyciągu, ${tax.currency}`,
+      amount: tax.amount,
+      currency: tax.currency,
+      source: 'ibkr',
+      importBatch,
+    });
+  }
+
   // ── Corporate actions → markery (wiersze NIE stają się transakcjami) ──
   const { splits, isinChanges } = mapCorporateActions(statement, warnings);
 
@@ -346,8 +368,10 @@ function mapForexTrade(
       date,
       operationType: 'fee',
       description: `Prowizja przewalutowania ${fxPair}`,
+      // Prowizje forex są w walucie bazowej konta (nagłówek "Comm in PLN") — także
+      // dla par bez PLN (EUR.USD); waluta bloku byłaby błędna.
       amount: roundTo2(trade.commFee),
-      currency: pair.quote,
+      currency: trade.commCurrency ?? pair.quote,
       source: 'ibkr',
       importBatch,
     });

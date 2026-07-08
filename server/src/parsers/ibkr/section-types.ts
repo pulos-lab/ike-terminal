@@ -20,6 +20,12 @@ export interface IbkrTrade {
   proceeds: number;
   /** Comm/Fee — prowizja (ujemna). */
   commFee: number;
+  /**
+   * Waluta prowizji, gdy nagłówek kolumny mówi wprost "Comm in XXX" (blok Forex:
+   * prowizje przewalutowań są zawsze w walucie bazowej konta, niezależnie od waluty
+   * bloku — np. EUR.USD pod blokiem USD ma prowizję w PLN). Brak = waluta bloku.
+   */
+  commCurrency?: string;
   /** Kody transakcji po splicie ";": O, C, P, Ep, A, Ex, FPA, Ca, ... */
   codes: string[];
 }
@@ -128,4 +134,6 @@ export interface IbkrStatement {
   corporateActions: IbkrCorporateActionRow[];
   transfers: IbkrTransferRow[];
   transactionTaxes: IbkrTransactionTaxRow[];
+  /** Agregat "Sales Tax" (VAT od opłat) z Cash Report — per waluta, tylko suma roczna. */
+  salesTax: Array<{ currency: string; amount: number }>;
 }
