@@ -79,7 +79,6 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
   const [optStrike, setOptStrike] = useState('');
   const [optExpiry, setOptExpiry] = useState('');
   const [optType, setOptType] = useState<'C' | 'P'>('C');
-  const [optMultiplier, setOptMultiplier] = useState('100');
   const [optCurrency, setOptCurrency] = useState('USD');
   /** Ostrzeżenie z serwera: ticker jest dzieckiem zastosowanego spin-offu —
    *  pozycja mogła już powstać automatycznie; wymagamy jawnego potwierdzenia. */
@@ -92,6 +91,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
   });
 
   const isOption = category === 'option';
+  const OPTION_MULTIPLIER = 100; // US equity options — zawsze 100
 
   // Podgląd kontraktu opcyjnego (ticker OCC jak w Yahoo) — gdy pola są kompletne.
   const optParsed =
@@ -127,7 +127,8 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     if (isOption) {
       if (!optUnderlying.trim()) e.optUnderlying = 'Podaj ticker instrumentu bazowego';
       if (!optStrike || parseFloat(optStrike) <= 0) e.optStrike = 'Strike musi być większy od 0';
-      if (!optExpiry) e.optExpiry = 'Podaj datę wygaśnięcia';
+      if (!optExpiry) e.optExpiry = 'Wybierz datę wygaśnięcia';
+      else if (optExpiry < date) e.optExpiry = 'Wygaśnięcie nie może być przed datą transakcji';
     } else if (!ticker.trim()) {
       e.ticker = 'Podaj ticker';
     }
@@ -167,7 +168,6 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     setOptStrike('');
     setOptExpiry('');
     setOptType('C');
-    setOptMultiplier('100');
     setOptCurrency('USD');
     setSpinOffWarning(null);
     resetValidation();
@@ -285,7 +285,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
                 strike: optParsed.strike,
                 expiry: optParsed.expiry,
                 optionType: optParsed.optionType,
-                multiplier: parseFloat(optMultiplier) > 0 ? parseFloat(optMultiplier) : 100,
+                multiplier: OPTION_MULTIPLIER,
               }
             : undefined,
         confirmSpinOff: opts?.confirmSpinOff,
@@ -311,7 +311,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
 
   // Podgląd wartości transakcji w paymentCurrency (z uwzględnieniem prowizji).
   // Prowizja jest już w paymentCurrency (input pola), więc dodajemy/odejmujemy bezpośrednio.
-  const optMult = isOption ? (parseFloat(optMultiplier) > 0 ? parseFloat(optMultiplier) : 100) : 1;
+  const optMult = isOption ? OPTION_MULTIPLIER : 1;
   const plnPreview = (() => {
     if (!showFxRate || !fxRate || !quantity || !price) return null;
     const valuePayment = parseFloat(quantity) * parseFloat(price) * optMult * parseFloat(fxRate);
@@ -411,8 +411,8 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
             )}
             {isOption && (
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Cena = premia za akcję; wartość = ilość × premia × mnożnik. Sprzedaż bez
-                wcześniejszego kupna otwiera pozycję krótką (wystawienie opcji).
+                Wartość = liczba kontraktów × premia za akcję × 100. Sprzedaż bez wcześniejszego
+                kupna otwiera pozycję krótką (wystawienie opcji).
               </p>
             )}
           </div>
@@ -449,20 +449,16 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
                 <Input
                   type="date"
                   value={optExpiry}
+                  min={date}
                   onChange={(e) => setOptExpiry(e.target.value)}
                   aria-invalid={!!fieldError('optExpiry')}
                 />
                 <FieldError error={fieldError('optExpiry')} />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground">Mnożnik kontraktu</label>
-                <Input
-                  type="number"
-                  step="1"
-                  min="1"
-                  value={optMultiplier}
-                  onChange={(e) => setOptMultiplier(e.target.value)}
-                />
+                {!optExpiry && !fieldError('optExpiry') && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Dzień wygaśnięcia kontraktu (zwykle piątek).
+                  </p>
+                )}
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">Waluta kontraktu</label>
@@ -482,16 +478,21 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
                   <p className="text-[11px] text-muted-foreground font-mono">
                     Kontrakt: {optionDisplayName(optParsed)} · ticker {toOccTicker(optParsed)}
                   </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    1 kontrakt = {OPTION_MULTIPLIER} akcji instrumentu bazowego.
+                  </p>
                 </div>
               )}
             </>
           )}
 
           <div>
-            <label className="text-xs text-muted-foreground">Ilość *</label>
+            <label className="text-xs text-muted-foreground">
+              {isOption ? 'Liczba kontraktów *' : 'Ilość *'}
+            </label>
             <Input
               type="number"
-              step="0.0001"
+              step={isOption ? '1' : '0.0001'}
               min="0"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
@@ -502,7 +503,8 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
           </div>
           <div>
             <label className="text-xs text-muted-foreground">
-              Cena *{effectiveQuote && <span className="ml-1 opacity-60">({effectiveQuote})</span>}
+              {isOption ? 'Premia za akcję *' : 'Cena *'}
+              {effectiveQuote && <span className="ml-1 opacity-60">({effectiveQuote})</span>}
             </label>
             <Input
               type="number"
@@ -516,8 +518,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
             <FieldError error={fieldError('price')} />
             {optionValuePreview != null && optionValuePreview > 0 && (
               <p className="mt-1 text-[11px] text-muted-foreground tabular-nums">
-                Wartość kontraktu: <strong>{formatNumber(optionValuePreview)}</strong> {optCurrency}{' '}
-                (× mnożnik {optMult})
+                Wartość: <strong>{formatNumber(optionValuePreview)}</strong> {optCurrency}
               </p>
             )}
           </div>
@@ -542,26 +543,28 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
               placeholder="0"
             />
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground">
-              Waluta zakupu
-              {effectiveQuote && (
-                <span className="text-[10px] ml-1 opacity-60">(notowanie: {effectiveQuote})</span>
-              )}
-            </label>
-            <Select value={paymentCurrency} onValueChange={setPaymentCurrency}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PAYMENT_CURRENCIES.map((c) => (
-                  <SelectItem key={c} value={c}>
-                    {c === 'auto' ? 'Auto (= waluta notowania)' : c}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {!isOption && (
+            <div>
+              <label className="text-xs text-muted-foreground">
+                Waluta zakupu
+                {effectiveQuote && (
+                  <span className="text-[10px] ml-1 opacity-60">(notowanie: {effectiveQuote})</span>
+                )}
+              </label>
+              <Select value={paymentCurrency} onValueChange={setPaymentCurrency}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_CURRENCIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c === 'auto' ? 'Auto (= waluta notowania)' : c}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           {showFxRate && (
             <div className="md:col-span-2">
