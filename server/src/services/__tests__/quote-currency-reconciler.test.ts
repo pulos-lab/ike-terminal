@@ -78,16 +78,27 @@ describe('reconcileQuoteCurrencies', () => {
     expect(after.paymentCurrency).toBe('PLN');
   });
 
-  it('pomija transakcje bez fxRate i te z currency == paymentCurrency', () => {
+  it('relabeluje też transakcje bez fxRate (sprzedaż z etykietą z pamięci symbolu)', () => {
+    // Sprzedaż bez sparowanego P/L nie ma fxRate, ale etykietę FX ma — bez
+    // relabelu zostałaby w innej walucie niż kupna tego samego ISIN-u.
+    txRepo.insertTransactions([tx({ isin: 'A1', paperName: 'A1', fxRate: undefined })], PID);
+    tickerRepo.upsertTickerMapEntry(entry({ isin: 'A1', ticker: 'A1' }), PID);
+
+    expect(reconcileQuoteCurrencies(PID).updatedCount).toBe(1);
+    expect(txRepo.getAllTransactions(PID)[0].currency).toBe('USD');
+  });
+
+  it('pomija currency == paymentCurrency oraz źródła spoza xtb/generic', () => {
     txRepo.insertTransactions(
       [
-        tx({ isin: 'A1', paperName: 'A1', fxRate: undefined }),
         tx({ isin: 'A2', paperName: 'A2', currency: 'PLN', paymentCurrency: 'PLN' }),
+        // mBank: currency z pliku brokera — nie relabelujemy mimo mismatchu z mapą
+        tx({ isin: 'A3', paperName: 'A3', source: 'mbank' }),
       ],
       PID,
     );
-    tickerRepo.upsertTickerMapEntry(entry({ isin: 'A1', ticker: 'A1' }), PID);
     tickerRepo.upsertTickerMapEntry(entry({ isin: 'A2', ticker: 'A2' }), PID);
+    tickerRepo.upsertTickerMapEntry(entry({ isin: 'A3', ticker: 'A3' }), PID);
 
     expect(reconcileQuoteCurrencies(PID).updatedCount).toBe(0);
     const after = txRepo.getAllTransactions(PID);

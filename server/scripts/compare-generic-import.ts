@@ -212,8 +212,11 @@ async function compareXtbFile(file: string, rel: string): Promise<void> {
   const csv = await xtbSheetToCsv(buffer);
   if (!csv) return;
 
-  // Waluta subkonta jak w parserze wbudowanym: prefiks nazwy pliku (PLN_/USD_).
-  const accountCurrency = /^([A-Z]{3})_/.exec(fileName)?.[1] ?? 'PLN';
+  // Waluta subkonta jak w parserze wbudowanym: prefiks nazwy pliku (PLN_/USD_);
+  // prefiks IKE_/IKZE_ implikuje PLN (konta emerytalne — jak currencyFromFileName).
+  const accountCurrency = /^(IKE|IKZE)_/i.test(fileName)
+    ? 'PLN'
+    : (/^([A-Z]{3})_/.exec(fileName)?.[1] ?? 'PLN');
   // Wariant nagłówka: część eksportów ma osobną kolumnę Ticker ("MSFT.US") obok
   // Instrument (nazwa) — inny fingerprint → inny wariant profilu (zgodnie z projektem).
   const headerLine = csv.split('\n').find((l) => l.includes('Type') && l.includes('Time')) ?? '';

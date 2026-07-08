@@ -277,6 +277,14 @@ function resolveTradeCurrency(args: {
   amountAbs: number;
   /** P/L z wiersza "close trade" (tylko sprzedaż; undefined gdy brak pary). */
   closePl: number | undefined;
+  /**
+   * true, gdy plik NIE zawiera żadnych wierszy "close trade" — w tym szablonie
+   * (nowy EN z kolumną Ticker, np. eksporty IKE_*) Amount sprzedaży to PEŁNA
+   * wartość sprzedaży w walucie konta (zweryfikowane: PEO 0.3507 @ 228.90 →
+   * Amount 80.28, ratio 1.0; UBI.FR ratio = EURPLN), nie zwrócony nominał.
+   * Stosunek liczy się wtedy wprost, jak dla kupna.
+   */
+  saleAmountIsFullValue: boolean;
   ids: { currency: string; placeholder: boolean };
   accountCurrency: string;
   /** Pamięć decyzji per symbol — sprzedaż bez close trade dziedziczy etykietę z kupna. */
@@ -294,7 +302,7 @@ function resolveTradeCurrency(args: {
   let settleValue: number | null = null;
   if (!(amountAbs > 0)) {
     args.collectors.noAmount.add(symbol);
-  } else if (side === 'K') {
+  } else if (side === 'K' || args.saleAmountIsFullValue) {
     settleValue = amountAbs;
   } else if (closePl !== undefined && Number.isFinite(closePl)) {
     const v = amountAbs + closePl;
@@ -536,10 +544,13 @@ function detectHeaderLayout(rows: any[][]): HeaderLayout | null {
   return null;
 }
 
-/** Fallback: extract account currency from filename prefix like "USD_52807819_..." */
+/** Fallback: extract account currency from filename prefix like "USD_52807819_..."
+ *  Prefiks IKE_/IKZE_ (eksporty kont emerytalnych, np. "IKE_51152547_...") ZAWSZE
+ *  implikuje PLN — konta IKE/IKZE są z definicji prowadzone w złotówkach. */
 function currencyFromFileName(fileName: string | undefined): string | null {
   if (!fileName) return null;
   const base = fileName.split(/[\\/]/).pop() || fileName;
+  if (/^(IKE|IKZE)_\d+_/i.test(base)) return 'PLN';
   const m = base.match(/^([A-Z]{3})_\d+_/);
   if (!m) return null;
   const cur = m[1];
@@ -688,6 +699,11 @@ export async function parseXtbFile(
       }
     }
   }
+  // Semantyka Amount sprzedaży zależy od szablonu: stary format (są wiersze
+  // "close trade") → zwrócony nominał otwarcia; nowy szablon z kolumną Ticker
+  // (eksporty IKE_*, zero wierszy close trade w pliku) → pełna wartość
+  // sprzedaży. Brak jakiegokolwiek close trade w pliku = wiarygodny sygnał.
+  const fileHasCloseTrades = closeTradePL.size > 0;
   const closeTradeCursor = new Map<string, number>();
   /** Zdejmij kolejny niezużyty P/L pod kluczem (FIFO, jak prowizje). */
   const takeClosePl = (key: string): number | undefined => {
@@ -769,6 +785,7 @@ export async function parseXtbFile(
         price,
         amountAbs: Math.abs(raw.amount),
         closePl: undefined,
+        saleAmountIsFullValue: !fileHasCloseTrades,
         ids,
         accountCurrency,
         symbolFx,
@@ -877,6 +894,7 @@ export async function parseXtbFile(
           price,
           amountAbs: Math.abs(raw.amount),
           closePl: takeClosePl(`${raw.symbol}|${isoTime}`),
+          saleAmountIsFullValue: !fileHasCloseTrades,
           ids,
           accountCurrency,
           symbolFx,
