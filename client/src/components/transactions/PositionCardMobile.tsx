@@ -10,6 +10,7 @@ import {
 } from '@/lib/formatters';
 import { ChevronDown, ChevronRight, TrendingDown } from 'lucide-react';
 import type { Position } from 'shared';
+import { displayOptionTicker } from 'shared';
 
 interface Props {
   position: Position;
@@ -64,7 +65,9 @@ export function PositionCardMobile({ position, onSell, isExpanded, onToggle }: P
             ) : (
               <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
             )}
-            <span className="font-mono font-semibold text-sm truncate">{position.ticker}</span>
+            <span className="font-mono font-semibold text-sm truncate">
+              {displayOptionTicker(position.ticker)}
+            </span>
             <CategoryBadge category={position.category} />
             {isMulti && (
               <span className="text-[10px] text-muted-foreground shrink-0">({lots.length})</span>

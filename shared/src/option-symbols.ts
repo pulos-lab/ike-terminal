@@ -66,3 +66,33 @@ export function toOptionPseudoIsin(opt: ParsedOptionSymbol): string {
 export function optionDisplayName(opt: ParsedOptionSymbol): string {
   return `${opt.underlying.toUpperCase()} ${opt.strike} ${opt.optionType === 'C' ? 'CALL' : 'PUT'} ${opt.expiry}`;
 }
+
+const OCC_TICKER_RE = /^([A-Z][A-Z0-9.]{0,9}?)(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/;
+
+/** Ticker OCC "DKNG220520P00045000" → sparsowane parametry kontraktu (null gdy to nie opcja). */
+export function parseOccTicker(ticker: string): ParsedOptionSymbol | null {
+  const m = ticker.trim().match(OCC_TICKER_RE);
+  if (!m) return null;
+  const [, underlying, yy, mm, dd, right, strikeCode] = m;
+  const month = Number(mm);
+  const day = Number(dd);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return {
+    underlying,
+    expiry: `20${yy}-${mm}-${dd}`,
+    strike: Number(strikeCode) / 1000,
+    optionType: right as 'C' | 'P',
+  };
+}
+
+/**
+ * Krótka etykieta do tabel/toastów: "DKNG 45 PUT 20.05.2022" (data w formacie UI).
+ * Dla tickera niebędącego opcją zwraca wejście bez zmian — bezpieczne do owinięcia
+ * każdego miejsca renderującego ticker.
+ */
+export function displayOptionTicker(ticker: string): string {
+  const parsed = parseOccTicker(ticker);
+  if (!parsed) return ticker;
+  const [y, m, d] = parsed.expiry.split('-');
+  return `${parsed.underlying} ${parsed.strike} ${parsed.optionType === 'C' ? 'CALL' : 'PUT'} ${d}.${m}.${y}`;
+}

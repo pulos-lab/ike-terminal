@@ -7,6 +7,7 @@ import { plColor } from '@/components/ui/pl-badge';
 import { cn } from '@/lib/utils';
 import { groupClosedTrades, lotCostBasis } from '@/lib/closed-trades-grouping';
 import type { Position } from 'shared';
+import { displayOptionTicker } from 'shared';
 
 interface Props {
   tab: 'all' | 'open' | 'closed';
@@ -165,7 +166,7 @@ function BestWorstTile({ best, worst }: { best: Position | null; worst: Position
     return (
       <Tile
         label="Najlepsza · Najgorsza"
-        value={best ? best.ticker : '—'}
+        value={best ? displayOptionTicker(best.ticker) : '—'}
         sub={
           best
             ? `${best.profitLossPct >= 0 ? '+' : ''}${best.profitLossPct.toFixed(2)}%`
@@ -182,13 +183,17 @@ function BestWorstTile({ best, worst }: { best: Position | null; worst: Position
       </p>
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <p className="font-mono text-xs font-semibold truncate">{best.ticker}</p>
+          <p className="font-mono text-xs font-semibold truncate">
+            {displayOptionTicker(best.ticker)}
+          </p>
           <p className="text-sm md:text-base font-bold tabular-nums tracking-tight text-gain">
             +{best.profitLossPct.toFixed(2)}%
           </p>
         </div>
         <div className="border-l border-border/60 pl-2">
-          <p className="font-mono text-xs font-semibold truncate">{worst.ticker}</p>
+          <p className="font-mono text-xs font-semibold truncate">
+            {displayOptionTicker(worst.ticker)}
+          </p>
           <p className="text-sm md:text-base font-bold tabular-nums tracking-tight text-loss">
             {worst.profitLossPct.toFixed(2)}%
           </p>

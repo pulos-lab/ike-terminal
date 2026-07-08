@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { formatDate, formatNumber, formatQuantity } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import { AlertTriangle, Check, Info, Loader2, Sparkles, Trash2 } from 'lucide-react';
+import { displayOptionTicker } from 'shared';
 
 interface DeleteTarget {
   id: number;
@@ -199,7 +200,7 @@ export function DeleteTransactionDialog({ target, onClose }: Props) {
                     <div className="flex items-center gap-2 mb-1">
                       <SideChip side={target.side} />
                       <span className="font-mono font-semibold text-foreground">
-                        {target.ticker}
+                        {displayOptionTicker(target.ticker)}
                       </span>
                       <span className="text-xs text-muted-foreground">
                         · {formatDate(target.date)}
