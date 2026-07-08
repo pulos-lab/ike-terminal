@@ -365,11 +365,18 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
           {isOption && (
             <div>
               <label className="text-xs text-muted-foreground">Instrument bazowy *</label>
-              <Input
+              <TickerAutocomplete
                 value={optUnderlying}
-                onChange={(e) => setOptUnderlying(e.target.value.toUpperCase())}
+                onChange={(v, result) => {
+                  // Underlying = symbol bazowy (bez suffiksu giełdy) — OCC tworzymy z niego.
+                  setOptUnderlying(v.toUpperCase());
+                  // Waluta kontraktu z wybranej spółki (opcje kwotowane w walucie bazowej);
+                  // ustawiamy tylko jeśli mieści się w opcjach selecta.
+                  if (result?.currency && ['USD', 'EUR', 'PLN'].includes(result.currency)) {
+                    setOptCurrency(result.currency);
+                  }
+                }}
                 placeholder="np. AAPL"
-                aria-invalid={!!fieldError('optUnderlying')}
               />
               <FieldError error={fieldError('optUnderlying')} />
             </div>
