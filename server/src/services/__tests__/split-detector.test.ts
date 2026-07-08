@@ -71,6 +71,19 @@ describe('detectSplits', () => {
     expect(splits[0].date).toBe('2023-06-15');
   });
 
+  it('pomija instrument tradowany wyłącznie krótko (regresja SMCI −300k)', () => {
+    // SMCI: realny split 10:1, ale user tylko shortował (sprzedaż @ 840, odkup @ 875).
+    // Cena providera skorygowana (~84) vs tx 840 daje ratio 10, ale bez pozycji długiej
+    // split go nie dotyczy — nie może stworzyć widmowej pozycji.
+    const txs = [
+      makeTx({ side: 'S', quantity: 1, price: 840, date: '2024-02-14', isin: 'SMCI0001' }),
+      makeTx({ side: 'K', quantity: 1, price: 875, date: '2024-03-20', isin: 'SMCI0001' }),
+    ];
+    const tickerMap = makeTickerMap([{ isin: 'SMCI0001', ticker: 'SMCI' }]);
+    const prices = makePriceMap('SMCI', { '2024-02-14': 84, '2024-03-20': 87.5 });
+    expect(detectSplits(txs, prices, tickerMap)).toHaveLength(0);
+  });
+
   it('detects a 2:1 split', () => {
     const txs = [makeTx({ side: 'K', quantity: 100, price: 200, date: '2024-01-10' })];
     const tickerMap = makeTickerMap([{ isin: 'TEST0001', ticker: 'TEST' }]);

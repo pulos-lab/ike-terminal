@@ -48,8 +48,9 @@ const MAX_MEMO_ENTRIES = 8;
  * v3: transformacja spin-offów (applySpinOffs) w strumieniu transakcji.
  * v4: cash flow transakcji księgowany w paymentCurrency (fxRate brokera / kurs dzienny).
  * v5: wycena opcji przez mnożnik kontraktu (option_contracts).
+ * v6: wycena dzienna pozycji krótkich (ujemne shares) — koniec zawyżania o proceeds shorta.
  */
-const ENGINE_VERSION = 5;
+const ENGINE_VERSION = 6;
 
 const memo = new Map<string, Promise<HistoryResult>>();
 

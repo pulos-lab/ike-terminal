@@ -155,3 +155,51 @@ describe('computeCashBalances — rozliczenie w paymentCurrency', () => {
     expect(balances['USD']).toBeUndefined();
   });
 });
+
+describe('computePortfolioHistory — wycena pozycji krótkiej (PLN, bez FX)', () => {
+  const PLN_ENTRY: TickerMapEntry = {
+    isin: 'PLSHORT00001',
+    ticker: 'SHRT.WA',
+    name: 'Short SA',
+    exchange: 'GPW',
+    currency: 'PLN',
+    priceSource: 'yahoo',
+  };
+  beforeEach(() => vi.clearAllMocks());
+
+  it('krótka sprzedaż: zobowiązanie odejmowane, gotówka z proceeds nie zawyża wartości', async () => {
+    // Deposit 1000 PLN; short 10 @ 50 (proceeds +500 → gotówka 1500).
+    // Zobowiązanie odkupu −10×50 = −500 → wartość 1500 − 500 = 1000.
+    // Błędny model (short pominięty w wycenie) zostawiał samą gotówkę 1500.
+    const short: Transaction = {
+      date: '2024-03-05T10:00:00',
+      paperName: 'Short SA',
+      isin: 'PLSHORT00001',
+      quantity: 10,
+      side: 'S',
+      price: 50,
+      value: 500,
+      commission: 0,
+      total: 500,
+      currency: 'PLN',
+      paymentCurrency: 'PLN',
+      source: 'mbank',
+    };
+    const dep: CashOperation = {
+      date: '2024-03-04T00:00:00',
+      operationType: 'deposit',
+      description: 'Zasilenie',
+      amount: 1000,
+      currency: 'PLN',
+      source: 'mbank',
+    };
+    const { history } = await computePortfolioHistory(
+      [short],
+      [dep],
+      new Map([[PLN_ENTRY.isin, PLN_ENTRY]]),
+      'WIG',
+      'none',
+    );
+    expect(history[history.length - 1].portfolioValue).toBeCloseTo(1000, 1);
+  });
+});
