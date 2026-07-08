@@ -172,3 +172,63 @@ describe('groupClosedTrades', () => {
     expect(groups[0].isOpen).toBe(true);
   });
 });
+
+describe('groupClosedTrades — scalanie spreadów opcyjnych', () => {
+  const long = (o: Partial<ClosedTrade> = {}): ClosedTrade =>
+    makeTrade({
+      category: 'option',
+      currency: 'USD',
+      ticker: 'DECK220620P00090000',
+      isin: 'OPT:DECK220620P00090000',
+      tradeGroupId: 'OPT:DECK220620P00090000#1',
+      isShort: false,
+      profitLoss: 120,
+      ...o,
+    });
+  const short = (o: Partial<ClosedTrade> = {}): ClosedTrade =>
+    makeTrade({
+      category: 'option',
+      currency: 'USD',
+      ticker: 'DECK220620P00100000',
+      isin: 'OPT:DECK220620P00100000',
+      tradeGroupId: 'OPT:DECK220620P00100000#1',
+      isShort: true,
+      profitLoss: -40,
+      ...o,
+    });
+
+  it('long + short na tym samym underlying/expiry → jeden spread (P/L netto)', () => {
+    const groups = groupClosedTrades([long(), short()]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].isSpread).toBe(true);
+    expect(groups[0].spreadLabel).toBe('DECK 90/100 PUT');
+    expect(groups[0].totalProfitLoss).toBe(80); // 120 + (−40)
+    expect(groups[0].trades).toHaveLength(2);
+  });
+
+  it('same długie nogi (brak short) NIE są scalane', () => {
+    const groups = groupClosedTrades([
+      long(),
+      long({ ticker: 'DECK220620P00095000', tradeGroupId: 'OPT:DECK220620P00095000#1' }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.every((g) => !g.isSpread)).toBe(true);
+  });
+
+  it('różne daty wygaśnięcia nie łączą się w spread', () => {
+    const groups = groupClosedTrades([
+      long(),
+      short({ ticker: 'DECK250117P00100000', tradeGroupId: 'OPT:DECK250117P00100000#1' }),
+    ]);
+    expect(groups).toHaveLength(2);
+  });
+
+  it('akcje (nie-opcje) nietknięte przez scalanie', () => {
+    const groups = groupClosedTrades([
+      makeTrade({ tradeGroupId: 'A#1' }),
+      makeTrade({ ticker: 'FOO.WA', tradeGroupId: 'B#1', sellTransactionId: 2 }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.every((g) => !g.isSpread)).toBe(true);
+  });
+});
