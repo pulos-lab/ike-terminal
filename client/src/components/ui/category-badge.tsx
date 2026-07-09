@@ -19,5 +19,11 @@ export function CategoryBadge({ category }: { category?: string }) {
         OBL
       </Badge>
     );
+  if (category === 'option')
+    return (
+      <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">
+        OPCJA
+      </Badge>
+    );
   return null;
 }

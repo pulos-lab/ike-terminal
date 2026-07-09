@@ -12,6 +12,7 @@ import { PLBadge } from '@/components/ui/pl-badge';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { formatCurrency, formatNumber, formatPercent, formatQuantity } from '@/lib/formatters';
+import { TickerLabel } from '@/components/ui/ticker-label';
 
 /**
  * Tabela otwartych pozycji w widoku publicznym — lekka wersja PortfolioPage,
@@ -52,7 +53,7 @@ export function PublicPositionsTable({
               {positions.map((pos) => (
                 <TableRow key={pos.isin}>
                   <TableCell className="font-medium whitespace-nowrap">
-                    {pos.ticker}
+                    <TickerLabel ticker={pos.ticker} />
                     <CategoryBadge category={pos.category} />
                   </TableCell>
                   <TableCell

@@ -1,6 +1,6 @@
 // ============ Broker Types ============
 
-export type BrokerType = 'auto' | 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'generic';
+export type BrokerType = 'auto' | 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'ibkr' | 'generic';
 
 export const BROKER_LABELS: Record<BrokerType, string> = {
   auto: 'Wykryj automatycznie',
@@ -8,6 +8,7 @@ export const BROKER_LABELS: Record<BrokerType, string> = {
   mbank: 'mBank eMakler',
   degiro: 'DEGIRO',
   xtb: 'XTB',
+  ibkr: 'Interactive Brokers',
   generic: 'Inny broker (profil)',
 };
 
@@ -20,13 +21,41 @@ export type RecordSource =
   | 'mbank'
   | 'degiro'
   | 'xtb'
+  | 'ibkr'
   | 'manual'
   | 'auto-yahoo'
   | 'generic';
 
 // ============ Transaction Types ============
 
-export type InstrumentCategory = 'stock' | 'etf' | 'cfd' | 'bond';
+export type InstrumentCategory = 'stock' | 'etf' | 'cfd' | 'bond' | 'option';
+
+// ============ Option Types ============
+
+/**
+ * Metadane kontraktu opcyjnego. Instrument identyfikowany pseudo-ISIN-em `OPT:{ticker OCC}`
+ * (opcje giełdowe nie mają ISIN); parametry kontraktu trzymane w tabeli `option_contracts`
+ * (nie w `transactions` — są per kontrakt, nie per transakcja).
+ */
+export interface OptionContract {
+  /** Pseudo-ISIN: `OPT:` + ticker OCC, np. "OPT:DKNG220520P00045000". */
+  isin: string;
+  /** Ticker w formacie OCC (SYMBOL + YYMMDD + C/P + strike×1000 pad 8), np. "DKNG220520P00045000". Yahoo v8 chart przyjmuje go wprost. */
+  occTicker: string;
+  /** Ticker instrumentu bazowego, np. "DKNG". */
+  underlying: string;
+  /** Data wygaśnięcia YYYY-MM-DD. */
+  expiry: string;
+  /** Cena wykonania w walucie kontraktu. */
+  strike: number;
+  /** C = call, P = put. */
+  optionType: 'C' | 'P';
+  /** Mnożnik kontraktu (US equity options: 100). */
+  multiplier: number;
+  /** Giełda notowania z wyciągu brokera (np. "CBOE", "DTB" dla Eurex). */
+  listingExch?: string;
+  currency: string;
+}
 
 export interface Transaction {
   id?: number;
@@ -130,7 +159,24 @@ export type CashOperationSubkind =
    * ekonomicznie to przychód z trzymanej pozycji, więc wchodzi do totalDividends i panelu
    * Dywidendy (z badge "Kupon"). NIE mylić z `interest` (odsetki od salda gotówki, bez pozycji).
    */
-  | 'coupon';
+  | 'coupon'
+  /**
+   * Subkategorie kosztów brokera (operationType='fee', import IBKR) — napędzają grupowanie
+   * kafli w panelu "Korekty i koszty". Silnik traktuje je jak zwykłe `fee` (cash tak, MWR nie).
+   * - `margin_interest` — odsetki od kredytu margin (Investment/Debit Loan Interest)
+   * - `borrow_fee` — koszt pożyczenia akcji pod krótką pozycję (Stock/USD Borrow Fees)
+   * - `market_data` — subskrypcje danych rynkowych (NYSE Level I, Snapshot itd.)
+   * - `fx_commission` — prowizje przewalutowań (IdealFX)
+   * - `sales_tax` — VAT od opłat/prowizji (w wyciągu IBKR tylko agregat z Cash Report)
+   * - `lending_income` — przychód/koszt programu pożyczania akcji (SYEP); przychód idzie
+   *   z operationType='other' (dodatni cashflow), koszty z 'fee'
+   */
+  | 'margin_interest'
+  | 'borrow_fee'
+  | 'market_data'
+  | 'fx_commission'
+  | 'sales_tax'
+  | 'lending_income';
 
 export interface CashOperation {
   id?: number;
@@ -187,6 +233,20 @@ export interface Position {
    * najpewniej brakuje operacji wykupu w zaimportowanych plikach. UI pokazuje ostrzeżenie.
    */
   maturityPassed?: boolean;
+  /**
+   * Metadane kontraktu dla pozycji z category='option' (z tabeli `option_contracts`).
+   * `shares` może być ujemne (pozycja krótka — wystawiona opcja); `currentValue` jest wtedy
+   * ujemna (zobowiązanie odkupu).
+   */
+  optionMeta?: Pick<
+    OptionContract,
+    'underlying' | 'expiry' | 'strike' | 'optionType' | 'multiplier'
+  >;
+  /**
+   * Opcja po dacie wygaśnięcia a pozycja wciąż otwarta — najpewniej brakuje wiersza
+   * zamykającego (expiry/assignment) w zaimportowanych plikach. Analogiczne do maturityPassed.
+   */
+  expiryPassed?: boolean;
 }
 
 export interface ClosedTradeFee {
@@ -542,6 +602,21 @@ export interface TransactionInput {
   /** Kurs wymiany broker'a: 1 unit `currency` = `fxRate` × `paymentCurrency`. */
   fxRate?: number;
   category?: InstrumentCategory;
+  /**
+   * Parametry kontraktu — wymagane gdy `category === 'option'`. Backend generuje z nich
+   * ticker OCC + pseudo-ISIN `OPT:{OCC}` i zapisuje kontrakt w `option_contracts`
+   * (identycznie jak import IBKR). `ticker` w body jest wtedy ignorowany.
+   * Cena transakcji = premia per akcja; wartość = qty × premia × multiplier.
+   */
+  option?: {
+    underlying: string;
+    strike: number;
+    /** YYYY-MM-DD */
+    expiry: string;
+    optionType: 'C' | 'P';
+    /** Domyślnie 100. */
+    multiplier?: number;
+  };
   /**
    * Potwierdzenie użytkownika, że świadomie dodaje transakcję na walor będący
    * dzieckiem zastosowanego spin-offu (pozycja mogła już powstać automatycznie).

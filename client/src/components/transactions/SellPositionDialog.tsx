@@ -20,6 +20,7 @@ import { useFormValidation, type FieldErrors } from '@/lib/use-form-validation';
 import { Loader2, TrendingDown } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Position } from 'shared';
+import { displayOptionTicker } from 'shared';
 
 /**
  * Mobile-friendly modal sprzedaży otwartej pozycji. Desktop ma własny inline flow
@@ -111,7 +112,9 @@ export function SellPositionDialog({ position, onClose }: Props) {
     },
     onSuccess: () => {
       invalidatePortfolio(queryClient);
-      toast.success(`Sprzedano ${quantity} szt ${position?.ticker} @ ${price}`);
+      toast.success(
+        `Sprzedano ${quantity} szt ${position ? displayOptionTicker(position.ticker) : ''} @ ${price}`,
+      );
       onClose();
     },
     onError: (err: Error) => errorToast('Nie udało się sprzedać', err),
@@ -125,7 +128,7 @@ export function SellPositionDialog({ position, onClose }: Props) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <TrendingDown className="h-4 w-4 text-muted-foreground" />
-            Sprzedaż {position?.ticker}
+            Sprzedaż {position ? displayOptionTicker(position.ticker) : ''}
           </DialogTitle>
           <DialogDescription>
             {position

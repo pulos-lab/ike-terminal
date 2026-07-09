@@ -28,6 +28,7 @@ import { useFormValidation, type FieldErrors } from '@/lib/use-form-validation';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { SpinOffChildWarning } from 'shared';
+import { toOccTicker, optionDisplayName } from 'shared';
 
 /**
  * Dialog ręcznego dodawania transakcji (kupno / sprzedaż dowolnego tickera).
@@ -71,7 +72,14 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
   /** Waluta zakupu/rozliczenia — wybór usera. 'auto' = równa walucie notowania (brak FX). */
   const [paymentCurrency, setPaymentCurrency] = useState<string>('auto');
   const [fxRate, setFxRate] = useState('');
-  const [category, setCategory] = useState<'stock' | 'etf' | 'cfd' | 'bond'>('stock');
+  const [category, setCategory] = useState<'stock' | 'etf' | 'cfd' | 'bond' | 'option'>('stock');
+  // Parametry kontraktu opcyjnego (category === 'option'). Ticker OCC i pseudo-ISIN
+  // generuje backend z tych pól — identycznie jak import IBKR.
+  const [optUnderlying, setOptUnderlying] = useState('');
+  const [optStrike, setOptStrike] = useState('');
+  const [optExpiry, setOptExpiry] = useState('');
+  const [optType, setOptType] = useState<'C' | 'P'>('C');
+  const [optCurrency, setOptCurrency] = useState('USD');
   /** Ostrzeżenie z serwera: ticker jest dzieckiem zastosowanego spin-offu —
    *  pozycja mogła już powstać automatycznie; wymagamy jawnego potwierdzenia. */
   const [spinOffWarning, setSpinOffWarning] = useState<SpinOffChildWarning | null>(null);
@@ -82,8 +90,22 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     staleTime: 5 * 60 * 1000,
   });
 
+  const isOption = category === 'option';
+  const OPTION_MULTIPLIER = 100; // US equity options — zawsze 100
+
+  // Podgląd kontraktu opcyjnego (ticker OCC jak w Yahoo) — gdy pola są kompletne.
+  const optParsed =
+    isOption && optUnderlying.trim() && optExpiry && parseFloat(optStrike) > 0
+      ? {
+          underlying: optUnderlying.trim().toUpperCase(),
+          expiry: optExpiry,
+          strike: parseFloat(optStrike),
+          optionType: optType,
+        }
+      : null;
+
   // Efektywna waluta notowania: explicit (z autocomplete / auto-fetch) lub heurystyka z suffixu.
-  const effectiveQuote = quoteCurrency || inferQuoteFromTicker(ticker);
+  const effectiveQuote = isOption ? optCurrency : quoteCurrency || inferQuoteFromTicker(ticker);
   // Efektywna waluta zakupu: 'auto' fallback = waluta notowania (brak przewalutowania).
   const effectivePayment = paymentCurrency !== 'auto' ? paymentCurrency : effectiveQuote;
   const showFxRate = Boolean(
@@ -91,14 +113,41 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
   );
 
   const formErrors = useMemo(() => {
-    const e: FieldErrors<'date' | 'ticker' | 'quantity' | 'price' | 'fxRate'> = {};
+    const e: FieldErrors<
+      | 'date'
+      | 'ticker'
+      | 'quantity'
+      | 'price'
+      | 'fxRate'
+      | 'optUnderlying'
+      | 'optStrike'
+      | 'optExpiry'
+    > = {};
     if (!date) e.date = 'Podaj datę';
-    if (!ticker.trim()) e.ticker = 'Podaj ticker';
+    if (isOption) {
+      if (!optUnderlying.trim()) e.optUnderlying = 'Podaj ticker instrumentu bazowego';
+      if (!optStrike || parseFloat(optStrike) <= 0) e.optStrike = 'Strike musi być większy od 0';
+      if (!optExpiry) e.optExpiry = 'Wybierz datę wygaśnięcia';
+      else if (optExpiry < date) e.optExpiry = 'Wygaśnięcie nie może być przed datą transakcji';
+    } else if (!ticker.trim()) {
+      e.ticker = 'Podaj ticker';
+    }
     if (!quantity || parseFloat(quantity) <= 0) e.quantity = 'Ilość musi być większa od 0';
     if (!price || parseFloat(price) <= 0) e.price = 'Cena musi być większa od 0';
     if (showFxRate && (!fxRate || parseFloat(fxRate) <= 0)) e.fxRate = 'Podaj kurs przeliczenia';
     return e;
-  }, [date, ticker, quantity, price, showFxRate, fxRate]);
+  }, [
+    date,
+    ticker,
+    quantity,
+    price,
+    showFxRate,
+    fxRate,
+    isOption,
+    optUnderlying,
+    optStrike,
+    optExpiry,
+  ]);
   const { submitGuard, fieldError, reset: resetValidation } = useFormValidation(formErrors);
 
   // Reset state przy otwarciu dialogu
@@ -115,6 +164,11 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
     setPaymentCurrency('auto');
     setFxRate('');
     setCategory('stock');
+    setOptUnderlying('');
+    setOptStrike('');
+    setOptExpiry('');
+    setOptType('C');
+    setOptCurrency('USD');
     setSpinOffWarning(null);
     resetValidation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -187,6 +241,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
 
   useEffect(() => {
     if (commissionTouched) return;
+    if (isOption) return; // prowizje opcyjne są kwotowe per kontrakt — bez auto-calc
     if (!ticker || !quantity || !price) return;
     setCommission(
       calcCommission(ticker, quantity, price, effectivePayment, effectiveQuote, fxRate),
@@ -212,7 +267,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
       const commQuote = showFxRate && fxNum > 0 ? commInput / fxNum : commInput;
       return api.createTransaction({
         date,
-        ticker,
+        ticker: isOption && optParsed ? toOccTicker(optParsed) : ticker,
         side,
         quantity: parseFloat(quantity),
         price: parseFloat(price),
@@ -222,6 +277,17 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
         paymentCurrency: paymentCurrency !== 'auto' ? paymentCurrency : undefined,
         fxRate: showFxRate && fxNum > 0 ? fxNum : undefined,
         category,
+        currency: isOption ? optCurrency : undefined,
+        option:
+          isOption && optParsed
+            ? {
+                underlying: optParsed.underlying,
+                strike: optParsed.strike,
+                expiry: optParsed.expiry,
+                optionType: optParsed.optionType,
+                multiplier: OPTION_MULTIPLIER,
+              }
+            : undefined,
         confirmSpinOff: opts?.confirmSpinOff,
       });
     },
@@ -234,7 +300,9 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
       }
       invalidatePortfolio(qc);
       toast.success(
-        `Dodano ${side === 'K' ? 'kupno' : 'sprzedaż'} ${ticker}: ${quantity} @ ${price}`,
+        `Dodano ${side === 'K' ? 'kupno' : 'sprzedaż'} ${
+          isOption && optParsed ? optionDisplayName(optParsed) : ticker
+        }: ${quantity} @ ${price}`,
       );
       onClose();
     },
@@ -243,12 +311,16 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
 
   // Podgląd wartości transakcji w paymentCurrency (z uwzględnieniem prowizji).
   // Prowizja jest już w paymentCurrency (input pola), więc dodajemy/odejmujemy bezpośrednio.
+  const optMult = isOption ? OPTION_MULTIPLIER : 1;
   const plnPreview = (() => {
     if (!showFxRate || !fxRate || !quantity || !price) return null;
-    const valuePayment = parseFloat(quantity) * parseFloat(price) * parseFloat(fxRate);
+    const valuePayment = parseFloat(quantity) * parseFloat(price) * optMult * parseFloat(fxRate);
     const commPayment = parseFloat(commission) || 0;
     return side === 'K' ? valuePayment + commPayment : valuePayment - commPayment;
   })();
+  // Podgląd wartości kontraktu opcyjnego w walucie notowania (mnożnik ×100 zaskakuje).
+  const optionValuePreview =
+    isOption && quantity && price ? parseFloat(quantity) * parseFloat(price) * optMult : null;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !createMut.isPending && onClose()}>
@@ -272,22 +344,43 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
             />
             <FieldError error={fieldError('date')} />
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground">Ticker *</label>
-            <TickerAutocomplete
-              value={ticker}
-              onChange={(v, result) => {
-                setTicker(v);
-                // Aktualizuj walutę notowania z TickerAutocomplete result. Gdy user wpisuje
-                // ręcznie bez wyboru z listy — result undefined, czyść (heurystyka z suffixu
-                // zadziała w effectiveQuote).
-                if (result?.currency) setQuoteCurrency(result.currency);
-                else setQuoteCurrency('');
-              }}
-              placeholder="np. AAPL, CDR.WA"
-            />
-            <FieldError error={fieldError('ticker')} />
-          </div>
+          {!isOption && (
+            <div>
+              <label className="text-xs text-muted-foreground">Ticker *</label>
+              <TickerAutocomplete
+                value={ticker}
+                onChange={(v, result) => {
+                  setTicker(v);
+                  // Aktualizuj walutę notowania z TickerAutocomplete result. Gdy user wpisuje
+                  // ręcznie bez wyboru z listy — result undefined, czyść (heurystyka z suffixu
+                  // zadziała w effectiveQuote).
+                  if (result?.currency) setQuoteCurrency(result.currency);
+                  else setQuoteCurrency('');
+                }}
+                placeholder="np. AAPL, CDR.WA"
+              />
+              <FieldError error={fieldError('ticker')} />
+            </div>
+          )}
+          {isOption && (
+            <div>
+              <label className="text-xs text-muted-foreground">Instrument bazowy *</label>
+              <TickerAutocomplete
+                value={optUnderlying}
+                onChange={(v, result) => {
+                  // Underlying = symbol bazowy (bez suffiksu giełdy) — OCC tworzymy z niego.
+                  setOptUnderlying(v.toUpperCase());
+                  // Waluta kontraktu z wybranej spółki (opcje kwotowane w walucie bazowej);
+                  // ustawiamy tylko jeśli mieści się w opcjach selecta.
+                  if (result?.currency && ['USD', 'EUR', 'PLN'].includes(result.currency)) {
+                    setOptCurrency(result.currency);
+                  }
+                }}
+                placeholder="np. AAPL"
+              />
+              <FieldError error={fieldError('optUnderlying')} />
+            </div>
+          )}
 
           <div>
             <label className="text-xs text-muted-foreground">Typ *</label>
@@ -305,7 +398,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
             <label className="text-xs text-muted-foreground">Kategoria</label>
             <Select
               value={category}
-              onValueChange={(v) => setCategory(v as 'stock' | 'etf' | 'cfd' | 'bond')}
+              onValueChange={(v) => setCategory(v as 'stock' | 'etf' | 'cfd' | 'bond' | 'option')}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -315,6 +408,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
                 <SelectItem value="etf">ETF</SelectItem>
                 <SelectItem value="cfd">CFD</SelectItem>
                 <SelectItem value="bond">Obligacja</SelectItem>
+                <SelectItem value="option">Opcja</SelectItem>
               </SelectContent>
             </Select>
             {category === 'bond' && (
@@ -324,11 +418,89 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
             )}
           </div>
 
+          {isOption && (
+            <p className="md:col-span-2 -mt-1 text-[11px] text-muted-foreground">
+              Wartość = liczba kontraktów × premia za akcję × 100. Sprzedaż bez wcześniejszego kupna
+              otwiera pozycję krótką (wystawienie opcji).
+            </p>
+          )}
+
+          {isOption && (
+            <>
+              <div>
+                <label className="text-xs text-muted-foreground">Typ opcji *</label>
+                <Select value={optType} onValueChange={(v) => setOptType(v as 'C' | 'P')}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="C">CALL</SelectItem>
+                    <SelectItem value="P">PUT</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Strike *</label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={optStrike}
+                  onChange={(e) => setOptStrike(e.target.value)}
+                  placeholder="np. 150"
+                  aria-invalid={!!fieldError('optStrike')}
+                />
+                <FieldError error={fieldError('optStrike')} />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Data wygaśnięcia *</label>
+                <Input
+                  type="date"
+                  value={optExpiry}
+                  min={date}
+                  onChange={(e) => setOptExpiry(e.target.value)}
+                  aria-invalid={!!fieldError('optExpiry')}
+                />
+                <FieldError error={fieldError('optExpiry')} />
+                {!optExpiry && !fieldError('optExpiry') && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Dzień wygaśnięcia kontraktu (zwykle piątek).
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Waluta kontraktu</label>
+                <Select value={optCurrency} onValueChange={setOptCurrency}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="USD">USD</SelectItem>
+                    <SelectItem value="EUR">EUR</SelectItem>
+                    <SelectItem value="PLN">PLN</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {optParsed && (
+                <div className="md:col-span-2 -mt-1">
+                  <p className="text-[11px] text-muted-foreground font-mono">
+                    Kontrakt: {optionDisplayName(optParsed)} · ticker {toOccTicker(optParsed)}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    1 kontrakt = {OPTION_MULTIPLIER} akcji instrumentu bazowego.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
           <div>
-            <label className="text-xs text-muted-foreground">Ilość *</label>
+            <label className="text-xs text-muted-foreground">
+              {isOption ? 'Liczba kontraktów *' : 'Ilość *'}
+            </label>
             <Input
               type="number"
-              step="0.0001"
+              step={isOption ? '1' : '0.0001'}
               min="0"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
@@ -339,7 +511,8 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
           </div>
           <div>
             <label className="text-xs text-muted-foreground">
-              Cena *{effectiveQuote && <span className="ml-1 opacity-60">({effectiveQuote})</span>}
+              {isOption ? 'Premia za akcję *' : 'Cena *'}
+              {effectiveQuote && <span className="ml-1 opacity-60">({effectiveQuote})</span>}
             </label>
             <Input
               type="number"
@@ -351,6 +524,11 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
               aria-invalid={!!fieldError('price')}
             />
             <FieldError error={fieldError('price')} />
+            {optionValuePreview != null && optionValuePreview > 0 && (
+              <p className="mt-1 text-[11px] text-muted-foreground tabular-nums">
+                Wartość: <strong>{formatNumber(optionValuePreview)}</strong> {optCurrency}
+              </p>
+            )}
           </div>
 
           <div>
@@ -373,26 +551,28 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
               placeholder="0"
             />
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground">
-              Waluta zakupu
-              {effectiveQuote && (
-                <span className="text-[10px] ml-1 opacity-60">(notowanie: {effectiveQuote})</span>
-              )}
-            </label>
-            <Select value={paymentCurrency} onValueChange={setPaymentCurrency}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PAYMENT_CURRENCIES.map((c) => (
-                  <SelectItem key={c} value={c}>
-                    {c === 'auto' ? 'Auto (= waluta notowania)' : c}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {!isOption && (
+            <div>
+              <label className="text-xs text-muted-foreground">
+                Waluta zakupu
+                {effectiveQuote && (
+                  <span className="text-[10px] ml-1 opacity-60">(notowanie: {effectiveQuote})</span>
+                )}
+              </label>
+              <Select value={paymentCurrency} onValueChange={setPaymentCurrency}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_CURRENCIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c === 'auto' ? 'Auto (= waluta notowania)' : c}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           {showFxRate && (
             <div className="md:col-span-2">

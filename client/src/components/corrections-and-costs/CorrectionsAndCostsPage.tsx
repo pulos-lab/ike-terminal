@@ -158,12 +158,57 @@ function SubkindBadge({ subkind }: { subkind?: Subkind }) {
  * Virtual category — dla UI dzielimy `other` z subkind='interest' jako osobną kategorię
  * "Odsetki" (zielona). W DB to dalej operation_type='other', tylko subkind rozróżnia.
  */
-type CostVirtualCategory = 'fee' | 'commission_refund' | 'trade_fee' | 'interest' | 'other';
+type CostVirtualCategory =
+  | 'fee'
+  | 'commission_refund'
+  | 'trade_fee'
+  | 'interest'
+  | 'other'
+  | 'margin_interest'
+  | 'borrow_fee'
+  | 'market_data'
+  | 'fx_commission'
+  | 'sales_tax'
+  | 'lending_income';
+
+/** Subkindy kosztów nadawane przez parser IBKR — mapują 1:1 na wirtualne kategorie kafli. */
+const FEE_SUBKINDS = new Set([
+  'margin_interest',
+  'borrow_fee',
+  'market_data',
+  'fx_commission',
+  'sales_tax',
+  'lending_income',
+]);
+
+/**
+ * Fallback po opisie dla danych zaimportowanych zanim parser zaczął nadawać subkindy
+ * (opisy generuje nasz mapper IBKR, więc wzorce są stabilne; market data rozpoznajemy
+ * po nazwach subskrypcji giełdowych).
+ */
+function feeGroupFromDescription(d: string): CostVirtualCategory | null {
+  if (/Odsetki od kredytu \(margin\)/i.test(d)) return 'margin_interest';
+  if (/Opłata za pożyczenie akcji/i.test(d)) return 'borrow_fee';
+  if (/SYEP|pożyczania akcji/i.test(d)) return 'lending_income';
+  if (/Prowizja przewalutowania/i.test(d)) return 'fx_commission';
+  if (/Sales Tax|Podatek VAT od opłat/i.test(d)) return 'sales_tax';
+  if (/Level [I|1]|Level II|Snapshot|OPRA|Market Data|NASDAQ|NYSE|CBOT|BUNDLE/i.test(d))
+    return 'market_data';
+  return null;
+}
 
 function virtualCategory(c: {
   category: AdditionalCost['category'];
   subkind?: string;
+  description?: string;
 }): CostVirtualCategory {
+  if (c.subkind && FEE_SUBKINDS.has(c.subkind)) return c.subkind as CostVirtualCategory;
+  // Fallback po opisie PRZED gałęzią interest — dane zaimportowane przed wprowadzeniem
+  // subkindów mają np. SYEP jako other+interest, a powinny trafić do "Pożyczanie akcji".
+  if ((c.category === 'fee' || c.category === 'other') && c.description) {
+    const fromDesc = feeGroupFromDescription(c.description);
+    if (fromDesc) return fromDesc;
+  }
   if (c.category === 'other' && c.subkind === 'interest') return 'interest';
   return c.category;
 }
@@ -205,7 +250,73 @@ const COST_CATEGORY_META: Record<
     tooltip:
       'Niesklasyfikowane operacje (np. rights issue, różne). Wchodzą do salda gotówki, ale nie do MWR jako wpłaty.',
   },
+  margin_interest: {
+    label: 'Odsetki margin',
+    color: 'bg-loss/15 text-loss border-loss/30',
+    tooltip:
+      'Odsetki od kredytu brokerskiego (margin loan) — koszt utrzymywania ujemnego salda gotówki. ' +
+      'Naliczane miesięcznie per waluta debetu.',
+  },
+  borrow_fee: {
+    label: 'Pożyczenie akcji (short)',
+    color: 'bg-loss/15 text-loss border-loss/30',
+    tooltip:
+      'Koszt pożyczenia akcji pod krótką pozycję (stock borrow fees). Naliczany za okres utrzymywania shorta.',
+  },
+  market_data: {
+    label: 'Dane rynkowe',
+    color: 'bg-amber-500/10 text-amber-500 border-amber-500/30',
+    tooltip:
+      'Subskrypcje danych giełdowych live (NYSE Level I, NASDAQ, OPRA, snapshoty). Opłaty miesięczne brokera.',
+  },
+  fx_commission: {
+    label: 'Prowizje FX',
+    color: 'bg-amber-500/10 text-amber-500 border-amber-500/30',
+    tooltip:
+      'Prowizje za przewalutowania (np. IdealFX w IBKR). Same przewalutowania są w zakładce Waluty — ' +
+      'tutaj tylko ich koszt.',
+  },
+  sales_tax: {
+    label: 'VAT od opłat',
+    color: 'bg-amber-500/10 text-amber-500 border-amber-500/30',
+    tooltip:
+      'Podatek VAT naliczany od prowizji i opłat brokera. W wyciągu IBKR dostępny wyłącznie jako ' +
+      'suma roczna (Cash Report), stąd jedna operacja na rok per waluta.',
+  },
+  lending_income: {
+    label: 'Pożyczanie akcji (SYEP)',
+    color: 'bg-gain/10 text-gain border-gain/30',
+    tooltip:
+      'Program pożyczania własnych akcji (Stock Yield Enhancement Program) — przychód za użyczenie ' +
+      'papierów brokerowi (dodatni) lub powiązane opłaty (ujemne).',
+  },
 };
+
+/** Grupa kosztowa do kafli: sumy per waluta + licznik operacji. */
+interface CostGroup {
+  cat: CostVirtualCategory;
+  count: number;
+  /** currency → suma kwot (ze znakiem). */
+  byCurrency: Map<string, number>;
+  /** Waga do sortowania/wyboru głównych kafli: suma |kwot| bez rozróżniania walut. */
+  weight: number;
+}
+
+function groupCosts(costs: AdditionalCost[]): CostGroup[] {
+  const groups = new Map<CostVirtualCategory, CostGroup>();
+  for (const c of costs) {
+    const cat = virtualCategory(c);
+    let g = groups.get(cat);
+    if (!g) {
+      g = { cat, count: 0, byCurrency: new Map(), weight: 0 };
+      groups.set(cat, g);
+    }
+    g.count++;
+    g.byCurrency.set(c.currency, (g.byCurrency.get(c.currency) ?? 0) + c.amount);
+    g.weight += Math.abs(c.amount);
+  }
+  return [...groups.values()].sort((a, b) => b.weight - a.weight);
+}
 
 function CostCategoryBadge({ category }: { category: CostVirtualCategory }) {
   const meta = COST_CATEGORY_META[category];
@@ -559,57 +670,6 @@ function AddCostDialog({
   );
 }
 
-// ─── SUMMARY CARD (zunifikowany wzorzec — spójny z Dashboard) ────────────────
-
-function SummaryCard({
-  label,
-  value,
-  currency = 'PLN',
-  subtext,
-  accent,
-  icon,
-}: {
-  label: string;
-  value: number;
-  /** ISO 4217 code (PLN, USD...) lub '' dla surowej liczby (np. count). */
-  currency?: string;
-  subtext?: string;
-  accent?: 'positive' | 'negative' | 'warning';
-  icon?: React.ReactNode;
-}) {
-  const valueColor =
-    accent === 'positive'
-      ? 'text-gain'
-      : accent === 'negative'
-        ? 'text-loss'
-        : accent === 'warning'
-          ? 'text-amber-500'
-          : '';
-  // Empty currency = count/raw number (np. "Niedomknięte" pokazuje ilość). Intl.NumberFormat
-  // wymaga validnego ISO kodu, więc fallback na toLocaleString dla raw liczb.
-  const formatted = currency ? formatCurrency(value, currency) : value.toLocaleString('pl-PL');
-  return (
-    <Card>
-      <CardHeader className="pb-1 md:pb-2 px-3 pt-3 md:px-6 md:pt-6">
-        <CardTitle className="text-[10px] md:text-xs font-medium text-muted-foreground flex items-center gap-1">
-          {icon}
-          {label}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="px-3 pb-3 md:px-6 md:pb-6">
-        <div className={`text-base md:text-2xl font-semibold tabular-nums ${valueColor}`}>
-          {formatted}
-        </div>
-        {subtext && (
-          <div className="text-[10px] md:text-xs text-muted-foreground mt-0.5 line-clamp-2">
-            {subtext}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 // ─── MAIN PAGE ───────────────────────────────────────────────────────────────
 
 export function CorrectionsAndCostsPage() {
@@ -620,6 +680,8 @@ export function CorrectionsAndCostsPage() {
   const [deletingCost, setDeletingCost] = useState<AdditionalCost | null>(null);
   const [expandedCA, toggleCA] = useToggleSet<number>();
   const [expandedCost, toggleCost] = useToggleSet<number>();
+  /** Filtr listy operacji — klik w kafel grupy zawęża historię, drugi klik czyści. */
+  const [groupFilter, setGroupFilter] = useState<CostVirtualCategory | null>(null);
 
   const {
     data: corpData,
@@ -661,7 +723,6 @@ export function CorrectionsAndCostsPage() {
 
   const actions = corpData?.actions ?? [];
   const pendingCount = corpData?.totals.pendingCount ?? 0;
-  const totalCapitalReturn = corpData?.totals.capitalReturn ?? 0;
   // Waluta bazowa portfela. Oba endpointy zwracają tę samą wartość (detectBaseCurrency),
   // ale costsData jest bardziej stabilne (zawsze są jakieś operacje). Fallback PLN.
   const baseCurrency = costsData?.baseCurrency ?? corpData?.baseCurrency ?? 'PLN';
@@ -677,13 +738,12 @@ export function CorrectionsAndCostsPage() {
   }, [actions]);
 
   const costs = costsData?.operations ?? [];
-  const costTotals = costsData?.totals ?? {
-    fees: 0,
-    commissionRefunds: 0,
-    tradeFees: 0,
-    other: 0,
-    grandTotal: 0,
-  };
+  // Grupy kosztowe (per subkind/opis) posortowane po wadze — kafle-filtry nad historią.
+  const costGroups = useMemo(() => groupCosts(costs), [costs]);
+  const filteredCosts = useMemo(
+    () => (groupFilter ? costs.filter((c) => virtualCategory(c) === groupFilter) : costs),
+    [costs, groupFilter],
+  );
 
   const isLoading = corpLoading || costsLoading;
   const error = corpError ?? costsError;
@@ -712,199 +772,57 @@ export function CorrectionsAndCostsPage() {
 
   return (
     <div className="space-y-4">
-      {/* Top-level summary (spójne z Dashboard / Portfel) — 3 merytoryczne kafle.
-          Liczba pending-ów pokazana jako warning badge w tytule sekcji górnej. */}
-      <div className="grid grid-cols-3 gap-2 md:gap-4">
-        <SummaryCard
-          label="Zwrot kapitału"
-          value={totalCapitalReturn}
-          currency={baseCurrency}
-          accent="positive"
-          subtext={`${resolved.length} operacji · liczy się do MWR/TWR`}
-          icon={<Check className="h-3 w-3 text-gain" />}
-        />
-        <SummaryCard
-          label="Koszty"
-          value={costTotals.fees + costTotals.tradeFees}
-          currency={baseCurrency}
-          accent={costTotals.fees + costTotals.tradeFees < 0 ? 'negative' : undefined}
-          subtext="Opłaty brokerskie + tax IFTT"
-          icon={<Receipt className="h-3 w-3 text-loss" />}
-        />
-        <SummaryCard
-          label="Zwroty prowizji"
-          value={costTotals.commissionRefunds}
-          currency={baseCurrency}
-          accent="positive"
-          subtext={`${costs.filter((c) => c.category === 'commission_refund').length} operacji`}
-          icon={<Check className="h-3 w-3 text-gain" />}
-        />
-      </div>
-
-      {/* ─── SEKCJA GÓRNA: Zdarzenia korporacyjne ─── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Landmark className="h-4 w-4 text-primary" />
-            Zdarzenia korporacyjne
-            {pendingCount > 0 && (
-              <Badge
-                variant="outline"
-                className="bg-amber-500/10 text-amber-500 border-amber-500/30"
-              >
-                <AlertTriangle className="h-3 w-3 mr-1" />
-                {pendingCount} do domknięcia
-              </Badge>
-            )}
-            <UITooltip delayDuration={150}>
-              <UITooltipTrigger asChild>
-                <Info className="h-3 w-3 text-muted-foreground cursor-help" />
-              </UITooltipTrigger>
-              <UITooltipContent className="max-w-sm">
-                Zwroty kapitału (np. obniżenie nominału), korekty wykupu, wezwania skupu. Cash
-                wpływa na konto, pozycja akcyjna bez zmian. MWR/TWR liczy te wartości jako
-                zrealizowany zwrot z trzymania pozycji.
-              </UITooltipContent>
-            </UITooltip>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Pending (conditional — tylko gdy są) */}
-          {pending.length > 0 && (
-            <div>
-              <div className="flex items-center gap-2 mb-2 text-sm font-medium text-amber-500">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                Wymagają domknięcia ({pending.length})
-              </div>
-              <div className="md:hidden flex flex-col gap-2 mb-3">
-                {pending.map((a) => {
-                  const isExpanded = expandedCA.has(a.id);
-                  return (
-                    <ExpandableCard
-                      key={a.id}
-                      expanded={isExpanded}
-                      onToggle={() => toggleCA(a.id)}
-                      headerLeft={
-                        <>
-                          <span className="font-mono font-semibold text-sm truncate">
-                            {a.ticker ?? '—'}
-                          </span>
-                          <SubkindBadge subkind={a.subkind} />
-                        </>
-                      }
-                      headerRight={
-                        <span className="font-mono font-semibold text-sm tabular-nums shrink-0">
-                          {formatCurrency(a.amount, a.currency)}
-                        </span>
-                      }
-                      subHeader={
-                        <ExpandableCardSubRow>
-                          <span className="text-muted-foreground tabular-nums">
-                            {formatDate(a.date)}
-                          </span>
-                          <Badge variant="outline" className="text-[10px]">
-                            {a.source}
-                          </Badge>
-                        </ExpandableCardSubRow>
-                      }
-                    >
-                      <div className="text-muted-foreground">{a.description}</div>
-                      <div className="flex justify-end gap-1.5 pt-1">
-                        <Button
-                          size="sm"
-                          variant="default"
-                          className="h-7 px-2 text-xs"
-                          onClick={() => setResolving(a)}
-                        >
-                          <Briefcase className="h-3 w-3 mr-1" />
-                          Domknij
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                          onClick={() => setDeletingCA(a)}
-                        >
-                          <Trash2 className="h-3 w-3 mr-1" />
-                          Usuń
-                        </Button>
-                      </div>
-                    </ExpandableCard>
-                  );
-                })}
-              </div>
-              <div className="hidden md:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-24">Data</TableHead>
-                      <TableHead className="w-36">Typ</TableHead>
-                      <TableHead className="w-24">Ticker</TableHead>
-                      <TableHead>Opis</TableHead>
-                      <TableHead className="text-right w-32">Kwota</TableHead>
-                      <TableHead className="w-16">Źródło</TableHead>
-                      <TableHead className="text-right w-48">Akcje</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pending.map((a) => (
-                      <TableRow key={a.id}>
-                        <TableCell className="whitespace-nowrap text-sm tabular-nums">
-                          {formatDate(a.date)}
-                        </TableCell>
-                        <TableCell>
-                          <SubkindBadge subkind={a.subkind} />
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">{a.ticker ?? '—'}</TableCell>
-                        <TableCell className="text-sm">{a.description}</TableCell>
-                        <TableCell className="text-right font-mono tabular-nums">
-                          {formatCurrency(a.amount, a.currency)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-xs">
-                            {a.source}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button size="sm" variant="default" onClick={() => setResolving(a)}>
-                            <Briefcase className="h-3 w-3 mr-1" />
-                            Domknij
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="ml-1 text-destructive hover:text-destructive"
-                            onClick={() => setDeletingCA(a)}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          )}
-
-          {/* Resolved (capital_return) */}
-          <div>
-            <div className="flex items-center gap-2 mb-2 text-sm font-medium text-gain">
-              <Check className="h-3.5 w-3.5" />
-              Zwroty kapitałowe ({resolved.length})
-            </div>
-            {resolved.length === 0 ? (
-              <EmptyState
-                className="py-6"
-                message="Brak zrealizowanych zwrotów kapitału. Pojawią się tu po imporcie historii z taką operacją."
-              />
-            ) : (
-              <>
-                <div className="md:hidden flex flex-col gap-2">
-                  {resolved.map((a) => {
+      {/* ─── SEKCJA GÓRNA: Zdarzenia korporacyjne ───
+          Bez żadnych zdarzeń (typowe dla brokerów bez polskich CA, np. IBKR) sekcja
+          zwija się do jednej linijki — pełna karta z pustym stanem przytłaczała. */}
+      {actions.length === 0 ? (
+        <Card>
+          <CardContent className="py-3 flex items-center gap-2 text-sm text-muted-foreground">
+            <Landmark className="h-4 w-4 shrink-0" />
+            <span>
+              Zdarzenia korporacyjne: brak — zwroty kapitału i wezwania skupu pojawią się tu po
+              imporcie historii z takimi operacjami.
+            </span>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Landmark className="h-4 w-4 text-primary" />
+              Zdarzenia korporacyjne
+              {pendingCount > 0 && (
+                <Badge
+                  variant="outline"
+                  className="bg-amber-500/10 text-amber-500 border-amber-500/30"
+                >
+                  <AlertTriangle className="h-3 w-3 mr-1" />
+                  {pendingCount} do domknięcia
+                </Badge>
+              )}
+              <UITooltip delayDuration={150}>
+                <UITooltipTrigger asChild>
+                  <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                </UITooltipTrigger>
+                <UITooltipContent className="max-w-sm">
+                  Zwroty kapitału (np. obniżenie nominału), korekty wykupu, wezwania skupu. Cash
+                  wpływa na konto, pozycja akcyjna bez zmian. MWR/TWR liczy te wartości jako
+                  zrealizowany zwrot z trzymania pozycji.
+                </UITooltipContent>
+              </UITooltip>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Pending (conditional — tylko gdy są) */}
+            {pending.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2 text-sm font-medium text-amber-500">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Wymagają domknięcia ({pending.length})
+                </div>
+                <div className="md:hidden flex flex-col gap-2 mb-3">
+                  {pending.map((a) => {
                     const isExpanded = expandedCA.has(a.id);
-                    const amountColor =
-                      a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : '';
                     return (
                       <ExpandableCard
                         key={a.id}
@@ -919,9 +837,7 @@ export function CorrectionsAndCostsPage() {
                           </>
                         }
                         headerRight={
-                          <span
-                            className={`font-mono font-semibold text-sm tabular-nums shrink-0 ${amountColor}`}
-                          >
+                          <span className="font-mono font-semibold text-sm tabular-nums shrink-0">
                             {formatCurrency(a.amount, a.currency)}
                           </span>
                         }
@@ -937,19 +853,26 @@ export function CorrectionsAndCostsPage() {
                         }
                       >
                         <div className="text-muted-foreground">{a.description}</div>
-                        {a.source === 'manual' && (
-                          <div className="flex justify-end pt-1">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                              onClick={() => setDeletingCA(a)}
-                            >
-                              <Trash2 className="h-3 w-3 mr-1" />
-                              Usuń
-                            </Button>
-                          </div>
-                        )}
+                        <div className="flex justify-end gap-1.5 pt-1">
+                          <Button
+                            size="sm"
+                            variant="default"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => setResolving(a)}
+                          >
+                            <Briefcase className="h-3 w-3 mr-1" />
+                            Domknij
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                            onClick={() => setDeletingCA(a)}
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            Usuń
+                          </Button>
+                        </div>
                       </ExpandableCard>
                     );
                   })}
@@ -964,11 +887,11 @@ export function CorrectionsAndCostsPage() {
                         <TableHead>Opis</TableHead>
                         <TableHead className="text-right w-32">Kwota</TableHead>
                         <TableHead className="w-16">Źródło</TableHead>
-                        <TableHead className="w-10"></TableHead>
+                        <TableHead className="text-right w-48">Akcje</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {resolved.map((a) => (
+                      {pending.map((a) => (
                         <TableRow key={a.id}>
                           <TableCell className="whitespace-nowrap text-sm tabular-nums">
                             {formatDate(a.date)}
@@ -978,11 +901,7 @@ export function CorrectionsAndCostsPage() {
                           </TableCell>
                           <TableCell className="font-mono text-xs">{a.ticker ?? '—'}</TableCell>
                           <TableCell className="text-sm">{a.description}</TableCell>
-                          <TableCell
-                            className={`text-right font-mono tabular-nums ${
-                              a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : ''
-                            }`}
-                          >
+                          <TableCell className="text-right font-mono tabular-nums">
                             {formatCurrency(a.amount, a.currency)}
                           </TableCell>
                           <TableCell>
@@ -990,28 +909,154 @@ export function CorrectionsAndCostsPage() {
                               {a.source}
                             </Badge>
                           </TableCell>
-                          <TableCell>
-                            {a.source === 'manual' && (
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7 text-destructive"
-                                onClick={() => setDeletingCA(a)}
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            )}
+                          <TableCell className="text-right">
+                            <Button size="sm" variant="default" onClick={() => setResolving(a)}>
+                              <Briefcase className="h-3 w-3 mr-1" />
+                              Domknij
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="ml-1 text-destructive hover:text-destructive"
+                              onClick={() => setDeletingCA(a)}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                 </div>
-              </>
+              </div>
             )}
-          </div>
-        </CardContent>
-      </Card>
+
+            {/* Resolved (capital_return) */}
+            <div>
+              <div className="flex items-center gap-2 mb-2 text-sm font-medium text-gain">
+                <Check className="h-3.5 w-3.5" />
+                Zwroty kapitałowe ({resolved.length})
+              </div>
+              {resolved.length === 0 ? (
+                <EmptyState
+                  className="py-6"
+                  message="Brak zrealizowanych zwrotów kapitału. Pojawią się tu po imporcie historii z taką operacją."
+                />
+              ) : (
+                <>
+                  <div className="md:hidden flex flex-col gap-2">
+                    {resolved.map((a) => {
+                      const isExpanded = expandedCA.has(a.id);
+                      const amountColor =
+                        a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : '';
+                      return (
+                        <ExpandableCard
+                          key={a.id}
+                          expanded={isExpanded}
+                          onToggle={() => toggleCA(a.id)}
+                          headerLeft={
+                            <>
+                              <span className="font-mono font-semibold text-sm truncate">
+                                {a.ticker ?? '—'}
+                              </span>
+                              <SubkindBadge subkind={a.subkind} />
+                            </>
+                          }
+                          headerRight={
+                            <span
+                              className={`font-mono font-semibold text-sm tabular-nums shrink-0 ${amountColor}`}
+                            >
+                              {formatCurrency(a.amount, a.currency)}
+                            </span>
+                          }
+                          subHeader={
+                            <ExpandableCardSubRow>
+                              <span className="text-muted-foreground tabular-nums">
+                                {formatDate(a.date)}
+                              </span>
+                              <Badge variant="outline" className="text-[10px]">
+                                {a.source}
+                              </Badge>
+                            </ExpandableCardSubRow>
+                          }
+                        >
+                          <div className="text-muted-foreground">{a.description}</div>
+                          {a.source === 'manual' && (
+                            <div className="flex justify-end pt-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                                onClick={() => setDeletingCA(a)}
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" />
+                                Usuń
+                              </Button>
+                            </div>
+                          )}
+                        </ExpandableCard>
+                      );
+                    })}
+                  </div>
+                  <div className="hidden md:block">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-24">Data</TableHead>
+                          <TableHead className="w-36">Typ</TableHead>
+                          <TableHead className="w-24">Ticker</TableHead>
+                          <TableHead>Opis</TableHead>
+                          <TableHead className="text-right w-32">Kwota</TableHead>
+                          <TableHead className="w-16">Źródło</TableHead>
+                          <TableHead className="w-10"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {resolved.map((a) => (
+                          <TableRow key={a.id}>
+                            <TableCell className="whitespace-nowrap text-sm tabular-nums">
+                              {formatDate(a.date)}
+                            </TableCell>
+                            <TableCell>
+                              <SubkindBadge subkind={a.subkind} />
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">{a.ticker ?? '—'}</TableCell>
+                            <TableCell className="text-sm">{a.description}</TableCell>
+                            <TableCell
+                              className={`text-right font-mono tabular-nums ${
+                                a.amount < 0 ? 'text-loss' : a.amount > 0 ? 'text-gain' : ''
+                              }`}
+                            >
+                              {formatCurrency(a.amount, a.currency)}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="text-xs">
+                                {a.source}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {a.source === 'manual' && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-7 w-7 text-destructive"
+                                  onClick={() => setDeletingCA(a)}
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ─── SEKCJA DOLNA: Pozostałe przepływy ─── */}
       <Card>
@@ -1043,74 +1088,60 @@ export function CorrectionsAndCostsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {/* Mini summary per virtualCategory (pokazuje tylko niezerowe).
-              Odsetki (other + subkind='interest') są osobnym kaflem zielonym,
-              a "Inne" zbiera resztę `other` bez tego subkindu. */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-            {(() => {
-              // Podziel `other` na 'interest' vs reszta.
-              const interestOps = costs.filter(
-                (c) => c.category === 'other' && c.subkind === 'interest',
-              );
-              const otherRestOps = costs.filter(
-                (c) => c.category === 'other' && c.subkind !== 'interest',
-              );
-              const interestTotal = interestOps.reduce((s, o) => s + o.amount, 0);
-              const otherRestTotal = otherRestOps.reduce((s, o) => s + o.amount, 0);
-              return [
-                {
-                  virtualCat: 'fee' as const,
-                  label: 'Opłaty',
-                  total: costTotals.fees,
-                  count: costs.filter((c) => c.category === 'fee').length,
-                },
-                {
-                  virtualCat: 'commission_refund' as const,
-                  label: 'Zwroty prowizji',
-                  total: costTotals.commissionRefunds,
-                  count: costs.filter((c) => c.category === 'commission_refund').length,
-                },
-                {
-                  virtualCat: 'trade_fee' as const,
-                  label: 'Podatek tx / swap',
-                  total: costTotals.tradeFees,
-                  count: costs.filter((c) => c.category === 'trade_fee').length,
-                },
-                {
-                  virtualCat: 'interest' as const,
-                  label: 'Odsetki',
-                  total: interestTotal,
-                  count: interestOps.length,
-                },
-                {
-                  virtualCat: 'other' as const,
-                  label: 'Inne',
-                  total: otherRestTotal,
-                  count: otherRestOps.length,
-                },
-              ];
-            })().map((tile) => {
-              if (tile.count === 0) return null;
+          {/* Kafle-grupy kosztów (subkind z parsera IBKR albo fallback po opisie),
+              posortowane po wadze. Kwoty per waluta — sumowanie USD+PLN w jednej
+              liczbie byłoby mylące. Klik = filtr historii poniżej (drugi klik czyści). */}
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+            {costGroups.map((g) => {
+              const meta = COST_CATEGORY_META[g.cat];
+              const active = groupFilter === g.cat;
               return (
-                <div
-                  key={tile.virtualCat}
-                  className="rounded-lg bg-muted/30 border border-border px-3 py-2"
+                <button
+                  key={g.cat}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setGroupFilter(active ? null : g.cat)}
+                  title={
+                    active ? 'Kliknij, aby wyczyścić filtr' : 'Kliknij, aby przefiltrować historię'
+                  }
+                  className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                    active
+                      ? 'bg-primary/10 border-primary/50 ring-1 ring-primary/40'
+                      : 'bg-muted/30 border-border hover:bg-muted/60'
+                  }`}
                 >
                   <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-0.5">
-                    {tile.label}
+                    {meta.label}
                   </p>
-                  <p
-                    className={`text-sm font-bold tabular-nums tracking-tight ${
-                      tile.total < 0 ? 'text-loss' : tile.total > 0 ? 'text-gain' : ''
-                    }`}
-                  >
-                    {formatCurrency(tile.total, baseCurrency)}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{tile.count} operacji</p>
-                </div>
+                  {[...g.byCurrency.entries()]
+                    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+                    .map(([cur, total]) => (
+                      <p
+                        key={cur}
+                        className={`text-sm font-semibold tabular-nums tracking-tight ${
+                          total < 0 ? 'text-loss/90' : total > 0 ? 'text-gain/90' : ''
+                        }`}
+                      >
+                        {formatCurrency(total, cur)}
+                      </p>
+                    ))}
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{g.count} operacji</p>
+                </button>
               );
             })}
           </div>
+
+          {groupFilter && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>
+                Filtr: <strong>{COST_CATEGORY_META[groupFilter].label}</strong> (
+                {filteredCosts.length} z {costs.length} operacji)
+              </span>
+              <Button size="xs" variant="ghost" onClick={() => setGroupFilter(null)}>
+                Wyczyść
+              </Button>
+            </div>
+          )}
 
           {/* Historia */}
           {costs.length === 0 ? (
@@ -1121,7 +1152,7 @@ export function CorrectionsAndCostsPage() {
           ) : (
             <>
               <div className="md:hidden flex flex-col gap-2">
-                {costs.map((c) => {
+                {filteredCosts.map((c) => {
                   const isExpanded = expandedCost.has(c.id);
                   const amountColor = c.amount < 0 ? 'text-loss' : c.amount > 0 ? 'text-gain' : '';
                   const vCat = virtualCategory(c);
@@ -1192,7 +1223,7 @@ export function CorrectionsAndCostsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {costs.map((c) => (
+                    {filteredCosts.map((c) => (
                       <TableRow key={c.id}>
                         <TableCell className="whitespace-nowrap text-sm tabular-nums">
                           {formatDate(c.date)}

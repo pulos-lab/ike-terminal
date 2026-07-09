@@ -34,8 +34,18 @@ import { toast } from 'sonner';
 import type { ClosedTrade } from 'shared';
 import { ClosedPositionCardMobile } from './ClosedPositionCardMobile';
 import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { displayOptionTicker } from 'shared';
+import { TickerLabel } from '@/components/ui/ticker-label';
 
 /** Round-trip wskazany do usunięcia — może obejmować kilka transakcji sprzedaży. */
+const CATEGORY_FILTER_LABELS: Record<string, string> = {
+  stock: 'Akcje',
+  etf: 'ETF',
+  cfd: 'CFD',
+  bond: 'Obligacje',
+  option: 'Opcje',
+};
+
 interface DeleteSellTarget {
   ids: number[];
   ticker: string;
@@ -104,6 +114,9 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
 
   const [plFilter, setPlFilter] = useState<'all' | 'profit' | 'loss'>('all');
   const [currencyFilter, setCurrencyFilter] = useState<string>('ALL');
+  // Filtr kategorii instrumentu (akcje/ETF/opcje/…) — opcje liczą się do wspólnych
+  // statystyk, ale da się je wyodrębnić.
+  const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   // Date range: use controlled props if provided, else internal state (backward compat)
   const [internalDateRange, setInternalDateRange] = useState<string>('ALL');
   const [internalCustomFrom, setInternalCustomFrom] = useState('');
@@ -138,8 +151,8 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
       if (t) {
         toast.success(
           ids.length > 1
-            ? `Usunięto sprzedaże ${t.ticker} (${ids.length}) — łącznie ${formatQuantity(t.quantity)} szt`
-            : `Usunięto transakcję sprzedaży ${t.ticker} — ${formatQuantity(t.quantity)} szt z ${formatDate(t.sellDate)}`,
+            ? `Usunięto sprzedaże ${displayOptionTicker(t.ticker)} (${ids.length}) — łącznie ${formatQuantity(t.quantity)} szt`
+            : `Usunięto transakcję sprzedaży ${displayOptionTicker(t.ticker)} — ${formatQuantity(t.quantity)} szt z ${formatDate(t.sellDate)}`,
         );
       } else {
         toast.success('Usunięto transakcję sprzedaży.');
@@ -153,6 +166,13 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
     if (!data?.trades?.length) return [];
     const set = new Set<string>();
     for (const trade of data.trades) set.add(trade.currency);
+    return Array.from(set).sort();
+  }, [data]);
+
+  const availableCategories = useMemo(() => {
+    if (!data?.trades?.length) return [];
+    const set = new Set<string>();
+    for (const trade of data.trades) set.add(trade.category ?? 'stock');
     return Array.from(set).sort();
   }, [data]);
 
@@ -172,6 +192,8 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
     if (plFilter === 'profit') g = g.filter((x) => x.totalProfitLoss > 0);
     else if (plFilter === 'loss') g = g.filter((x) => x.totalProfitLoss < 0);
     if (currencyFilter !== 'ALL') g = g.filter((x) => x.currency === currencyFilter);
+    if (categoryFilter !== 'ALL')
+      g = g.filter((x) => (x.trades[0]?.category ?? 'stock') === categoryFilter);
     if (dateRange !== 'ALL') {
       let fromDate: string | undefined;
       let toDate: string | undefined;
@@ -186,7 +208,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
       if (toDate) g = g.filter((x) => x.sellDate.slice(0, 10) <= toDate!);
     }
     return g;
-  }, [allGroups, plFilter, currencyFilter, dateRange, customFrom, customTo]);
+  }, [allGroups, plFilter, currencyFilter, categoryFilter, dateRange, customFrom, customTo]);
 
   // Liczba nóg (transakcji) w przefiltrowanych grupach — do nagłówka.
   const filteredLegCount = useMemo(() => groups.reduce((s, g) => s + g.trades.length, 0), [groups]);
@@ -214,10 +236,15 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
   }, [groups]);
 
   const totalTrades = data?.trades?.length ?? 0;
-  const isFiltered = plFilter !== 'all' || currencyFilter !== 'ALL' || dateRange !== 'ALL';
+  const isFiltered =
+    plFilter !== 'all' ||
+    currencyFilter !== 'ALL' ||
+    categoryFilter !== 'ALL' ||
+    dateRange !== 'ALL';
   const activeFilterCount =
     (plFilter !== 'all' ? 1 : 0) +
     (currencyFilter !== 'ALL' ? 1 : 0) +
+    (categoryFilter !== 'ALL' ? 1 : 0) +
     (dateRange !== 'ALL' ? 1 : 0);
 
   return (
@@ -301,6 +328,27 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                               {availableCurrencies.map((c) => (
                                 <SelectItem key={c} value={c}>
                                   {c}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {availableCategories.length > 1 && (
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+                            Kategoria
+                          </span>
+                          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                            <SelectTrigger className="h-9 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="ALL">Wszystkie kategorie</SelectItem>
+                              {availableCategories.map((c) => (
+                                <SelectItem key={c} value={c}>
+                                  {CATEGORY_FILTER_LABELS[c] ?? c}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -425,6 +473,22 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                   </Select>
                 )}
 
+                {availableCategories.length > 1 && (
+                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                    <SelectTrigger className="h-7 w-[150px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">Wszystkie kategorie</SelectItem>
+                      {availableCategories.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {CATEGORY_FILTER_LABELS[c] ?? c}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
                 <div className="ml-auto flex flex-wrap items-center gap-3">
                   <div className="flex items-center rounded-md border">
                     <Button
@@ -492,7 +556,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                     onDelete={() =>
                       setDeleteTarget({
                         ids: group.sellTransactionIds,
-                        ticker: group.ticker,
+                        ticker: group.spreadLabel ?? group.ticker,
                         sellDate: group.sellDate,
                         quantity: group.totalQuantity,
                       })
@@ -527,7 +591,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                         return (
                           <TableRow key={group.key}>
                             <TableCell className="font-mono font-medium">
-                              {trade.ticker}
+                              <TickerLabel ticker={trade.ticker} />
                               <CategoryBadge category={trade.category} />
                               {trade.isShort && (
                                 <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
@@ -572,7 +636,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                   onClick={() =>
                                     setDeleteTarget({
                                       ids: group.sellTransactionIds,
-                                      ticker: group.ticker,
+                                      ticker: group.spreadLabel ?? group.ticker,
                                       sellDate: group.sellDate,
                                       quantity: group.totalQuantity,
                                     })
@@ -619,13 +683,21 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                 ) : (
                                   <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                                 )}
-                                {group.ticker}
+                                {group.spreadLabel ? (
+                                  <span className="font-mono font-medium whitespace-nowrap">
+                                    {group.spreadLabel}
+                                  </span>
+                                ) : (
+                                  <TickerLabel ticker={group.ticker} />
+                                )}
                                 <CategoryBadge category={group.trades[0]?.category} />
                                 {group.trades.some((t) => t.isShort) && (
                                   <span className="text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
-                                    {group.trades.every((t) => t.isShort)
-                                      ? 'SHORT'
-                                      : `${group.trades.filter((t) => t.isShort).length}S`}
+                                    {group.spreadLabel
+                                      ? 'spread'
+                                      : group.trades.every((t) => t.isShort)
+                                        ? 'SHORT'
+                                        : `${group.trades.filter((t) => t.isShort).length}S`}
                                   </span>
                                 )}
                                 <span className="text-xs text-muted-foreground ml-1">
@@ -679,7 +751,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                     e.stopPropagation();
                                     setDeleteTarget({
                                       ids: group.sellTransactionIds,
-                                      ticker: group.ticker,
+                                      ticker: group.spreadLabel ?? group.ticker,
                                       sellDate: group.sellDate,
                                       quantity: group.totalQuantity,
                                     });
@@ -698,7 +770,14 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                             group.trades.map((trade, j) => (
                               <TableRow key={`${group.key}-${j}`} className="bg-muted/30">
                                 <TableCell className="font-mono text-muted-foreground pl-9 text-sm">
-                                  └ lot {j + 1}
+                                  {group.spreadLabel ? (
+                                    <span className="inline-flex items-center gap-1">
+                                      <span className="text-muted-foreground">└</span>
+                                      <TickerLabel ticker={trade.ticker} />
+                                    </span>
+                                  ) : (
+                                    `└ lot ${j + 1}`
+                                  )}
                                   {trade.isShort && (
                                     <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
                                       S
@@ -788,8 +867,8 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
         description={
           deleteTarget
             ? deleteTarget.ids.length > 1
-              ? `Usunąć ${deleteTarget.ids.length} transakcje sprzedaży ${deleteTarget.ticker} (łącznie ${formatQuantity(deleteTarget.quantity)} szt)? Pozycja wróci do otwartych.`
-              : `Usunąć transakcję sprzedaży ${deleteTarget.ticker} — ${formatQuantity(deleteTarget.quantity)} szt z ${formatDate(deleteTarget.sellDate)}? Pozycja wróci do otwartych.`
+              ? `Usunąć ${deleteTarget.ids.length} transakcje sprzedaży ${displayOptionTicker(deleteTarget.ticker)} (łącznie ${formatQuantity(deleteTarget.quantity)} szt)? Pozycja wróci do otwartych.`
+              : `Usunąć transakcję sprzedaży ${displayOptionTicker(deleteTarget.ticker)} — ${formatQuantity(deleteTarget.quantity)} szt z ${formatDate(deleteTarget.sellDate)}? Pozycja wróci do otwartych.`
             : ''
         }
         loading={deleteMutation.isPending}

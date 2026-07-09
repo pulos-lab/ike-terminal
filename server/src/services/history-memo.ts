@@ -31,6 +31,7 @@ import type {
   TickerMapEntry,
   DetectedSplit,
   AppliedSpinOff,
+  OptionContract,
 } from 'shared';
 import { computePortfolioHistory } from './portfolio-engine.js';
 import { getPortfolioDataVersion } from '../db/data-version.js';
@@ -46,8 +47,9 @@ const MAX_MEMO_ENTRIES = 8;
  * hot-reload tsx watch). v2: wycena obligacji przez mnożnik nominal/100.
  * v3: transformacja spin-offów (applySpinOffs) w strumieniu transakcji.
  * v4: cash flow transakcji księgowany w paymentCurrency (fxRate brokera / kurs dzienny).
+ * v5: wycena opcji przez mnożnik kontraktu (option_contracts).
  */
-const ENGINE_VERSION = 4;
+const ENGINE_VERSION = 5;
 
 const memo = new Map<string, Promise<HistoryResult>>();
 
@@ -75,6 +77,9 @@ export function computePortfolioHistoryMemoized(
   // Spin-offy nie wchodzą do klucza memo z tego samego powodu co splits:
   // każda ich mutacja przechodzi przez applier/routes, które bumpują dataVersion.
   spinOffs: AppliedSpinOff[] = [],
+  // Kontrakty opcyjne też nie wchodzą do klucza: zapis następuje wyłącznie w imporcie
+  // i ręcznym dodaniu transakcji, które bumpują dataVersion.
+  optionContracts?: Map<string, OptionContract>,
 ): Promise<HistoryResult> {
   const today = new Date().toISOString().split('T')[0];
   const key = [
@@ -106,6 +111,7 @@ export function computePortfolioHistoryMemoized(
     splits,
     baseCurrency,
     spinOffs,
+    optionContracts,
   ).catch((err) => {
     // Nie cache'ujemy błędów — kolejny request spróbuje od nowa
     memo.delete(key);
