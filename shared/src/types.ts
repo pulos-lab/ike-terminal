@@ -483,6 +483,13 @@ export interface DetectedSplit {
   txPrice: number; // transaction price (pre-split)
   providerPrice: number; // Yahoo/Stooq price (post-split adjusted)
   source: 'auto' | 'manual';
+  /**
+   * Kandydat z proporcji ceny wyraźnie splitowej, ale o ratio spoza listy „znanych"
+   * (np. 1:12 Paysafe, 12:1). MUSI zostać potwierdzony zdarzeniem split z Yahoo w
+   * resolveSplitEventDates; bez potwierdzenia jest odrzucany (może być crash/rally,
+   * nie split). Zwykłe wykrycia (znane ratio) tego nie wymagają.
+   */
+  needsConfirmation?: boolean;
 }
 
 // ============ Ticker Map Types ============

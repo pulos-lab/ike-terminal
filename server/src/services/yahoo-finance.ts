@@ -395,13 +395,29 @@ export async function fetchYahooSplitEvents(
 
     const splits: Record<string, { date: number; numerator: number; denominator: number }> =
       result.events.splits;
-    const events = Object.values(splits)
+    const raw = Object.values(splits)
       .filter((s) => s.numerator > 0 && s.denominator > 0)
       .map((s) => ({
         date: new Date(s.date * 1000).toISOString().split('T')[0],
         ratio: s.numerator / s.denominator,
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
+
+    // Yahoo bywa niespójne i raportuje ten sam split w dwóch sąsiednich dniach
+    // (np. EDU 1:10 na 2022-04-07 i 2022-04-08). Zliczenie obu podwoiłoby korektę
+    // (×0.01 zamiast ×0.1). Sklejamy zdarzenia o identycznym ratio w oknie ≤4 dni.
+    const events: Array<{ date: string; ratio: number }> = [];
+    for (const e of raw) {
+      const prev = events[events.length - 1];
+      if (
+        prev &&
+        Math.abs(prev.ratio - e.ratio) < 1e-9 &&
+        Math.abs(Date.parse(e.date) - Date.parse(prev.date)) <= 4 * 86_400_000
+      ) {
+        continue;
+      }
+      events.push(e);
+    }
 
     setCached(cacheKey, events, 12 * 3600);
     return events;
