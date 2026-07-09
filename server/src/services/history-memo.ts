@@ -49,8 +49,10 @@ const MAX_MEMO_ENTRIES = 8;
  * v4: cash flow transakcji księgowany w paymentCurrency (fxRate brokera / kurs dzienny).
  * v5: wycena opcji przez mnożnik kontraktu (option_contracts).
  * v6: wycena dzienna pozycji krótkich (ujemne shares) — koniec zawyżania o proceeds shorta.
+ * v7: kandydaci splitów o nieznanym ratio (np. 1:12 Paysafe) — korekta cen historycznych
+ *     dopiero po potwierdzeniu zdarzeniem split z Yahoo; koniec skoków na wykresie.
  */
-const ENGINE_VERSION = 6;
+const ENGINE_VERSION = 7;
 
 const memo = new Map<string, Promise<HistoryResult>>();
 

@@ -172,6 +172,22 @@ export function detectSplits(
         source: 'auto',
       });
       cumulativeRatio.set(entry.ticker, currentRatio * snappedRatio);
+    } else if (rawRatio >= 3 || (rawRatio > 0 && rawRatio <= 1 / 3)) {
+      // Ratio spoza listy „znanych", ale skala ≥3× (nietypowy split, np. 1:12 Paysafe,
+      // 12:1, 1:7). Próg 3× wyklucza typowe rajdy/krachy (+130% = 0.43, −60% = 2.5).
+      // Nie ufamy na słowo — zgłaszamy jako KANDYDATA do potwierdzenia zdarzeniem split
+      // z Yahoo; bez potwierdzenia zostanie odrzucony w resolveSplitEventDates.
+      splits.push({
+        ticker: entry.ticker,
+        isin: tx.isin,
+        date: dateKey,
+        ratio: rawRatio,
+        txPrice: tx.price,
+        providerPrice: scaledProviderPrice,
+        source: 'auto',
+        needsConfirmation: true,
+      });
+      cumulativeRatio.set(entry.ticker, currentRatio * rawRatio);
     }
   }
 
