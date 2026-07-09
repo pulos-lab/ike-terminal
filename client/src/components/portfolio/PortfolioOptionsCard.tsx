@@ -1,4 +1,4 @@
-import { Fragment, useMemo } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import type { Position } from 'shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -16,6 +16,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { formatCurrency, formatNumber, formatPLN, formatQuantity } from '@/lib/formatters';
 import { useToggleSet } from '@/hooks/useToggleSet';
+import { PortfolioOptionsGreeks } from './PortfolioOptionsGreeks';
 
 /**
  * Karta „Opcje" w zakładce Portfel — wydzielona sekcja dla pozycji category='option'.
@@ -29,7 +30,7 @@ import { useToggleSet } from '@/hooks/useToggleSet';
  * prezentacyjne — nie dotyka wyceny ani P/L (te liczy silnik per noga).
  */
 
-interface OptionGroup {
+export interface OptionGroup {
   key: string;
   underlying: string;
   expiry: string;
@@ -243,13 +244,14 @@ export function PortfolioOptionsCard({
 }) {
   const groups = useMemo(() => buildGroups(positions), [positions]);
   const [expanded, toggle] = useToggleSet<string>();
+  const [tab, setTab] = useState<'positions' | 'greeks'>('positions');
 
   if (positions.length === 0) return null;
   const optionsValuePln = positions.reduce((s, p) => s + p.currentValuePln, 0);
 
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 space-y-0">
         <CardTitle className="text-base">
           Opcje
           <span className="ml-2 text-muted-foreground font-normal">
@@ -257,107 +259,123 @@ export function PortfolioOptionsCard({
             {formatPLN(optionsValuePln)})
           </span>
         </CardTitle>
+        <div className="inline-flex items-center rounded-md bg-muted p-0.5 shrink-0">
+          {(['positions', 'greeks'] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`px-2.5 py-0.5 rounded text-xs font-medium transition-colors ${
+                tab === t ? 'bg-background text-foreground' : 'text-muted-foreground'
+              }`}
+            >
+              {t === 'positions' ? 'Pozycje' : 'Greeks'}
+            </button>
+          ))}
+        </div>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Instrument</TableHead>
-                <TableHead>Wygasa</TableHead>
-                <TableHead className="text-right">DTE</TableHead>
-                <TableHead className="text-right">Ilość</TableHead>
-                <TableHead className="text-right">Śr. premia</TableHead>
-                <TableHead className="text-right">Kurs</TableHead>
-                <TableHead className="text-right">Wartość (PLN)</TableHead>
-                <TableHead className="text-right">P/L</TableHead>
-                <TableHead className="text-right">P/L %</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {groups.map((g) => {
-                // Pojedyncza noga — zwykły wiersz (bez rozwijania).
-                if (g.legs.length === 1) return <LegRow key={g.key} pos={g.legs[0]} />;
+        {tab === 'greeks' && <PortfolioOptionsGreeks groups={groups} />}
+        {tab === 'positions' && (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Instrument</TableHead>
+                  <TableHead>Wygasa</TableHead>
+                  <TableHead className="text-right">DTE</TableHead>
+                  <TableHead className="text-right">Ilość</TableHead>
+                  <TableHead className="text-right">Śr. premia</TableHead>
+                  <TableHead className="text-right">Kurs</TableHead>
+                  <TableHead className="text-right">Wartość (PLN)</TableHead>
+                  <TableHead className="text-right">P/L</TableHead>
+                  <TableHead className="text-right">P/L %</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {groups.map((g) => {
+                  // Pojedyncza noga — zwykły wiersz (bez rozwijania).
+                  if (g.legs.length === 1) return <LegRow key={g.key} pos={g.legs[0]} />;
 
-                const isOpen = expanded.has(g.key);
-                return (
-                  <Fragment key={g.key}>
-                    <TableRow
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => toggle(g.key)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          toggle(g.key);
-                        }
-                      }}
-                    >
-                      <TableCell className="font-mono font-medium whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1">
-                          {isOpen ? (
-                            <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                          )}
-                          {g.label}
-                          {g.kindLabel && (
-                            <Badge variant="outline" className="ml-1 text-[10px]">
-                              {g.kindLabel}
-                            </Badge>
-                          )}
-                          {g.expiryPassed && <ExpiryWarning />}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground whitespace-nowrap">
-                        {g.expiry || '—'}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        <DteCell expiry={g.expiry} />
-                      </TableCell>
-                      {/* Ilość/premia/kurs są per-noga — na wierszu spreadu puste, widoczne po rozwinięciu. */}
-                      <TableCell className="text-right text-muted-foreground">
-                        {legWord(g.legs.length)}
-                      </TableCell>
-                      <TableCell />
-                      <TableCell />
-                      <TableCell
-                        className={`text-right font-medium tabular-nums ${g.netValuePln < 0 ? 'text-red-600' : ''}`}
+                  const isOpen = expanded.has(g.key);
+                  return (
+                    <Fragment key={g.key}>
+                      <TableRow
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => toggle(g.key)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggle(g.key);
+                          }
+                        }}
                       >
-                        {formatPLN(g.netValuePln)}
-                      </TableCell>
-                      <TableCell
-                        className={`text-right font-medium ${plColor(g.netProfitLossPct)}`}
-                      >
-                        {formatCurrency(g.netProfitLoss, g.currency)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <PLBadge value={g.netProfitLossPct} />
-                      </TableCell>
-                    </TableRow>
-                    {isOpen && g.legs.map((leg) => <LegRow key={leg.isin} pos={leg} indent />)}
-                  </Fragment>
-                );
-              })}
-              <TableRow className="border-t-2 font-semibold">
-                <TableCell colSpan={6} className="text-right">
-                  Razem
-                </TableCell>
-                <TableCell
-                  className={`text-right tabular-nums ${optionsValuePln < 0 ? 'text-red-600' : ''}`}
-                >
-                  {formatPLN(optionsValuePln)}
-                </TableCell>
-                <TableCell colSpan={2} className="text-right text-muted-foreground font-normal">
-                  {totalValuePln > 0
-                    ? `${((optionsValuePln / totalValuePln) * 100).toFixed(1)}% portfela`
-                    : ''}
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </div>
+                        <TableCell className="font-mono font-medium whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1">
+                            {isOpen ? (
+                              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                            )}
+                            {g.label}
+                            {g.kindLabel && (
+                              <Badge variant="outline" className="ml-1 text-[10px]">
+                                {g.kindLabel}
+                              </Badge>
+                            )}
+                            {g.expiryPassed && <ExpiryWarning />}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground whitespace-nowrap">
+                          {g.expiry || '—'}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <DteCell expiry={g.expiry} />
+                        </TableCell>
+                        {/* Ilość/premia/kurs są per-noga — na wierszu spreadu puste, widoczne po rozwinięciu. */}
+                        <TableCell className="text-right text-muted-foreground">
+                          {legWord(g.legs.length)}
+                        </TableCell>
+                        <TableCell />
+                        <TableCell />
+                        <TableCell
+                          className={`text-right font-medium tabular-nums ${g.netValuePln < 0 ? 'text-red-600' : ''}`}
+                        >
+                          {formatPLN(g.netValuePln)}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-medium ${plColor(g.netProfitLossPct)}`}
+                        >
+                          {formatCurrency(g.netProfitLoss, g.currency)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <PLBadge value={g.netProfitLossPct} />
+                        </TableCell>
+                      </TableRow>
+                      {isOpen && g.legs.map((leg) => <LegRow key={leg.isin} pos={leg} indent />)}
+                    </Fragment>
+                  );
+                })}
+                <TableRow className="border-t-2 font-semibold">
+                  <TableCell colSpan={6} className="text-right">
+                    Razem
+                  </TableCell>
+                  <TableCell
+                    className={`text-right tabular-nums ${optionsValuePln < 0 ? 'text-red-600' : ''}`}
+                  >
+                    {formatPLN(optionsValuePln)}
+                  </TableCell>
+                  <TableCell colSpan={2} className="text-right text-muted-foreground font-normal">
+                    {totalValuePln > 0
+                      ? `${((optionsValuePln / totalValuePln) * 100).toFixed(1)}% portfela`
+                      : ''}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

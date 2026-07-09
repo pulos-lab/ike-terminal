@@ -12,6 +12,7 @@ import type {
   PortfolioHistoryResponse,
   PortfolioMetricsResponse,
   PortfolioPositionsResponse,
+  PortfolioGreeksResponse,
   PortfolioSettings,
   PortfolioShare,
   PublicHistoryResponse,
@@ -145,6 +146,7 @@ export const api = {
 
   // Portfolio
   getPositions: () => request<PortfolioPositionsResponse>('/portfolio/positions'),
+  getPositionsGreeks: () => request<PortfolioGreeksResponse>('/portfolio/positions/greeks'),
   getMetrics: () => request<PortfolioMetricsResponse>('/portfolio/metrics'),
   getClosedTrades: () => request<ClosedTradesResponse>('/portfolio/closed-trades'),
   getDividends: () => request<DividendsResponse>('/portfolio/dividends'),

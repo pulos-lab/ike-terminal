@@ -4,6 +4,7 @@ export const QUERY_KEYS = {
   /** Lista portfeli użytkownika (PortfolioProvider) — niezależna od aktywnego portfela. */
   portfolios: ['portfolios'] as const,
   positions: ['portfolio', 'positions'] as const,
+  positionsGreeks: ['portfolio', 'positions', 'greeks'] as const,
   transactions: ['portfolio', 'transactions'] as const,
   closedTrades: ['portfolio', 'closed-trades'] as const,
   metrics: ['portfolio', 'metrics'] as const,
