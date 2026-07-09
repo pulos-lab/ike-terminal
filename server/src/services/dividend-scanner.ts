@@ -166,6 +166,8 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
   for (const [isin, entry] of tickerMap) {
     // NC i Catalyst: Yahoo ich nie listuje (kupony obligacji przychodzą z CSV brokera).
     if (entry.exchange === 'NC' || entry.exchange === 'CATALYST') continue;
+    // Opcje (pseudo-ISIN OPT:...) nie płacą dywidend — skan byłby zbędnym strzałem do Yahoo.
+    if (isin.startsWith('OPT:')) continue;
     // Stan posiadania "na dziś" — włącznie z dzisiejszymi transakcjami (includeDate=true).
     const shares = getSharesAtDate(adjustedTxs, isin, today, true);
     if (shares <= 0) continue;
