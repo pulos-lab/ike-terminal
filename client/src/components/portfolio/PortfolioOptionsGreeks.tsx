@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
-import { formatNumber, formatPLN } from '@/lib/formatters';
+import { formatNumber } from '@/lib/formatters';
 import type { OptionGroup } from './PortfolioOptionsCard';
 
 type Mode = 'current' | 'atPurchase';
@@ -98,13 +98,11 @@ function NetTile({
   greek,
   value,
   unit,
-  hint,
 }: {
   label: string;
   greek: string;
   value: string;
   unit: string;
-  hint: string;
 }) {
   return (
     <div className="rounded-lg bg-muted/40 p-3">
@@ -173,28 +171,24 @@ export function PortfolioOptionsGreeks({ groups }: { groups: OptionGroup[] }) {
           greek="delta"
           value={fmtSigned(deltaEquiv)}
           unit={`jak ${deltaEquiv >= 0 ? 'long' : 'short'} ${Math.abs(deltaEquiv)} akcji`}
-          hint=""
         />
         <NetTile
           label="Theta (Θ)"
           greek="theta"
           value={`${fmtSigned(net.theta, 0)} ${netCcy}`}
           unit="dziennie na czasie"
-          hint=""
         />
         <NetTile
           label="Vega"
           greek="vega"
           value={`${fmtSigned(net.vega, 0)} ${netCcy}`}
           unit="na +1 pp IV"
-          hint=""
         />
         <NetTile
           label="Rho"
           greek="rho"
           value={`${fmtSigned(net.rho, 0)} ${netCcy}`}
           unit="na +1 pp stopy"
-          hint=""
         />
       </div>
 
