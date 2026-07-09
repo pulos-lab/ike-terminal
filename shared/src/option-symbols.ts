@@ -96,3 +96,25 @@ export function displayOptionTicker(ticker: string): string {
   const [y, m, d] = parsed.expiry.split('-');
   return `${parsed.underlying} ${parsed.strike} ${parsed.optionType === 'C' ? 'CALL' : 'PUT'} ${d}.${m}.${y}`;
 }
+
+/**
+ * Wartość wewnętrzna (intrinsic) kontraktu opcyjnego per akcja bazową:
+ * - Call: max(kurs bazowego − strike, 0)
+ * - Put:  max(strike − kurs bazowego, 0)
+ *
+ * Yahoo nie udostępnia historii cen opcji (OCC ticker → 404), więc do wyceny
+ * historycznej i do fallbacku bieżącego używamy wartości wewnętrznej liczonej
+ * z kursu instrumentu bazowego. Pomija premię czasową (konserwatywnie: opcje
+ * OTM = 0), ale eliminuje absurdy martwej/interpolowanej premii — zwłaszcza dla
+ * głęboko-ITM krótkich pozycji, których zobowiązanie inaczej znika z wyceny.
+ * Wartość pozycji = qty × intrinsic × mnożnik kontraktu (mnożnik nakładany osobno).
+ */
+export function optionIntrinsicValue(
+  optionType: 'C' | 'P',
+  underlyingPrice: number,
+  strike: number,
+): number {
+  return optionType === 'C'
+    ? Math.max(underlyingPrice - strike, 0)
+    : Math.max(strike - underlyingPrice, 0);
+}

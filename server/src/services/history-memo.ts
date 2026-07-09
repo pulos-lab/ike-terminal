@@ -51,8 +51,10 @@ const MAX_MEMO_ENTRIES = 8;
  * v6: wycena dzienna pozycji krótkich (ujemne shares) — koniec zawyżania o proceeds shorta.
  * v7: kandydaci splitów o nieznanym ratio (np. 1:12 Paysafe) — korekta cen historycznych
  *     dopiero po potwierdzeniu zdarzeniem split z Yahoo; koniec skoków na wykresie.
+ * v8: wycena opcji wartością wewnętrzną (intrinsic) z kursu instrumentu bazowego —
+ *     koniec martwej interpolowanej premii ukrywającej zobowiązanie głęboko-ITM shortów.
  */
-const ENGINE_VERSION = 7;
+const ENGINE_VERSION = 8;
 
 const memo = new Map<string, Promise<HistoryResult>>();
 
