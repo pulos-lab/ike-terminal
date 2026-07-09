@@ -850,6 +850,49 @@ export interface PortfolioPositionsResponse {
   baseCurrency: string;
 }
 
+// ============ Option Greeks ============
+
+/**
+ * Greeki opcji SKALOWANE DO POZYCJI (× mnożnik × liczba kontraktów, ze znakiem shares):
+ * delta/gamma = ekwiwalent akcji bazowych; theta/vega/rho = w PLN (upływ dnia / +1pp IV /
+ * +1pp stopy). `iv` to zmienność implikowana KONTRAKTU (ułamek), nie skalowana.
+ */
+export interface OptionGreeks {
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  rho: number;
+  iv: number;
+}
+
+export interface PositionGreeks {
+  isin: string;
+  underlying: string;
+  /** dni do wygaśnięcia */
+  dte: number;
+  moneyness: 'ITM' | 'ATM' | 'OTM';
+  /** wg żywej ceny opcji + kursu bazowego; null gdy nie da się wyznaczyć IV */
+  current: OptionGreeks | null;
+  /** wg premii transakcji + kursu bazowego z dnia zakupu; null gdy brak danych */
+  atPurchase: (OptionGreeks & { date: string }) | null;
+}
+
+/** Agregat netto portfela opcji (delta/gamma = ekwiwalent akcji, theta/vega/rho = PLN). */
+export interface GreeksNet {
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  rho: number;
+}
+
+export interface PortfolioGreeksResponse {
+  positions: PositionGreeks[];
+  net: { current: GreeksNet; atPurchase: GreeksNet };
+  asOf: string;
+}
+
 export interface PortfolioHistoryResponse {
   history: PortfolioHistoryPoint[];
   metrics: PortfolioMetrics;
