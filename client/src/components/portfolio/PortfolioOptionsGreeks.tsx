@@ -35,6 +35,33 @@ function fmtSigned(v: number, decimals = 0): string {
   return `${v > 0 ? '+' : ''}${formatNumber(v, decimals)}`;
 }
 
+const CCY_SYMBOL: Record<string, string> = { USD: '$', EUR: '€', GBP: '£', PLN: 'zł' };
+function ccySym(c: string): string {
+  return CCY_SYMBOL[c] ?? c;
+}
+
+/** Krótkie wyjaśnienia greeków — widoczna legenda pod tabelą (nie tylko tooltip). */
+const GREEK_LEGEND: Array<{ sym: string; name: string; text: string }> = [
+  {
+    sym: 'Δ',
+    name: 'Delta',
+    text: 'kierunkowa ekspozycja w ekwiwalencie akcji bazowych (−100 ≈ jak short 100 akcji).',
+  },
+  { sym: 'Γ', name: 'Gamma', text: 'jak szybko zmienia się delta przy ruchu kursu bazowego o 1.' },
+  {
+    sym: 'Θ',
+    name: 'Theta',
+    text: 'zysk/strata dziennie z upływu czasu (długie opcje tracą, wystawca zyskuje).',
+  },
+  { sym: 'ν', name: 'Vega', text: 'zysk/strata na wzrost zmienności implikowanej o 1 pp.' },
+  { sym: 'ρ', name: 'Rho', text: 'zysk/strata na wzrost stopy wolnej od ryzyka o 1 pp.' },
+  {
+    sym: 'IV',
+    name: 'Zmienność implikowana',
+    text: 'zmienność „wyciągnięta" z ceny opcji przez model Black-Scholes.',
+  },
+];
+
 /** Sumuje greeki nóg grupy dla wybranego trybu; null gdy żadna noga ich nie ma. */
 function sumGroupGreeks(
   group: OptionGroup,
@@ -116,6 +143,10 @@ export function PortfolioOptionsGreeks({ groups }: { groups: OptionGroup[] }) {
 
   const net: GreeksNet = mode === 'current' ? data.net.current : data.net.atPurchase;
   const deltaEquiv = Math.round(net.delta);
+  const netCcy = ccySym(data.net.currency);
+  // Waluta kolumn money w tabeli: wspólna waluta pozycji (kwotowanie w walucie opcji), null gdy mieszane.
+  const posCcys = new Set((data.positions ?? []).map((p) => p.currency));
+  const tableCcy = posCcys.size === 1 ? ccySym([...posCcys][0]) : null;
 
   return (
     <div>
@@ -147,21 +178,21 @@ export function PortfolioOptionsGreeks({ groups }: { groups: OptionGroup[] }) {
         <NetTile
           label="Theta (Θ)"
           greek="theta"
-          value={`${fmtSigned(net.theta, 0)} zł`}
+          value={`${fmtSigned(net.theta, 0)} ${netCcy}`}
           unit="dziennie na czasie"
           hint=""
         />
         <NetTile
           label="Vega"
           greek="vega"
-          value={`${fmtSigned(net.vega, 0)} zł`}
+          value={`${fmtSigned(net.vega, 0)} ${netCcy}`}
           unit="na +1 pp IV"
           hint=""
         />
         <NetTile
           label="Rho"
           greek="rho"
-          value={`${fmtSigned(net.rho, 0)} zł`}
+          value={`${fmtSigned(net.rho, 0)} ${netCcy}`}
           unit="na +1 pp stopy"
           hint=""
         />
@@ -183,10 +214,10 @@ export function PortfolioOptionsGreeks({ groups }: { groups: OptionGroup[] }) {
                           : k === 'gamma'
                             ? 'Γ'
                             : k === 'theta'
-                              ? 'Θ/d'
+                              ? `Θ/d${tableCcy ? ` · ${tableCcy}` : ''}`
                               : k === 'vega'
-                                ? 'Vega'
-                                : 'Rho'}
+                                ? `Vega${tableCcy ? ` · ${tableCcy}` : ''}`
+                                : `Rho${tableCcy ? ` · ${tableCcy}` : ''}`}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs text-xs">{GREEK_HELP[k]}</TooltipContent>
@@ -247,10 +278,20 @@ export function PortfolioOptionsGreeks({ groups }: { groups: OptionGroup[] }) {
           </TableBody>
         </Table>
       </div>
+      <dl className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-1.5 text-[11px] leading-snug">
+        {GREEK_LEGEND.map((g) => (
+          <div key={g.name} className="flex gap-1.5">
+            <dt className="font-mono font-medium text-foreground shrink-0 w-7">{g.sym}</dt>
+            <dd className="text-muted-foreground">
+              <span className="text-foreground">{g.name}</span> — {g.text}
+            </dd>
+          </div>
+        ))}
+      </dl>
       <p className="mt-3 text-[11px] text-muted-foreground leading-relaxed">
-        Greeki liczone modelem Black-Scholes; IV odwrócone z ceny opcji (teraz) lub premii
-        transakcji (z dnia zakupu). Stopa wolna od ryzyka z rentowności skarbowych US dopasowana do
-        terminu. Δ/Γ = ekwiwalent akcji, Θ/Vega/Rho = PLN na pozycję.
+        Model Black-Scholes; IV odwrócone z ceny opcji (teraz) lub premii transakcji (z dnia
+        zakupu). Stopa wolna od ryzyka z rentowności skarbowych US dopasowana do terminu. Δ/Γ =
+        ekwiwalent akcji bazowych; Θ/Vega/Rho kwotowane w walucie opcji.
       </p>
     </div>
   );

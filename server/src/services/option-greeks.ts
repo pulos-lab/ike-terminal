@@ -44,33 +44,38 @@ function scaleToPosition(
   iv: number,
   shares: number,
   multiplier: number,
-  fxToPln: number,
 ): OptionGreeks {
   const g = bsGreeks(right, S, K, T, r, iv);
-  const qm = shares * multiplier; // ze znakiem: short → ujemne
+  const qm = shares * multiplier; // ze znakiem: short → ujemne. Theta/Vega/Rho w WALUCIE OPCJI.
   return {
     delta: g.delta * qm,
     gamma: g.gamma * qm,
-    theta: g.theta * qm * fxToPln,
-    vega: g.vega * qm * fxToPln,
-    rho: g.rho * qm * fxToPln,
+    theta: g.theta * qm,
+    vega: g.vega * qm,
+    rho: g.rho * qm,
     iv,
   };
 }
 
-function addNet(net: GreeksNet, g: OptionGreeks): void {
+/** Dodaje greeki do agregatu; theta/vega/rho przez `moneyFactor` (1 gdy waluta netto = waluta
+ *  pozycji, inaczej kurs do PLN dla portfela wielowalutowego). Delta/gamma bez skali (akcje). */
+function addNet(net: GreeksNet, g: OptionGreeks, moneyFactor: number): void {
   net.delta += g.delta;
   net.gamma += g.gamma;
-  net.theta += g.theta;
-  net.vega += g.vega;
-  net.rho += g.rho;
+  net.theta += g.theta * moneyFactor;
+  net.vega += g.vega * moneyFactor;
+  net.rho += g.rho * moneyFactor;
 }
 
 export async function computePortfolioGreeks(pid: string): Promise<PortfolioGreeksResponse> {
   const asOf = new Date().toISOString().slice(0, 10);
   const optionTx = getAllTransactions(pid).filter((t) => t.isin.startsWith('OPT:'));
   if (optionTx.length === 0) {
-    return { positions: [], net: { current: { ...ZERO_NET }, atPurchase: { ...ZERO_NET } }, asOf };
+    return {
+      positions: [],
+      net: { current: { ...ZERO_NET }, atPurchase: { ...ZERO_NET }, currency: 'PLN' },
+      asOf,
+    };
   }
 
   const tickerMap = getTickerMap(pid);
@@ -81,7 +86,11 @@ export async function computePortfolioGreeks(pid: string): Promise<PortfolioGree
   });
   const optPos = positions.filter((p) => p.category === 'option' && p.optionMeta);
   if (optPos.length === 0) {
-    return { positions: [], net: { current: { ...ZERO_NET }, atPurchase: { ...ZERO_NET } }, asOf };
+    return {
+      positions: [],
+      net: { current: { ...ZERO_NET }, atPurchase: { ...ZERO_NET }, currency: 'PLN' },
+      asOf,
+    };
   }
 
   // FX per waluta kontraktu (do PLN dla theta/vega/rho).
@@ -128,6 +137,9 @@ export async function computePortfolioGreeks(pid: string): Promise<PortfolioGree
     return best;
   };
 
+  // Waluta agregatu netto: wspólna waluta opcji (theta/vega/rho natywnie), inaczej 'PLN'.
+  const netCurrency = currencies.length === 1 ? currencies[0] : 'PLN';
+
   const net = { current: { ...ZERO_NET }, atPurchase: { ...ZERO_NET } };
   const out: PositionGreeks[] = [];
 
@@ -136,7 +148,9 @@ export async function computePortfolioGreeks(pid: string): Promise<PortfolioGree
     const right = m.optionType as OptionRight;
     const K = m.strike;
     const mult = m.multiplier || 100;
-    const fx = fxToPln[p.currency.toUpperCase()] ?? 1;
+    const posCcy = p.currency.toUpperCase();
+    // Do agregatu: gdy waluta netto = waluta pozycji → 1; inaczej (portfel mieszany) → kurs do PLN.
+    const moneyFactor = netCurrency === posCcy ? 1 : (fxToPln[posCcy] ?? 1);
     const dteDays = Math.round(yearsBetween(asOf, m.expiry) * 365);
 
     // ── Teraz ──
@@ -147,8 +161,8 @@ export async function computePortfolioGreeks(pid: string): Promise<PortfolioGree
       const rNow = await riskFreeRate(Tnow);
       const iv = impliedVol(right, p.currentPrice, Snow, K, Tnow, rNow);
       if (iv != null) {
-        current = scaleToPosition(right, Snow, K, Tnow, rNow, iv, p.shares, mult, fx);
-        addNet(net.current, current);
+        current = scaleToPosition(right, Snow, K, Tnow, rNow, iv, p.shares, mult);
+        addNet(net.current, current, moneyFactor);
       }
     }
 
@@ -163,9 +177,9 @@ export async function computePortfolioGreeks(pid: string): Promise<PortfolioGree
         const rBuy = await riskFreeRate(Tbuy, buyDate);
         const iv = impliedVol(right, lot.price, Sbuy, K, Tbuy, rBuy);
         if (iv != null) {
-          const g = scaleToPosition(right, Sbuy, K, Tbuy, rBuy, iv, p.shares, mult, fx);
+          const g = scaleToPosition(right, Sbuy, K, Tbuy, rBuy, iv, p.shares, mult);
           atPurchase = { ...g, date: buyDate };
-          addNet(net.atPurchase, g);
+          addNet(net.atPurchase, g, moneyFactor);
         }
       }
     }
@@ -173,6 +187,7 @@ export async function computePortfolioGreeks(pid: string): Promise<PortfolioGree
     out.push({
       isin: p.isin,
       underlying: m.underlying,
+      currency: posCcy,
       dte: dteDays,
       moneyness: Snow != null && Snow > 0 ? moneyness(right, Snow, K) : 'OTM',
       current,
@@ -180,5 +195,5 @@ export async function computePortfolioGreeks(pid: string): Promise<PortfolioGree
     });
   }
 
-  return { positions: out, net, asOf };
+  return { positions: out, net: { ...net, currency: netCurrency }, asOf };
 }
