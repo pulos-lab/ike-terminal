@@ -4,6 +4,13 @@ import type { Transaction, TickerMapEntry, DetectedSplit } from 'shared';
 const RATIO_TOLERANCE = 0.05;
 
 /**
+ * Tolerancja korroboracji ceną dla splitu wykrytego z niedopasowania ilości: cena
+ * sprzedaży (post-split) × ratio ≤ średnia cena kupna (pre-split) × ta stała. 2× dopuszcza
+ * ruch rynku między splitem a sprzedażą; wyklucza krótkie sprzedaże (cena ≈ rynkowa, bez zawału).
+ */
+const SPLIT_PRICE_TOLERANCE = 2;
+
+/**
  * Known real-world stock split ratios (forward and reverse).
  * The smallest possible split is 2:1 (forward) or 1:2 (reverse),
  * so any ratio between 0.53 and 1.9 is definitely NOT a split.
@@ -87,12 +94,28 @@ export function detectSplits(
   const splits: DetectedSplit[] = [];
   const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
 
+  // Instrumenty, na których NIGDY nie było pozycji długiej (czysty trading krótki) —
+  // split ich nie dotyczy. Bez tego realny split spółki (np. SMCI 10:1), wykryty z ceny
+  // providera (skorygowanej) vs cena transakcji short, był datowany na transakcję short
+  // i mnożył ją N-krotnie → widmowa pozycja i gigantyczny skok wyceny na wykresie.
+  const everLong = new Set<string>();
+  {
+    const net = new Map<string, number>();
+    for (const tx of sorted) {
+      const n = (net.get(tx.isin) ?? 0) + (tx.side === 'K' ? tx.quantity : -tx.quantity);
+      net.set(tx.isin, n);
+      if (n > 1e-9) everLong.add(tx.isin);
+    }
+  }
+
   // Track cumulative scaling already applied per ticker so we can detect subsequent splits
   const cumulativeRatio = new Map<string, number>();
 
   for (const tx of sorted) {
     const entry = tickerMap.get(tx.isin);
     if (!entry) continue;
+    // Pomijamy instrumenty tradowane wyłącznie krótko (patrz everLong wyżej).
+    if (!everLong.has(tx.isin)) continue;
 
     // Obligacje nie mają splitów (kursy tx i providera są w tej samej skali % nominału,
     // więc ratio ≈ 1 — guard jest defensywny, bez ryzyka fałszywych wykryć).
@@ -266,28 +289,37 @@ export function detectSplitFromQuantityMismatch(
   const results: Array<{ isin: string; date: string; ratio: number }> = [];
 
   for (const [isin, txs] of byIsin) {
-    // Obligacje nie mają splitów — pomijamy całą grupę.
-    if (txs[0]?.category === 'bond') continue;
+    // Obligacje i opcje nie mają splitów w tym sensie — pomijamy całą grupę.
+    if (txs[0]?.category === 'bond' || txs[0]?.category === 'option') continue;
     const sorted = [...txs].sort((a, b) => a.date.localeCompare(b.date));
     let accumulated = 0;
+    let accCost = 0; // wartość nabycia posiadanych akcji — do średniej ceny
 
     for (const tx of sorted) {
       if (tx.side === 'K') {
         accumulated += tx.quantity;
+        accCost += tx.quantity * tx.price;
       } else {
         if (accumulated > 0 && tx.quantity > accumulated * 1.5) {
           const rawRatio = tx.quantity / accumulated;
-          if (isPlausibleSplitRatio(rawRatio)) {
-            results.push({
-              isin,
-              date: tx.date.split('T')[0],
-              ratio: snapToKnownRatio(rawRatio),
-            });
-            // Adjust accumulated as if split happened
-            accumulated = accumulated * snapToKnownRatio(rawRatio);
+          const avgBuyPrice = accCost / accumulated;
+          // Korroboracja ceną: realny split N:1 zawala cenę ~N-krotnie, więc cena
+          // sprzedaży powinna być ~avgBuyPrice/ratio. Krótka sprzedaż (sprzedaję więcej
+          // niż mam) ma cenę ~rynkową ≈ avgBuyPrice — BEZ zawału. Bez tego warunku
+          // short + odkup był błędnie księgowany jako split (sprzedaż 100 SPOT przy 5
+          // posiadanych → fałszywy split 20:1). Tolerancja 2× na ruch rynku.
+          const looksLikeSplit =
+            avgBuyPrice > 0 && tx.price * rawRatio <= avgBuyPrice * SPLIT_PRICE_TOLERANCE;
+          if (isPlausibleSplitRatio(rawRatio) && looksLikeSplit) {
+            const ratio = snapToKnownRatio(rawRatio);
+            results.push({ isin, date: tx.date.split('T')[0], ratio });
+            // Adjust accumulated as if split happened (koszt bez zmian → avg /ratio).
+            accumulated = accumulated * ratio;
           }
         }
+        const avgBuyPrice = accumulated > 0 ? accCost / accumulated : 0;
         accumulated = Math.max(0, accumulated - tx.quantity);
+        accCost = avgBuyPrice * accumulated; // proporcjonalna redukcja (avg bez zmian)
       }
     }
   }
