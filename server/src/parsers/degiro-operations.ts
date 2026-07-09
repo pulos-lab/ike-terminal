@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import type { CashOperation, ParseResult, SkippedRow } from 'shared';
+import type { CashOperation, ParseResult, SkippedRow, QuarantineRecord } from 'shared';
 import { normalizeForDetect, parseNumber, roundTo2, parseDegiroDate } from './utils.js';
 
 /**
@@ -63,10 +63,24 @@ export function parseDegiroOperations(
   // Parse all rows into structured format
   const parsed: AccountRow[] = [];
   const skipped: SkippedRow[] = [];
+  const quarantine: QuarantineRecord[] = [];
+  const maxKnownCol = header.length - 1;
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     const rowNum = i + 1;
+
+    // ── STRUCTURE VALIDATION ─────────────────────────────────────────────
+    if (row && row.length > maxKnownCol + 1) {
+      quarantine.push({
+        rowNumber: rowNum,
+        severity: 'malformed',
+        reason: 'column_count_mismatch',
+        message: `Wiersz ma ${row.length} kolumn, nagłówek ${maxKnownCol + 1}.`,
+        raw: row.map(String),
+      });
+      continue;
+    }
 
     if (!row || row.length < 8) {
       skipped.push({ row: rowNum, reason: 'short_row' });
@@ -82,6 +96,19 @@ export function parseDegiroOperations(
     const currency = row[7]?.trim() || '';
     const amount = parseNumber(row[8]);
     const orderId = row[11]?.trim() || '';
+
+    // Sprawdź czy waluta zawiera wartość liczbową (średnik zamiast przecinka)
+    const isCurrencyNumeric = currency ? /^\d+(?:[.,]\d+)?$/.test(currency) : false;
+    if (isCurrencyNumeric) {
+      quarantine.push({
+        rowNumber: rowNum,
+        severity: 'malformed',
+        reason: 'column_count_mismatch',
+        message: `Kolumna "waluta" zawiera wartość liczbową "${currency}".`,
+        raw: row.map(String),
+      });
+      continue;
+    }
 
     if (!dateStr) {
       skipped.push({ row: rowNum, reason: 'missing_date' });
@@ -301,7 +328,11 @@ export function parseDegiroOperations(
     });
   }
 
-  return { data: operations, skipped };
+  return {
+    data: operations,
+    skipped,
+    ...(quarantine.length > 0 ? { quarantine } : {}),
+  };
 }
 
 /**

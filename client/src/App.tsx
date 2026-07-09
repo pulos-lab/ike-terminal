@@ -16,6 +16,7 @@ import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { PortfolioPage } from '@/components/portfolio/PortfolioPage';
 import { TradesPage } from '@/components/transactions/TradesPage';
 import { DividendsPage } from '@/components/dividends/DividendsPage';
+import { ImportPage } from '@/components/import/ImportPage';
 import { CurrencyExchangePage } from '@/components/currency/CurrencyExchangePage';
 import { CashFlowPage } from '@/components/cash/CashFlowPage';
 import { CorrectionsAndCostsPage } from '@/components/corrections-and-costs/CorrectionsAndCostsPage';
@@ -65,6 +66,7 @@ function App() {
                           <Route path="/dividends" element={<DividendsPage />} />
                           <Route path="/currency" element={<CurrencyExchangePage />} />
                           <Route path="/cash" element={<CashFlowPage />} />
+                          <Route path="/import" element={<ImportPage />} />
                           <Route
                             path="/corrections-and-costs"
                             element={<CorrectionsAndCostsPage />}

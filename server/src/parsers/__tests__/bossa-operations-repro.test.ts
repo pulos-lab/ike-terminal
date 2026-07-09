@@ -98,4 +98,40 @@ describe('bossa operations repro — user data', () => {
     expect(bondSub).toBeDefined();
     expect(bondSub!.operationType).toBe('withdrawal');
   });
+
+  it('amount with semicolon instead of comma — row goes to QUARANTINE (malformed)', () => {
+    const csv =
+      'data;tytuł operacji;szczegóły;kwota;waluta\n2026-06-08;Wypłata odsetek z tytułu obligacji PRF0628;;148;19;PLN';
+    const result = parseBossaOperations(csv, 'test');
+    expect(result.data).toHaveLength(0);
+    expect(result.quarantine).toHaveLength(1);
+    expect(result.quarantine![0].severity).toBe('malformed');
+    expect(result.quarantine![0].reason).toBe('column_count_mismatch');
+    expect(result.quarantine![0].raw).toEqual([
+      '2026-06-08',
+      'Wypłata odsetek z tytułu obligacji PRF0628',
+      '',
+      '148',
+      '19',
+      'PLN',
+    ]);
+  });
+
+  it('90;90 pattern — row goes to QUARANTINE (malformed)', () => {
+    const csv =
+      'data;tytuł operacji;szczegóły;kwota;waluta\n2024-03-08;Wypłata dywidendy SYNEKTIK;;90;90;PLN';
+    const result = parseBossaOperations(csv, 'test');
+    expect(result.data).toHaveLength(0);
+    expect(result.quarantine).toHaveLength(1);
+    expect(result.quarantine![0].severity).toBe('malformed');
+    expect(result.quarantine![0].reason).toBe('column_count_mismatch');
+    expect(result.quarantine![0].raw).toEqual([
+      '2024-03-08',
+      'Wypłata dywidendy SYNEKTIK',
+      '',
+      '90',
+      '90',
+      'PLN',
+    ]);
+  });
 });

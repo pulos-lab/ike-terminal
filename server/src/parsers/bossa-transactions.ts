@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import type { Transaction, ParseResult, SkippedRow } from 'shared';
+import type { Transaction, ParseResult, SkippedRow, QuarantineRecord } from 'shared';
 import { applyIsinAlias, isBondInstrument, findBondByTicker, inferBondNominal } from 'shared';
 import { normalizeForDetect, parseNumber, validateTradeFields, parseDottedDate } from './utils.js';
 
@@ -56,12 +56,38 @@ export function parseBossaTransactions(
 
   const transactions: Transaction[] = [];
   const skipped: SkippedRow[] = [];
+  const quarantine: QuarantineRecord[] = [];
   const warnings: string[] = [];
+  const fields = result.meta?.fields || [];
 
   const rows = result.data as any[];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const rowNum = i + 2; // 1-based, +1 for header
+
+    // ── STRUCTURE VALIDATION ─────────────────────────────────────────────
+    const rawCurrency = row['waluta']?.trim();
+    const isCurrencyNumeric = rawCurrency ? /^\d+(?:[.,]\d+)?$/.test(rawCurrency) : false;
+    const hasExtraColumns =
+      row.__parsed_extra && Array.isArray(row.__parsed_extra) && row.__parsed_extra.length > 0;
+
+    if (isCurrencyNumeric || hasExtraColumns) {
+      const rawValues = fields.map((f: string) => String(row[f] ?? ''));
+      if (row.__parsed_extra) rawValues.push(...(row.__parsed_extra as string[]).map(String));
+
+      quarantine.push({
+        rowNumber: rowNum,
+        severity: 'malformed',
+        reason: 'column_count_mismatch',
+        message: hasExtraColumns
+          ? `Wiersz ma ${rawValues.length} kolumn, nagłówek ${fields.length}.`
+          : `Kolumna "waluta" zawiera wartość liczbową "${rawCurrency}".`,
+        raw: rawValues,
+      });
+      continue;
+    }
+
+    // ── PARSING ──────────────────────────────────────────────────────────
     const dateStr = row['data']?.trim();
     const paperName = row['papier']?.trim();
     const isin = row['isin']?.trim();
@@ -73,9 +99,51 @@ export function parseBossaTransactions(
     // Bossa podaje total wprost w kolumnie 'po prowizji' — ufamy CSV zamiast
     // przeliczać computeTotal() (broker jest źródłem prawdy dla rozliczenia).
     const total = parseNumber(row['po prowizji']);
-    const currency = row['waluta']?.trim();
 
-    // Wspólna walidacja pól (utils.validateTradeFields) — Bossa wymaga ISIN-u z CSV.
+    // ── DATA VALIDATION ─────────────────────────────────────────────────
+    // Pusta waluta = domyślnie PLN; nieprawidłowa (np. "19") → quarantine
+    const currency = !rawCurrency
+      ? 'PLN'
+      : /^[A-Za-z]{3}$/.test(rawCurrency)
+        ? rawCurrency.toUpperCase()
+        : null;
+
+    const fieldErrors: { field: string; code: string; message: string }[] = [];
+
+    if (!currency) {
+      fieldErrors.push({
+        field: 'waluta',
+        code: 'invalid_currency',
+        message: `Niepoprawny kod waluty: "${rawCurrency}".`,
+      });
+    }
+
+    if (fieldErrors.length > 0) {
+      const rawValues = fields.map((f: string) => String(row[f] ?? ''));
+      quarantine.push({
+        rowNumber: rowNum,
+        severity: 'invalid',
+        reason: fieldErrors[0].code,
+        message: fieldErrors.map((e) => e.message).join(' '),
+        raw: rawValues,
+        parsed: {
+          date: dateStr,
+          paperName,
+          isin,
+          quantity,
+          side,
+          price,
+          value,
+          commission,
+          total,
+          currency: rawCurrency,
+        },
+        suggestions: fieldErrors.filter((e) => e.code === 'invalid_currency').map(() => 'PLN'),
+      });
+      continue;
+    }
+
+    // ── STANDARD VALIDATION ─────────────────────────────────────────────
     const check = validateTradeFields({ date: dateStr, isin, side, quantity, price });
     if (!check.ok) {
       skipped.push({ row: rowNum, reason: check.reason, paperName });
@@ -137,5 +205,10 @@ export function parseBossaTransactions(
     });
   }
 
-  return { data: transactions, skipped, warnings: warnings.length > 0 ? warnings : undefined };
+  return {
+    data: transactions,
+    skipped,
+    quarantine: quarantine.length > 0 ? quarantine : undefined,
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
 }

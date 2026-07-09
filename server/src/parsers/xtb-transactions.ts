@@ -4,6 +4,7 @@ import type {
   CashOperation,
   ParseResult,
   SkippedRow,
+  QuarantineRecord,
   InstrumentCategory,
 } from 'shared';
 import { findCfdTicker } from 'shared';
@@ -632,10 +633,26 @@ export async function parseXtbFile(
   const { headerIdx, col } = layout;
 
   // ── Parse data rows — column indices come from the layout map ──
+  const maxCol = Math.max(col.id, col.type, col.time, col.comment, col.symbol, col.amount);
+  const expectedColCount = maxCol + 1;
+  const quarantine: QuarantineRecord[] = [];
+
   const rawRows: RawRow[] = [];
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row) continue;
+
+    // ── STRUCTURE VALIDATION ─────────────────────────────────────────────
+    if (row.length > expectedColCount) {
+      quarantine.push({
+        rowNumber: i + 1,
+        severity: 'malformed',
+        reason: 'column_count_mismatch',
+        message: `Wiersz ma ${row.length} kolumn, oczekiwano ${expectedColCount}.`,
+        raw: row.map(String),
+      });
+      continue;
+    }
 
     const typeCell = row[col.type]?.toString().trim() || '';
     if (!typeCell) continue;
@@ -1340,8 +1357,15 @@ export async function parseXtbFile(
   }
 
   return {
-    transactions: { data: transactions, skipped: txSkipped },
-    operations: { data: operations, skipped: opsSkipped },
+    transactions: {
+      data: transactions,
+      skipped: txSkipped,
+      ...(quarantine.length > 0 ? { quarantine } : {}),
+    },
+    operations: {
+      data: operations,
+      skipped: opsSkipped,
+    },
     warnings: warnings.length > 0 ? warnings : undefined,
   };
 }

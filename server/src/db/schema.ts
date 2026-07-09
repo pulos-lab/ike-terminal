@@ -149,6 +149,28 @@ export function initSchema(db: Database.Database): void {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS import_quarantine (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      import_batch TEXT NOT NULL,
+      row_number INTEGER NOT NULL,
+      severity TEXT NOT NULL CHECK(severity IN ('malformed', 'invalid')),
+      reason TEXT NOT NULL,
+      message TEXT NOT NULL,
+      raw_json TEXT NOT NULL,
+      parsed_json TEXT,
+      suggestions_json TEXT,
+      file_name TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_quarantine_batch ON import_quarantine(import_batch);
+
+    CREATE TABLE IF NOT EXISTS import_batch_meta (
+      import_batch TEXT PRIMARY KEY,
+      result_json TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS portfolio_snapshots (
       date TEXT PRIMARY KEY,
       total_value_pln REAL NOT NULL,
@@ -159,6 +181,23 @@ export function initSchema(db: Database.Database): void {
       computed_at TEXT DEFAULT (datetime('now'))
     );
   `);
+
+  // ── Migration: import_batch_meta — stare kolumny warnings_json/skipped_count → result_json ──
+  const metaCols = db.prepare('PRAGMA table_info(import_batch_meta)').all() as { name: string }[];
+  const hasOldSchema = metaCols.some((c) => c.name === 'warnings_json');
+  if (hasOldSchema) {
+    db.exec(`
+      CREATE TABLE import_batch_meta_new (
+        import_batch TEXT PRIMARY KEY,
+        result_json TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      INSERT INTO import_batch_meta_new (import_batch, created_at)
+        SELECT import_batch, created_at FROM import_batch_meta;
+      DROP TABLE import_batch_meta;
+      ALTER TABLE import_batch_meta_new RENAME TO import_batch_meta;
+    `);
+  }
 
   // Migrations for existing databases
   const tmColumns = db.prepare('PRAGMA table_info(ticker_map)').all() as any[];

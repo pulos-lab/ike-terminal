@@ -7,8 +7,20 @@ import {
   getTransactionsCount,
   clearImportedTransactions,
   getLastImportDate,
+  deleteTransactionsByBatch,
 } from '../db/transactions-repo.js';
-import { getOperationsCount, clearImportedOperations } from '../db/operations-repo.js';
+import {
+  getOperationsCount,
+  clearImportedOperations,
+  deleteOperationsByBatch,
+} from '../db/operations-repo.js';
+import {
+  getQuarantineByBatch,
+  deleteQuarantineByBatch,
+  getAllQuarantine,
+} from '../db/import-quarantine-repo.js';
+import { getAllImportBatches } from '../db/import-batches-repo.js';
+import { deleteImportBatchMeta, getImportBatchMeta } from '../db/import-batch-meta-repo.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import importGenericRouter from './import-generic.js';
 
@@ -138,6 +150,82 @@ router.get('/status', (req, res) => {
     lastImportDate: getLastImportDate(pid),
   });
 });
+
+/**
+ * GET /api/import/batches — lista wszystkich batchy importów z licznikami.
+ */
+router.get(
+  '/batches',
+  asyncHandler((req, res) => {
+    const pid = req.portfolioId;
+    const batches = getAllImportBatches(pid);
+    res.json({ batches });
+  }),
+);
+
+/**
+ * DELETE /api/import/batch/:importBatch — usuwa wszystkie transakcje i operacje
+ * z danego batcha importu (cofnięcie importu). Czyści też kwarantannę batcha.
+ */
+router.delete(
+  '/batch/:importBatch',
+  asyncHandler((req, res) => {
+    const { importBatch } = req.params;
+    const pid = req.portfolioId;
+    const txRemoved = deleteTransactionsByBatch(importBatch, pid);
+    const opsRemoved = deleteOperationsByBatch(importBatch, pid);
+    const qRemoved = deleteQuarantineByBatch(importBatch, pid);
+    deleteImportBatchMeta(pid, importBatch);
+    res.json({
+      success: true,
+      transactionsRemoved: txRemoved,
+      operationsRemoved: opsRemoved,
+      quarantineRemoved: qRemoved,
+    });
+  }),
+);
+
+/**
+ * GET /api/import/quarantine — lista wszystkich rekordów kwarantanny.
+ */
+router.get(
+  '/quarantine',
+  asyncHandler((req, res) => {
+    const pid = req.portfolioId;
+    const records = getAllQuarantine(pid);
+    res.json({ records });
+  }),
+);
+
+/**
+ * GET /api/import/quarantine/:importBatch — kwarantanna dla konkretnego batcha.
+ */
+router.get(
+  '/quarantine/:importBatch',
+  asyncHandler((req, res) => {
+    const { importBatch } = req.params;
+    const pid = req.portfolioId;
+    const records = getQuarantineByBatch(importBatch, pid);
+    res.json({ records });
+  }),
+);
+
+/**
+ * GET /api/import/batches/:importBatch/result — zapisany wynik importu (warnings, skipped, etc).
+ */
+router.get(
+  '/batches/:importBatch/result',
+  asyncHandler((req, res) => {
+    const { importBatch } = req.params;
+    const pid = req.portfolioId;
+    const result = getImportBatchMeta(pid, importBatch);
+    if (!result) {
+      res.status(404).json({ error: 'Brak zapisanego wyniku dla tego importu.' });
+      return;
+    }
+    res.json({ result });
+  }),
+);
 
 /**
  * Error-middleware dla uploadu: błędy multera (limit rozmiaru) i fileFiltera

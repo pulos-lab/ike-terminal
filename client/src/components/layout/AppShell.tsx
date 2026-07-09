@@ -227,7 +227,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {dark ? 'Light' : 'Dark'}
               </button>
               <button
-                onClick={() => setImportOpen(true)}
+                onClick={() => navigate('/app/import')}
                 title={
                   reimportCount > 0
                     ? `${reimportCount} import(y) czeka na ponowne wgranie pliku po korekcie mapowania`
@@ -300,7 +300,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem onSelect={() => setImportOpen(true)}>
+              <DropdownMenuItem onSelect={() => navigate('/app/import')}>
                 <Upload className="h-4 w-4" />
                 Import transakcji
                 {reimportCount > 0 && (

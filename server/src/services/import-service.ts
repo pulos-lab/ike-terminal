@@ -21,6 +21,7 @@ import type {
   CashOperation,
   BrokerType,
   SkippedRow,
+  QuarantineRecord,
   ImportResult,
   RedemptionMarker,
   IpoSubscriptionMarker,
@@ -62,6 +63,8 @@ import {
   getTickerByIsin,
   deleteTickerMapEntry,
 } from '../db/ticker-map-repo.js';
+import { insertQuarantineRecords } from '../db/import-quarantine-repo.js';
+import { upsertImportBatchMeta } from '../db/import-batch-meta-repo.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
 import { reconcilePaymentCurrencies } from './payment-currency-reconciler.js';
 import { reconcileQuoteCurrencies } from './quote-currency-reconciler.js';
@@ -449,7 +452,33 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   ];
   const duplicatesSkipped = insertedTxDuplicates.length + insertedOpsDuplicates.length;
 
+  // Agregacja quarantine z wszystkich plików
+  const allQuarantine: QuarantineRecord[] = [
+    ...parsedTxFiles.flatMap((pf) => pf.quarantine ?? []),
+    ...(parsedOps?.quarantine ?? []),
+  ];
+
+  if (allQuarantine.length > 0) {
+    const fileName = [
+      ...txFiles.map((f) => f.originalName),
+      ...(opsFile ? [opsFile.originalName] : []),
+    ].join(', ');
+    insertQuarantineRecords(allQuarantine, importBatch, fileName, pid);
+  }
+
   const orphanedSells = detectOrphanedSells(pid);
+
+  upsertImportBatchMeta(pid, importBatch, {
+    ...result,
+    tickersResolved: resolved.length,
+    tickersUnresolved: unresolvedVisible.map((u) => u.paperName),
+    skipped: allSkipped.length > 0 ? allSkipped : undefined,
+    quarantineCount: allQuarantine.length > 0 ? allQuarantine.length : undefined,
+    duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
+    orphanedSells: orphanedSells,
+    syntheticSells: syntheticSells > 0 ? syntheticSells : undefined,
+    crossFileWarnings: crossFileWarnings.length > 0 ? crossFileWarnings : undefined,
+  });
 
   return {
     ...result,
@@ -457,6 +486,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     tickersResolved: resolved.length,
     tickersUnresolved: unresolvedVisible.map((u) => u.paperName),
     skipped: allSkipped.length > 0 ? allSkipped : undefined,
+    quarantine: allQuarantine.length > 0 ? allQuarantine : undefined,
     duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
     orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
     syntheticSells: syntheticSells > 0 ? syntheticSells : undefined,
@@ -649,11 +679,36 @@ async function importCombinedFiles(
     ...insertedTxDuplicates,
     ...insertedOpsDuplicates,
   ];
+  const allQuarantine: QuarantineRecord[] = parsedFiles.flatMap((p) => [
+    ...(p.output.transactions.quarantine ?? []),
+    ...(p.output.operations.quarantine ?? []),
+  ]);
+
+  if (allQuarantine.length > 0) {
+    const fileName = parsedFiles.map((p) => p.name).join(', ');
+    insertQuarantineRecords(allQuarantine, importBatch, fileName, pid);
+  }
+
   // detectOrphanedSells liczy surowe sumy K/S — sprzedaż po splicie "przekracza" kupno
   // sprzed splitu. Dla ISIN-ów ze splitem zapisanym w tym imporcie (realne ex-daty z
   // wyciągu) korektę robi silnik, więc warning byłby fałszywym alarmem.
   const splitIsins = new Set(allSplits.map((s) => s.isin));
   const orphanedSells = detectOrphanedSells(pid).filter((o) => !splitIsins.has(o.isin));
+
+  upsertImportBatchMeta(pid, importBatch, {
+    success: true,
+    transactionsImported: txInserted,
+    operationsImported: opsInserted,
+    importBatch,
+    detectedSource: parser.id,
+    tickersResolved: resolved.length,
+    tickersUnresolved: unresolvedVisible.map((u) => u.paperName),
+    skipped: allSkipped.length > 0 ? allSkipped : undefined,
+    quarantineCount: allQuarantine.length > 0 ? allQuarantine.length : undefined,
+    duplicatesSkipped: insertedTxDuplicates.length + insertedOpsDuplicates.length || undefined,
+    orphanedSells: orphanedSells,
+    warnings: parserWarnings.length > 0 ? parserWarnings : undefined,
+  });
 
   return {
     success: true,
@@ -665,6 +720,7 @@ async function importCombinedFiles(
     tickersResolved: resolved.length,
     tickersUnresolved: unresolvedVisible.map((u) => u.paperName),
     skipped: allSkipped.length > 0 ? allSkipped : undefined,
+    quarantine: allQuarantine.length > 0 ? allQuarantine : undefined,
     duplicatesSkipped: insertedTxDuplicates.length + insertedOpsDuplicates.length || undefined,
     orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
     taxesApplied: taxesApplied > 0 ? taxesApplied : undefined,

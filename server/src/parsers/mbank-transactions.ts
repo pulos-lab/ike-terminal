@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import type { Transaction, ParseResult, SkippedRow } from 'shared';
+import type { Transaction, ParseResult, SkippedRow, QuarantineRecord } from 'shared';
 import {
   normalizeForDetect,
   parseNumber,
@@ -60,6 +60,7 @@ export function parseMbankTransactions(
   const rows = result.data as string[][];
   const transactions: Transaction[] = [];
   const skipped: SkippedRow[] = [];
+  const quarantine: QuarantineRecord[] = [];
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -68,6 +69,20 @@ export function parseMbankTransactions(
 
     if (!row || row.length < 6) {
       skipped.push({ row: rowNum, reason: 'short_row', paperName });
+      continue;
+    }
+
+    // Sprawdź czy kolumna waluty (priceCurrency lub colMap.priceCurrency) zawiera wartość liczbową
+    const rawCurrency = colMap.priceCurrency >= 0 ? row[colMap.priceCurrency]?.trim() : undefined;
+    const isCurrencyNumeric = rawCurrency ? /^\d+(?:[.,]\d+)?$/.test(rawCurrency) : false;
+    if (isCurrencyNumeric) {
+      quarantine.push({
+        rowNumber: rowNum,
+        severity: 'malformed',
+        reason: 'column_count_mismatch',
+        message: `Kolumna "waluta" zawiera wartość liczbową "${rawCurrency}".`,
+        raw: row.map(String),
+      });
       continue;
     }
 
@@ -128,7 +143,12 @@ export function parseMbankTransactions(
         ]
       : undefined;
 
-  return { data: transactions, skipped, warnings };
+  return {
+    data: transactions,
+    skipped,
+    warnings,
+    ...(quarantine.length > 0 ? { quarantine } : {}),
+  };
 }
 
 /**

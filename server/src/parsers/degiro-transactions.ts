@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import type { Transaction, ParseResult, SkippedRow } from 'shared';
+import type { Transaction, ParseResult, SkippedRow, QuarantineRecord } from 'shared';
 import {
   normalizeForDetect,
   parseNumber,
@@ -72,14 +72,46 @@ export function parseDegiroTransactions(
 
   const transactions: Transaction[] = [];
   const skipped: SkippedRow[] = [];
+  const quarantine: QuarantineRecord[] = [];
+
+  // Maksymalny znany indeks kolumny: fee i fxRate są dynamiczne, ale najwyższy
+  // stały indeks to orderId (11) albo fee/fxRate (do ~17 w nowym formacie).
+  // Używamy header.length jako bezpiecznej górnej granicy.
+  const maxKnownCol = header.length - 1;
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     const rowNum = i + 1; // 1-based
     const product = row ? row[2]?.trim() : undefined;
 
+    // ── STRUCTURE VALIDATION ─────────────────────────────────────────────
+    if (row && row.length > maxKnownCol + 1) {
+      quarantine.push({
+        rowNumber: rowNum,
+        severity: 'malformed',
+        reason: 'column_count_mismatch',
+        message: `Wiersz ma ${row.length} kolumn, nagłówek ${maxKnownCol + 1}.`,
+        raw: row.map(String),
+      });
+      continue;
+    }
+
     if (!row || row.length < 14) {
       skipped.push({ row: rowNum, reason: 'short_row', paperName: product });
+      continue;
+    }
+
+    // Sprawdź czy kolumna waluty (8) zawiera wartość liczbową
+    const rawCurrency = row[8]?.trim();
+    const isCurrencyNumeric = rawCurrency ? /^\d+(?:[.,]\d+)?$/.test(rawCurrency) : false;
+    if (isCurrencyNumeric) {
+      quarantine.push({
+        rowNumber: rowNum,
+        severity: 'malformed',
+        reason: 'column_count_mismatch',
+        message: `Kolumna "waluta" zawiera wartość liczbową "${rawCurrency}".`,
+        raw: row.map(String),
+      });
       continue;
     }
 
@@ -170,7 +202,11 @@ export function parseDegiroTransactions(
     });
   }
 
-  return { data: transactions, skipped };
+  return {
+    data: transactions,
+    skipped,
+    ...(quarantine.length > 0 ? { quarantine } : {}),
+  };
 }
 
 /**

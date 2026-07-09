@@ -7,6 +7,7 @@ import type {
   BondAllocationMarker,
   CapitalReturnMarker,
   SkippedRow,
+  QuarantineRecord,
 } from 'shared';
 import {
   lookupTenderPrice,
@@ -44,6 +45,7 @@ export function isBossaOperationsFormat(csvContent: string): boolean {
 export interface BossaOperationsParseResult {
   data: CashOperation[];
   skipped: SkippedRow[];
+  quarantine?: QuarantineRecord[];
   /**
    * Markery domykające pozycje (Wykup certyfikatów, Rozliczenie oferty).
    * Nie są zapisywane jako CashOperation — reconciliation w import-service tworzy z nich
@@ -99,6 +101,7 @@ export function parseBossaOperations(
     return {
       data: [],
       skipped: [],
+      quarantine: [],
       redemptions: [],
       ipoSubscriptions: [],
       bondAllocations: [],
@@ -108,6 +111,8 @@ export function parseBossaOperations(
 
   const operations: CashOperation[] = [];
   const skipped: SkippedRow[] = [];
+  const quarantine: QuarantineRecord[] = [];
+  const fields = result.meta?.fields || [];
 
   // Dwa etapy: najpierw zbieramy wszystkie wiersze (potrzebujemy parować prowizje wezwań skupu),
   // potem emitujemy CashOperation + RedemptionMarker.
@@ -125,12 +130,81 @@ export function parseBossaOperations(
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const rowNum = i + 2;
+
+    // ── STRUCTURE VALIDATION ─────────────────────────────────────────────
+    const rawCurrency = row['waluta']?.trim();
+    const isCurrencyNumeric = rawCurrency ? /^\d+(?:[.,]\d+)?$/.test(rawCurrency) : false;
+    const hasExtraColumns =
+      row.__parsed_extra && Array.isArray(row.__parsed_extra) && row.__parsed_extra.length > 0;
+
+    if (isCurrencyNumeric || hasExtraColumns) {
+      const rawValues = fields.map((f: string) => String(row[f] ?? ''));
+      if (row.__parsed_extra) rawValues.push(...(row.__parsed_extra as string[]).map(String));
+
+      quarantine.push({
+        rowNumber: rowNum,
+        severity: 'malformed',
+        reason: 'column_count_mismatch',
+        message: hasExtraColumns
+          ? `Wiersz ma ${rawValues.length} kolumn, nagłówek ${fields.length}.`
+          : `Kolumna "waluta" zawiera wartość liczbową "${rawCurrency}".`,
+        raw: rawValues,
+      });
+      continue;
+    }
+
+    // ── PARSING ──────────────────────────────────────────────────────────
     const dateStr = row['data']?.trim();
     const title = row['tytuł operacji']?.trim() || row['tytu\u0142 operacji']?.trim() || '';
     const details = row['szczegóły']?.trim() || row['szczeg\u00f3\u0142y']?.trim() || '';
     const amount = parseNumber(row['kwota']);
-    const currency = row['waluta']?.trim() || 'PLN';
 
+    // ── DATA VALIDATION ─────────────────────────────────────────────────
+    // Pusta waluta = domyślnie PLN; nieprawidłowa (np. "19") → quarantine
+    const currency = !rawCurrency
+      ? 'PLN'
+      : /^[A-Za-z]{3}$/.test(rawCurrency)
+        ? rawCurrency.toUpperCase()
+        : null;
+
+    const fieldErrors: { field: string; code: string; message: string }[] = [];
+
+    if (!currency) {
+      fieldErrors.push({
+        field: 'waluta',
+        code: 'invalid_currency',
+        message: `Niepoprawny kod waluty: "${rawCurrency}".`,
+      });
+    }
+    if (isNaN(amount) && amount !== undefined) {
+      fieldErrors.push({
+        field: 'kwota',
+        code: 'invalid_amount',
+        message: `Niepoprawna kwota: "${row['kwota']}".`,
+      });
+    }
+
+    if (fieldErrors.length > 0) {
+      const rawValues = fields.map((f: string) => String(row[f] ?? ''));
+      quarantine.push({
+        rowNumber: rowNum,
+        severity: 'invalid',
+        reason: fieldErrors[0].code,
+        message: fieldErrors.map((e) => e.message).join(' '),
+        raw: rawValues,
+        parsed: {
+          date: dateStr,
+          title,
+          details,
+          amount,
+          currency: rawCurrency,
+        },
+        suggestions: fieldErrors.filter((e) => e.code === 'invalid_currency').map(() => 'PLN'),
+      });
+      continue;
+    }
+
+    // ── STANDARD SKIPPED ────────────────────────────────────────────────
     if (!dateStr) {
       skipped.push({ row: rowNum, reason: 'missing_date', paperName: title });
       continue;
@@ -545,6 +619,7 @@ export function parseBossaOperations(
   return {
     data: operations,
     skipped,
+    quarantine: quarantine.length > 0 ? quarantine : undefined,
     redemptions,
     ipoSubscriptions,
     bondAllocations,

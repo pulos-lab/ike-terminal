@@ -451,6 +451,33 @@ export const api = {
   // Import
   getImportStatus: () => request<ImportStatusResponse>('/import/status'),
 
+  /** Lista wszystkich batchy importów z licznikami. */
+  getImportBatches: () =>
+    request<{ batches: import('shared').ImportBatchInfo[] }>('/import/batches'),
+
+  /** Cofnięcie importu — usuwa wszystkie transakcje/operacje batcha + kwarantannę. */
+  deleteImportBatch: (importBatch: string) =>
+    request<{ success: boolean; transactionsRemoved: number; operationsRemoved: number }>(
+      `/import/batch/${encodeURIComponent(importBatch)}`,
+      { method: 'DELETE' },
+    ),
+
+  /** Lista wszystkich rekordów kwarantanny (z metadanymi batcha). */
+  getQuarantineList: () =>
+    request<{ records: import('shared').QuarantineRecordWithMeta[] }>('/import/quarantine'),
+
+  /** Rekordy kwarantanny dla konkretnego batcha. */
+  getQuarantineByBatch: (importBatch: string) =>
+    request<{ records: import('shared').QuarantineRecord[] }>(
+      `/import/quarantine/${encodeURIComponent(importBatch)}`,
+    ),
+
+  /** Zapisany wynik importu (warnings, skipped, etc). */
+  getImportBatchResult: (importBatch: string) =>
+    request<{ result: import('shared').ImportResult }>(
+      `/import/batches/${encodeURIComponent(importBatch)}/result`,
+    ),
+
   /**
    * Klasyfikacja pliku — zwraca wykryty broker + rolę (transactions/operations).
    * UI używa tego żeby zdecydować, czy drugie pole (operacje) jest potrzebne.

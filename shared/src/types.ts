@@ -674,9 +674,42 @@ export interface SkippedRow {
   paperName?: string;
 }
 
+export interface QuarantineRecord {
+  rowNumber: number;
+  severity: 'malformed' | 'invalid';
+  reason: string;
+  message: string;
+  /** Surowe wartości kolumn CSV w kolejności nagłówków (do wyświetlenia użytkownikowi). */
+  raw: string[];
+  /** Sparsowane pola (dostępne gdy severity=invalid — wiadomo co parser wyciągnął). */
+  parsed?: Record<string, unknown>;
+  /** Sugestie poprawek (np. ["PLN"] dla invalid_currency). */
+  suggestions?: string[];
+}
+
+/** Rekord kwarantanny z API listy — dodatkowo zawiera importBatch i fileName. */
+export interface QuarantineRecordWithMeta extends QuarantineRecord {
+  importBatch: string;
+  fileName?: string;
+}
+
+/** Podsumowanie batcha importu — do listy w UI. */
+export interface ImportBatchInfo {
+  importBatch: string;
+  transactionsCount: number;
+  operationsCount: number;
+  quarantineCount: number;
+  firstDate: string | null;
+  sources: string[];
+  warnings: string[];
+  skippedCount: number;
+}
+
 export interface ParseResult<T> {
   data: T[];
   skipped: SkippedRow[];
+  /** Wiersze zakwarantannowane — struktura/dane niepoprawne, ale zachowane do wglądu użytkownika. */
+  quarantine?: QuarantineRecord[];
   /** Ostrzeżenia parsera (po polsku) — import-service dokleja je do crossFileWarnings. */
   warnings?: string[];
 }
@@ -1086,6 +1119,7 @@ export interface ImportResult {
   tickersResolved?: number;
   tickersUnresolved?: string[];
   skipped?: SkippedRow[];
+  quarantine?: QuarantineRecord[];
   duplicatesSkipped?: number;
   orphanedSells?: OrphanedSell[];
   /** Parser-level warnings (np. XTB missing Closed Positions sheet) */
