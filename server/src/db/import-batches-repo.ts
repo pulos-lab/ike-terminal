@@ -53,6 +53,7 @@ export function getAllImportBatches(
     const result = r.result_json ? (JSON.parse(r.result_json) as Record<string, unknown>) : {};
     const skipped = result.skipped as Array<unknown> | undefined;
     const warnings = result.warnings as string[] | undefined;
+    const crossFileWarnings = result.crossFileWarnings as string[] | undefined;
     return {
       importBatch: r.import_batch,
       transactionsCount: r.transactions_count,
@@ -60,7 +61,7 @@ export function getAllImportBatches(
       quarantineCount: r.quarantine_count,
       firstDate: r.first_date,
       sources: r.sources ? r.sources.split(',') : [],
-      warnings: warnings ?? [],
+      warnings: [...(warnings ?? []), ...(crossFileWarnings ?? [])],
       skippedCount: skipped?.length ?? 0,
     };
   });
