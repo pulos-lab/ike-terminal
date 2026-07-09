@@ -318,15 +318,6 @@ function groupCosts(costs: AdditionalCost[]): CostGroup[] {
   return [...groups.values()].sort((a, b) => b.weight - a.weight);
 }
 
-/** Waluta z największą |sumą| w grupie — do głównej liczby kafla. */
-function primaryCurrency(g: CostGroup): { currency: string; total: number } {
-  let best: { currency: string; total: number } = { currency: 'PLN', total: 0 };
-  for (const [currency, total] of g.byCurrency) {
-    if (Math.abs(total) > Math.abs(best.total)) best = { currency, total };
-  }
-  return best;
-}
-
 function CostCategoryBadge({ category }: { category: CostVirtualCategory }) {
   const meta = COST_CATEGORY_META[category];
   return (

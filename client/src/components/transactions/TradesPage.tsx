@@ -29,7 +29,7 @@ import { TradesFeed } from './TradesFeed';
 import { AddTransactionDialog } from './AddTransactionDialog';
 import { SellPositionDialog } from './SellPositionDialog';
 import { toast } from 'sonner';
-import type { Position } from 'shared';
+import type { Position, InstrumentCategory } from 'shared';
 import { displayOptionTicker } from 'shared';
 import { TickerLabel } from '@/components/ui/ticker-label';
 
@@ -121,7 +121,7 @@ export function TradesPage() {
     }: {
       ticker: string;
       form: SellForm;
-      category?: 'stock' | 'etf' | 'cfd' | 'bond';
+      category?: InstrumentCategory;
     }) =>
       api.createTransaction({
         date: form.date,

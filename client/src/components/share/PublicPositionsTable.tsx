@@ -12,7 +12,6 @@ import { PLBadge } from '@/components/ui/pl-badge';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { formatCurrency, formatNumber, formatPercent, formatQuantity } from '@/lib/formatters';
-import { displayOptionTicker } from 'shared';
 import { TickerLabel } from '@/components/ui/ticker-label';
 
 /**
