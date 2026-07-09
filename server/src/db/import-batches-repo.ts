@@ -27,8 +27,7 @@ export function getAllImportBatches(
         COALESCE(q.cnt, 0) AS quarantine_count,
         b.first_date,
         b.sources,
-        m.warnings_json,
-        COALESCE(m.skipped_count, 0) AS skipped_count
+        m.result_json
       FROM (
         SELECT import_batch, MIN(date) AS first_date, GROUP_CONCAT(DISTINCT source) AS sources
         FROM (
@@ -50,14 +49,19 @@ export function getAllImportBatches(
     )
     .all(limit) as any[];
 
-  return rows.map((r) => ({
-    importBatch: r.import_batch,
-    transactionsCount: r.transactions_count,
-    operationsCount: r.operations_count,
-    quarantineCount: r.quarantine_count,
-    firstDate: r.first_date,
-    sources: r.sources ? r.sources.split(',') : [],
-    warnings: r.warnings_json ? (JSON.parse(r.warnings_json) as string[]) : [],
-    skippedCount: r.skipped_count,
-  }));
+  return rows.map((r) => {
+    const result = r.result_json ? (JSON.parse(r.result_json) as Record<string, unknown>) : {};
+    const skipped = result.skipped as Array<unknown> | undefined;
+    const warnings = result.warnings as string[] | undefined;
+    return {
+      importBatch: r.import_batch,
+      transactionsCount: r.transactions_count,
+      operationsCount: r.operations_count,
+      quarantineCount: r.quarantine_count,
+      firstDate: r.first_date,
+      sources: r.sources ? r.sources.split(',') : [],
+      warnings: warnings ?? [],
+      skippedCount: skipped?.length ?? 0,
+    };
+  });
 }
