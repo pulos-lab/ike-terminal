@@ -135,7 +135,7 @@ function addDaysIso(date: string, days: number): string {
  * data heurystyczna +1 dzień, żeby transakcja-marker z dnia obserwacji
  * też została skorygowana.
  */
-async function resolveSplitEventDates(
+export async function resolveSplitEventDates(
   detected: DetectedSplit[],
   tickerMap: Map<string, TickerMapEntry>,
 ): Promise<DetectedSplit[]> {
@@ -161,7 +161,7 @@ async function resolveSplitEventDates(
       }
 
       const eventsProduct = events.reduce((acc, e) => acc * e.ratio, 1);
-      if (events.length > 0 && Math.abs(eventsProduct / heuristicProduct - 1) < 0.05) {
+      const pushYahooEvents = () => {
         for (const e of events) {
           resolved.push({
             ticker,
@@ -173,8 +173,42 @@ async function resolveSplitEventDates(
             source: 'auto',
           });
         }
-        return;
+      };
+
+      // Yahoo jest AUTORYTATYWNE dla dat i ratio splitów. Heurystyka (detectSplits)
+      // służy tylko do zdecydowania CZY odpytać Yahoo — jej ratio bywają zaszumione
+      // (cena wykonania ≠ kurs zamknięcia) i potrafi zgłosić kilka detekcji na JEDEN
+      // realny split (po jednej na każdą transakcję sprzed splitu), co zawyża iloczyn.
+      // Dlatego gdy Yahoo zwraca zdarzenia zgodne KIERUNKOWO (reverse vs forward)
+      // i MAGNITUDOWO z detekcją, bierzemy dokładne daty+ratio z Yahoo i porzucamy
+      // (potencjalnie zdublowaną) heurystykę. Domyka klasę LCID 1:10 / EDU / PSFE 1:12.
+      if (events.length > 0) {
+        const sameDirection = eventsProduct < 1 === heuristicProduct < 1;
+        // Dopasowanie magnitudowe: albo iloczyn Yahoo ≈ iloczyn heurystyk (czysta
+        // detekcja lub realny multi-split), albo któraś pojedyncza detekcja ≈ iloczyn
+        // Yahoo (nadmiarowe zdublowanie jednego splitu). Tolerancja ±25%.
+        const tol = Math.log(1.25);
+        const productMatch = Math.abs(Math.log(eventsProduct / heuristicProduct)) < tol;
+        const closest = sorted
+          .map((s) => s.ratio)
+          .reduce((best, r) =>
+            Math.abs(Math.log(r / eventsProduct)) < Math.abs(Math.log(best / eventsProduct))
+              ? r
+              : best,
+          );
+        const singleMatch = Math.abs(Math.log(closest / eventsProduct)) < tol;
+        if (sameDirection && (productMatch || singleMatch)) {
+          pushYahooEvents();
+          return;
+        }
       }
+
+      // Yahoo nie potwierdza detekcji. Kandydat o nieznanym ratio (needsConfirmation)
+      // mógł być tylko gwałtownym ruchem kursu — odrzucamy w całości (bez tego historyczne
+      // pozycje wyceniałyby się w złej skali, np. skok na wykresie). Split o znanym ratio
+      // ufamy heurystyce z datą tx+1 (Yahoo bywa niekompletne dla starszych / mniej
+      // płynnych spółek), zachowując dotychczasowe zachowanie.
+      if (sorted.some((s) => s.needsConfirmation)) return;
 
       for (const s of sorted) {
         resolved.push({ ...s, date: addDaysIso(s.date, 1) });
