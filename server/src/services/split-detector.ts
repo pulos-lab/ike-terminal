@@ -119,7 +119,9 @@ export function detectSplits(
 
     // Obligacje nie mają splitów (kursy tx i providera są w tej samej skali % nominału,
     // więc ratio ≈ 1 — guard jest defensywny, bez ryzyka fałszywych wykryć).
-    if (tx.category === 'bond') continue;
+    // Opcje: od kiedy wyceniamy je wartością wewnętrzną, mapa cen OCC jest wypełniona
+    // (intrinsic vs premia tx dałoby fałszywe ratio) — pomijamy.
+    if (tx.category === 'bond' || tx.category === 'option') continue;
 
     // Skip if currencies don't match (FX difference, not split)
     // Normalize: GBX/GBp/GBP are all equivalent for comparison

@@ -43,8 +43,10 @@ import {
   findBondByTicker,
   inferBondNominal,
   SPIN_OFF_MAP,
+  parseOccTicker,
+  optionIntrinsicValue,
 } from 'shared';
-import type { InstrumentCategory, OptionContract } from 'shared';
+import type { InstrumentCategory, OptionContract, ParsedOptionSymbol } from 'shared';
 
 // ============ Bond Helpers ============
 
@@ -645,7 +647,26 @@ export async function computeOpenPositions(
       previousClose = yp?.previousClose ?? null;
     }
 
-    // Fallback: if live price unavailable, use last transaction price
+    // Fallback: if live price unavailable, use last transaction price.
+    // Dla OPCJI martwa premia tx potrafi grubo mylić (zwłaszcza short głęboko-ITM,
+    // gdzie zobowiązanie znika z wyceny) — próbujemy najpierw wartości wewnętrznej
+    // z LIVE kursu instrumentu bazowego (spójnie z wyceną historyczną).
+    if (currentPrice === null && txs[0]?.category === 'option') {
+      const parsed = optionContract
+        ? {
+            underlying: optionContract.underlying,
+            strike: optionContract.strike,
+            optionType: optionContract.optionType,
+          }
+        : parseOccTicker(entry.ticker);
+      if (parsed) {
+        const yp = await fetchYahooPrice(parsed.underlying);
+        if (yp?.price) {
+          currentPrice = optionIntrinsicValue(parsed.optionType, yp.price, parsed.strike);
+          priceManual = true;
+        }
+      }
+    }
     if (currentPrice === null) {
       const lastTx = [...txs].sort((a, b) => b.date.localeCompare(a.date))[0];
       currentPrice = lastTx?.price || 0;
@@ -1710,6 +1731,54 @@ export async function computePortfolioHistory(
     }
   }
 
+  // ── Opcje: przygotowanie wyceny wartością wewnętrzną (intrinsic) ──
+  // Yahoo nie ma historii cen opcji (OCC ticker → 404), więc bez tego silnik interpoluje
+  // martwą premię między transakcjami — dla głęboko-ITM krótkiej pozycji jej zobowiązanie
+  // znika z wyceny (portfel zawyżony miesiącami). Parsujemy kontrakt (option_contracts lub
+  // z OCC tickera) i wyceniamy po intrinsic z kursu instrumentu BAZOWEGO, który pobieramy
+  // z Yahoo (root OCC = ticker Yahoo dla opcji US). Bazowy już tradowany osobno → reużycie
+  // jego serii bez dublowania fetchu.
+  interface HeldOption {
+    occTicker: string;
+    optionType: 'C' | 'P';
+    strike: number;
+    expiry: string;
+    underlyingKey: string; // klucz w historicalPrices z serią kursu bazowego
+  }
+  const heldOptions: HeldOption[] = [];
+  const optionUnderlyingsToFetch = new Set<string>();
+  const alreadyFetchedTickers = new Set(tickersToFetch.map((t) => t.ticker));
+  for (const isin of allIsins) {
+    const entry = tickerMap.get(isin);
+    if (!entry) continue;
+    const contract = optionContracts?.get(isin);
+    const parsed: ParsedOptionSymbol | null = contract
+      ? {
+          underlying: contract.underlying,
+          strike: contract.strike,
+          optionType: contract.optionType,
+          expiry: contract.expiry,
+        }
+      : parseOccTicker(entry.ticker);
+    if (!parsed) continue; // nie opcja
+    heldOptions.push({
+      occTicker: entry.ticker,
+      optionType: parsed.optionType,
+      strike: parsed.strike,
+      expiry: parsed.expiry,
+      underlyingKey: parsed.underlying,
+    });
+    if (!alreadyFetchedTickers.has(parsed.underlying)) {
+      optionUnderlyingsToFetch.add(parsed.underlying);
+    }
+  }
+  // Zdarzenia split instrumentów bazowych opcji (Yahoo, autorytatywne) — potrzebne,
+  // bo kursy historyczne Yahoo są skorygowane o splity (np. OTLY 1:20, LCID 1:10), a
+  // strike opcji jest w skali współczesnej. Pobieramy je NIEZALEŻNIE od tego, czy user
+  // trzymał akcje bazowego (allSplits łapie tylko splity z pozycji akcyjnych).
+  const optionUnderlyingSymbols = new Set(heldOptions.map((o) => o.underlyingKey));
+  const underlyingSplitEvents = new Map<string, Array<{ date: string; ratio: number }>>();
+
   // Fetch all historical data
   const historicalPrices = new Map<string, Map<string, number>>(); // ticker -> date -> close
 
@@ -1787,7 +1856,53 @@ export async function computePortfolioHistory(
     );
   }
 
+  // Kursy instrumentów bazowych opcji (do wyceny intrinsic) — tylko te nietradowane
+  // osobno (tradowane już są w tickersToFetch). Yahoo; brak notowań (np. Eurex) → pusta
+  // seria i tor spada na dotychczasowe zachowanie (interpolacja premii).
+  for (const sym of optionUnderlyingsToFetch) {
+    fetchPromises.push(
+      (async () => {
+        const data = await fetchYahooHistory(sym, start, end);
+        const priceMap = new Map<string, number>();
+        for (const d of data) priceMap.set(d.date, d.close);
+        historicalPrices.set(sym, priceMap);
+      })(),
+    );
+  }
+  // Zdarzenia split bazowych opcji (do sprowadzenia kursu Yahoo do skali strike'a).
+  for (const sym of optionUnderlyingSymbols) {
+    fetchPromises.push(
+      (async () => {
+        underlyingSplitEvents.set(sym, await fetchYahooSplitEvents(sym, start));
+      })(),
+    );
+  }
+
   await Promise.all(fetchPromises);
+
+  // ── Opcje: wypełnienie map cen wartością wewnętrzną z kursu instrumentu bazowego ──
+  // Nadpisuje pustą serię OCC (Yahoo → 404) wartością intrinsic per dzień. Dni transakcji
+  // zostaną potem doprecyzowane realną premią (nadpisanie cen tx niżej), a interpolacja
+  // premii sama się pominie (opcje mają teraz komplet punktów). Short (ujemne shares) →
+  // ujemne zobowiązanie; mnożnik ×100 nakłada bondMultByIsin.
+  //
+  // KLUCZOWE: kursy historyczne Yahoo są SKORYGOWANE o splity (np. OTLY 1:20, LCID 1:10),
+  // a strike opcji jest w skali WSPÓŁCZESNEJ (z dnia handlu). Sprowadzamy kurs bazowego do
+  // skali strike'a mnożąc przez iloczyn ratio zdarzeń split PO danej dacie (real = yahoo ×
+  // Πratio; reverse 1:20 ratio=0.05 → ×0.05; forward 4:1 ratio=4 → ×4).
+  for (const opt of heldOptions) {
+    const underlyingSeries = historicalPrices.get(opt.underlyingKey);
+    if (!underlyingSeries || underlyingSeries.size === 0) continue; // brak kursu bazowego
+    const events = underlyingSplitEvents.get(opt.underlyingKey) ?? [];
+    const priceMap = historicalPrices.get(opt.occTicker) ?? new Map<string, number>();
+    for (const [date, yahooPrice] of underlyingSeries) {
+      if (date > opt.expiry) continue; // po wygaśnięciu kontrakt bezwartościowy
+      let scale = 1;
+      for (const e of events) if (e.date > date) scale *= e.ratio;
+      priceMap.set(date, optionIntrinsicValue(opt.optionType, yahooPrice * scale, opt.strike));
+    }
+    historicalPrices.set(opt.occTicker, priceMap);
+  }
 
   // ── Transaction cash impacts — księgowane w walucie ROZLICZENIA ──
   // Historycznie total szedł zawsze w tx.currency (walucie notowania), co dla kupna
@@ -1961,9 +2076,11 @@ export async function computePortfolioHistory(
   }
 
   // Build fallback price map from transaction prices — used when historical
-  // price data is missing on the purchase date (prevents stock value = 0)
+  // price data is missing on the purchase date (prevents stock value = 0).
+  // Iterujemy PO DACIE (adjustedTxs nie jest sortowane — DB potrafi zwrócić sprzedaż
+  // przed kupnem), żeby wziąć cenę NAJWCZEŚNIEJSZEJ transakcji, nie przypadkowej.
   const txPriceByTicker = new Map<string, number>();
-  for (const tx of adjustedTxs) {
+  for (const tx of [...adjustedTxs].sort((a, b) => a.date.localeCompare(b.date))) {
     const entry = tickerMap.get(tx.isin);
     if (entry && tx.price > 0 && !txPriceByTicker.has(entry.ticker)) {
       txPriceByTicker.set(entry.ticker, tx.price);
@@ -2123,10 +2240,13 @@ export async function computePortfolioHistory(
       const entry = tickerMap.get(isin);
       if (!entry) continue;
 
+      // `??` (nie `||`): forward-fill MUSI przenosić poprzednią cenę = 0 (opcja OTM ma
+      // wartość wewnętrzną 0). Z `||` zero było traktowane jak brak i podmieniane ceną
+      // transakcji (np. w luki weekendowe) → widmowe skoki wyceny opcji.
       let price = getPrice(
         entry.ticker,
         date,
-        prevPrices.get(entry.ticker) || txPriceByTicker.get(entry.ticker) || 0,
+        prevPrices.get(entry.ticker) ?? txPriceByTicker.get(entry.ticker) ?? 0,
       );
       prevPrices.set(entry.ticker, price);
 
