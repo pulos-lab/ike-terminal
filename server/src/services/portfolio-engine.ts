@@ -2000,6 +2000,18 @@ export async function computePortfolioHistory(
       // Yahoo stores .L prices in GBX (pence) — convert adjusted GBP price back to GBX
       const priceForMap =
         txCurNorm === 'GBP' && entry.ticker.endsWith('.L') ? tx.price * 100 : tx.price;
+      // Przypisanie/wykonanie opcji: akcje księgowane po strike (np. 230 przy rynku ~96) —
+      // NIE nadpisujemy kursu rynkowego strike'iem, bo daje jednodniowy blip wyceny.
+      // Fallback bez znacznika (dane sprzed backfillu / inne brokery): rażący rozjazd >30%
+      // od istniejącej ceny rynkowej też traktujemy jak strike/złą cenę i zostawiamy rynek.
+      const existing = priceMap.get(dateKey);
+      const isAssignmentLike = tx.optionEvent === 'assignment' || tx.optionEvent === 'exercise';
+      if (
+        isAssignmentLike ||
+        (existing !== undefined && existing > 0 && Math.abs(priceForMap / existing - 1) > 0.3)
+      ) {
+        continue;
+      }
       priceMap.set(dateKey, priceForMap);
     }
   }
@@ -2317,34 +2329,24 @@ export async function computePortfolioHistory(
         ? ((benchValue + benchTotalWithdrawn - totalDeposited) / totalDeposited) * 100
         : 0;
 
-    // TWR: chain daily returns, adjusting denominator for cash flows
-    // dailyReturn = V_today / (V_yesterday + netCashFlow_today) - 1
-    // When a large cash flow makes the denominator very small (< 5% of prevValue),
-    // use mid-day timing (Modified Dietz) to prevent near-zero division artifacts.
-    // When portfolio is essentially liquidated (totalValue < 1% of peak),
-    // freeze TWR to avoid meaningless ratios on residual cash.
+    // TWR: łańcuch dziennych zwrotów sub-okresowych z przepływem na starcie dnia.
+    //   dailyReturn = V_dziś / (V_wczoraj + netCashFlow_dziś) − 1
+    // Formuła STANDARDOWA daje 0% dla czystej wpłaty/wypłaty (V_dziś = V_wczoraj + flow →
+    // ratio 1), więc przepływy nie tworzą sztucznego zwrotu — bez Modified Dietz, który
+    // przy dużej wypłacie dawał fałszywy zjazd (mianownik z wagą 0.5 vs V_dziś z pełnym flow).
+    // Łańcuchujemy TYLKO gdy oba końce sub-okresu i mianownik są ZNACZĄCE (>5% szczytu):
+    // przy wartości bliskiej zeru/ujemnej (portfel praktycznie zlikwidowany, np. po dużej
+    // wypłacie z resztką lewarowanych pozycji) TWR jest matematycznie bez sensu i eksploduje,
+    // więc go ZAMRAŻAMY na ostatniej sensownej wartości.
     const netCashFlow = depositBase - withdrawalBase;
-    if (prevTotalValue > 0 && totalValue > peakTotalValue * 0.01) {
-      // Guard: if prevTotalValue is negligible relative to totalValue and there
-      // was no cash flow, this is a data artifact (e.g. missing price data on
-      // purchase date caused portfolio to be valued at ~0). Skip chaining.
-      if (prevTotalValue < totalValue * 0.01 && netCashFlow === 0) {
-        // TWR stays unchanged — not a real return
-      } else {
-        let denominator = prevTotalValue + netCashFlow;
-        // Modified Dietz: only apply 0.5 weight for WITHDRAWALS (negative cash flow)
-        // that are large relative to portfolio value. This prevents near-zero
-        // denominator from inflating returns.
-        // For DEPOSITS, the full denominator (prevValue + deposit) is correct —
-        // applying 0.5 weight would create artificial returns when deposit >> prevValue
-        // (e.g., deposit of 1715 into a 9 PLN portfolio → 99% fake return).
-        if (netCashFlow < 0 && Math.abs(netCashFlow) > prevTotalValue * 0.3) {
-          denominator = prevTotalValue + 0.5 * netCashFlow;
-        }
-        if (denominator > 0) {
-          twrCumulative *= totalValue / denominator;
-        }
-      }
+    const twrDenominator = prevTotalValue + netCashFlow;
+    const MEANINGFUL_VALUE = peakTotalValue * 0.05;
+    if (
+      prevTotalValue > MEANINGFUL_VALUE &&
+      totalValue > MEANINGFUL_VALUE &&
+      twrDenominator > MEANINGFUL_VALUE
+    ) {
+      twrCumulative *= totalValue / twrDenominator;
     } else if (totalValue > 0 && prevTotalValue === 0) {
       // First day with value — TWR starts at 1 (0%)
       twrCumulative = 1;

@@ -18,6 +18,7 @@ export function initSchema(db: Database.Database): void {
       source TEXT DEFAULT 'bossa',
       import_batch TEXT,
       synthetic_origin TEXT,
+      option_event TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -194,6 +195,10 @@ export function initSchema(db: Database.Database): void {
   // Human-readable opis źródła; NULL dla zwykłych transakcji z pliku brokera.
   if (!txColumns.some((c: any) => c.name === 'synthetic_origin')) {
     db.exec('ALTER TABLE transactions ADD COLUMN synthetic_origin TEXT');
+  }
+  // Przypisanie / wykonanie opcji ('assignment' / 'exercise') — akcje po strike, nie po rynku.
+  if (!txColumns.some((c: any) => c.name === 'option_event')) {
+    db.exec('ALTER TABLE transactions ADD COLUMN option_event TEXT');
   }
 
   // Migration: poszerzenie stock_splits z UNIQUE(isin) do UNIQUE(isin, split_date) —

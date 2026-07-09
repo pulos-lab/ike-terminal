@@ -374,3 +374,78 @@ describe('computePortfolioHistory — wycena opcji wartością wewnętrzną z ku
     expect(mon.portfolioValue).toBeCloseTo(fri.portfolioValue, 2);
   });
 });
+
+describe('computePortfolioHistory — blip dnia przypisania (akcje po strike vs rynek)', () => {
+  const XYZ: TickerMapEntry = {
+    isin: 'PL_XYZ',
+    ticker: 'XYZ',
+    name: 'XYZ',
+    exchange: 'OTHER',
+    currency: 'PLN',
+    priceSource: 'yahoo',
+  };
+  const tm = new Map([['PL_XYZ', XYZ]]);
+  function daily(from: string, to: string, close: number) {
+    const out: Array<{ date: string; close: number }> = [];
+    const cur = new Date(from + 'T00:00:00Z');
+    const end = new Date(to + 'T00:00:00Z');
+    while (cur <= end) {
+      out.push({ date: cur.toISOString().slice(0, 10), close });
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return out;
+  }
+  const dep: CashOperation = {
+    date: '2024-01-01T00:00:00',
+    operationType: 'deposit',
+    description: '',
+    amount: 30000,
+    currency: 'PLN',
+  } as CashOperation;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (yahoo.fetchYahooHistory as any).mockImplementation(async (t: string) =>
+      t === 'XYZ' ? daily('2024-01-01', '2026-12-31', 96) : [],
+    );
+  });
+
+  it('akcje z przypisania (optionEvent) wyceniane po rynku w dniu tx — brak jednodniowego skoku', async () => {
+    // Kupno 100 XYZ po strike 230 (rynek 96) — bez fixu nadpisanie ceny dnia dawało
+    // 100×230 tylko w dniu tx (skok), nazajutrz 100×96. Ze znacznikiem: zawsze rynek.
+    const assign: Transaction = {
+      date: '2024-02-01T16:20:00',
+      paperName: 'XYZ',
+      isin: 'PL_XYZ',
+      quantity: 100,
+      side: 'K',
+      price: 230, // strike
+      value: 23000,
+      commission: 0,
+      total: 23000,
+      currency: 'PLN',
+      paymentCurrency: 'PLN',
+      category: 'stock',
+      source: 'ibkr',
+      optionEvent: 'assignment',
+    };
+    const { history } = await computePortfolioHistory(
+      [assign],
+      [dep],
+      tm,
+      '',
+      'none',
+      undefined,
+      undefined,
+      [],
+      'PLN',
+      [],
+      undefined,
+    );
+    const d1 = history.find((h) => h.date === '2024-02-01')!;
+    const d2 = history.find((h) => h.date === '2024-02-02')!;
+    // Dzień przypisania ≈ dzień następny (oba: 7000 gotówki + 100×96 = 16600); brak skoku do 30000.
+    expect(d1.portfolioValue).toBeCloseTo(16600, 0);
+    expect(d1.portfolioValue).toBeCloseTo(d2.portfolioValue, 0);
+  });
+});
