@@ -12,8 +12,8 @@ export function insertTransactions(
 ): number {
   const db = getDb(portfolioId);
   const stmt = db.prepare(`
-    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, payment_currency, fx_rate, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit, synthetic_origin)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, payment_currency, fx_rate, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit, synthetic_origin, option_event)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertMany = db.transaction((txs: Transaction[]) => {
@@ -40,6 +40,7 @@ export function insertTransactions(
         tx.cfdPositionId ?? null,
         tx.cfdGrossProfit ?? null,
         tx.syntheticOrigin ?? null,
+        tx.optionEvent ?? null,
       );
       count++;
     }
@@ -81,8 +82,8 @@ export function insertTransactionsWithDedup(
     WHERE cfd_position_id = ? AND side = ? AND date = ?
   `);
   const insertStmt = db.prepare(`
-    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, payment_currency, fx_rate, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit, synthetic_origin)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, payment_currency, fx_rate, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit, synthetic_origin, option_event)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   type Group = { txs: Transaction[]; isCfd: boolean };
@@ -136,6 +137,7 @@ export function insertTransactionsWithDedup(
           tx.cfdPositionId ?? null,
           tx.cfdGrossProfit ?? null,
           tx.syntheticOrigin ?? null,
+          tx.optionEvent ?? null,
         );
         inserted++;
       }
@@ -249,8 +251,8 @@ export function insertTransaction(tx: Transaction, portfolioId: string = 'defaul
   const result = db
     .prepare(
       `
-    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, payment_currency, fx_rate, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit, synthetic_origin)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO transactions (date, paper_name, isin, quantity, side, price, value, commission, total, currency, payment_currency, fx_rate, category, source, import_batch, swap, rollover, cfd_position_id, cfd_gross_profit, synthetic_origin, option_event)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     )
     .run(
@@ -274,6 +276,7 @@ export function insertTransaction(tx: Transaction, portfolioId: string = 'defaul
       tx.cfdPositionId ?? null,
       tx.cfdGrossProfit ?? null,
       tx.syntheticOrigin ?? null,
+      tx.optionEvent ?? null,
     );
   bumpPortfolioDataVersion(portfolioId);
   return Number(result.lastInsertRowid);
@@ -420,5 +423,6 @@ function mapRow(row: any): Transaction {
     cfdPositionId: row.cfd_position_id || undefined,
     cfdGrossProfit: row.cfd_gross_profit ?? undefined,
     syntheticOrigin: row.synthetic_origin ?? undefined,
+    optionEvent: row.option_event ?? undefined,
   };
 }

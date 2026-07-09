@@ -102,6 +102,13 @@ export interface Transaction {
    * Dla zwykłych K/S z pliku brokera: undefined. UI pokazuje ikonę ℹ i tooltip.
    */
   syntheticOrigin?: string;
+  /**
+   * Transakcja powstała z przypisania (`assignment`) lub wykonania (`exercise`) opcji —
+   * akcje zaksięgowane po cenie wykonania (strike), NIE po rynku. Ustawiane z kodów IBKR
+   * ('A'/'Ex') przy imporcie lub backfillem. Wpływa na wycenę (nie nadpisujemy kursu
+   * rynkowego ceną strike) i UI (badge „przypisanie"/„wykonanie").
+   */
+  optionEvent?: 'assignment' | 'exercise';
 }
 
 // ============ Cash Operation Types ============

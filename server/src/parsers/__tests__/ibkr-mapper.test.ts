@@ -212,12 +212,21 @@ describe('mapowanie Trades', () => {
     expect(expiry).toMatchObject({ price: 0, value: 0, total: 0, quantity: 3 });
   });
 
-  it('assignment: noga opcyjna zamyka po 0, noga akcyjna K po strike', () => {
+  it('assignment: noga opcyjna zamyka po 0, noga akcyjna K po strike, obie z optionEvent', () => {
     const { transactions } = parse();
     const optLeg = transactions.find((t) => t.isin === 'OPT:PYPL220617P00230000')!;
-    expect(optLeg).toMatchObject({ side: 'K', price: 0, value: 0 });
+    expect(optLeg).toMatchObject({ side: 'K', price: 0, value: 0, optionEvent: 'assignment' });
     const stockLeg = transactions.find((t) => t.isin === 'US70450Y1038')!;
-    expect(stockLeg).toMatchObject({ side: 'K', quantity: 100, price: 230, value: 23000 });
+    expect(stockLeg).toMatchObject({
+      side: 'K',
+      quantity: 100,
+      price: 230,
+      value: 23000,
+      optionEvent: 'assignment', // z kodu 'A;O' → nie nadpisujemy kursu rynkowego strike'iem
+    });
+    // zwykła transakcja (bez kodu A/Ex) nie ma znacznika
+    const normal = transactions.find((t) => t.isin === 'US91282CEP23')!;
+    expect(normal.optionEvent).toBeUndefined();
   });
 
   it('obligacja: qty znormalizowane do nominału/100, cena zostaje w % nominału', () => {

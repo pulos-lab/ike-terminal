@@ -53,8 +53,11 @@ const MAX_MEMO_ENTRIES = 8;
  *     dopiero po potwierdzeniu zdarzeniem split z Yahoo; koniec skoków na wykresie.
  * v8: wycena opcji wartością wewnętrzną (intrinsic) z kursu instrumentu bazowego —
  *     koniec martwej interpolowanej premii ukrywającej zobowiązanie głęboko-ITM shortów.
+ * v9: TWR odporny na wartość bliską zeru/ujemną (formuła standardowa + zamrożenie <5%
+ *     szczytu, bez fałszywego Modified Dietz) + brak blipa dnia przypisania (akcje po strike
+ *     nie nadpisują kursu rynkowego).
  */
-const ENGINE_VERSION = 8;
+const ENGINE_VERSION = 9;
 
 const memo = new Map<string, Promise<HistoryResult>>();
 
