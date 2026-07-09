@@ -367,8 +367,7 @@ export function getLastImportDate(portfolioId: string = 'default'): string | nul
   return row?.last_import || null;
 }
 
-/** Detect ISINs where total sold > total bought (excluding CFD and option positions —
- *  sprzedaż opcji bez wcześniejszego kupna to legalne otwarcie pozycji krótkiej). */
+/** Detect ISINs where total sold > total bought (excluding CFD positions). */
 export function detectOrphanedSells(portfolioId: string = 'default'): OrphanedSell[] {
   const db = getDb(portfolioId);
   const rows = db
@@ -381,7 +380,7 @@ export function detectOrphanedSells(portfolioId: string = 'default'): OrphanedSe
       tm.ticker
     FROM transactions t
     LEFT JOIN ticker_map tm ON t.isin = tm.isin
-    WHERE t.category NOT IN ('cfd', 'option')
+    WHERE t.category != 'cfd'
     GROUP BY t.isin
     HAVING sold > bought + 0.001
   `,

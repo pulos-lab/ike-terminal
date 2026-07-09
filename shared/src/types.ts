@@ -1,6 +1,6 @@
 // ============ Broker Types ============
 
-export type BrokerType = 'auto' | 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'ibkr' | 'generic';
+export type BrokerType = 'auto' | 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'generic';
 
 export const BROKER_LABELS: Record<BrokerType, string> = {
   auto: 'Wykryj automatycznie',
@@ -8,7 +8,6 @@ export const BROKER_LABELS: Record<BrokerType, string> = {
   mbank: 'mBank eMakler',
   degiro: 'DEGIRO',
   xtb: 'XTB',
-  ibkr: 'Interactive Brokers',
   generic: 'Inny broker (profil)',
 };
 
@@ -21,41 +20,13 @@ export type RecordSource =
   | 'mbank'
   | 'degiro'
   | 'xtb'
-  | 'ibkr'
   | 'manual'
   | 'auto-yahoo'
   | 'generic';
 
 // ============ Transaction Types ============
 
-export type InstrumentCategory = 'stock' | 'etf' | 'cfd' | 'bond' | 'option';
-
-// ============ Option Types ============
-
-/**
- * Metadane kontraktu opcyjnego. Instrument identyfikowany pseudo-ISIN-em `OPT:{ticker OCC}`
- * (opcje giełdowe nie mają ISIN); parametry kontraktu trzymane w tabeli `option_contracts`
- * (nie w `transactions` — są per kontrakt, nie per transakcja).
- */
-export interface OptionContract {
-  /** Pseudo-ISIN: `OPT:` + ticker OCC, np. "OPT:DKNG220520P00045000". */
-  isin: string;
-  /** Ticker w formacie OCC (SYMBOL + YYMMDD + C/P + strike×1000 pad 8), np. "DKNG220520P00045000". Yahoo v8 chart przyjmuje go wprost. */
-  occTicker: string;
-  /** Ticker instrumentu bazowego, np. "DKNG". */
-  underlying: string;
-  /** Data wygaśnięcia YYYY-MM-DD. */
-  expiry: string;
-  /** Cena wykonania w walucie kontraktu. */
-  strike: number;
-  /** C = call, P = put. */
-  optionType: 'C' | 'P';
-  /** Mnożnik kontraktu (US equity options: 100). */
-  multiplier: number;
-  /** Giełda notowania z wyciągu brokera (np. "CBOE", "DTB" dla Eurex). */
-  listingExch?: string;
-  currency: string;
-}
+export type InstrumentCategory = 'stock' | 'etf' | 'cfd' | 'bond';
 
 export interface Transaction {
   id?: number;
@@ -216,20 +187,6 @@ export interface Position {
    * najpewniej brakuje operacji wykupu w zaimportowanych plikach. UI pokazuje ostrzeżenie.
    */
   maturityPassed?: boolean;
-  /**
-   * Metadane kontraktu dla pozycji z category='option' (z tabeli `option_contracts`).
-   * `shares` może być ujemne (pozycja krótka — wystawiona opcja); `currentValue` jest wtedy
-   * ujemna (zobowiązanie odkupu).
-   */
-  optionMeta?: Pick<
-    OptionContract,
-    'underlying' | 'expiry' | 'strike' | 'optionType' | 'multiplier'
-  >;
-  /**
-   * Opcja po dacie wygaśnięcia a pozycja wciąż otwarta — najpewniej brakuje wiersza
-   * zamykającego (expiry/assignment) w zaimportowanych plikach. Analogiczne do maturityPassed.
-   */
-  expiryPassed?: boolean;
 }
 
 export interface ClosedTradeFee {

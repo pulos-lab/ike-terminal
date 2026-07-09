@@ -42,7 +42,7 @@ describe('import upload error handling', () => {
     const res = await postFile('notatki.txt', 'to nie jest csv');
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('CSV, XLSX i HTML');
+    expect(body.error).toContain('CSV i XLSX');
   });
 
   it('odrzuca plik powyżej 5 MB z kodem 413', async () => {

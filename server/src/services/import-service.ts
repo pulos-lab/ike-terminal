@@ -31,15 +31,10 @@ import { findBondByTicker, inferBondNominal } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
 import {
   detectBroker,
-  detectCombinedBroker,
-  isCombinedExtension,
+  detectBinaryBroker,
   PARSER_REGISTRY,
-  type CombinedParseOutput,
   type OperationsParseResult,
 } from '../parsers/registry.js';
-import type { TransactionTax } from '../parsers/degiro-operations.js';
-import { upsertSplits } from '../db/splits-repo.js';
-import { upsertOptionContracts } from '../db/option-contracts-repo.js';
 import { computeTotal } from '../parsers/utils.js';
 import {
   insertTransactionsWithDedup,
@@ -80,14 +75,13 @@ export async function classifyFile(file: {
   buffer: Buffer;
   originalname: string;
 }): Promise<ClassifiedFile> {
-  // Pliki "combined" (XTB XLSX, IBKR HTML) zawierają transakcje + operacje w jednym pliku
-  const isBinary = isCombinedExtension(file.originalname);
+  const isBinary = file.originalname.toLowerCase().endsWith('.xlsx');
 
   if (isBinary) {
-    const combined = await detectCombinedBroker(file.buffer, file.originalname);
+    const binary = await detectBinaryBroker(file.buffer);
     return {
-      role: combined ? 'transactions' : 'unknown', // combined zawiera oba typy — traktujemy jako "transactions" z bonusem operacji
-      broker: combined?.id ?? null,
+      role: binary ? 'transactions' : 'unknown', // XTB XLSX zawiera oba typy w jednym pliku — traktujemy jako "transactions" z bonusem operacji
+      broker: binary?.id ?? null,
       isBinary: true,
       buffer: file.buffer,
       originalName: file.originalname,
@@ -190,22 +184,17 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
           `Wgraj pliki z jednego brokera na raz.`,
       ]);
     }
-    // Multi-file dla plików combined tylko gdy parser to deklaruje
-    // (IBKR: wyciągi roczne per rok/konto; XTB XLSX pozostaje single-file).
+    // Multi-file wspierane tylko dla CSV brokerów. XTB XLSX to pojedynczy plik.
     if (txFiles.some((t) => t.isBinary)) {
-      const parser = await detectCombinedBroker(txFiles[0].buffer, txFiles[0].originalName);
-      if (!parser?.supportsMultipleFiles) {
-        return emptyResult(importBatch, [
-          'Wgrywanie wielu plików nie jest wspierane dla XTB XLSX — wgraj jeden plik XTB naraz.',
-        ]);
-      }
+      return emptyResult(importBatch, [
+        'Wgrywanie wielu plików nie jest wspierane dla XTB XLSX — wgraj jeden plik XTB naraz.',
+      ]);
     }
   }
 
-  // Pliki combined (XTB XLSX single-file, IBKR HTML multi-file): transakcje +
-  // operacje + markery reconciliation z jednego parsera, atomowo.
-  if (txFiles.length > 0 && txFiles[0].isBinary) {
-    return await importCombinedFiles(txFiles, importBatch, pid);
+  // XTB XLSX: jeden plik, multi-sheet, atomowy z natury
+  if (txFiles.length === 1 && txFiles[0].isBinary) {
+    return await importBinary(txFiles[0], importBatch, pid);
   }
 
   // CSV flow: parsujemy oba pliki, potem wsadzamy w jednej db.transaction()
@@ -342,7 +331,44 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     // Applied cross-batch (nawet jeśli user wgrał transakcje osobno wcześniej).
     if (opsParser?.parseTransactionTaxes && opsContentRaw) {
       const taxes = opsParser.parseTransactionTaxes(opsContentRaw);
-      const applied = applyTransactionTaxes(taxes, opsParser.label, pid, crossFileWarnings);
+      let applied = 0;
+      // W obrębie batcha każdy (transakcja, opis podatku) dostaje podatek
+      // najwyżej raz — dwa same-day trade'y tego samego ISIN-u dostają po
+      // jednym stamp duty zamiast obu na pierwszym.
+      const usedInBatch = new Set<string>();
+      const usedKey = (txId: number, desc: string) => `${txId}|${desc}`;
+      for (const tax of taxes) {
+        const txs = getTransactionsByIsin(tax.isin, pid);
+        const taxDate = tax.date.split('T')[0];
+        const candidates = txs.filter((t) => t.date.startsWith(taxDate));
+        const match =
+          candidates.find((t) => t.id && !usedInBatch.has(usedKey(t.id, tax.description))) ??
+          candidates[0];
+        if (match?.id) {
+          // recordAppliedTransactionTax zwraca false przy reimporcie tego
+          // samego podatku — wtedy prowizja jest już powiększona, nie doliczamy.
+          const isNew = recordAppliedTransactionTax(
+            {
+              transactionId: match.id,
+              isin: tax.isin,
+              taxDate: tax.date,
+              description: tax.description,
+              amount: tax.amount,
+            },
+            pid,
+          );
+          if (!isNew) continue;
+          usedInBatch.add(usedKey(match.id, tax.description));
+          const newCommission = Math.round((match.commission + tax.amount) * 100) / 100;
+          const newTotal = computeTotal(match.side, match.value, newCommission);
+          updateTransaction(match.id, { commission: newCommission, total: newTotal }, pid);
+          applied++;
+        } else {
+          crossFileWarnings.push(
+            `${opsParser.label}: ${tax.description} dla ISIN ${tax.isin} z ${taxDate} nie znalazł pasującej transakcji`,
+          );
+        }
+      }
       if (applied > 0) result.taxesApplied = applied;
     }
   });
@@ -452,168 +478,57 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   };
 }
 
-// ─── Combined path (XTB XLSX single-file, IBKR HTML multi-file) ──────────────
+// ─── XTB XLSX (single-file) path ─────────────────────────────────────────────
 
-async function importCombinedFiles(
-  files: ClassifiedFile[],
+async function importBinary(
+  file: ClassifiedFile,
   importBatch: string,
   pid: string,
 ): Promise<ImportResult> {
-  const parser = await detectCombinedBroker(files[0].buffer, files[0].originalName);
-  if (!parser) {
-    return emptyResult(importBatch, ['Nie rozpoznano formatu pliku']);
+  const binary = await detectBinaryBroker(file.buffer);
+  if (!binary) {
+    return emptyResult(importBatch, ['Nie rozpoznano formatu XLSX']);
   }
+  const parseResult = await binary.parse(file.buffer, importBatch, file.originalName);
+  const { transactions: txResult, operations: opsResult } = parseResult;
+  const parserWarnings: string[] = (parseResult as any).warnings ?? [];
 
-  // Parsowanie wszystkich plików (poza transakcją SQLite — czysty CPU/IO)
-  const parsedFiles: Array<{ name: string; output: CombinedParseOutput }> = [];
-  const parserWarnings: string[] = [];
-  for (const file of files) {
-    const fileParser = await detectCombinedBroker(file.buffer, file.originalName);
-    if (fileParser?.id !== parser.id) {
-      return emptyResult(importBatch, [
-        `Plik "${file.originalName}" nie wygląda na eksport ${parser.label}.`,
-      ]);
-    }
-    const output = await parser.parse(file.buffer, importBatch, file.originalName);
-    if (output.warnings?.length) parserWarnings.push(...output.warnings);
-    parsedFiles.push({ name: file.originalName, output });
-  }
-
-  const allTxData = parsedFiles.flatMap((p) => p.output.transactions.data);
-  const allOpsData = parsedFiles.flatMap((p) => p.output.operations.data);
-  if (allTxData.length === 0 && allOpsData.length === 0) {
-    return emptyResult(importBatch, [`Pliki ${parser.label} nie zawierają rozpoznawalnych danych`]);
+  if (txResult.data.length === 0 && opsResult.data.length === 0) {
+    return emptyResult(importBatch, [`Plik ${binary.label} nie zawiera rozpoznawalnych danych`]);
   }
 
   seedTickerMap(pid);
 
-  if (parser.needsNameResolution) {
-    for (const tx of allTxData) {
+  if (binary.needsNameResolution) {
+    for (const tx of txResult.data) {
       const existing = findIsinByName(tx.paperName, pid);
       if (existing) tx.isin = existing.isin;
     }
   }
 
-  // Markery reconciliation zebrane ze wszystkich plików (dedup po naturalnych kluczach —
-  // ten sam kontrakt/split pojawia się w wielu rocznikach; upserty są idempotentne).
-  const allOptionContracts = dedupeBy(
-    parsedFiles.flatMap((p) => p.output.optionContracts ?? []),
-    (c) => c.isin,
-  );
-  const allSplits = dedupeBy(
-    parsedFiles.flatMap((p) => p.output.splits ?? []),
-    (s) => `${s.isin}|${s.exDate}`,
-  );
-  const allIsinChanges = dedupeBy(
-    parsedFiles.flatMap((p) => p.output.isinChanges ?? []),
-    (c) => `${c.oldIsin}|${c.newIsin}`,
-  );
-  const allTaxes: TransactionTax[] = parsedFiles.flatMap((p) => p.output.transactionTaxes ?? []);
-
-  // Zmiany ISIN aplikujemy do sparsowanych danych PRZED insertem — inaczej re-import
-  // pliku wstawiłby transakcję ze STARYM ISIN-em obok wiersza już przepisanego na nowy
-  // (dedup liczy po ISIN-ie). UPDATE w DB (niżej) zostaje dla wierszy z wcześniejszych
-  // batchy. Mapowanie z domknięciem łańcucha (A→B, B→C ⇒ A→C).
-  const isinTarget = new Map(allIsinChanges.map((c) => [c.oldIsin, c.newIsin]));
-  const resolveIsin = (isin: string): string => {
-    let current = isin;
-    for (let hops = 0; hops < 5; hops++) {
-      const next = isinTarget.get(current);
-      if (!next) return current;
-      current = next;
-    }
-    return current;
-  };
-  if (isinTarget.size > 0) {
-    for (const tx of allTxData) tx.isin = resolveIsin(tx.isin);
-  }
-
   const db = getDb(pid);
   let txInserted = 0;
   let opsInserted = 0;
-  let taxesApplied = 0;
   const insertedTxDuplicates: SkippedRow[] = [];
   const insertedOpsDuplicates: SkippedRow[] = [];
 
   const run = db.transaction(() => {
-    // 1. Inserty PER PLIK — dedup zliczeniowy łapie nakładające się zakresy między plikami
-    for (const pf of parsedFiles) {
-      if (pf.output.transactions.data.length > 0) {
-        const r = insertTransactionsWithDedup(pf.output.transactions.data, pid);
-        txInserted += r.inserted;
-        insertedTxDuplicates.push(...r.duplicates);
-      }
-      if (pf.output.operations.data.length > 0) {
-        const r = insertOperationsWithDedup(pf.output.operations.data, pid);
-        opsInserted += r.inserted;
-        insertedOpsDuplicates.push(...r.duplicates);
-      }
+    if (txResult.data.length > 0) {
+      const r = insertTransactionsWithDedup(txResult.data, pid);
+      txInserted = r.inserted;
+      insertedTxDuplicates.push(...r.duplicates);
     }
-
-    // 2. Seeding ticker_map dla opcji PRZED resolveUnknownIsins — pseudo-ISIN OPT:
-    // nie istnieje w Yahoo/Stooq, a ticker OCC działa w Yahoo v8 chart wprost.
-    for (const c of allOptionContracts) {
-      if (!getTickerByIsin(c.isin, pid)) {
-        upsertTickerMapEntry(
-          {
-            isin: c.isin,
-            ticker: c.occTicker,
-            name: `${c.underlying} ${c.strike} ${c.optionType === 'C' ? 'CALL' : 'PUT'} ${c.expiry}`,
-            exchange: 'OTHER',
-            currency: c.currency,
-            priceSource: 'yahoo',
-          },
-          pid,
-        );
-      }
-    }
-    if (allOptionContracts.length > 0) {
-      upsertOptionContracts(pid, allOptionContracts);
-    }
-
-    // 3. Zmiany ISIN (CUSIP change, reverse split z nowym ISIN) — PRZED zapisem splitów,
-    // żeby split SPCE aplikował się już na nowym ISIN-ie spójnie z transakcjami.
-    for (const change of allIsinChanges) {
-      const updated = db
-        .prepare('UPDATE transactions SET isin = ? WHERE isin = ?')
-        .run(change.newIsin, change.oldIsin);
-      deleteTickerMapEntry(change.oldIsin, pid);
-      if (updated.changes > 0) {
-        parserWarnings.push(
-          `${parser.label}: zmiana ISIN ${change.oldIsin} → ${change.newIsin}` +
-            `${change.symbol ? ` (${change.symbol})` : ''} — zaktualizowano ${updated.changes} transakcji.`,
-        );
-      }
-    }
-
-    // 4. Splity z Corporate Actions — realne ex-daty, source 'manual' (wygrywa z heurystyką)
-    if (allSplits.length > 0) {
-      upsertSplits(
-        pid,
-        allSplits.map((s) => ({
-          isin: s.isin,
-          ticker: s.ticker,
-          splitDate: s.exDate,
-          ratio: s.ratio,
-          source: 'manual' as const,
-        })),
-      );
-      parserWarnings.push(
-        `${parser.label}: zapisano ${allSplits.length} split(y) z sekcji Corporate Actions ` +
-          `(${allSplits.map((s) => `${s.ticker} ${s.ratio}:1`).join(', ')}).`,
-      );
-    }
-
-    // 5. Podatki transakcyjne (FTT) — współdzielony helper z DEGIRO, idempotentny
-    if (allTaxes.length > 0) {
-      taxesApplied = applyTransactionTaxes(allTaxes, parser.label, pid, parserWarnings);
+    if (opsResult.data.length > 0) {
+      const r = insertOperationsWithDedup(opsResult.data, pid);
+      opsInserted = r.inserted;
+      insertedOpsDuplicates.push(...r.duplicates);
     }
   });
   run();
 
   const { resolved, unresolved } =
-    allTxData.length > 0
-      ? await resolveUnknownIsins(allTxData, pid)
+    txResult.data.length > 0
+      ? await resolveUnknownIsins(txResult.data, pid)
       : { resolved: [], unresolved: [] };
 
   // Po resolwerze ticker_map ma walutę notowania z Yahoo — uzgadniamy etykietę
@@ -624,16 +539,14 @@ async function importCombinedFiles(
   parserWarnings.push(...quoteRecon.warnings);
 
   const unresolvedVisible = unresolved.filter((u) => {
-    const isinTxs = allTxData.filter((t) => t.isin === u.isin);
+    const isinTxs = txResult.data.filter((t) => t.isin === u.isin);
     const net = isinTxs.reduce((sum, t) => sum + (t.side === 'K' ? t.quantity : -t.quantity), 0);
     return Math.abs(net) > 0.001;
   });
 
   const allSkipped = [
-    ...parsedFiles.flatMap((p) => [
-      ...p.output.transactions.skipped,
-      ...p.output.operations.skipped,
-    ]),
+    ...txResult.skipped,
+    ...opsResult.skipped,
     ...insertedTxDuplicates,
     ...insertedOpsDuplicates,
   ];
@@ -645,75 +558,14 @@ async function importCombinedFiles(
     operationsImported: opsInserted,
     errors: [],
     importBatch,
-    detectedSource: parser.id,
+    detectedSource: binary.id,
     tickersResolved: resolved.length,
     tickersUnresolved: unresolvedVisible.map((u) => u.paperName),
     skipped: allSkipped.length > 0 ? allSkipped : undefined,
     duplicatesSkipped: insertedTxDuplicates.length + insertedOpsDuplicates.length || undefined,
     orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
-    taxesApplied: taxesApplied > 0 ? taxesApplied : undefined,
     warnings: parserWarnings.length > 0 ? parserWarnings : undefined,
   };
-}
-
-function dedupeBy<T>(items: T[], key: (item: T) => string): T[] {
-  const seen = new Map<string, T>();
-  for (const item of items) {
-    if (!seen.has(key(item))) seen.set(key(item), item);
-  }
-  return [...seen.values()];
-}
-
-/**
- * Dolicza podatki transakcyjne (stamp duty / FTT) do prowizji pasujących transakcji.
- * Idempotentne przez `applied_transaction_taxes` (UNIQUE) — reimport tego samego pliku
- * nie zwiększy prowizji drugi raz. W obrębie batcha każdy (transakcja, opis podatku)
- * dostaje podatek najwyżej raz — dwa same-day trade'y tego samego ISIN-u dostają po
- * jednym stamp duty zamiast obu na pierwszym. Współdzielone przez ścieżkę CSV (DEGIRO)
- * i combined (IBKR). Zwraca liczbę doliczonych podatków.
- */
-function applyTransactionTaxes(
-  taxes: TransactionTax[],
-  parserLabel: string,
-  pid: string,
-  warnings: string[],
-): number {
-  let applied = 0;
-  const usedInBatch = new Set<string>();
-  const usedKey = (txId: number, desc: string) => `${txId}|${desc}`;
-  for (const tax of taxes) {
-    const txs = getTransactionsByIsin(tax.isin, pid);
-    const taxDate = tax.date.split('T')[0];
-    const candidates = txs.filter((t) => t.date.startsWith(taxDate));
-    const match =
-      candidates.find((t) => t.id && !usedInBatch.has(usedKey(t.id, tax.description))) ??
-      candidates[0];
-    if (match?.id) {
-      // recordAppliedTransactionTax zwraca false przy reimporcie tego
-      // samego podatku — wtedy prowizja jest już powiększona, nie doliczamy.
-      const isNew = recordAppliedTransactionTax(
-        {
-          transactionId: match.id,
-          isin: tax.isin,
-          taxDate: tax.date,
-          description: tax.description,
-          amount: tax.amount,
-        },
-        pid,
-      );
-      if (!isNew) continue;
-      usedInBatch.add(usedKey(match.id, tax.description));
-      const newCommission = Math.round((match.commission + tax.amount) * 100) / 100;
-      const newTotal = computeTotal(match.side, match.value, newCommission);
-      updateTransaction(match.id, { commission: newCommission, total: newTotal }, pid);
-      applied++;
-    } else {
-      warnings.push(
-        `${parserLabel}: ${tax.description} dla ISIN ${tax.isin} z ${taxDate} nie znalazł pasującej transakcji`,
-      );
-    }
-  }
-  return applied;
 }
 
 // ─── Bossa reconciliation: wykupy certyfikatów + wezwania skupu ze znaną ceną ─

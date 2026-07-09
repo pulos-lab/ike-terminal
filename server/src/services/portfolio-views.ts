@@ -11,7 +11,6 @@ import { getAllTransactions } from '../db/transactions-repo.js';
 import { getAllOperations, getMetadata, setMetadata } from '../db/operations-repo.js';
 import { getTickerMap, getAllTickers, updateTickerSectors } from '../db/ticker-map-repo.js';
 import { getSplits, upsertSplits } from '../db/splits-repo.js';
-import { getOptionContractsMap } from '../db/option-contracts-repo.js';
 import { getSpinOffs } from '../db/spin-offs-repo.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { invalidateCachedPrices } from './history-cache.js';
@@ -107,8 +106,7 @@ async function lazyBackfillSectors(pid: string): Promise<void> {
     const entries = getAllTickers(pid);
     // Backfill gdy brak supersektora — po zmianie taksonomii (stockwatch) stary
     // `sector` z Yahoo GICS (po angielsku) nie jest już autorytatywny.
-    // Opcje (pseudo-ISIN OPT:...) nie mają sektora — pomijamy zbędne strzały do Yahoo.
-    const toUpdate = entries.filter((e) => !e.supersector && !e.isin.startsWith('OPT:'));
+    const toUpdate = entries.filter((e) => !e.supersector);
     for (const entry of toUpdate) {
       try {
         const { supersector, subsector } = await resolveSector(entry);
@@ -195,7 +193,6 @@ export async function buildHistoryView(
     baseCurrency,
     undefined,
     spinOffs,
-    getOptionContractsMap(pid),
   );
 
   if (result.detectedSplits.length > 0) {
@@ -237,7 +234,7 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     tickerMap,
     savedSplits,
     undefined,
-    { skipSplitDetection: !splitScanDue, optionContracts: getOptionContractsMap(pid) },
+    { skipSplitDetection: !splitScanDue },
     spinOffs,
   );
   if (splitScanDue) {
@@ -264,8 +261,7 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
 
   let cashValuePln = 0;
   const cashPositions = Object.entries(balances)
-    // Ujemne saldo = kredyt margin (np. IBKR) — musi być widoczne i pomniejszać total
-    .filter(([, balance]) => Math.abs(balance) > 0.01)
+    .filter(([, balance]) => balance > 0.01) // only positive cash
     .map(([currency, balance]) => {
       const rate = fxRates[currency.toUpperCase()] ?? 1;
       const valuePln = balance * rate;

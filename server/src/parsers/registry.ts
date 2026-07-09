@@ -19,9 +19,6 @@ import {
   parseDegiroTransactionTaxes,
 } from './degiro-operations.js';
 import { parseXtbFile, isXtbFormat } from './xtb-transactions.js';
-import { parseIbkrFile, isIbkrFormat } from './ibkr/index.js';
-import type { IbkrSplitMarker, IbkrIsinChangeMarker } from './ibkr/index.js';
-import type { OptionContract } from 'shared';
 
 /**
  * Parser registry — defines all supported brokers, their detection logic,
@@ -139,88 +136,36 @@ export function detectAllMatches(content: string): {
 /**
  * Get parser by broker ID. Returns undefined for 'auto'.
  */
-// ── Combined (single/multi-file, transakcje+operacje w jednym pliku) registry ──
-// Brokerzy, których jeden plik zawiera oba typy danych: XTB (XLSX multi-sheet),
-// IBKR (HTML Activity Statement). Wejściem jest surowy Buffer (XLSX jest binarny,
-// HTML wymaga detekcji po treści przed ścieżką CSV).
+// ── Binary (XLSX) parser registry ──────────────────────────────────────────
 
-/** Wynik parsera combined — poza transakcjami i operacjami może nieść markery
- *  reconciliation (IBKR: splity, zmiany ISIN, kontrakty opcyjne, podatki FTT). */
-export interface CombinedParseOutput {
-  transactions: ParseResult<Transaction>;
-  operations: ParseResult<CashOperation>;
-  warnings?: string[];
-  /** Splity z sekcji Corporate Actions (realne ex-daty) → upsertSplits(source 'manual'). */
-  splits?: IbkrSplitMarker[];
-  /** Zmiany ISIN (CUSIP change, reverse split z nowym ISIN) → UPDATE transactions. */
-  isinChanges?: IbkrIsinChangeMarker[];
-  /** Kontrakty opcyjne → option_contracts + seeding ticker_map (ticker OCC dla Yahoo). */
-  optionContracts?: OptionContract[];
-  /** Podatki transakcyjne (FTT) → doliczenie do prowizji (wzorzec DEGIRO). */
-  transactionTaxes?: TransactionTax[];
-  /** Numer konta (IBKR) — do komunikatów w wynikach importu. */
-  account?: string;
-}
-
-export interface CombinedBrokerParser {
+export interface BinaryBrokerParser {
   id: BrokerType;
   label: string;
-  /** Rozszerzenia plików tego brokera (lowercase, z kropką). */
-  extensions: string[];
   detect: (buffer: Buffer) => boolean | Promise<boolean>;
-  parse: (buffer: Buffer, importBatch: string, fileName?: string) => Promise<CombinedParseOutput>;
+  parse: (
+    buffer: Buffer,
+    importBatch: string,
+    fileName?: string,
+  ) => Promise<{
+    transactions: ParseResult<Transaction>;
+    operations: ParseResult<CashOperation>;
+    warnings?: string[];
+  }>;
   needsNameResolution: boolean;
-  /** Czy można wgrać wiele plików naraz (IBKR: jeden Activity Statement per rok/konto). */
-  supportsMultipleFiles: boolean;
 }
 
-const COMBINED_PARSER_REGISTRY: CombinedBrokerParser[] = [
+const BINARY_PARSER_REGISTRY: BinaryBrokerParser[] = [
   {
     id: 'xtb',
     label: 'XTB',
-    extensions: ['.xlsx'],
     detect: isXtbFormat,
     parse: parseXtbFile,
     needsNameResolution: true,
-    supportsMultipleFiles: false,
-  },
-  {
-    id: 'ibkr',
-    label: 'Interactive Brokers',
-    extensions: ['.htm', '.html'],
-    detect: isIbkrFormat,
-    parse: (buffer, importBatch) => {
-      const out = parseIbkrFile(buffer, importBatch);
-      return Promise.resolve({
-        transactions: { data: out.transactions, skipped: out.skipped },
-        operations: { data: out.operations, skipped: [] },
-        warnings: out.warnings,
-        splits: out.splits,
-        isinChanges: out.isinChanges,
-        optionContracts: out.optionContracts,
-        transactionTaxes: out.transactionTaxes,
-        account: out.account,
-      });
-    },
-    needsNameResolution: false,
-    supportsMultipleFiles: true,
   },
 ];
 
-/** Czy rozszerzenie pliku należy do któregokolwiek parsera combined. */
-export function isCombinedExtension(fileName: string): boolean {
-  const lower = fileName.toLowerCase();
-  return COMBINED_PARSER_REGISTRY.some((p) => p.extensions.some((ext) => lower.endsWith(ext)));
-}
-
-export async function detectCombinedBroker(
-  buffer: Buffer,
-  fileName?: string,
-): Promise<CombinedBrokerParser | null> {
-  const lower = fileName?.toLowerCase();
-  for (const parser of COMBINED_PARSER_REGISTRY) {
-    // Rozszerzenie zawęża detekcję (XLSX nie jest parsowalne jako HTML i odwrotnie)
-    if (lower && !parser.extensions.some((ext) => lower.endsWith(ext))) continue;
+export async function detectBinaryBroker(buffer: Buffer): Promise<BinaryBrokerParser | null> {
+  for (const parser of BINARY_PARSER_REGISTRY) {
     if (await parser.detect(buffer)) return parser;
   }
   return null;

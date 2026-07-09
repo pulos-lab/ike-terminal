@@ -44,7 +44,7 @@ import {
   inferBondNominal,
   SPIN_OFF_MAP,
 } from 'shared';
-import type { InstrumentCategory, OptionContract } from 'shared';
+import type { InstrumentCategory } from 'shared';
 
 // ============ Bond Helpers ============
 
@@ -70,25 +70,6 @@ function bondPriceMultiplier(
       1000;
   }
   return nominal / 100;
-}
-
-/**
- * Mnożnik ceny instrumentu: przelicza kurs notowania na wartość pozycji
- * (`wartość = qty × kurs × mnożnik`). Obligacje: nominal/100 (kurs w % nominału).
- * Opcje: mnożnik kontraktu z `option_contracts` (premia kwotowana per akcja,
- * standard US equity options = 100). Pozostałe: 1.
- */
-function instrumentPriceMultiplier(
-  category: InstrumentCategory | undefined,
-  ticker: string | undefined,
-  txs: Transaction[],
-  isin?: string,
-  optionContracts?: Map<string, OptionContract>,
-): number {
-  if (category === 'option') {
-    return (isin ? optionContracts?.get(isin)?.multiplier : undefined) ?? 100;
-  }
-  return bondPriceMultiplier(category, ticker, txs);
 }
 
 // ============ Split Helpers ============
@@ -289,10 +270,6 @@ interface PositionMetrics {
   avgBuyPrice: number; // in transaction currency
   totalCommission: number;
   buyLots: BuyLot[];
-  /** Otwarte loty krótkie (sprzedaż bez pokrycia — wystawione opcje). */
-  shortLots: BuyLot[];
-  /** Suma ilości w otwartych lotach krótkich (dodatnia). Pozycja netto-short: shares≈0, shortShares>0. */
-  shortShares: number;
   buyCurrency: string;
   /** Total cost basis in PLN (for cross-currency P/L) */
   costBasisPln: number;
@@ -364,7 +341,6 @@ export function computePositionMetrics(transactions: Transaction[]): PositionMet
   }
 
   const shares = buyLots.reduce((sum, lot) => sum + lot.quantity, 0);
-  const shortShares = shortLots.reduce((sum, lot) => sum + lot.quantity, 0);
   const totalCost = buyLots.reduce((sum, lot) => sum + lot.quantity * lot.price, 0);
   const avgBuyPrice = shares > 0 ? totalCost / shares : 0;
   const buyCurrency = buyLots.length > 0 ? buyLots[0].currency : 'PLN';
@@ -372,16 +348,7 @@ export function computePositionMetrics(transactions: Transaction[]): PositionMet
   // or needs FX conversion for USD/CAD buys — handled in computeOpenPositions)
   const costBasisPln = totalCost;
 
-  return {
-    shares,
-    shortShares,
-    avgBuyPrice,
-    totalCommission,
-    buyLots,
-    shortLots,
-    buyCurrency,
-    costBasisPln,
-  };
+  return { shares, avgBuyPrice, totalCommission, buyLots, buyCurrency, costBasisPln };
 }
 
 // ============ Open Positions ============
@@ -399,8 +366,6 @@ export async function computeOpenPositions(
      * dashboardu odpalał ~1 niecache'owany strzał do Yahoo per otwarta pozycja.
      */
     skipSplitDetection?: boolean;
-    /** Metadane kontraktów opcyjnych (mnożnik, expiry) — z getOptionContractsMap(pid). */
-    optionContracts?: Map<string, OptionContract>;
   },
   spinOffs: AppliedSpinOff[] = [],
 ): Promise<{ positions: Position[]; totalValuePln: number; detectedSplits: DetectedSplit[] }> {
@@ -497,15 +462,7 @@ export async function computeOpenPositions(
 
   for (const [isin, txs] of byIsin) {
     const metrics = computePositionMetrics(txs);
-    // Pozycja netto-short (wystawione opcje: sprzedaż bez pokrycia, jeszcze nie odkupione/
-    // wygasłe): shares≈0, shortShares>0. Prezentujemy ją z ujemną ilością i ujemną wartością
-    // (zobowiązanie odkupu); kosztem bazowym jest otrzymana premia (ujemny costBasis).
-    const isShort = metrics.shares < EPSILON && metrics.shortShares > EPSILON;
-    if (metrics.shares < EPSILON && !isShort) continue;
-    const effLots = isShort ? metrics.shortLots : metrics.buyLots;
-    const effShares = isShort ? -metrics.shortShares : metrics.shares;
-    const optionContract =
-      txs[0]?.category === 'option' ? opts?.optionContracts?.get(isin) : undefined;
+    if (metrics.shares < EPSILON) continue;
 
     const entry = tickerMap.get(isin);
     if (!entry) {
@@ -527,38 +484,27 @@ export async function computeOpenPositions(
       const fxNativeToPln = fxRates[fxKey] || 1;
       const category = txs[0]?.category || 'stock';
       // Obligacje: kurs w % nominału — wartości w walucie przez mnożnik nominal/100;
-      // opcje: mnożnik kontraktu (premia per akcja). avgBuyPrice/currentPrice zostają
-      // w skali notowania.
-      const instMult = instrumentPriceMultiplier(
-        category,
-        fallbackEntry.ticker,
-        txs,
-        isin,
-        opts?.optionContracts,
-      );
-      const currentValueNative = effShares * fallbackPrice * instMult;
+      // avgBuyPrice/currentPrice zostają w % (spójna skala z kwotowaniem Catalyst).
+      const bondMult = bondPriceMultiplier(category, fallbackEntry.ticker, txs);
+      const currentValueNative = metrics.shares * fallbackPrice * bondMult;
       const currentValuePln = currentValueNative * fxNativeToPln;
       let costBasisPln = 0;
-      for (const lot of effLots) {
+      for (const lot of metrics.buyLots) {
         const lotFx = fxRates[lot.currency] || 1;
-        costBasisPln += lot.quantity * lot.price * instMult * lotFx;
+        costBasisPln += lot.quantity * lot.price * bondMult * lotFx;
       }
-      if (isShort) costBasisPln = -costBasisPln; // otrzymana premia = ujemny koszt bazowy
       const profitLossPln = currentValuePln - costBasisPln;
-      const profitLossPct =
-        Math.abs(costBasisPln) > 0 ? (profitLossPln / Math.abs(costBasisPln)) * 100 : 0;
+      const profitLossPct = costBasisPln > 0 ? (profitLossPln / costBasisPln) * 100 : 0;
       const avgBuyPriceNative =
-        Math.abs(effShares) > 0
-          ? Math.abs(costBasisPln) / instMult / fxNativeToPln / Math.abs(effShares)
-          : 0;
-      const costBasisNative = effShares * avgBuyPriceNative * instMult;
+        metrics.shares > 0 ? costBasisPln / bondMult / fxNativeToPln / metrics.shares : 0;
+      const costBasisNative = metrics.shares * avgBuyPriceNative * bondMult;
       const profitLossNative = currentValueNative - costBasisNative;
       totalValuePln += currentValuePln;
       positions.push({
         paperName: fallbackEntry.name,
         isin,
         ticker: fallbackEntry.ticker,
-        shares: effShares,
+        shares: metrics.shares,
         avgBuyPrice: avgBuyPriceNative,
         totalCommission: metrics.totalCommission,
         currentPrice: fallbackPrice,
@@ -573,19 +519,7 @@ export async function computeOpenPositions(
         dailyChangePct: null,
         category,
         priceManual: true,
-        optionMeta: optionContract
-          ? {
-              underlying: optionContract.underlying,
-              expiry: optionContract.expiry,
-              strike: optionContract.strike,
-              optionType: optionContract.optionType,
-              multiplier: optionContract.multiplier,
-            }
-          : undefined,
-        expiryPassed: optionContract
-          ? optionContract.expiry < new Date().toISOString().slice(0, 10)
-          : undefined,
-        buyLots: effLots.map((lot) => ({
+        buyLots: metrics.buyLots.map((lot) => ({
           date: lot.date,
           quantity: lot.quantity,
           price: lot.price,
@@ -636,15 +570,8 @@ export async function computeOpenPositions(
     // Determine category from the first transaction
     const category = txs[0]?.category || 'stock';
     // Obligacje: kurs w % nominału — wartości w walucie przez mnożnik nominal/100;
-    // opcje: mnożnik kontraktu (premia per akcja). avgBuyPrice/currentPrice zostają
-    // w skali notowania (spójna z kwotowaniem Catalyst/Stooq/OPRA).
-    const instMult = instrumentPriceMultiplier(
-      category,
-      entry.ticker,
-      txs,
-      isin,
-      opts?.optionContracts,
-    );
+    // avgBuyPrice/currentPrice zostają w % (spójna skala z kwotowaniem Catalyst/Stooq).
+    const bondMult = bondPriceMultiplier(category, entry.ticker, txs);
     // Obligacja po terminie wykupu a pozycja otwarta → najpewniej brakuje operacji
     // wykupu w plikach (pozycja "wisi" po ostatnim kursie). UI pokaże ostrzeżenie.
     const maturityPassed =
@@ -655,33 +582,28 @@ export async function computeOpenPositions(
           })()
         : undefined;
 
-    const currentValueNative = effShares * priceInNative * instMult;
+    const currentValueNative = metrics.shares * priceInNative * bondMult;
     const currentValuePln = currentValueNative * fxNativeToPln;
 
     // Cost basis in PLN: convert each buy lot individually using its own currency.
     // This correctly handles mixed-currency purchases (e.g. NVO bought in PLN and USD).
-    // Dla pozycji short: loty otwarcia to sprzedaże — otrzymana premia = ujemny koszt bazowy.
     let costBasisPln = 0;
-    for (const lot of effLots) {
+    for (const lot of metrics.buyLots) {
       const lotFx = fxRates[lot.currency] || 1;
-      costBasisPln += lot.quantity * lot.price * instMult * lotFx;
+      costBasisPln += lot.quantity * lot.price * bondMult * lotFx;
     }
-    if (isShort) costBasisPln = -costBasisPln;
 
     // P/L in PLN (the account currency)
     const profitLossPln = currentValuePln - costBasisPln;
-    const profitLossPct =
-      Math.abs(costBasisPln) > 0 ? (profitLossPln / Math.abs(costBasisPln)) * 100 : 0;
+    const profitLossPct = costBasisPln > 0 ? (profitLossPln / costBasisPln) * 100 : 0;
 
     // For display: avgBuyPrice in the paper's native currency
     // Derived from PLN cost basis to correctly handle mixed-currency lots
     const avgBuyPriceNative =
-      Math.abs(effShares) > 0
-        ? Math.abs(costBasisPln) / instMult / fxNativeToPln / Math.abs(effShares)
-        : 0;
+      metrics.shares > 0 ? costBasisPln / bondMult / fxNativeToPln / metrics.shares : 0;
 
     // P/L in native currency (for display alongside position's currency)
-    const costBasisNative = effShares * avgBuyPriceNative * instMult;
+    const costBasisNative = metrics.shares * avgBuyPriceNative * bondMult;
     const profitLossNative = currentValueNative - costBasisNative;
 
     totalValuePln += currentValuePln;
@@ -690,7 +612,7 @@ export async function computeOpenPositions(
       paperName: entry.name,
       isin,
       ticker: entry.ticker,
-      shares: effShares,
+      shares: metrics.shares,
       avgBuyPrice: avgBuyPriceNative,
       totalCommission: metrics.totalCommission,
       currentPrice: priceInNative,
@@ -708,19 +630,7 @@ export async function computeOpenPositions(
       category,
       priceManual: priceManual || undefined,
       maturityPassed,
-      optionMeta: optionContract
-        ? {
-            underlying: optionContract.underlying,
-            expiry: optionContract.expiry,
-            strike: optionContract.strike,
-            optionType: optionContract.optionType,
-            multiplier: optionContract.multiplier,
-          }
-        : undefined,
-      expiryPassed: optionContract
-        ? optionContract.expiry < new Date().toISOString().slice(0, 10)
-        : undefined,
-      buyLots: effLots.map((lot) => {
+      buyLots: metrics.buyLots.map((lot) => {
         // Convert lot price to the paper's native currency for consistent display
         const lotFx = fxRates[lot.currency] || 1;
         const priceInNativeCurrency =
@@ -762,7 +672,6 @@ export function computeClosedTrades(
   operations?: CashOperation[],
   splits: DetectedSplit[] = [],
   spinOffs: AppliedSpinOff[] = [],
-  optionContracts?: Map<string, OptionContract>,
 ): ClosedTrade[] {
   // Adjust transactions for stock splits (quantity/price correction),
   // then apply spin-offs — sprzedaż dziecka musi FIFO-wać z wstrzykniętym kosztem
@@ -817,14 +726,7 @@ export function computeClosedTrades(
     }> = [];
     const entry = tickerMap.get(isin);
     // Obligacje: kursy w % nominału — P/L w walucie wymaga mnożnika nominal/100.
-    // Opcje: mnożnik kontraktu (premia per akcja, standard 100).
-    const bondMult = instrumentPriceMultiplier(
-      txs[0]?.category,
-      entry?.ticker ?? txs[0]?.paperName,
-      txs,
-      isin,
-      optionContracts,
-    );
+    const bondMult = bondPriceMultiplier(txs[0]?.category, entry?.ticker ?? txs[0]?.paperName, txs);
     // Round-trip (epizod) — licznik rośnie za każdym razem, gdy otwieramy pozycję od zera.
     let episodeSeq = 0;
 
@@ -1552,7 +1454,6 @@ export async function computePortfolioHistory(
    *  w USD, bez FX noise z wahań USD/PLN. */
   baseCurrency: string = 'PLN',
   spinOffs: AppliedSpinOff[] = [],
-  optionContracts?: Map<string, OptionContract>,
 ): Promise<{
   history: PortfolioHistoryPoint[];
   metrics: PortfolioMetrics;
@@ -1938,13 +1839,11 @@ export async function computePortfolioHistory(
 
   // Obligacje: kursy (tx i Stooq) w % nominału — mnożnik nominal/100 policzony raz
   // per ISIN przed pętlą dni (wycena dzienna = shares × price × mnożnik × fx).
-  // Opcje: mnożnik kontraktu (shares bywa ujemne dla shortów — wycena dzienna
-  // naturalnie daje wtedy ujemną wartość zobowiązania).
   const bondMultByIsin = new Map<string, number>();
   {
     const txsByIsin = new Map<string, Transaction[]>();
     for (const tx of adjustedTxs) {
-      if (tx.category !== 'bond' && tx.category !== 'option') continue;
+      if (tx.category !== 'bond') continue;
       const arr = txsByIsin.get(tx.isin) || [];
       arr.push(tx);
       txsByIsin.set(tx.isin, arr);
@@ -1953,13 +1852,7 @@ export async function computePortfolioHistory(
       const entry = tickerMap.get(isin);
       bondMultByIsin.set(
         isin,
-        instrumentPriceMultiplier(
-          txs[0]?.category,
-          entry?.ticker ?? txs[0]?.paperName,
-          txs,
-          isin,
-          optionContracts,
-        ),
+        bondPriceMultiplier('bond', entry?.ticker ?? txs[0]?.paperName, txs),
       );
     }
   }
