@@ -23,9 +23,9 @@ const GREEK_HELP: Record<string, string> = {
     'Delta (Δ) — kierunkowa ekspozycja w ekwiwalencie akcji bazowych. −100 ≈ jakbyś był short 100 akcji.',
   gamma: 'Gamma (Γ) — jak szybko delta zmienia się przy ruchu kursu bazowego o 1.',
   theta:
-    'Theta (Θ) — ile zł zyskujesz/tracisz dziennie na upływie czasu (dla długich opcji ujemna).',
-  vega: 'Vega — ile zł zyskujesz/tracisz na wzrost zmienności implikowanej o 1 pp.',
-  rho: 'Rho — ile zł zyskujesz/tracisz na wzrost stopy wolnej od ryzyka o 1 pp.',
+    'Theta (Θ) — ile zyskujesz/tracisz dziennie na upływie czasu, w walucie opcji (długie opcje tracą).',
+  vega: 'Vega — ile zyskujesz/tracisz na wzrost zmienności implikowanej o 1 pp, w walucie opcji.',
+  rho: 'Rho — ile zyskujesz/tracisz na wzrost stopy wolnej od ryzyka o 1 pp, w walucie opcji.',
 };
 
 function signColor(v: number): string {
