@@ -230,6 +230,18 @@ export function mapIbkrStatement(
   };
 }
 
+/**
+ * Przypisanie (kod 'A') / wykonanie (kod 'Ex') opcji — akcje księgowane po cenie wykonania
+ * (strike), nie po rynku. Kod występuje na obu nogach (opcyjnej `A;C` i akcyjnej `A;O`),
+ * więc oznaczamy oba wiersze. Wpływa na wycenę (nie nadpisujemy kursu rynkowego strike'iem)
+ * i UI (badge). Zwraca undefined dla zwykłych transakcji.
+ */
+function optionEventFromCodes(codes: string[]): 'assignment' | 'exercise' | undefined {
+  if (codes.includes('A')) return 'assignment';
+  if (codes.includes('Ex')) return 'exercise';
+  return undefined;
+}
+
 function mapStockTrade(
   trade: IbkrTrade,
   stockBySymbol: Map<string, IbkrStatement['stockInstruments'][number]>,
@@ -258,6 +270,7 @@ function mapStockTrade(
     paymentCurrency: trade.currency,
     category: instrument?.type === 'ETF' ? 'etf' : 'stock',
     source: 'ibkr',
+    optionEvent: optionEventFromCodes(trade.codes),
   };
 }
 
@@ -285,6 +298,7 @@ function mapOptionTrade(trade: IbkrTrade, warnings: string[]): Transaction | nul
     paymentCurrency: trade.currency,
     category: 'option',
     source: 'ibkr',
+    optionEvent: optionEventFromCodes(trade.codes),
   };
 }
 

@@ -91,6 +91,24 @@ function SyntheticOriginTooltip({ origin }: { origin: string }) {
   );
 }
 
+/** Badge dla transakcji z przypisania/wykonania opcji — akcje po cenie strike, nie po rynku. */
+function OptionEventBadge({ event }: { event: 'assignment' | 'exercise' }) {
+  const label = event === 'assignment' ? 'przypisanie' : 'wykonanie';
+  return (
+    <Tooltip delayDuration={150}>
+      <TooltipTrigger asChild>
+        <span className="ml-1 inline-flex items-center rounded bg-violet-500/15 px-1 py-0 text-[10px] font-semibold text-violet-400 cursor-help shrink-0">
+          {label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs text-xs">
+        Akcje objęte z {label === 'przypisanie' ? 'przypisania' : 'wykonania'} opcji — po cenie
+        wykonania (strike), nie po kursie rynkowym.
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 interface EditForm {
   date: string;
   side: 'K' | 'S';
@@ -481,6 +499,7 @@ export const TradesFeed = memo(function TradesFeed() {
                   <div className="flex items-center gap-1.5 mb-0.5">
                     <TickerLabel ticker={tx.ticker} className="font-mono font-semibold text-sm" />
                     {tx.syntheticOrigin && <SyntheticOriginTooltip origin={tx.syntheticOrigin} />}
+                    {tx.optionEvent && <OptionEventBadge event={tx.optionEvent} />}
                     {autoFx ? (
                       <Tooltip delayDuration={150}>
                         <TooltipTrigger asChild>
@@ -784,6 +803,7 @@ const NormalRow = memo(function NormalRow({ tx, onEdit, onDelete }: NormalRowPro
         <span className="inline-flex items-center gap-1">
           <TickerLabel ticker={tx.ticker} />
           {tx.syntheticOrigin && <SyntheticOriginTooltip origin={tx.syntheticOrigin} />}
+          {tx.optionEvent && <OptionEventBadge event={tx.optionEvent} />}
         </span>
       </td>
       <td className="py-2.5 pr-4">

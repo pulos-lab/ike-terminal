@@ -16,6 +16,7 @@
     "fix:tickers": "tsx src/scripts/fix-tickers.ts",
     "audit:tickers": "tsx src/scripts/audit-ticker-map.ts",
     "diagnose:isin": "tsx src/scripts/diagnose-isin.ts",
+    "backfill:assignments": "tsx src/scripts/backfill-assignments.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
