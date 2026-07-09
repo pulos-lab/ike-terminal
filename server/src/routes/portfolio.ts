@@ -81,6 +81,7 @@ import {
   loadSplitsForEngine,
   loadSpinOffsForEngine,
 } from '../services/portfolio-views.js';
+import { computePortfolioGreeks } from '../services/option-greeks.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { searchTickers, fetchYahooTickerName } from '../services/ticker-search.js';
 import { scanDividends } from '../services/dividend-scanner.js';
@@ -97,6 +98,14 @@ router.get(
   '/positions',
   asyncHandler(async (req, res) => {
     res.json(await buildPositionsView(req.portfolioId));
+  }),
+);
+
+// GET /api/portfolio/positions/greeks — greeki opcji (Black-Scholes), liczone na żądanie
+router.get(
+  '/positions/greeks',
+  asyncHandler(async (req, res) => {
+    res.json(await computePortfolioGreeks(req.portfolioId));
   }),
 );
 
