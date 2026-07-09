@@ -391,8 +391,9 @@ export function parseBossaOperations(
     // Warunek isBondInstrument odróżnia od odsetek od salda gotówki ("Odsetki od środków...")
     // — te spadają niżej do classifyOperation → unknown/other jak dotychczas.
     const couponMatch =
-      title.match(/^(?:Wypłata\s+)?[Oo]dset(?:ek|ki)(?:\s+od\s+obligacji)?\s+(\S+)/) ||
-      title.match(/^Wypłata kuponu\s+(\S+)/i);
+      title.match(
+        /^(?:Wypłata\s+)?[Oo]dset(?:ek|ki)(?:\s+(?:od\s+obligacji|z\s+tytułu\s+obligacji))?\s+(\S+)/,
+      ) || title.match(/^Wypłata kuponu\s+(\S+)/i);
     if (couponMatch && isBondInstrument(couponMatch[1])) {
       operations.push({
         date: `${dateStr}T00:00:00`,
@@ -590,7 +591,8 @@ function classifyOperation(title: string): OperationType | 'skip' | 'unknown' {
   // w kolumnie `prowizja` z hisPW, a zwrot to niezależne cash-eventy (często z anulowanych zleceń).
   // Dashboard XIRR liczy cashflow z wpłat/wypłat, więc zwrot jako `commission_refund`
   // nie zniekształca metryk. Parowanie heurystyczne miałoby duże ryzyko false-positive.
-  if (title.includes('Zapisy na akcje')) return 'withdrawal';
+  if (title.includes('Zapisy na akcje') || title.includes('Zapisy na obligacje'))
+    return 'withdrawal';
   if (title.includes('Zwrot nadpłaty') || title.includes('Zwrot nadp\u0142aty')) return 'deposit'; // caller może zmienić na withdrawal wg znaku
   // UWAGA: "Obniżenie wartości nominalnej" i "Wykup PW - wyrównanie" NIE przechodzą już przez
   // tę funkcję — są przechwytywane w głównej pętli jako CapitalReturnMarker.
