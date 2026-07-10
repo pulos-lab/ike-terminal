@@ -20,6 +20,7 @@ import { FeedbackBlock, type FeedbackMessage } from './FeedbackBlock';
 import { SKIP_REASON_LABELS } from '@/lib/import-labels';
 import {
   BROKER_IMPORT_CONFIG,
+  BROKER_TAB_LABELS,
   BROKER_TILES,
   GENERIC_TILE_LABEL,
   isKnownBroker,
@@ -31,21 +32,14 @@ type ImportTab = 'all' | KnownBroker | 'generic';
 
 const TAB_LABELS: Record<ImportTab, string> = {
   all: 'Wszystkie',
-  bossa: 'Bossa',
-  mbank: 'mBank',
-  degiro: 'DEGIRO',
-  xtb: 'XTB',
-  ibkr: 'IBKR',
+  ...BROKER_TAB_LABELS,
   generic: 'Uniwersalny',
 };
 
-const TAB_SOURCE_MAP: Partial<Record<ImportTab, RecordSource>> = {
-  bossa: 'bossa',
-  mbank: 'mbank',
-  degiro: 'degiro',
-  xtb: 'xtb',
-  ibkr: 'ibkr',
-};
+const TAB_SOURCE_MAP: Partial<Record<ImportTab, RecordSource>> =
+  Object.fromEntries(
+    (Object.keys(BROKER_TAB_LABELS) as KnownBroker[]).map((k) => [k, k as RecordSource]),
+  );
 
 function TabButton({
   active,

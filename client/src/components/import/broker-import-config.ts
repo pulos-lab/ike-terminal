@@ -37,6 +37,15 @@ export interface BrokerImportConfig {
   formatNote?: string;
 }
 
+/** Etykiety zakładek — jedno źródło prawdy dla paska zakładek i filtrowania batchy. */
+export const BROKER_TAB_LABELS: Record<KnownBroker, string> = {
+  bossa: 'Bossa',
+  mbank: 'mBank',
+  degiro: 'DEGIRO',
+  xtb: 'XTB',
+  ibkr: 'IBKR',
+};
+
 /** Kolejność i podpis kafelków na ekranie wyboru. */
 export const BROKER_TILES: Array<{ id: KnownBroker | 'generic'; tagline: string }> = [
   { id: 'bossa', tagline: '2 pliki CSV (transakcje + operacje)' },
