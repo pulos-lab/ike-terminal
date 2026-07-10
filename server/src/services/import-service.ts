@@ -24,10 +24,11 @@ import type {
   ImportResult,
   RedemptionMarker,
   IpoSubscriptionMarker,
+  BondAllocationMarker,
   CapitalReturnMarker,
   ParseResult,
 } from 'shared';
-import { findBondByTicker, inferBondNominal } from 'shared';
+import { findBondByTicker, findBondByName, inferBondNominal } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
 import {
   detectBroker,
@@ -308,6 +309,17 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     // 3a''. IPO subscriptions → synthetic K (znana cena emisyjna z mapy)
     if (parsedOps?.ipoSubscriptions?.length) {
       const r = reconcileBossaIpos(parsedOps.ipoSubscriptions, pid, importBatch, crossFileWarnings);
+      syntheticSells += r;
+    }
+
+    // 3a''''. Bond subscriptions → synthetic K (subskrypcja obligacji)
+    if (parsedOps?.bondAllocations?.length) {
+      const r = reconcileBossaBondSubscriptions(
+        parsedOps.bondAllocations,
+        pid,
+        importBatch,
+        crossFileWarnings,
+      );
       syntheticSells += r;
     }
 
@@ -796,6 +808,74 @@ function reconcileBossaIpos(
     // Celowo NIE wpisujemy stuba do ticker_map — papier subskrybowany z IPO to normalna spółka
     // notowana na GPW/NewConnect, więc resolver znajdzie ją pod prawdziwym Yahoo tickerem
     // (np. BIOCELTIX → BCL.WA). Inaczej stub "BIOCELTIX" zablokowałby live price lookup.
+  }
+
+  return added;
+}
+
+/**
+ * Subskrypcja obligacji (Zapisy na obligacje + Zwrot nadpłaty) → syntetyczna K.
+ * Qty = round((subscriptionAmount - refundAmount) / nominal).
+ * Gdy bond-map nie rozpozna emitenta (ticker/isin/nominal optional) → pomija z warningiem.
+ */
+function reconcileBossaBondSubscriptions(
+  bonds: BondAllocationMarker[],
+  pid: string,
+  importBatch: string,
+  warnings: string[],
+): number {
+  if (bonds.length === 0) return 0;
+  let added = 0;
+
+  for (const bond of bonds) {
+    const label = bond.ticker ?? bond.csvIssuerName;
+    const nettoCost = bond.subscriptionAmount - bond.refundAmount;
+    if (nettoCost <= 0) {
+      warnings.push(
+        `Bossa: subskrypcja obligacji ${label} — koszt netto ${nettoCost.toFixed(2)} ${bond.currency} jest ≤ 0 (pełny zwrot?); pomijam.`,
+      );
+      continue;
+    }
+
+    if (!bond.nominal || !bond.ticker || !bond.isin) {
+      warnings.push(
+        `Bossa: subskrypcja obligacji ${label} — nie rozpoznano emitenta w bond-map ` +
+          `(możliwe kilka serii). Dodaj pozycję obligacji ręcznie w panelu Transakcje. ` +
+          `Kwota netto: ${nettoCost.toFixed(2)} ${bond.currency}, nominał: ${bond.nominal ?? '??'} PLN.`,
+      );
+      continue;
+    }
+
+    const qty = Math.round(nettoCost / bond.nominal);
+    if (qty <= 0) {
+      warnings.push(
+        `Bossa: subskrypcja obligacji ${label} — wyliczona liczba szt ≤ 0 (netto ${nettoCost}, nominał ${bond.nominal}); pomijam.`,
+      );
+      continue;
+    }
+
+    const originTag = `Subskrypcja obligacji ${label} — ${qty} szt @ ${bond.nominal} PLN (nominał z bond-map)`;
+
+    const syntheticBuy: Transaction = {
+      date: `${bond.allocationDate}T00:00:00`,
+      paperName: bond.ticker,
+      isin: bond.isin,
+      quantity: qty,
+      side: 'K',
+      price: bond.nominal,
+      value: nettoCost,
+      commission: 0,
+      total: nettoCost,
+      currency: bond.currency,
+      paymentCurrency: 'PLN',
+      source: 'bossa',
+      importBatch,
+      syntheticOrigin: originTag,
+      category: 'bond',
+    };
+
+    const r = insertTransactionsWithDedup([syntheticBuy], pid);
+    added += r.inserted;
   }
 
   return added;
