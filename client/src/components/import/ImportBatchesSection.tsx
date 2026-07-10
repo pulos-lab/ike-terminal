@@ -13,6 +13,7 @@ export function ImportBatchesSection({ sourceFilter }: { sourceFilter?: RecordSo
   const queryClient = useQueryClient();
   const [resultMsg, setResultMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [expandedBatch, setExpandedBatch] = useState<string | null>(null);
+  const [aggregateExpanded, setAggregateExpanded] = useState<Set<string>>(new Set());
 
   const { data } = useQuery({
     queryKey: ['import-batches'],
@@ -141,21 +142,56 @@ export function ImportBatchesSection({ sourceFilter }: { sourceFilter?: RecordSo
                   </div>
 
                   {/* Info messages */}
-                  {b.info && b.info.length > 0 && (
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                        <Info className="h-3 w-3 text-info" />
-                        Informacje ({b.info.length})
-                      </p>
-                      <ul className="space-y-0.5">
-                        {b.info.map((msg, i) => (
-                          <li key={i} className="text-[11px] text-info bg-info/5 border border-info/20 rounded px-2 py-1">
-                            {msg}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+                  {b.info && b.info.length > 0 && (() => {
+                    const aggIdx = b.info.findIndex((m) => m.startsWith('Utworzono'));
+                    const hasAgg = aggIdx >= 0;
+                    const details = hasAgg ? b.info.filter((_, i) => i !== aggIdx) : b.info;
+                    const isOpen = aggregateExpanded.has(b.importBatch);
+                    return (
+                      <div className="space-y-1">
+                        <ul className="space-y-0.5">
+                          {!hasAgg ? (
+                            details.map((msg, i) => (
+                              <li key={i} className="text-[11px] text-info bg-info/5 border border-info/20 rounded px-2 py-1">
+                                {msg}
+                              </li>
+                            ))
+                          ) : (
+                            <>
+                              <li>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = new Set(aggregateExpanded);
+                                    if (isOpen) next.delete(b.importBatch);
+                                    else next.add(b.importBatch);
+                                    setAggregateExpanded(next);
+                                  }}
+                                  className="w-full flex items-center gap-1.5 text-[11px] text-info bg-info/5 border border-info/20 rounded px-2 py-1 hover:bg-info/10 transition-colors text-left"
+                                >
+                                  {isOpen ? (
+                                    <ChevronDown className="h-3 w-3 shrink-0" />
+                                  ) : (
+                                    <ChevronRight className="h-3 w-3 shrink-0" />
+                                  )}
+                                  {b.info[aggIdx]}
+                                </button>
+                              </li>
+                              {isOpen && (
+                                <div className="ml-3 space-y-0.5">
+                                  {details.map((msg, i) => (
+                                    <div key={i} className="text-[11px] text-info/80 border-l-2 border-info/20 pl-2 py-0.5">
+                                      {msg}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </ul>
+                      </div>
+                    );
+                  })()}
 
                   {/* Warnings */}
                   {b.warnings.length > 0 && (
