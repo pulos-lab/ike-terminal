@@ -53,15 +53,19 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   const totalReturn = chainLinkPct(last.returnPct, first.returnPct);
   const benchmarkReturn = chainLinkPct(last.benchmarkReturnPct, first.benchmarkReturnPct);
 
-  // Daily returns from portfolio values, adjusted for cash flows (deposits)
-  // On deposit days, portfolioValue jumps by the deposit amount — that's not
-  // market return. We subtract the cash flow: (V_t - V_{t-1} - CF_t) / V_{t-1}
+  // Dzienne zwroty z indeksu TWR — ten sam powód co przy Max Drawdown niżej.
+  // Poprzednia formuła (V_t − V_{t−1} − CF)/V_{t−1} dzieliła przez wartość NETTO
+  // portfela: dla rachunków opcyjno-marginowych (IBKR) equity bywa bliskie zera
+  // lub ujemne i "najlepszy dzień" wychodził +4000%, a volatility/Sharpe/Sortino/
+  // win rate dziedziczyły ten sam śmieciowy mianownik. Silnik liczy TWR odpornie
+  // (sub-okresy przy equity <5% szczytu są zamrażane), więc iloraz indeksu daje
+  // sensowny dzienny zwrot także tam, gdzie surowa wartość eksploduje.
   const dailyReturns: number[] = [];
   for (let i = 1; i < data.length; i++) {
-    const prevValue = data[i - 1].portfolioValue;
-    if (prevValue > 0) {
-      const cashFlow = data[i].investedCumulative - data[i - 1].investedCumulative;
-      dailyReturns.push((data[i].portfolioValue - prevValue - cashFlow) / prevValue);
+    const prevIndex = 1 + data[i - 1].twrPct / 100;
+    const curIndex = 1 + data[i].twrPct / 100;
+    if (prevIndex > 0) {
+      dailyReturns.push(curIndex / prevIndex - 1);
     }
   }
 

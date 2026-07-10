@@ -215,23 +215,23 @@ function virtualCategory(c: {
 
 const COST_CATEGORY_META: Record<
   CostVirtualCategory,
-  { label: string; color: string; tooltip: string }
+  { label: string; dot: string; tooltip: string }
 > = {
   fee: {
     label: 'Opłata',
-    color: 'bg-loss/15 text-loss border-loss/30',
+    dot: 'bg-loss',
     tooltip:
       'Opłaty brokerskie i giełdowe (prowizje za wnioski, blokady na oferty skupu, exchange fees).',
   },
   commission_refund: {
     label: 'Zwrot prowizji',
-    color: 'bg-gain/10 text-gain border-gain/30',
+    dot: 'bg-gain',
     tooltip:
       'Zwrot prowizji — broker oddaje prowizję z anulowanego/niespełnionego zlecenia. Dodatnia kwota oznacza wpływ na konto.',
   },
   trade_fee: {
     label: 'Podatek tx / swap',
-    color: 'bg-amber-500/10 text-amber-500 border-amber-500/30',
+    dot: 'bg-amber-500',
     tooltip:
       'Tax IFTT (włoski podatek od transakcji na akcjach/ETF) oraz rzadkie swap/rollover poza CFD. ' +
       'Swap i rollover dla CFD są wliczone bezpośrednio w prowizję transakcji (pola Transaction.swap/rollover) ' +
@@ -239,53 +239,53 @@ const COST_CATEGORY_META: Record<
   },
   interest: {
     label: 'Odsetki',
-    color: 'bg-gain/10 text-gain border-gain/30',
+    dot: 'bg-gain',
     tooltip:
       'Odsetki od wolnych środków na rachunku brokerskim (np. XTB Free funds interest) lub od lokaty overnight. ' +
       'Dodatni cashflow, ale nie dywidenda spółki — nie wlicza się do totalDividends. Wchodzi do salda gotówki.',
   },
   other: {
     label: 'Inne',
-    color: 'bg-muted text-muted-foreground border-border',
+    dot: 'bg-muted-foreground/50',
     tooltip:
       'Niesklasyfikowane operacje (np. rights issue, różne). Wchodzą do salda gotówki, ale nie do MWR jako wpłaty.',
   },
   margin_interest: {
     label: 'Odsetki margin',
-    color: 'bg-loss/15 text-loss border-loss/30',
+    dot: 'bg-loss',
     tooltip:
       'Odsetki od kredytu brokerskiego (margin loan) — koszt utrzymywania ujemnego salda gotówki. ' +
       'Naliczane miesięcznie per waluta debetu.',
   },
   borrow_fee: {
     label: 'Pożyczenie akcji (short)',
-    color: 'bg-loss/15 text-loss border-loss/30',
+    dot: 'bg-loss',
     tooltip:
       'Koszt pożyczenia akcji pod krótką pozycję (stock borrow fees). Naliczany za okres utrzymywania shorta.',
   },
   market_data: {
     label: 'Dane rynkowe',
-    color: 'bg-amber-500/10 text-amber-500 border-amber-500/30',
+    dot: 'bg-amber-500',
     tooltip:
       'Subskrypcje danych giełdowych live (NYSE Level I, NASDAQ, OPRA, snapshoty). Opłaty miesięczne brokera.',
   },
   fx_commission: {
     label: 'Prowizje FX',
-    color: 'bg-amber-500/10 text-amber-500 border-amber-500/30',
+    dot: 'bg-amber-500',
     tooltip:
       'Prowizje za przewalutowania (np. IdealFX w IBKR). Same przewalutowania są w zakładce Waluty — ' +
       'tutaj tylko ich koszt.',
   },
   sales_tax: {
     label: 'VAT od opłat',
-    color: 'bg-amber-500/10 text-amber-500 border-amber-500/30',
+    dot: 'bg-amber-500',
     tooltip:
       'Podatek VAT naliczany od prowizji i opłat brokera. W wyciągu IBKR dostępny wyłącznie jako ' +
       'suma roczna (Cash Report), stąd jedna operacja na rok per waluta.',
   },
   lending_income: {
     label: 'Pożyczanie akcji (SYEP)',
-    color: 'bg-gain/10 text-gain border-gain/30',
+    dot: 'bg-gain',
     tooltip:
       'Program pożyczania własnych akcji (Stock Yield Enhancement Program) — przychód za użyczenie ' +
       'papierów brokerowi (dodatni) lub powiązane opłaty (ujemne).',
@@ -318,14 +318,19 @@ function groupCosts(costs: AdditionalCost[]): CostGroup[] {
   return [...groups.values()].sort((a, b) => b.weight - a.weight);
 }
 
+/**
+ * Cicha etykieta kategorii: kropka koloru + tekst zamiast pełnokolorowej pigułki —
+ * kolor niesie znaczenie (koszt/wpływ/podatek), ale nie krzyczy z każdego wiersza.
+ */
 function CostCategoryBadge({ category }: { category: CostVirtualCategory }) {
   const meta = COST_CATEGORY_META[category];
   return (
     <UITooltip delayDuration={150}>
       <UITooltipTrigger asChild>
-        <Badge variant="outline" className={`${meta.color} cursor-help`}>
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground cursor-help whitespace-nowrap">
+          <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${meta.dot}`} />
           {meta.label}
-        </Badge>
+        </span>
       </UITooltipTrigger>
       <UITooltipContent className="max-w-xs">{meta.tooltip}</UITooltipContent>
     </UITooltip>
