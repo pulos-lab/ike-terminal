@@ -17,6 +17,10 @@ export function getDb(portfolioId: string = 'default'): Database.Database {
     db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
+    // Prod działa pod systemd ProtectSystem=strict (zapisywalny tylko katalog data/) —
+    // journal statementów przy dużych importach NIE może spillować do /tmp
+    // (SQLITE_IOERR_GETTEMPPATH przy imporcie kilkunastu plików naraz).
+    db.pragma('temp_store = MEMORY');
     initSchema(db);
     connections.set(portfolioId, db);
   }

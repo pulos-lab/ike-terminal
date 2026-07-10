@@ -32,6 +32,9 @@ export function getImportsDb(): Database.Database {
     }
     db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
+    // Jak w connection.ts: prod (systemd ProtectSystem=strict) nie ma zapisywalnego
+    // /tmp — pliki tymczasowe SQLite muszą zostać w pamięci.
+    db.pragma('temp_store = MEMORY');
     db.exec(`
       CREATE TABLE IF NOT EXISTS import_profiles (
         id TEXT PRIMARY KEY,
