@@ -16,6 +16,9 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/opt/ike-terminal/data
+# Prywatny, zapisywalny /tmp — bez niego ProtectSystem=strict odcina SQLite
+# od plików tymczasowych (SQLITE_IOERR_GETTEMPPATH przy dużych importach).
+PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target

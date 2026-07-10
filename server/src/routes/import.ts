@@ -20,6 +20,8 @@ const router = Router();
 router.use('/generic', importGenericRouter);
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+// IBKR eksportuje wyciągi per rok × konto — kilkanaście plików w jednej paczce to norma.
+const MAX_TX_FILES = 25;
 
 /** Błąd z fileFilter — rozpoznawany w error-middleware na końcu routera, mapowany na 400. */
 class UnsupportedFileTypeError extends Error {
@@ -79,7 +81,7 @@ router.post(
 router.post(
   '/bulk',
   upload.fields([
-    { name: 'transactions', maxCount: 10 },
+    { name: 'transactions', maxCount: MAX_TX_FILES },
     { name: 'operations', maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
@@ -146,6 +148,11 @@ router.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
     if (err.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({
         error: `Plik jest za duży — maksymalny rozmiar to ${MAX_FILE_SIZE / (1024 * 1024)} MB`,
+      });
+    }
+    if (err.code === 'LIMIT_UNEXPECTED_FILE' || err.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({
+        error: `Za dużo plików w jednej paczce — maksymalnie ${MAX_TX_FILES} plików transakcji. Podziel import na mniejsze paczki.`,
       });
     }
     return res.status(400).json({ error: `Błąd uploadu pliku: ${err.message}` });
