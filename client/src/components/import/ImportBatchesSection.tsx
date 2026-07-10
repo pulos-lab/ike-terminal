@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import {
-  Loader2, Undo2, CheckCircle, AlertCircle, AlertTriangle,
+  Loader2, Undo2, CheckCircle, AlertCircle, AlertTriangle, Info,
   ChevronDown, ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -122,7 +122,11 @@ export function ImportBatchesSection({ sourceFilter }: { sourceFilter?: RecordSo
                 <div className="border-t border-border px-3 py-3 space-y-3">
                   {/* Summary */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    <SummaryCard label="Transakcje" value={b.transactionsCount} />
+                    <SummaryCard
+                      label="Transakcje"
+                      value={b.transactionsCount}
+                      detail={b.syntheticTransactionsCount ? `w tym ${b.syntheticTransactionsCount} syntetycznych` : undefined}
+                    />
                     <SummaryCard label="Operacje" value={b.operationsCount} />
                     <SummaryCard
                       label="Pominięte"
@@ -135,6 +139,23 @@ export function ImportBatchesSection({ sourceFilter }: { sourceFilter?: RecordSo
                       warn={b.quarantineCount > 0}
                     />
                   </div>
+
+                  {/* Info messages */}
+                  {b.info && b.info.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <Info className="h-3 w-3 text-info" />
+                        Informacje ({b.info.length})
+                      </p>
+                      <ul className="space-y-0.5">
+                        {b.info.map((msg, i) => (
+                          <li key={i} className="text-[11px] text-info bg-info/5 border border-info/20 rounded px-2 py-1">
+                            {msg}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
 
                   {/* Warnings */}
                   {b.warnings.length > 0 && (
@@ -154,15 +175,15 @@ export function ImportBatchesSection({ sourceFilter }: { sourceFilter?: RecordSo
                   )}
 
                   {/* Skipped rows from stored result */}
-                  {result?.skipped && result.skipped.length > 0 && (
+                  {result?.skipped && result.skipped.filter(s => s.reason !== 'redemption_reconciled' && s.reason !== 'bond_subscription_consumed').length > 0 && (
                     <div className="space-y-1">
                       <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                        <AlertTriangle className="h-3 w-3 text-muted-foreground" />
-                        Pominięte wiersze ({result.skipped.length})
+                        <AlertTriangle className="h-3 w-3 text-warning" />
+                        Pominięte wiersze ({result.skipped.filter(s => s.reason !== 'redemption_reconciled' && s.reason !== 'bond_subscription_consumed').length})
                       </p>
                       <div className="max-h-48 overflow-y-auto space-y-0.5">
-                        {result.skipped.map((s, i) => (
-                          <div key={i} className="text-[11px] text-muted-foreground bg-muted/30 rounded px-2 py-1">
+                        {result.skipped.filter(s => s.reason !== 'redemption_reconciled' && s.reason !== 'bond_subscription_consumed').map((s, i) => (
+                          <div key={i} className="text-[11px] text-warning bg-warning/5 border border-warning/20 rounded px-2 py-1">
                             {s.paperName && <span className="font-medium">{s.paperName} </span>}
                             <span>(wiersz {s.row}) — {SKIP_REASON_LABELS[s.reason] || s.reason}</span>
                           </div>
@@ -233,15 +254,18 @@ function SummaryCard({
   label,
   value,
   warn,
+  detail,
 }: {
   label: string;
   value: number;
   warn?: boolean;
+  detail?: string;
 }) {
   return (
     <div className={`rounded border ${warn && value > 0 ? 'border-warning/30 bg-warning/5' : 'border-border/50 bg-muted/20'} px-2.5 py-1.5 text-center`}>
       <p className="text-lg font-semibold tabular-nums">{value}</p>
       <p className="text-[10px] text-muted-foreground">{label}</p>
+      {detail && <p className="text-[9px] text-muted-foreground/60 mt-0.5">{detail}</p>}
     </div>
   );
 }

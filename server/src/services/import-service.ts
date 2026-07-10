@@ -287,6 +287,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   const insertedOpsDuplicates: SkippedRow[] = [];
   let syntheticSells = 0;
   const crossFileWarnings: string[] = [...parserWarnings];
+  const infoMessages: string[] = [];
 
   const runAll = db.transaction(() => {
     // 1. Transakcje — insert PER PLIK: licznik w DB rośnie po każdym pliku,
@@ -333,6 +334,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
         pid,
         importBatch,
         crossFileWarnings,
+        infoMessages,
       );
       syntheticSells += r;
     }
@@ -450,6 +452,11 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     ...insertedTxDuplicates,
     ...insertedOpsDuplicates,
   ];
+  // Filtruj wiersze skonsumowane przez reconciliation (subskrypcje obligacji, wykupy, IPO)
+  // — nie są "pominięte", zostały celowo użyte do utworzenia syntetyków.
+  const userSkipped = allSkipped.filter(
+    (s) => s.reason !== 'bond_subscription_consumed' && s.reason !== 'redemption_reconciled',
+  );
   const duplicatesSkipped = insertedTxDuplicates.length + insertedOpsDuplicates.length;
 
   // Agregacja quarantine z wszystkich plików
@@ -468,16 +475,25 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
 
   const orphanedSells = detectOrphanedSells(pid);
 
+  // Ogólne komunikaty o syntetykach na podstawie zsumowanych liczników.
+  if (syntheticSells > 0) {
+    infoMessages.push(
+      `Utworzono ${syntheticSells} syntetycznych transakcji (wykupy, subskrypcje obligacji, IPO)`,
+    );
+  }
+
   upsertImportBatchMeta(pid, importBatch, {
     ...result,
     tickersResolved: resolved.length,
     tickersUnresolved: unresolvedVisible.map((u) => u.paperName),
-    skipped: allSkipped.length > 0 ? allSkipped : undefined,
+    skipped: userSkipped.length > 0 ? userSkipped : undefined,
     quarantineCount: allQuarantine.length > 0 ? allQuarantine.length : undefined,
     duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
     orphanedSells: orphanedSells,
     syntheticSells: syntheticSells > 0 ? syntheticSells : undefined,
+    syntheticTransactions: syntheticSells > 0 ? syntheticSells : undefined,
     crossFileWarnings: crossFileWarnings.length > 0 ? crossFileWarnings : undefined,
+    info: infoMessages.length > 0 ? infoMessages : undefined,
   });
 
   return {
@@ -485,12 +501,14 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     success: true,
     tickersResolved: resolved.length,
     tickersUnresolved: unresolvedVisible.map((u) => u.paperName),
-    skipped: allSkipped.length > 0 ? allSkipped : undefined,
+    skipped: userSkipped.length > 0 ? userSkipped : undefined,
     quarantine: allQuarantine.length > 0 ? allQuarantine : undefined,
     duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
     orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
     syntheticSells: syntheticSells > 0 ? syntheticSells : undefined,
+    syntheticTransactions: syntheticSells > 0 ? syntheticSells : undefined,
     crossFileWarnings: crossFileWarnings.length > 0 ? crossFileWarnings : undefined,
+    info: infoMessages.length > 0 ? infoMessages : undefined,
   };
 }
 
@@ -1031,6 +1049,7 @@ function reconcileBossaBondSubscriptions(
   pid: string,
   importBatch: string,
   warnings: string[],
+  info: string[],
 ): number {
   if (bonds.length === 0) return 0;
   let added = 0;
@@ -1084,6 +1103,11 @@ function reconcileBossaBondSubscriptions(
 
     const r = insertTransactionsWithDedup([syntheticBuy], pid);
     added += r.inserted;
+    info.push(
+      `Subskrypcja obligacji ${label} (${bond.csvIssuerName}): ` +
+        `pominięto ${bond.subscriptionAmount > 0 && bond.refundAmount > 0 ? 2 : 1} wiersz(e) w cash flow` +
+        ` → utworzono syntetyczne kupno ${qty} szt × ${bond.nominal} PLN = ${nettoCost.toFixed(2)} PLN`,
+    );
   }
 
   return added;

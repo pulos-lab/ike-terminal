@@ -406,7 +406,7 @@ export function parseBossaOperations(
 
     // 0b. Bond subscription / refund pair skonsumowane przez marker → skip obu wierszy.
     if (bondConsumedRows.has(rowNum)) {
-      skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
+      skipped.push({ row: rowNum, reason: 'bond_subscription_consumed', paperName: title });
       continue;
     }
 

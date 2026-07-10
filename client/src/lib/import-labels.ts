@@ -25,6 +25,7 @@ export const SKIP_REASON_LABELS: Record<SkipReason, string> = {
   unmatched_fx_credit: 'niesparowana wymiana walut',
   duplicate: 'duplikat (już zaimportowano)',
   redemption_reconciled: 'wykup/wezwanie (domknięte syntetyczną sprzedażą)',
+  bond_subscription_consumed: 'subskrypcja obligacji (syntetyczny kupno)',
   capital_return_reconciled: 'zwrot kapitału (widoczny w Zdarzeniach korporacyjnych)',
   unknown_operation_type: 'nierozpoznany typ operacji',
   unknown_type: 'nieznany typ operacji',

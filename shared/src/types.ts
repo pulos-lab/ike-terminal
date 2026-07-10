@@ -660,6 +660,7 @@ export type SkipReason =
   | 'unmatched_fx_credit'
   | 'duplicate'
   | 'redemption_reconciled' // Wykup certyfikatów / Rozliczenie oferty — obsłużone przez reconciliation jako synthetic sell
+  | 'bond_subscription_consumed' // Zapisy na obligacje + zwrot nadpłaty — skonsumowane przez reconciliation jako syntetyczny kupno
   | 'capital_return_reconciled' // Obniżenie nominału / wyrównanie — obsłużone przez reconciliation jako CashOperation(capital_return)
   | 'unknown_operation_type' // Nierozpoznany tytuł operacji — wrzucone jako 'other', ale raportowane w warnings
   | 'unknown_type' // XTB — typ operacji spoza znanych typów parsera, wiersz pominięty (paperName zawiera nazwę typu)
@@ -703,6 +704,10 @@ export interface ImportBatchInfo {
   sources: string[];
   warnings: string[];
   skippedCount: number;
+  /** Liczba syntetycznych transakcji utworzonych podczas importu. */
+  syntheticTransactionsCount?: number;
+  /** Komunikaty informacyjne o działaniach podjętych podczas importu. */
+  info?: string[];
 }
 
 export interface ParseResult<T> {
@@ -1130,6 +1135,10 @@ export interface ImportResult {
   taxesApplied?: number;
   /** Bossa: liczba syntetycznych sprzedaży wygenerowanych przez reconcileRedemptions */
   syntheticSells?: number;
+  /** Liczba wszystkich syntetycznych transakcji utworzonych podczas importu (wykupy, subskrypcje, IPO). */
+  syntheticTransactions?: number;
+  /** Komunikaty informacyjne o działaniach podjętych podczas importu (np. subskrypcja obligacji). */
+  info?: string[];
   /** Detected broker for transactions file */
   detectedSource?: string;
   /** Detected broker for operations file (bulk import, może się różnić) */

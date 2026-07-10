@@ -9,6 +9,8 @@ export interface ImportBatchInfo {
   sources: string[];
   warnings: string[];
   skippedCount: number;
+  syntheticTransactionsCount?: number;
+  info?: string[];
 }
 
 export function getAllImportBatches(
@@ -54,6 +56,8 @@ export function getAllImportBatches(
     const skipped = result.skipped as Array<unknown> | undefined;
     const warnings = result.warnings as string[] | undefined;
     const crossFileWarnings = result.crossFileWarnings as string[] | undefined;
+    const info = result.info as string[] | undefined;
+    const syntheticTransactions = result.syntheticTransactions as number | undefined;
     return {
       importBatch: r.import_batch,
       transactionsCount: r.transactions_count,
@@ -63,6 +67,8 @@ export function getAllImportBatches(
       sources: r.sources ? r.sources.split(',') : [],
       warnings: [...(warnings ?? []), ...(crossFileWarnings ?? [])],
       skippedCount: skipped?.length ?? 0,
+      syntheticTransactionsCount: syntheticTransactions,
+      info,
     };
   });
 }

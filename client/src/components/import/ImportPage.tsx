@@ -180,13 +180,6 @@ export function ImportPage() {
           addMessage({ kind: 'success', text: `Zaimportowano ${parts.join(' i ')}${sourceLabel}` });
         }
 
-        if (result.syntheticSells && result.syntheticSells > 0) {
-          addMessage({
-            kind: 'info',
-            text: `Utworzono ${result.syntheticSells} syntetycznych sprzedaży (wykupy certyfikatów / wezwania skupu akcji)`,
-          });
-        }
-
         if (result.taxesApplied && result.taxesApplied > 0) {
           addMessage({
             kind: 'info',
@@ -208,12 +201,14 @@ export function ImportPage() {
 
         for (const w of result.crossFileWarnings ?? []) addMessage({ kind: 'warn', text: w });
         for (const w of result.warnings ?? []) addMessage({ kind: 'warn', text: w });
+        for (const msg of result.info ?? []) addMessage({ kind: 'info', text: msg });
 
         if (result.skipped && result.skipped.length > 0) {
           const hiddenReasons = new Set<SkipReason>([
             'close_trade_entry',
             'duplicate',
             'redemption_reconciled',
+            'bond_subscription_consumed',
           ]);
           const visible = result.skipped.filter((s) => !hiddenReasons.has(s.reason));
           if (visible.length > 0) {

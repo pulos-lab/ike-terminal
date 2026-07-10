@@ -163,13 +163,6 @@ export function ImportDialog({ open, onOpenChange }: Props) {
           addMessage({ kind: 'success', text: `Zaimportowano ${parts.join(' i ')}${sourceLabel}` });
         }
 
-        if (result.syntheticSells && result.syntheticSells > 0) {
-          addMessage({
-            kind: 'info',
-            text: `Utworzono ${result.syntheticSells} syntetycznych sprzedaży (wykupy certyfikatów / wezwania skupu akcji)`,
-          });
-        }
-
         if (result.taxesApplied && result.taxesApplied > 0) {
           addMessage({
             kind: 'info',

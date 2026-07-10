@@ -87,7 +87,7 @@ describe('bossa operations repro — user data', () => {
     expect(result.bondAllocations[0].refundAmount).toBe(200);
     // Both rows consumed
     expect(result.data).toHaveLength(0);
-    expect(result.skipped.filter((s) => s.reason === 'redemption_reconciled').length).toBe(2);
+    expect(result.skipped.filter((s) => s.reason === 'bond_subscription_consumed').length).toBe(2);
   });
 
   it('unpaired "Zapisy na obligacje" — stays as withdrawal, no bond allocation marker', () => {
