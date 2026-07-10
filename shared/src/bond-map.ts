@@ -39,6 +39,49 @@ export function findBondByIsin(isin: string): BondMapEntry | null {
 }
 
 /**
+ * Normalizuje nazwę emitenta obligacji do porównania.
+ * "PRAGMAGO D4" → { name: "PRAGMAGO", series: "D4" }
+ * "PragmaGO S.A." → { name: "PRAGMAGO", series: undefined }
+ */
+function normalizeBondIssuerName(raw: string): { name: string; series?: string } {
+  const upper = raw.toUpperCase().trim();
+  const seriesMatch = upper.match(/^(.+?)\s+([A-Z]\d{1,2})$/);
+  const name = seriesMatch
+    ? seriesMatch[1]
+        .trim()
+        .replace(/\s+(?:S\.?A\.?|SP(?:ÓLKA|OLKA)\s+AKCYJNA)\s*$/i, '')
+        .trim()
+    : upper.replace(/\s+(?:S\.?A\.?|SP(?:ÓLKA|OLKA)\s+AKCYJNA)\s*$/i, '').trim();
+  return { name, series: seriesMatch?.[2] ?? undefined };
+}
+
+/**
+ * Wyszukaj obligację po nazwie emitenta (pole `name` w bond-map).
+ * Gdy nazwa zawiera numer serii (np. "PRAGMAGO D4"), najpierw próbuje
+ * dopasować po nazwie + serii, potem po samej nazwie (fallback).
+ */
+export function findBondByName(name: string): BondMapEntry | null {
+  const { name: query, series } = normalizeBondIssuerName(name);
+  // Pass 1: match name + series
+  if (series) {
+    for (const entry of Object.values(BOND_MAP)) {
+      const entryName = normalizeBondIssuerName(entry.name ?? '');
+      if (entryName.name && entryName.name === query && entry.series?.toUpperCase() === series) {
+        return entry;
+      }
+    }
+  }
+  // Pass 2: match name only (fallback)
+  for (const entry of Object.values(BOND_MAP)) {
+    const entryName = normalizeBondIssuerName(entry.name ?? '');
+    if (entryName.name && entryName.name === query) {
+      return entry;
+    }
+  }
+  return null;
+}
+
+/**
  * Czy papier (paperName/ticker + opcjonalny ISIN) jest obligacją Catalyst?
  * Kolejność: mapa (ticker → ISIN) → regex skarbowy → prefiks ISIN PL0000.
  * Korporacyjne spoza mapy NIE są wykrywane (świadomie — brak bezpiecznego wzorca);

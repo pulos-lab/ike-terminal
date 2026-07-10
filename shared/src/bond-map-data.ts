@@ -16,6 +16,8 @@ export interface BondMapEntry {
   couponType?: 'fixed' | 'floating' | 'zero';
   /** Oprocentowanie w bieżącym okresie odsetkowym (%). */
   couponRate?: number;
+  /** Numer serii obligacji (np. "D4") — z obligacje.pl, może być undefined. */
+  series?: string;
 }
 
 /** Klucz: ticker Catalyst uppercase (np. "DS1030", "FPC0733", "KGH0629"). */
@@ -6553,6 +6555,7 @@ export const BOND_MAP: Record<string, BondMapEntry> = {
     segment: 'corporate',
     couponType: 'floating',
     couponRate: 8.11,
+    series: 'D4',
   },
   PRF0727: {
     isin: 'PLGFPRE00396',

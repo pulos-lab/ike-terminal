@@ -44,6 +44,8 @@ interface BondEntry extends ListRow {
   isin: string;
   nominal: number;
   currency: string;
+  /** Numer serii (np. "D4", "E1") — ekstrahowany z detail page, może być null. */
+  series?: string;
 }
 
 async function fetchHtml(url: string): Promise<string> {
@@ -89,14 +91,21 @@ function parseList(html: string): ListRow[] {
 }
 
 /** Szczegóły: tabela <th>Etykieta:</th><td>wartość</td> — parsujemy regexem (struktura stabilna). */
-function parseDetail(html: string): { isin: string; nominal: number; currency: string } | null {
+function parseDetail(
+  html: string,
+): { isin: string; nominal: number; currency: string; series?: string } | null {
   const isinMatch = html.match(/ISIN:<\/th>\s*<td>([A-Z0-9]+)<\/td>/);
   // "Wartość nominalna:</th> <td>1 000.00 PLN</td>" — spacje tysięcy, kropka dziesiętna
   const nominalMatch = html.match(/Wartość nominalna:<\/th>\s*<td>([\d\s .,]+)\s+([A-Z]{3})<\/td>/);
   if (!isinMatch || !nominalMatch) return null;
   const nominal = parseFloat(nominalMatch[1].replace(/[\s ]/g, '').replace(',', '.'));
   if (!Number.isFinite(nominal) || nominal <= 0) return null;
-  return { isin: isinMatch[1], nominal, currency: nominalMatch[2] };
+  // Numer serii: obligacje.pl ma wiersz "Seria:" lub "Numer emisji:" w tabeli szczegółów.
+  const seriesMatch =
+    html.match(/Seria:<\/th>\s*<td>([^<]+)<\/td>/i) ||
+    html.match(/Numer (?:emisji|serii):<\/th>\s*<td>([^<]+)<\/td>/i);
+  const series = seriesMatch ? seriesMatch[1].trim() : undefined;
+  return { isin: isinMatch[1], nominal, currency: nominalMatch[2], series };
 }
 
 function segmentOf(row: ListRow): 'treasury' | 'corporate' {
@@ -133,6 +142,8 @@ function generateFile(entries: BondEntry[]): string {
   lines.push("  couponType?: 'fixed' | 'floating' | 'zero';");
   lines.push('  /** Oprocentowanie w bieżącym okresie odsetkowym (%). */');
   lines.push('  couponRate?: number;');
+  lines.push('  /** Numer serii obligacji (np. "D4") — z obligacje.pl, może być undefined. */');
+  lines.push('  series?: string;');
   lines.push('}');
   lines.push('');
   lines.push('/** Klucz: ticker Catalyst uppercase (np. "DS1030", "FPC0733", "KGH0629"). */');
@@ -149,6 +160,7 @@ function generateFile(entries: BondEntry[]): string {
     ];
     if (e.couponType) fields.push(`couponType: '${e.couponType}'`);
     if (e.couponRate !== undefined) fields.push(`couponRate: ${e.couponRate}`);
+    if (e.series) fields.push(`series: '${e.series}'`);
     // Klucz cytowany gdy nie jest poprawnym identyfikatorem JS (np. "BOS0735-K")
     const key = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(e.ticker) ? e.ticker : JSON.stringify(e.ticker);
     lines.push(`  ${key}: { ${fields.join(', ')} },`);
@@ -214,6 +226,7 @@ async function main(): Promise<void> {
       isin: old.isin,
       nominal: old.nominal,
       currency: old.currency,
+      series: old.series,
     });
     preserved++;
   }
