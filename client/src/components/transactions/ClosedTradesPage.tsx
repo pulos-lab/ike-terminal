@@ -13,7 +13,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectTrigger,
@@ -29,11 +28,11 @@ import { formatNumber, formatDate, formatCurrency, formatQuantity } from '@/lib/
 import { groupClosedTrades, type TradeGroup } from '@/lib/closed-trades-grouping';
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
-import { ChevronRight, ChevronDown, Trash2, SlidersHorizontal } from 'lucide-react';
+import { ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ClosedTrade } from 'shared';
 import { ClosedPositionCardMobile } from './ClosedPositionCardMobile';
-import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { FilterBar, FilterFieldLabel, YearRangeFilter } from '@/components/shared/filters';
 import { displayOptionTicker } from 'shared';
 import { TickerLabel } from '@/components/ui/ticker-label';
 
@@ -247,6 +246,15 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
     (categoryFilter !== 'ALL' ? 1 : 0) +
     (dateRange !== 'ALL' ? 1 : 0);
 
+  const clearFilters = () => {
+    setPlFilter('all');
+    setCurrencyFilter('ALL');
+    setCategoryFilter('ALL');
+    setDateRange('ALL');
+    setCustomFrom('');
+    setCustomTo('');
+  };
+
   return (
     <div>
       <Card>
@@ -264,33 +272,46 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
         <CardContent>
           {!isLoading && data?.trades?.length ? (
             <>
-              <div className="md:hidden mb-3 flex justify-end">
-                <Sheet>
-                  <SheetTrigger asChild>
-                    <Button size="sm" variant="outline" className="h-8 px-3 text-xs gap-1.5">
-                      <SlidersHorizontal className="h-3.5 w-3.5" />
-                      Filtry
-                      {activeFilterCount > 0 && (
-                        <span className="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold">
-                          {activeFilterCount}
-                        </span>
-                      )}
-                    </Button>
-                  </SheetTrigger>
-                  <SheetContent side="bottom" className="rounded-t-xl max-h-[85vh] overflow-auto">
-                    <SheetHeader className="pb-2">
-                      <SheetTitle>Filtry</SheetTitle>
-                    </SheetHeader>
-                    <div className="flex flex-col gap-4 px-4 pb-6">
-                      <div className="flex flex-col gap-1.5">
-                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
-                          Wynik
-                        </span>
-                        <div className="grid grid-cols-3 rounded-md border overflow-hidden">
+              <div className="mb-3 md:mb-4">
+                <FilterBar activeCount={activeFilterCount} onClear={clearFilters}>
+                  {({ inSheet }) => (
+                    <>
+                      {inSheet ? (
+                        <div className="flex flex-col gap-1.5">
+                          <FilterFieldLabel>Wynik</FilterFieldLabel>
+                          <div className="grid grid-cols-3 rounded-md border overflow-hidden">
+                            <Button
+                              size="sm"
+                              variant={plFilter === 'all' ? 'secondary' : 'ghost'}
+                              className="h-9 text-xs rounded-none"
+                              onClick={() => setPlFilter('all')}
+                            >
+                              Wszystkie
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant={plFilter === 'profit' ? 'secondary' : 'ghost'}
+                              className="h-9 text-xs rounded-none border-x"
+                              onClick={() => setPlFilter('profit')}
+                            >
+                              Zyski
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant={plFilter === 'loss' ? 'secondary' : 'ghost'}
+                              className="h-9 text-xs rounded-none"
+                              onClick={() => setPlFilter('loss')}
+                            >
+                              Straty
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center rounded-md border">
                           <Button
                             size="sm"
                             variant={plFilter === 'all' ? 'secondary' : 'ghost'}
-                            className="h-9 text-xs rounded-none"
+                            className="h-7 px-2.5 text-xs rounded-r-none"
                             onClick={() => setPlFilter('all')}
                           >
                             Wszystkie
@@ -298,7 +319,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                           <Button
                             size="sm"
                             variant={plFilter === 'profit' ? 'secondary' : 'ghost'}
-                            className="h-9 text-xs rounded-none border-x"
+                            className="h-7 px-2.5 text-xs rounded-none border-x"
                             onClick={() => setPlFilter('profit')}
                           >
                             Zyski
@@ -306,21 +327,21 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                           <Button
                             size="sm"
                             variant={plFilter === 'loss' ? 'secondary' : 'ghost'}
-                            className="h-9 text-xs rounded-none"
+                            className="h-7 px-2.5 text-xs rounded-l-none"
                             onClick={() => setPlFilter('loss')}
                           >
                             Straty
                           </Button>
                         </div>
-                      </div>
+                      )}
 
                       {availableCurrencies.length > 1 && (
-                        <div className="flex flex-col gap-1.5">
-                          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
-                            Waluta
-                          </span>
+                        <div className={inSheet ? 'flex flex-col gap-1.5' : undefined}>
+                          {inSheet && <FilterFieldLabel>Waluta</FilterFieldLabel>}
                           <Select value={currencyFilter} onValueChange={setCurrencyFilter}>
-                            <SelectTrigger className="h-9 text-xs">
+                            <SelectTrigger
+                              className={inSheet ? 'h-9 text-xs' : 'h-7 w-[140px] text-xs'}
+                            >
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -336,12 +357,12 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                       )}
 
                       {availableCategories.length > 1 && (
-                        <div className="flex flex-col gap-1.5">
-                          <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
-                            Kategoria
-                          </span>
+                        <div className={inSheet ? 'flex flex-col gap-1.5' : undefined}>
+                          {inSheet && <FilterFieldLabel>Kategoria</FilterFieldLabel>}
                           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                            <SelectTrigger className="h-9 text-xs">
+                            <SelectTrigger
+                              className={inSheet ? 'h-9 text-xs' : 'h-7 w-[150px] text-xs'}
+                            >
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -356,188 +377,22 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                         </div>
                       )}
 
-                      <div className="flex flex-col gap-1.5">
-                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
-                          Okres
-                        </span>
-                        <div className="flex flex-wrap gap-1.5">
-                          <Button
-                            size="sm"
-                            variant={dateRange === 'ALL' ? 'secondary' : 'outline'}
-                            className="h-8 px-3 text-xs"
-                            onClick={() => setDateRange('ALL')}
-                          >
-                            Wszystko
-                          </Button>
-                          {availableYears.slice(0, 4).map((year) => (
-                            <Button
-                              key={year}
-                              size="sm"
-                              variant={dateRange === String(year) ? 'secondary' : 'outline'}
-                              className="h-8 px-3 text-xs"
-                              onClick={() => setDateRange(String(year))}
-                            >
-                              {year}
-                            </Button>
-                          ))}
-                          <Button
-                            size="sm"
-                            variant={dateRange === 'CUSTOM' ? 'secondary' : 'outline'}
-                            className="h-8 px-3 text-xs"
-                            onClick={() => setDateRange('CUSTOM')}
-                          >
-                            Zakres
-                          </Button>
-                        </div>
-                        {dateRange === 'CUSTOM' && (
-                          <div className="flex items-center gap-2 mt-1">
-                            <Input
-                              type="date"
-                              value={customFrom}
-                              onChange={(e) => setCustomFrom(e.target.value)}
-                              className="h-9 text-xs flex-1"
-                            />
-                            <span className="text-muted-foreground text-xs">—</span>
-                            <Input
-                              type="date"
-                              value={customTo}
-                              onChange={(e) => setCustomTo(e.target.value)}
-                              className="h-9 text-xs flex-1"
-                            />
-                          </div>
-                        )}
+                      <div className={inSheet ? 'flex flex-col gap-1.5' : 'ml-auto'}>
+                        {inSheet && <FilterFieldLabel>Okres</FilterFieldLabel>}
+                        <YearRangeFilter
+                          wrap={inSheet}
+                          years={availableYears}
+                          value={dateRange}
+                          onChange={setDateRange}
+                          customFrom={customFrom}
+                          onCustomFromChange={setCustomFrom}
+                          customTo={customTo}
+                          onCustomToChange={setCustomTo}
+                        />
                       </div>
-
-                      {activeFilterCount > 0 && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-8 text-xs text-muted-foreground self-start"
-                          onClick={() => {
-                            setPlFilter('all');
-                            setCurrencyFilter('ALL');
-                            setDateRange('ALL');
-                            setCustomFrom('');
-                            setCustomTo('');
-                          }}
-                        >
-                          Wyczyść filtry
-                        </Button>
-                      )}
-                    </div>
-                  </SheetContent>
-                </Sheet>
-              </div>
-
-              <div className="hidden md:flex flex-wrap items-center gap-3 mb-4">
-                <div className="flex items-center rounded-md border">
-                  <Button
-                    size="sm"
-                    variant={plFilter === 'all' ? 'secondary' : 'ghost'}
-                    className="h-7 px-2.5 text-xs rounded-r-none"
-                    onClick={() => setPlFilter('all')}
-                  >
-                    Wszystkie
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={plFilter === 'profit' ? 'secondary' : 'ghost'}
-                    className="h-7 px-2.5 text-xs rounded-none border-x"
-                    onClick={() => setPlFilter('profit')}
-                  >
-                    Zyski
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={plFilter === 'loss' ? 'secondary' : 'ghost'}
-                    className="h-7 px-2.5 text-xs rounded-l-none"
-                    onClick={() => setPlFilter('loss')}
-                  >
-                    Straty
-                  </Button>
-                </div>
-
-                {availableCurrencies.length > 1 && (
-                  <Select value={currencyFilter} onValueChange={setCurrencyFilter}>
-                    <SelectTrigger className="h-7 w-[140px] text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ALL">Wszystkie waluty</SelectItem>
-                      {availableCurrencies.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-
-                {availableCategories.length > 1 && (
-                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                    <SelectTrigger className="h-7 w-[150px] text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ALL">Wszystkie kategorie</SelectItem>
-                      {availableCategories.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {CATEGORY_FILTER_LABELS[c] ?? c}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-
-                <div className="ml-auto flex flex-wrap items-center gap-3">
-                  <div className="flex items-center rounded-md border">
-                    <Button
-                      size="sm"
-                      variant={dateRange === 'ALL' ? 'secondary' : 'ghost'}
-                      className="h-7 px-2.5 text-xs rounded-r-none"
-                      onClick={() => setDateRange('ALL')}
-                    >
-                      Wszystko
-                    </Button>
-                    {availableYears.slice(0, 4).map((year, i) => (
-                      <Button
-                        key={year}
-                        size="sm"
-                        variant={dateRange === String(year) ? 'secondary' : 'ghost'}
-                        className={`h-7 px-2.5 text-xs rounded-none border-l ${i === availableYears.slice(0, 4).length - 1 && dateRange !== 'CUSTOM' ? 'rounded-r-md' : ''}`}
-                        onClick={() => setDateRange(String(year))}
-                      >
-                        {year}
-                      </Button>
-                    ))}
-                    <Button
-                      size="sm"
-                      variant={dateRange === 'CUSTOM' ? 'secondary' : 'ghost'}
-                      className="h-7 px-2.5 text-xs rounded-l-none border-l"
-                      onClick={() => setDateRange('CUSTOM')}
-                    >
-                      Zakres
-                    </Button>
-                  </div>
-
-                  {dateRange === 'CUSTOM' && (
-                    <div className="flex items-center gap-1.5">
-                      <Input
-                        type="date"
-                        value={customFrom}
-                        onChange={(e) => setCustomFrom(e.target.value)}
-                        className="h-7 text-xs w-[130px]"
-                      />
-                      <span className="text-muted-foreground text-xs">—</span>
-                      <Input
-                        type="date"
-                        value={customTo}
-                        onChange={(e) => setCustomTo(e.target.value)}
-                        className="h-7 text-xs w-[130px]"
-                      />
-                    </div>
+                    </>
                   )}
-                </div>
+                </FilterBar>
               </div>
             </>
           ) : null}
@@ -845,14 +700,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
           ) : data?.trades?.length ? (
             <EmptyState
               message="Brak transakcji dla wybranych filtrów."
-              action={{
-                label: 'Wyczyść filtry',
-                onClick: () => {
-                  setPlFilter('all');
-                  setCurrencyFilter('ALL');
-                  setDateRange('ALL');
-                },
-              }}
+              action={{ label: 'Wyczyść filtry', onClick: clearFilters }}
             />
           ) : (
             <EmptyState message="Brak zamkniętych transakcji. Zaimportuj historię transakcji lub dodaj ręcznie." />

@@ -53,6 +53,12 @@ import {
 import { toast } from 'sonner';
 import { ExpandableCard, ExpandableCardSubRow } from '@/components/ui/expandable-card';
 import { useToggleSet } from '@/hooks/useToggleSet';
+import {
+  FilterBar,
+  FilterFieldLabel,
+  YearRangeFilter,
+  matchesDateRange,
+} from '@/components/shared/filters';
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
@@ -680,8 +686,12 @@ export function CorrectionsAndCostsPage() {
   const [deletingCost, setDeletingCost] = useState<AdditionalCost | null>(null);
   const [expandedCA, toggleCA] = useToggleSet<number>();
   const [expandedCost, toggleCost] = useToggleSet<number>();
-  /** Filtr listy operacji — klik w kafel grupy zawęża historię, drugi klik czyści. */
-  const [groupFilter, setGroupFilter] = useState<CostVirtualCategory | null>(null);
+  // Filtry strony — spójne z Pozycjami zamkniętymi: rok/zakres obejmuje OBE sekcje
+  // (zdarzenia korporacyjne + przepływy), kategoria tylko historię przepływów.
+  const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  const [dateRange, setDateRange] = useState<string>('ALL');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
 
   const {
     data: corpData,
@@ -722,28 +732,59 @@ export function CorrectionsAndCostsPage() {
   });
 
   const actions = corpData?.actions ?? [];
-  const pendingCount = corpData?.totals.pendingCount ?? 0;
   // Waluta bazowa portfela. Oba endpointy zwracają tę samą wartość (detectBaseCurrency),
   // ale costsData jest bardziej stabilne (zawsze są jakieś operacje). Fallback PLN.
   const baseCurrency = costsData?.baseCurrency ?? corpData?.baseCurrency ?? 'PLN';
+
+  const costs = costsData?.operations ?? [];
+
+  // Lata z OBU sekcji — filtr roku obejmuje całą stronę.
+  const availableYears = useMemo(() => {
+    const set = new Set<number>();
+    for (const a of actions) set.add(new Date(a.date).getFullYear());
+    for (const c of costs) set.add(new Date(c.date).getFullYear());
+    return Array.from(set).sort((a, b) => b - a);
+  }, [actions, costs]);
+
+  // Kategorie do Selecta — z całości danych (nie znikają po zawężeniu roku).
+  const availableCategories = useMemo(() => {
+    const set = new Set<CostVirtualCategory>();
+    for (const c of costs) set.add(virtualCategory(c));
+    return Array.from(set).sort();
+  }, [costs]);
 
   const { resolved, pending } = useMemo(() => {
     const r: CorporateAction[] = [];
     const p: CorporateAction[] = [];
     for (const a of actions) {
+      if (!matchesDateRange(a.date, { dateRange, customFrom, customTo })) continue;
       if (a.status === 'resolved') r.push(a);
       else p.push(a);
     }
     return { resolved: r, pending: p };
-  }, [actions]);
+  }, [actions, dateRange, customFrom, customTo]);
 
-  const costs = costsData?.operations ?? [];
-  // Grupy kosztowe (per subkind/opis) posortowane po wadze — kafle-filtry nad historią.
-  const costGroups = useMemo(() => groupCosts(costs), [costs]);
   const filteredCosts = useMemo(
-    () => (groupFilter ? costs.filter((c) => virtualCategory(c) === groupFilter) : costs),
-    [costs, groupFilter],
+    () =>
+      costs.filter(
+        (c) =>
+          matchesDateRange(c.date, { dateRange, customFrom, customTo }) &&
+          (categoryFilter === 'ALL' || virtualCategory(c) === categoryFilter),
+      ),
+    [costs, categoryFilter, dateRange, customFrom, customTo],
   );
+
+  // Chipy podsumowania liczone z PRZEFILTROWANYCH danych — zawężenie roku od razu
+  // pokazuje sumy kosztów za ten okres (np. do rozliczenia podatkowego).
+  const costGroups = useMemo(() => groupCosts(filteredCosts), [filteredCosts]);
+
+  const activeFilterCount = (categoryFilter !== 'ALL' ? 1 : 0) + (dateRange !== 'ALL' ? 1 : 0);
+  const clearFilters = () => {
+    setCategoryFilter('ALL');
+    setDateRange('ALL');
+    setCustomFrom('');
+    setCustomTo('');
+  };
 
   const isLoading = corpLoading || costsLoading;
   const error = corpError ?? costsError;
@@ -772,6 +813,48 @@ export function CorrectionsAndCostsPage() {
 
   return (
     <div className="space-y-4">
+      {/* ─── Pasek filtrów strony (wzorzec z Pozycji zamkniętych) ───
+          Rok/zakres filtruje obie sekcje, kategoria tylko Pozostałe przepływy. */}
+      {(actions.length > 0 || costs.length > 0) && (
+        <FilterBar activeCount={activeFilterCount} onClear={clearFilters}>
+          {({ inSheet }) => (
+            <>
+              {availableCategories.length > 1 && (
+                <div className={inSheet ? 'flex flex-col gap-1.5' : undefined}>
+                  {inSheet && <FilterFieldLabel>Kategoria kosztu</FilterFieldLabel>}
+                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                    <SelectTrigger className={inSheet ? 'h-9 text-xs' : 'h-7 w-[190px] text-xs'}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">Wszystkie kategorie</SelectItem>
+                      {availableCategories.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {COST_CATEGORY_META[c].label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              <div className={inSheet ? 'flex flex-col gap-1.5' : 'ml-auto'}>
+                {inSheet && <FilterFieldLabel>Okres</FilterFieldLabel>}
+                <YearRangeFilter
+                  wrap={inSheet}
+                  years={availableYears}
+                  value={dateRange}
+                  onChange={setDateRange}
+                  customFrom={customFrom}
+                  onCustomFromChange={setCustomFrom}
+                  customTo={customTo}
+                  onCustomToChange={setCustomTo}
+                />
+              </div>
+            </>
+          )}
+        </FilterBar>
+      )}
+
       {/* ─── SEKCJA GÓRNA: Zdarzenia korporacyjne ───
           Bez żadnych zdarzeń (typowe dla brokerów bez polskich CA, np. IBKR) sekcja
           zwija się do jednej linijki — pełna karta z pustym stanem przytłaczała. */}
@@ -791,13 +874,13 @@ export function CorrectionsAndCostsPage() {
             <CardTitle className="flex items-center gap-2 text-base">
               <Landmark className="h-4 w-4 text-primary" />
               Zdarzenia korporacyjne
-              {pendingCount > 0 && (
+              {pending.length > 0 && (
                 <Badge
                   variant="outline"
                   className="bg-amber-500/10 text-amber-500 border-amber-500/30"
                 >
                   <AlertTriangle className="h-3 w-3 mr-1" />
-                  {pendingCount} do domknięcia
+                  {pending.length} do domknięcia
                 </Badge>
               )}
               <UITooltip delayDuration={150}>
@@ -940,7 +1023,11 @@ export function CorrectionsAndCostsPage() {
               {resolved.length === 0 ? (
                 <EmptyState
                   className="py-6"
-                  message="Brak zrealizowanych zwrotów kapitału. Pojawią się tu po imporcie historii z taką operacją."
+                  message={
+                    dateRange !== 'ALL'
+                      ? 'Brak zwrotów kapitału w wybranym okresie.'
+                      : 'Brak zrealizowanych zwrotów kapitału. Pojawią się tu po imporcie historii z taką operacją.'
+                  }
                 />
               ) : (
                 <>
@@ -1088,57 +1175,45 @@ export function CorrectionsAndCostsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {/* Kafle-grupy kosztów (subkind z parsera IBKR albo fallback po opisie),
+          {/* Ciche chipy podsumowania — liczone z danych PO filtrach (rok + kategoria),
               posortowane po wadze. Kwoty per waluta — sumowanie USD+PLN w jednej
-              liczbie byłoby mylące. Klik = filtr historii poniżej (drugi klik czyści). */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-            {costGroups.map((g) => {
-              const meta = COST_CATEGORY_META[g.cat];
-              const active = groupFilter === g.cat;
-              return (
-                <button
-                  key={g.cat}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setGroupFilter(active ? null : g.cat)}
-                  title={
-                    active ? 'Kliknij, aby wyczyścić filtr' : 'Kliknij, aby przefiltrować historię'
-                  }
-                  className={`rounded-lg border px-3 py-2 text-left transition-colors ${
-                    active
-                      ? 'bg-primary/10 border-primary/50 ring-1 ring-primary/40'
-                      : 'bg-muted/30 border-border hover:bg-muted/60'
-                  }`}
-                >
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-0.5">
+              liczbie byłoby mylące. Filtrowanie robi pasek na górze strony. */}
+          {costGroups.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {costGroups.map((g) => {
+                const meta = COST_CATEGORY_META[g.cat];
+                return (
+                  <span
+                    key={g.cat}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/30 px-2.5 py-1 text-[11px] text-muted-foreground"
+                  >
                     {meta.label}
-                  </p>
-                  {[...g.byCurrency.entries()]
-                    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
-                    .map(([cur, total]) => (
-                      <p
-                        key={cur}
-                        className={`text-sm font-semibold tabular-nums tracking-tight ${
-                          total < 0 ? 'text-loss/90' : total > 0 ? 'text-gain/90' : ''
-                        }`}
-                      >
-                        {formatCurrency(total, cur)}
-                      </p>
-                    ))}
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{g.count} operacji</p>
-                </button>
-              );
-            })}
-          </div>
+                    {[...g.byCurrency.entries()]
+                      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+                      .map(([cur, total]) => (
+                        <span
+                          key={cur}
+                          className={`font-semibold tabular-nums ${
+                            total < 0 ? 'text-loss/90' : total > 0 ? 'text-gain/90' : ''
+                          }`}
+                        >
+                          {formatCurrency(total, cur)}
+                        </span>
+                      ))}
+                    · {g.count}
+                  </span>
+                );
+              })}
+            </div>
+          )}
 
-          {groupFilter && (
+          {activeFilterCount > 0 && costs.length > 0 && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span>
-                Filtr: <strong>{COST_CATEGORY_META[groupFilter].label}</strong> (
-                {filteredCosts.length} z {costs.length} operacji)
+                {filteredCosts.length} z {costs.length} operacji
               </span>
-              <Button size="xs" variant="ghost" onClick={() => setGroupFilter(null)}>
-                Wyczyść
+              <Button size="xs" variant="ghost" onClick={clearFilters}>
+                Wyczyść filtry
               </Button>
             </div>
           )}
@@ -1148,6 +1223,12 @@ export function CorrectionsAndCostsPage() {
             <EmptyState
               className="py-6"
               message="Brak operacji kosztowych. Zaimportuj historię transakcji lub dodaj ręcznie."
+            />
+          ) : filteredCosts.length === 0 ? (
+            <EmptyState
+              className="py-6"
+              message="Brak operacji dla wybranych filtrów."
+              action={{ label: 'Wyczyść filtry', onClick: clearFilters }}
             />
           ) : (
             <>
