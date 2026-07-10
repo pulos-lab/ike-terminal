@@ -325,12 +325,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
 
     // 3a''''. Bond subscriptions → synthetic K (subskrypcja obligacji)
     if (parsedOps?.bondAllocations?.length) {
-      const r = reconcileBossaBondSubscriptions(
-        parsedOps.bondAllocations,
-        pid,
-        importBatch,
-        crossFileWarnings,
-      );
+      const r = reconcileBossaBondSubscriptions(parsedOps.bondAllocations, pid, importBatch);
       syntheticSells += r;
     }
 
@@ -974,39 +969,25 @@ function reconcileBossaBondSubscriptions(
   bonds: BondAllocationMarker[],
   pid: string,
   importBatch: string,
-  warnings: string[],
 ): number {
   if (bonds.length === 0) return 0;
   let added = 0;
 
   for (const bond of bonds) {
-    const label = bond.ticker ?? bond.csvIssuerName;
+    // Parser emituje marker tylko dla wykonalnych rozliczeń (emitent rozpoznany,
+    // netto > 0, qty ≥ 1) — patrz bossa-operations.ts. Tu zostaje sama konstrukcja
+    // syntetycznego kupna.
+    const qty = bond.quantity;
     const nettoCost = bond.subscriptionAmount - bond.refundAmount;
-    if (nettoCost <= 0) {
-      warnings.push(
-        `Bossa: subskrypcja obligacji ${label} — koszt netto ${nettoCost.toFixed(2)} ${bond.currency} jest ≤ 0 (pełny zwrot?); pomijam.`,
-      );
-      continue;
-    }
 
-    if (!bond.nominal || !bond.ticker || !bond.isin) {
-      warnings.push(
-        `Bossa: subskrypcja obligacji ${label} — nie rozpoznano emitenta w bond-map ` +
-          `(możliwe kilka serii). Dodaj pozycję obligacji ręcznie w panelu Transakcje. ` +
-          `Kwota netto: ${nettoCost.toFixed(2)} ${bond.currency}, nominał: ${bond.nominal ?? '??'} PLN.`,
-      );
-      continue;
-    }
+    // KONWENCJA (CLAUDE.md): Transaction.price obligacji jest w % nominału —
+    // silnik mnoży przez bondPriceMultiplier = nominal/100. Zapis po cenie
+    // emisyjnej ≈ 100%; liczymy z netto jak przy wykupie (reconcileRedemptions).
+    const pricePct = Math.round((nettoCost / qty / bond.nominal) * 100 * 10000) / 10000;
 
-    const qty = Math.round(nettoCost / bond.nominal);
-    if (qty <= 0) {
-      warnings.push(
-        `Bossa: subskrypcja obligacji ${label} — wyliczona liczba szt ≤ 0 (netto ${nettoCost}, nominał ${bond.nominal}); pomijam.`,
-      );
-      continue;
-    }
-
-    const originTag = `Subskrypcja obligacji ${label} — ${qty} szt @ ${bond.nominal} PLN (nominał z bond-map)`;
+    const originTag =
+      `Subskrypcja obligacji ${bond.ticker} — ${qty} szt @ ${pricePct}% nominału ` +
+      `${bond.nominal} PLN (bond-map)`;
 
     const syntheticBuy: Transaction = {
       date: `${bond.allocationDate}T00:00:00`,
@@ -1014,7 +995,7 @@ function reconcileBossaBondSubscriptions(
       isin: bond.isin,
       quantity: qty,
       side: 'K',
-      price: bond.nominal,
+      price: pricePct,
       value: nettoCost,
       commission: 0,
       total: nettoCost,

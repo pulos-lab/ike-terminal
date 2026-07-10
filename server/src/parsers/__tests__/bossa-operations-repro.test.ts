@@ -98,4 +98,58 @@ describe('bossa operations repro — user data', () => {
     expect(bondSub).toBeDefined();
     expect(bondSub!.operationType).toBe('withdrawal');
   });
+
+  it('nierozpoznany emitent — para NIE jest konsumowana, oba wiersze zostają w cash flow', () => {
+    const csv = [
+      CSV_HEADER,
+      '2025-05-29;Zapisy na obligacje NIEISTNIEJACY EMITENT Z9;;-30000,00;PLN',
+      '2025-06-09;Zwrot nadpłaty NIEISTNIEJACY EMITENT Z9;;20000,00;PLN',
+    ].join('\n');
+    const result = parseBossaOperations(csv, 'test');
+    expect(result.bondAllocations).toHaveLength(0);
+    // Cash flow zachowany: wypłata −30000 + wpłata +20000 (netto −10000 NIE znika)
+    expect(result.data.find((o) => o.amount === -30000)?.operationType).toBe('withdrawal');
+    expect(result.data.find((o) => o.amount === 20000)?.operationType).toBe('deposit');
+    expect(result.warnings?.some((w) => w.includes('nie został rozpoznany w bond-map'))).toBe(true);
+  });
+
+  it('pełny zwrot (netto ≤ 0) — para NIE jest konsumowana, wiersze zostają w cash flow', () => {
+    const csv = [
+      CSV_HEADER,
+      '2025-05-29;Zapisy na obligacje BENEFIT SYSTEMS;;-10000,00;PLN',
+      '2025-06-09;Zwrot nadpłaty BENEFIT SYSTEMS;;10000,00;PLN',
+    ].join('\n');
+    const result = parseBossaOperations(csv, 'test');
+    expect(result.bondAllocations).toHaveLength(0);
+    expect(result.data).toHaveLength(2);
+  });
+
+  it('dwie subskrypcje tego samego emitenta parują się z DWOMA różnymi zwrotami', () => {
+    const csv = [
+      CSV_HEADER,
+      '2025-05-29;Zapisy na obligacje PRAGMAGO D4;;-7500,00;PLN',
+      '2025-06-09;Zwrot nadpłaty PRAGMAGO D4;;200,00;PLN',
+      '2025-08-12;Zapisy na obligacje PRAGMAGO D4;;-5000,00;PLN',
+      '2025-08-20;Zwrot nadpłaty PRAGMAGO D4;;1000,00;PLN',
+    ].join('\n');
+    const result = parseBossaOperations(csv, 'test');
+    expect(result.bondAllocations).toHaveLength(2);
+    const refunds = result.bondAllocations.map((m) => m.refundAmount).sort((a, b) => a - b);
+    expect(refunds).toEqual([200, 1000]); // każdy zapis ma SWÓJ zwrot, nie 2× pierwszy
+    expect(result.data).toHaveLength(0); // wszystkie 4 wiersze skonsumowane
+  });
+
+  it('marker niesie quantity wyliczone z netto i nominału (BFT0330, nominał 1000)', () => {
+    const csv = [
+      CSV_HEADER,
+      '2025-05-29;Zapisy na obligacje BENEFIT SYSTEMS;;-10000,00;PLN',
+      '2025-06-09;Zwrot nadpłaty BENEFIT SYSTEMS;;150,00;PLN',
+    ].join('\n');
+    const result = parseBossaOperations(csv, 'test');
+    expect(result.bondAllocations).toHaveLength(1);
+    const m = result.bondAllocations[0];
+    expect(m.ticker).toBe('BFT0330');
+    expect(m.nominal).toBe(1000);
+    expect(m.quantity).toBe(10); // round(9850 / 1000)
+  });
 });

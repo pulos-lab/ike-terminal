@@ -262,13 +262,18 @@ export function parseBossaOperations(
     const bondSubMatch = pr.title.match(/^Zapisy na obligacje\s+(.+)$/i);
     if (!bondSubMatch) continue;
     const csvIssuerName = bondSubMatch[1].trim();
-    // Szukaj pasującego zwrotu nadpłaty
+    // Szukaj pasującego zwrotu nadpłaty. Wykluczamy zwroty już skonsumowane
+    // (dwie subskrypcje tego samego emitenta muszą sparować się z DWOMA różnymi
+    // zwrotami), a sufiks kotwiczymy spacją, żeby emitent o nazwie będącej
+    // końcówką innego nie kradł cudzego zwrotu.
     const refundRow = parsedRows.find(
       (r) =>
         r.rowNum !== pr.rowNum &&
+        !bondConsumedRows.has(r.rowNum) &&
+        !ipoConsumedRows.has(r.rowNum) &&
         (r.title.startsWith('Zwrot nadpłaty') || r.title.startsWith('Zwrot nadp\u0142aty')) &&
         !r.title.includes('przekroczony limit') &&
-        r.title.endsWith(csvIssuerName),
+        r.title.endsWith(` ${csvIssuerName}`),
     );
     if (!refundRow) {
       warnings.push(
@@ -278,11 +283,39 @@ export function parseBossaOperations(
       );
       continue;
     }
-    // Próbuj dopasować do bond-map po nazwie emitenta
+
+    // Marker emitujemy WYŁĄCZNIE gdy rozliczenie jest wykonalne end-to-end.
+    // Niewykonalna para (nieznany emitent, netto ≤ 0, qty < 1) NIE jest konsumowana:
+    // oba wiersze przechodzą niżej jako zwykłe operacje gotówkowe (wypłata + wpłata),
+    // więc cash flow portfela pozostaje poprawny — dokładnie jak przed tą funkcją.
     const bondEntry = findBondByName(csvIssuerName);
-    const marker: BondAllocationMarker = {
+    if (!bondEntry) {
+      warnings.push(
+        `Zapis obligacji "${pr.title}" (${pr.dateStr}) sparowany ze zwrotem ` +
+          `"${refundRow.title}" (${refundRow.dateStr}), ale emitent "${csvIssuerName}" ` +
+          `nie został rozpoznany w bond-map (możliwe kilka serii). Kwoty zostały ` +
+          `zaksięgowane jako operacje gotówkowe; pozycję obligacji dodaj ręcznie w panelu Transakcje.`,
+      );
+      continue;
+    }
+    const nettoCost = Math.abs(pr.amount) - refundRow.amount;
+    const qty = bondEntry.nominal > 0 ? Math.round(nettoCost / bondEntry.nominal) : 0;
+    if (nettoCost <= 0 || qty < 1) {
+      warnings.push(
+        `Zapis obligacji "${pr.title}" (${pr.dateStr}): koszt netto ${nettoCost.toFixed(2)} PLN ` +
+          `przy nominale ${bondEntry.nominal} PLN nie daje dodatniej liczby sztuk — nie rozliczam. ` +
+          `Kwoty zostały zaksięgowane jako operacje gotówkowe.`,
+      );
+      continue;
+    }
+
+    bondAllocations.push({
       subscriptionDate: pr.dateStr,
       allocationDate: refundRow.dateStr,
+      ticker: bondEntry.ticker,
+      isin: bondEntry.isin,
+      nominal: bondEntry.nominal,
+      quantity: qty,
       csvIssuerName,
       subscriptionAmount: Math.abs(pr.amount),
       refundAmount: refundRow.amount,
@@ -290,20 +323,7 @@ export function parseBossaOperations(
       source: 'bossa',
       rawSubscriptionTitle: pr.title,
       rawRefundTitle: refundRow.title,
-    };
-    if (bondEntry) {
-      marker.ticker = bondEntry.ticker;
-      marker.isin = bondEntry.isin;
-      marker.nominal = bondEntry.nominal;
-    } else {
-      warnings.push(
-        `Zapis obligacji "${pr.title}" (${pr.dateStr}) sparowany ze zwrotem ` +
-          `"${refundRow.title}" (${refundRow.dateStr}), ale emitent "${csvIssuerName}" ` +
-          `nie został rozpoznany w bond-map (możliwe kilka serii). ` +
-          `Dodaj pozycję obligacji ręcznie w panelu Transakcje.`,
-      );
-    }
-    bondAllocations.push(marker);
+    });
     bondConsumedRows.add(pr.rowNum);
     bondConsumedRows.add(refundRow.rowNum);
   }
