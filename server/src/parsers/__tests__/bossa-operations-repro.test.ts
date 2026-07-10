@@ -46,22 +46,27 @@ describe('bossa operations repro — user data', () => {
     // Check the bond interest classification
     const bondOps = result.data.filter((o) => o.description?.includes('PRF0628'));
     expect(bondOps.length).toBeGreaterThan(0);
-    // Po fix: regex dopasowuje "z tytułu obligacji" → dividend + coupon
     for (const op of bondOps) {
       expect(op.operationType).toBe('dividend');
       expect(op.subkind).toBe('coupon');
       expect(op.currency).toBe('PLN');
     }
 
-    // Zapisy na obligacje → withdrawal
-    const bondSub = result.data.find((o) => o.amount === -7500);
-    expect(bondSub).toBeDefined();
-    expect(bondSub!.operationType).toBe('withdrawal');
-    expect(bondSub!.currency).toBe('PLN');
+    // Zapisy na obligacje + Zwrot nadpłaty → bondAllocations marker (nie withdrawal/deposit)
+    expect(result.bondAllocations).toHaveLength(1);
+    expect(result.bondAllocations[0].csvIssuerName).toBe('PRAGMAGO D4');
+    // findBondByName dopasowuje "PRAGMAGO D4" → "PragmaGO S.A." + series "D4" → PRF0628
+    expect(result.bondAllocations[0].ticker).toBe('PRF0628');
+    expect(result.bondAllocations[0].isin).toBe('PLGFPRE00453');
+    expect(result.bondAllocations[0].nominal).toBe(100);
+    expect(result.bondAllocations[0].subscriptionAmount).toBe(7500);
+    expect(result.bondAllocations[0].refundAmount).toBe(200);
+    // Oba wiersze skonsumowane — nie ma ich w data
+    expect(result.data.find((o) => o.amount === -7500)).toBeUndefined();
+    expect(result.data.find((o) => o.amount === 200)).toBeUndefined();
   });
 
   it('HEADER with trailing semicolon + data without — comma decimals still correct', () => {
-    // Header has trailing ; (6 cols), data has no trailing ; (5 values)
     const csv =
       'data;tytuł operacji;szczegóły;kwota;waluta;\n2026-06-08;Wypłata odsetek z tytułu obligacji PRF0628;;148,19;PLN';
     const result = parseBossaOperations(csv, 'test');
@@ -69,45 +74,28 @@ describe('bossa operations repro — user data', () => {
     expect(result.data[0].amount).toBe(148.19);
   });
 
-  it('amount with semicolon instead of comma — row goes to QUARANTINE (malformed)', () => {
-    // If the decimal comma is replaced with semicolon, it becomes a column delimiter.
-    // The row is now quarantined instead of polluting the DB.
-    const csv =
-      'data;tytuł operacji;szczegóły;kwota;waluta\n2026-06-08;Wypłata odsetek z tytułu obligacji PRF0628;;148;19;PLN';
+  it('bond subscription + refund pair → marker created, both rows consumed from cashflow', () => {
+    const csv = [
+      CSV_HEADER,
+      '2025-06-09;Zwrot nadpłaty PRAGMAGO D4;;200,00;PLN',
+      '2025-05-29;Zapisy na obligacje PRAGMAGO D4;;-7500,00;PLN',
+    ].join('\n');
     const result = parseBossaOperations(csv, 'test');
-    // Row should NOT be in data
+    expect(result.bondAllocations).toHaveLength(1);
+    expect(result.bondAllocations[0].csvIssuerName).toBe('PRAGMAGO D4');
+    expect(result.bondAllocations[0].subscriptionAmount).toBe(7500);
+    expect(result.bondAllocations[0].refundAmount).toBe(200);
+    // Both rows consumed
     expect(result.data).toHaveLength(0);
-    // Row should be in quarantine as malformed
-    expect(result.quarantine).toHaveLength(1);
-    expect(result.quarantine![0].severity).toBe('malformed');
-    expect(result.quarantine![0].reason).toBe('column_count_mismatch');
-    expect(result.quarantine![0].raw).toEqual([
-      '2026-06-08',
-      'Wypłata odsetek z tytułu obligacji PRF0628',
-      '',
-      '148',
-      '19',
-      'PLN',
-    ]);
+    expect(result.skipped.filter((s) => s.reason === 'redemption_reconciled').length).toBe(2);
   });
 
-  it('90;90 pattern — row goes to QUARANTINE (malformed)', () => {
-    const csv =
-      'data;tytuł operacji;szczegóły;kwota;waluta\n2024-03-08;Wypłata dywidendy SYNEKTIK;;90;90;PLN';
+  it('unpaired "Zapisy na obligacje" — stays as withdrawal, no bond allocation marker', () => {
+    const csv = [CSV_HEADER, '2025-05-29;Zapisy na obligacje PRAGMAGO D4;;-7500,00;PLN'].join('\n');
     const result = parseBossaOperations(csv, 'test');
-    // Row should NOT be in data
-    expect(result.data).toHaveLength(0);
-    // Row should be in quarantine as malformed
-    expect(result.quarantine).toHaveLength(1);
-    expect(result.quarantine![0].severity).toBe('malformed');
-    expect(result.quarantine![0].reason).toBe('column_count_mismatch');
-    expect(result.quarantine![0].raw).toEqual([
-      '2024-03-08',
-      'Wypłata dywidendy SYNEKTIK',
-      '',
-      '90',
-      '90',
-      'PLN',
-    ]);
+    expect(result.bondAllocations).toHaveLength(0);
+    const bondSub = result.data.find((o) => o.amount === -7500);
+    expect(bondSub).toBeDefined();
+    expect(bondSub!.operationType).toBe('withdrawal');
   });
 });

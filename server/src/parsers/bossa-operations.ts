@@ -4,6 +4,7 @@ import type {
   OperationType,
   RedemptionMarker,
   IpoSubscriptionMarker,
+  BondAllocationMarker,
   CapitalReturnMarker,
   SkippedRow,
 } from 'shared';
@@ -12,6 +13,7 @@ import {
   lookupIpoSubscription,
   isBondInstrument,
   findBondByTicker,
+  findBondByName,
 } from 'shared';
 import { normalizeForDetect, parseNumber } from './utils.js';
 
@@ -56,6 +58,11 @@ export interface BossaOperationsParseResult {
    */
   ipoSubscriptions: IpoSubscriptionMarker[];
   /**
+   * Markery subskrypcji obligacji — pary (Zapisy na obligacje + Zwrot nadpłaty).
+   * Reconciliation tworzy z nich syntetyczną K transakcję obligacji.
+   */
+  bondAllocations: BondAllocationMarker[];
+  /**
    * Markery zwrotu kapitału z istniejącej pozycji: obniżenie wartości nominalnej
    * (np. GETIN 2022-12-30), "Wykup PW - wyrównanie" (np. SOLV). Reconciliation wstawia
    * je jako CashOperation(type='capital_return', subkind=marker.kind) — to zapewnia:
@@ -89,7 +96,14 @@ export function parseBossaOperations(
   const hasDataCol = headers.some((h) => h.toLowerCase() === 'data');
   const hasKwotaCol = headers.some((h) => h.toLowerCase() === 'kwota');
   if (!hasDataCol || !hasKwotaCol) {
-    return { data: [], skipped: [], redemptions: [], ipoSubscriptions: [], capitalReturns: [] };
+    return {
+      data: [],
+      skipped: [],
+      redemptions: [],
+      ipoSubscriptions: [],
+      bondAllocations: [],
+      capitalReturns: [],
+    };
   }
 
   const operations: CashOperation[] = [];
@@ -241,10 +255,63 @@ export function parseBossaOperations(
     ipoConsumedRows.add(refund.rowNum);
   }
 
-  // Osierocony leg zwrotu: "Zwrot nadpłaty X" bez wcześniejszego "Zapisy na akcje X".
+  // --- Bond subscription pre-scan: paruj "Zapisy na obligacje X" z "Zwrot nadpłaty X" ---
+  const bondAllocations: BondAllocationMarker[] = [];
+  const bondConsumedRows = new Set<number>();
+  for (const pr of parsedRows) {
+    const bondSubMatch = pr.title.match(/^Zapisy na obligacje\s+(.+)$/i);
+    if (!bondSubMatch) continue;
+    const csvIssuerName = bondSubMatch[1].trim();
+    // Szukaj pasującego zwrotu nadpłaty
+    const refundRow = parsedRows.find(
+      (r) =>
+        r.rowNum !== pr.rowNum &&
+        (r.title.startsWith('Zwrot nadpłaty') || r.title.startsWith('Zwrot nadp\u0142aty')) &&
+        !r.title.includes('przekroczony limit') &&
+        r.title.endsWith(csvIssuerName),
+    );
+    if (!refundRow) {
+      warnings.push(
+        `Wiersz ${pr.rowNum}: znaleziono zapis obligacji "${pr.title}" (${pr.dateStr}), ale bez ` +
+          `pasującego wiersza "Zwrot nadpłaty ${csvIssuerName}" — nie udało się go rozliczyć. ` +
+          `Kwota została zaksięgowana jako wypłata gotówki.`,
+      );
+      continue;
+    }
+    // Próbuj dopasować do bond-map po nazwie emitenta
+    const bondEntry = findBondByName(csvIssuerName);
+    const marker: BondAllocationMarker = {
+      subscriptionDate: pr.dateStr,
+      allocationDate: refundRow.dateStr,
+      csvIssuerName,
+      subscriptionAmount: Math.abs(pr.amount),
+      refundAmount: refundRow.amount,
+      currency: 'PLN',
+      source: 'bossa',
+      rawSubscriptionTitle: pr.title,
+      rawRefundTitle: refundRow.title,
+    };
+    if (bondEntry) {
+      marker.ticker = bondEntry.ticker;
+      marker.isin = bondEntry.isin;
+      marker.nominal = bondEntry.nominal;
+    } else {
+      warnings.push(
+        `Zapis obligacji "${pr.title}" (${pr.dateStr}) sparowany ze zwrotem ` +
+          `"${refundRow.title}" (${refundRow.dateStr}), ale emitent "${csvIssuerName}" ` +
+          `nie został rozpoznany w bond-map (możliwe kilka serii). ` +
+          `Dodaj pozycję obligacji ręcznie w panelu Transakcje.`,
+      );
+    }
+    bondAllocations.push(marker);
+    bondConsumedRows.add(pr.rowNum);
+    bondConsumedRows.add(refundRow.rowNum);
+  }
+
+  // Osierocony leg zwrotu: "Zwrot nadpłaty X" bez wcześniejszego "Zapisy na akcje X" lub "Zapisy na obligacje X".
   // Wpadnie niżej jako deposit (cashflow zachowany), ale subskrypcji nie da się rozliczyć.
   for (const [normTicker, refund] of ipoRefundRows) {
-    if (ipoSubRows.has(normTicker)) continue;
+    if (ipoSubRows.has(normTicker) || bondConsumedRows.has(refund.rowNum)) continue;
     warnings.push(
       `Wiersz ${refund.rowNum}: znaleziono zwrot nadpłaty IPO "${refund.rawTitle}" ` +
         `(${refund.dateStr}), ale bez pasującego wiersza "Zapisy na akcje ${normTicker}" — ` +
@@ -259,6 +326,12 @@ export function parseBossaOperations(
     // 0. IPO subscription / refund pair skonsumowane przez marker → skip obu wierszy.
     //    Cashflow reprezentuje syntetyczna K transakcja generowana przez reconciliation.
     if (ipoConsumedRows.has(rowNum)) {
+      skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
+      continue;
+    }
+
+    // 0b. Bond subscription / refund pair skonsumowane przez marker → skip obu wierszy.
+    if (bondConsumedRows.has(rowNum)) {
       skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
       continue;
     }
@@ -474,6 +547,7 @@ export function parseBossaOperations(
     skipped,
     redemptions,
     ipoSubscriptions,
+    bondAllocations,
     capitalReturns,
     warnings: warnings.length > 0 ? warnings : undefined,
   };

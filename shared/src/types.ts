@@ -775,6 +775,37 @@ export interface RedemptionMarker {
   sourceUrl?: string;
 }
 
+// ============ Bond Subscription (Zapisy na obligacje) ============
+
+/**
+ * Para "Zapisy na obligacje X" + "Zwrot nadpłaty X" z Bossa CSV.
+ * Reconciliation tworzy z niej syntetyczną K transakcję obligacji.
+ * Ticker/isin/nominal są optional — gdy bond-map nie rozpozna emitenta
+ * (np. kilka serii), użytkownik dodaje pozycję ręcznie.
+ */
+export interface BondAllocationMarker {
+  /** Data wiersza "Zapisy na obligacje" (ISO YYYY-MM-DD). */
+  subscriptionDate: string;
+  /** Data wiersza "Zwrot nadpłaty" — używana jako data syntetycznej K transakcji. */
+  allocationDate: string;
+  /** Ticker z bond-map (np. PRF0628) — gdy resolver rozpozna emitenta. */
+  ticker?: string;
+  /** ISIN z bond-map — gdy resolver rozpozna emitenta. */
+  isin?: string;
+  /** Wartość nominalna 1 obligacji (z bond-map, zwykle 100 PLN) — gdy resolver rozpozna emitenta. */
+  nominal?: number;
+  /** Nazwa emitenta z tytułu CSV (np. "PRAGMAGO D4"). Zawsze obecna. */
+  csvIssuerName: string;
+  /** |zapisy.amount| = kwota zablokowana przy subskrypcji. */
+  subscriptionAmount: number;
+  /** zwrot.amount = nadpłata oddana przez brokera. */
+  refundAmount: number;
+  currency: string;
+  source: 'bossa';
+  rawSubscriptionTitle: string;
+  rawRefundTitle: string;
+}
+
 // ============ API Response Types ============
 
 export interface CashPosition {
