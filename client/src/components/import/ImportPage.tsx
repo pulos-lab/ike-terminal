@@ -35,6 +35,7 @@ const TAB_LABELS: Record<ImportTab, string> = {
   mbank: 'mBank',
   degiro: 'DEGIRO',
   xtb: 'XTB',
+  ibkr: 'IBKR',
   generic: 'Uniwersalny',
 };
 
@@ -43,6 +44,7 @@ const TAB_SOURCE_MAP: Partial<Record<ImportTab, RecordSource>> = {
   mbank: 'mbank',
   degiro: 'degiro',
   xtb: 'xtb',
+  ibkr: 'ibkr',
 };
 
 function TabButton({
