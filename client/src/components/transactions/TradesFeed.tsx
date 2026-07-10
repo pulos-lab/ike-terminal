@@ -625,7 +625,10 @@ function VirtualTable({
   return (
     <div ref={parentRef} className="overflow-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
       <table className="w-full text-sm">
-        <thead className="sticky top-0 bg-background z-10">
+        {/* bg-card, nie bg-background — tabela siedzi w <Card>; tło strony na sticky
+            nagłówku tworzyło czarny pasek widoczny tylko przy >500 wierszach
+            (SimpleTable poniżej progu ma przezroczysty nagłówek na tle karty). */}
+        <thead className="sticky top-0 bg-card z-10">
           <tr className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold border-b border-border">
             <th className="text-left py-2 pr-4">Data</th>
             <th className="text-left py-2 pr-4">Ticker</th>
