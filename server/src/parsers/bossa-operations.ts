@@ -15,7 +15,13 @@ import {
   findBondByTicker,
   findBondByName,
 } from 'shared';
-import { normalizeForDetect, parseNumber } from './utils.js';
+import {
+  normalizeForDetect,
+  parseNumber,
+  detectColumnShift,
+  columnShiftWarning,
+  rawRowForWarning,
+} from './utils.js';
 
 /**
  * Parse Bossa cash operations CSV
@@ -108,6 +114,7 @@ export function parseBossaOperations(
 
   const operations: CashOperation[] = [];
   const skipped: SkippedRow[] = [];
+  const warnings: string[] = [];
 
   // Dwa etapy: najpierw zbieramy wszystkie wiersze (potrzebujemy parować prowizje wezwań skupu),
   // potem emitujemy CashOperation + RedemptionMarker.
@@ -137,6 +144,17 @@ export function parseBossaOperations(
     }
     if (!DATE_RE.test(dateStr)) {
       skipped.push({ row: rowNum, reason: 'invalid_date', paperName: title });
+      continue;
+    }
+    // Ochrona przed cichym przesunięciem kolumn (np. średnik w tytule operacji
+    // przesuwa kwotę do kolumny waluty): sygnały treści, nie liczba kolumn.
+    const shiftProblems = detectColumnShift([
+      { label: 'kwota', value: row['kwota'], kind: 'number' },
+      { label: 'waluta', value: row['waluta'], kind: 'currency' },
+    ]);
+    if (shiftProblems.length > 0) {
+      skipped.push({ row: rowNum, reason: 'column_shift', paperName: title });
+      warnings.push(columnShiftWarning(rowNum, shiftProblems, rawRowForWarning(row, ';')));
       continue;
     }
     if (amount === 0) {
@@ -208,7 +226,6 @@ export function parseBossaOperations(
   const redemptions: RedemptionMarker[] = [];
   const ipoSubscriptions: IpoSubscriptionMarker[] = [];
   const capitalReturns: CapitalReturnMarker[] = [];
-  const warnings: string[] = [];
   const ipoConsumedRows = new Set<number>(); // rowNum wierszy Zapisy/Zwrot skonsumowanych przez marker IPO
 
   // Budowanie markerów IPO: dla każdej pary (Zapisy ↔ Zwrot) po normalizowanym tickerze

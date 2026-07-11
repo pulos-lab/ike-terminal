@@ -1,6 +1,13 @@
 import Papa from 'papaparse';
 import type { CashOperation, ParseResult, SkippedRow } from 'shared';
-import { normalizeForDetect, parseNumber, parseDottedDate } from './utils.js';
+import {
+  normalizeForDetect,
+  parseNumber,
+  parseDottedDate,
+  detectColumnShift,
+  columnShiftWarning,
+  rawRowForWarning,
+} from './utils.js';
 
 /**
  * Parse mBank eMakler financial history CSV (eMAKLER_historia_finansowa.Csv).
@@ -58,6 +65,7 @@ export function parseMbankOperations(
   const rows = result.data as string[][];
   const operations: CashOperation[] = [];
   const skipped: SkippedRow[] = [];
+  const warnings: string[] = [];
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -78,6 +86,18 @@ export function parseMbankOperations(
     }
     if (!description) {
       skipped.push({ row: rowNum, reason: 'missing_description' });
+      continue;
+    }
+
+    // Ochrona przed cichym przesunięciem kolumn: Opis jest wolnym tekstem — jeśli
+    // zawiera delimiter, Kwota ląduje w złej kolumnie (reszta opisu zamiast liczby).
+    const shiftProblems = detectColumnShift([
+      { label: 'Data', value: dateStr, kind: 'date' },
+      { label: 'Kwota', value: row[2], kind: 'number' },
+    ]);
+    if (shiftProblems.length > 0) {
+      skipped.push({ row: rowNum, reason: 'column_shift', paperName: description });
+      warnings.push(columnShiftWarning(rowNum, shiftProblems, rawRowForWarning(row, delimiter)));
       continue;
     }
 
@@ -161,7 +181,7 @@ export function parseMbankOperations(
     });
   }
 
-  return { data: operations, skipped };
+  return { data: operations, skipped, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 /**

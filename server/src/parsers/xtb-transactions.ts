@@ -7,7 +7,14 @@ import type {
   InstrumentCategory,
 } from 'shared';
 import { findCfdTicker } from 'shared';
-import { roundTo2, roundFxRate } from './utils.js';
+import {
+  roundTo2,
+  roundFxRate,
+  parseNumber,
+  detectColumnShift,
+  columnShiftWarning,
+  rawRowForWarning,
+} from './utils.js';
 
 /** Infer CFD category from instrument name using static CFD_TICKER_MAP.
  *  Used as fallback when Closed Positions sheet is missing. */
@@ -598,9 +605,14 @@ export async function parseXtbFile(
   // Convert to 2D array. ExcelJS preserves column positions (including empty
   // leading columns) — detectHeaderLayout scans every cell for known header
   // names via synonyms, so leading empty columns are handled implicitly.
+  // excelRowNums: PRAWDZIWE numery wierszy arkusza (ExcelJS row.number) — indeks
+  // w `rows` po includeEmpty:false rozjeżdża się z arkuszem przy pustych wierszach,
+  // a numer w skipped/warnings musi pozwolić userowi znaleźć wiersz w pliku.
   const rows: any[][] = [];
-  worksheet.eachRow({ includeEmpty: false }, (row) => {
+  const excelRowNums: number[] = [];
+  worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
     rows.push((row.values as any[]).slice(1));
+    excelRowNums.push(rowNumber);
   });
 
   // ── Extract account currency ──
@@ -633,9 +645,11 @@ export async function parseXtbFile(
 
   // ── Parse data rows — column indices come from the layout map ──
   const rawRows: RawRow[] = [];
+  const structSkipped: SkippedRow[] = [];
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row) continue;
+    const rowNum = excelRowNums[i];
 
     const typeCell = row[col.type]?.toString().trim() || '';
     if (!typeCell) continue;
@@ -647,12 +661,36 @@ export async function parseXtbFile(
       timeVal instanceof Date || typeof timeVal === 'number'
         ? timeVal
         : timeVal?.toString().trim() || '';
+
+    // XLSX nie ma delimitera, więc klasyczne przesunięcie kolumn nie występuje —
+    // ale komórka tekstowa w kolumnie Amount (albo obiekt formuły ExcelJS) to ten
+    // sam cichy błąd: parseFloat('12abc')=12 wchodziło do DB bez sygnału.
+    // Niepusta nie-liczba → skip z ostrzeżeniem; pusta komórka = kwota 0 (jak dotąd).
     const amountRaw = row[col.amount];
-    const amount =
-      typeof amountRaw === 'number' ? amountRaw : parseFloat(amountRaw?.toString() || '0') || 0;
+    let amount = 0;
+    if (typeof amountRaw === 'number') {
+      amount = amountRaw;
+    } else {
+      const amountStr = amountRaw?.toString().trim() || '';
+      const shiftProblems = detectColumnShift([
+        { label: 'Amount', value: amountStr, kind: 'number' },
+      ]);
+      if (shiftProblems.length > 0) {
+        structSkipped.push({
+          row: rowNum,
+          reason: 'column_shift',
+          paperName: row[col.symbol]?.toString().trim() || typeCell,
+        });
+        warnings.push(columnShiftWarning(rowNum, shiftProblems, rawRowForWarning(row, ';')));
+        continue;
+      }
+      // parseNumber zamiast parseFloat: tekstowa kwota "1,5" (przecinek dziesiętny)
+      // dawała parseFloat=1 — cicho ucięte grosze.
+      amount = parseNumber(amountStr);
+    }
 
     rawRows.push({
-      rowNum: i + 1,
+      rowNum,
       id: row[col.id]?.toString().trim() || '',
       type: normalizeType(typeCell),
       time,
@@ -717,7 +755,9 @@ export async function parseXtbFile(
 
   // ── Pass 1: Build transactions from Stock purchase / Stock sale ──
   const transactions: Transaction[] = [];
-  const txSkipped: SkippedRow[] = [];
+  // Skipy strukturalne (column_shift) idą do listy transakcji — przy zepsutej
+  // kolumnie Amount nie wiadomo nawet, czy wiersz był transakcją czy operacją.
+  const txSkipped: SkippedRow[] = [...structSkipped];
   const opsSkipped: SkippedRow[] = [];
 
   // Track transactions by key for commission matching: "SYMBOL|ISO_TIME" → indeksy w transactions[].

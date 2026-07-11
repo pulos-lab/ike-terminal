@@ -7,6 +7,9 @@ import {
   computeTotal,
   validateTradeFields,
   parseDottedDate,
+  detectColumnShift,
+  columnShiftWarning,
+  rawRowForWarning,
 } from './utils.js';
 
 /**
@@ -60,6 +63,7 @@ export function parseMbankTransactions(
   const rows = result.data as string[][];
   const transactions: Transaction[] = [];
   const skipped: SkippedRow[] = [];
+  const warnings: string[] = [];
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -81,6 +85,21 @@ export function parseMbankTransactions(
     const priceCurrency = at(colMap.priceCurrency)?.trim();
     const commission = parseNumber(at(colMap.commission));
     const exchange = at(colMap.exchange)?.trim();
+
+    // Ochrona przed cichym przesunięciem kolumn (dodatkowy separator w którymś polu):
+    // sygnały treści, nie liczba kolumn. Kolumny z indeksem −1 dają undefined = brak sygnału.
+    const shiftProblems = detectColumnShift([
+      { label: 'Czas transakcji', value: dateStr, kind: 'date' },
+      { label: 'Liczba', value: at(colMap.quantity), kind: 'number' },
+      { label: 'Kurs', value: at(colMap.price), kind: 'number' },
+      { label: 'Prowizja', value: at(colMap.commission), kind: 'number' },
+      { label: 'Waluta', value: priceCurrency, kind: 'currency' },
+    ]);
+    if (shiftProblems.length > 0) {
+      skipped.push({ row: rowNum, reason: 'column_shift', paperName: paperName || undefined });
+      warnings.push(columnShiftWarning(rowNum, shiftProblems, rawRowForWarning(row, delimiter)));
+      continue;
+    }
 
     // Wspólna walidacja pól (utils.validateTradeFields) — mBank wymaga nazwy papieru,
     // ISIN nie istnieje w eksporcie (resolwowany po imporcie).
@@ -120,15 +139,14 @@ export function parseMbankTransactions(
   if (colMap.commission < 0) missingCols.push('Prowizja (przyjęto 0)');
   if (colMap.priceCurrency < 0) missingCols.push('Waluta kursu (inferowana z giełdy lub PLN)');
   if (colMap.exchange < 0) missingCols.push('Giełda (waluta domyślnie PLN)');
-  const warnings =
-    missingCols.length > 0 && transactions.length > 0
-      ? [
-          `mBank: w nagłówku pliku brakuje kolumn: ${missingCols.join('; ')} — ` +
-            `zweryfikuj prowizje i waluty zaimportowanych transakcji.`,
-        ]
-      : undefined;
+  if (missingCols.length > 0 && transactions.length > 0) {
+    warnings.push(
+      `mBank: w nagłówku pliku brakuje kolumn: ${missingCols.join('; ')} — ` +
+        `zweryfikuj prowizje i waluty zaimportowanych transakcji.`,
+    );
+  }
 
-  return { data: transactions, skipped, warnings };
+  return { data: transactions, skipped, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 /**

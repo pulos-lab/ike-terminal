@@ -105,6 +105,108 @@ export function validateTradeFields(fields: {
   return { ok: true };
 }
 
+// ── Walidacja struktury wiersza — ochrona przed cichym przesunięciem kolumn ──
+//
+// Zagrożenie: dodatkowy separator w środku pola (np. średnik w tytule operacji)
+// przesuwa wartości do złych kolumn, a `parseNumber('12abc') = 12` przechodzi bez
+// sygnału — dane lądują w DB z przekłamanymi kwotami. Wykrywamy FAKTYCZNE
+// przesunięcie sygnałami TREŚCI (liczba w kolumnie waluty, tekst w kolumnie
+// liczbowej, brak daty w kolumnie daty), a NIE liczbą kolumn: nadmiarowe kolumny
+// po prawej (np. "Product" w nowych eksportach) i puste `__parsed_extra`
+// z trailing separatora są nieszkodliwe i muszą być tolerowane.
+
+export type RowFieldKind = 'number' | 'currency' | 'date';
+
+export interface RowShapeField {
+  /** Etykieta kolumny (nazwa z nagłówka pliku) — do komunikatu ostrzeżenia. */
+  label: string;
+  value: string | undefined;
+  kind: RowFieldKind;
+}
+
+/**
+ * Czy tekst jest W CAŁOŚCI liczbą w formacie EU/US (te same reguły czyszczenia
+ * co parseNumber: spacje tysięcy, przecinek/kropka dziesiętna, oba separatory).
+ * W przeciwieństwie do parseNumber odrzuca częściowe dopasowania ('12abc').
+ */
+export function isStrictNumber(value: string): boolean {
+  let cleaned = value.replace(/\s/g, '');
+  const lastComma = cleaned.lastIndexOf(',');
+  const lastDot = cleaned.lastIndexOf('.');
+  if (lastComma >= 0 && lastDot >= 0) {
+    cleaned =
+      lastComma > lastDot
+        ? cleaned.replace(/\./g, '').replace(',', '.')
+        : cleaned.replace(/,/g, '');
+  } else {
+    cleaned = cleaned.replace(',', '.');
+  }
+  return /^[+-]?\d+(\.\d+)?$/.test(cleaned);
+}
+
+/**
+ * Data w dowolnej konwencji obsługiwanej przez parsery (DD.MM.YYYY, DD-MM-YYYY,
+ * YYYY-MM-DD, opcjonalny czas). Celowo LUŹNE — chodzi o wykrycie przesunięcia
+ * (liczba/tekst w kolumnie daty), nie o egzekwowanie konkretnego formatu;
+ * warianty formatu łapie dalsza walidacja parsera.
+ */
+const DATE_ANY_RE = /(\d{2}[.-]\d{2}[.-]\d{4}|\d{4}-\d{2}-\d{2})/;
+
+/**
+ * Sygnały przesunięcia kolumn w wierszu. Puste pole NIGDY nie jest sygnałem
+ * (braki obsługuje walidacja pól parsera — missing_date/invalid_price itd.).
+ * Zwraca listę opisów problemów; pusta lista = wiersz strukturalnie OK.
+ */
+export function detectColumnShift(fields: RowShapeField[]): string[] {
+  const problems: string[] = [];
+  for (const f of fields) {
+    const v = f.value?.toString().trim();
+    if (!v) continue;
+    switch (f.kind) {
+      case 'number':
+        if (!isStrictNumber(v)) problems.push(`kolumna „${f.label}" nie jest liczbą („${v}")`);
+        break;
+      case 'currency':
+        if (/^[+-]?\d/.test(v))
+          problems.push(`kolumna „${f.label}" zawiera liczbę („${v}") zamiast kodu waluty`);
+        break;
+      case 'date':
+        if (!DATE_ANY_RE.test(v)) problems.push(`kolumna „${f.label}" nie zawiera daty („${v}")`);
+        break;
+    }
+  }
+  return problems;
+}
+
+const RAW_ROW_MAX_LEN = 220;
+
+/**
+ * Surowa treść wiersza do ostrzeżenia. Przyjmuje tablicę komórek (Papa
+ * header:false) lub obiekt wiersza (Papa header:true — kolejność pól = kolejność
+ * nagłówka, `__parsed_extra` spłaszczane na koniec).
+ */
+export function rawRowForWarning(row: unknown, delimiter: string): string {
+  const values = Array.isArray(row)
+    ? row
+    : row && typeof row === 'object'
+      ? Object.values(row as Record<string, unknown>).flat()
+      : [row];
+  const s = values.map((v) => (v == null ? '' : String(v))).join(delimiter);
+  return s.length > RAW_ROW_MAX_LEN ? `${s.slice(0, RAW_ROW_MAX_LEN)}…` : s;
+}
+
+/**
+ * Czytelne ostrzeżenie o pominiętym wierszu z przesuniętymi kolumnami — z numerem
+ * wiersza i surową treścią, żeby użytkownik mógł znaleźć i poprawić wiersz w pliku.
+ */
+export function columnShiftWarning(rowNum: number, problems: string[], rawRow: string): string {
+  return (
+    `Wiersz ${rowNum} pominięty — wartości nie pasują do kolumn formatu ` +
+    `(prawdopodobnie dodatkowy separator w którymś polu przesunął kolumny): ` +
+    `${problems.join('; ')}. Treść wiersza: ${rawRow}`
+  );
+}
+
 /**
  * Parse DD.MM.YYYY with optional HH:MM:SS time to ISO 8601.
  * "25.02.2026 09:47:27" -> "2026-02-25T09:47:27"

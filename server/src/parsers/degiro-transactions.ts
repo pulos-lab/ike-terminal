@@ -6,6 +6,9 @@ import {
   roundTo2,
   validateTradeFields,
   parseDegiroDate,
+  detectColumnShift,
+  columnShiftWarning,
+  rawRowForWarning,
 } from './utils.js';
 
 /**
@@ -72,6 +75,7 @@ export function parseDegiroTransactions(
 
   const transactions: Transaction[] = [];
   const skipped: SkippedRow[] = [];
+  const warnings: string[] = [];
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
@@ -92,6 +96,26 @@ export function parseDegiroTransactions(
     const localValue = parseNumber(row[9]);
     const fee = parseNumber(row[colMap.fee]);
     const fxRateRaw = colMap.fxRate >= 0 ? parseNumber(row[colMap.fxRate]) : 0;
+
+    // Ochrona przed cichym przesunięciem kolumn — DEGIRO czyta kolumny pozycyjnie,
+    // więc dodatkowy przecinek w polu przesuwa WSZYSTKIE dalsze wartości. Sygnały
+    // treści (liczba w kolumnie waluty, tekst w liczbowej), nie liczba kolumn.
+    const shiftProblems = detectColumnShift([
+      { label: 'Data', value: dateStr, kind: 'date' },
+      { label: 'Liczba', value: row[6], kind: 'number' },
+      { label: 'Kurs', value: row[7], kind: 'number' },
+      { label: 'waluta kursu', value: priceCurrency, kind: 'currency' },
+      { label: 'Wartość lokalna', value: row[9], kind: 'number' },
+      { label: 'Opłata transakcyjna', value: row[colMap.fee], kind: 'number' },
+      ...(colMap.fxRate >= 0
+        ? [{ label: 'Kurs wymiany', value: row[colMap.fxRate], kind: 'number' as const }]
+        : []),
+    ]);
+    if (shiftProblems.length > 0) {
+      skipped.push({ row: rowNum, reason: 'column_shift', paperName: product || undefined });
+      warnings.push(columnShiftWarning(rowNum, shiftProblems, rawRowForWarning(row, ',')));
+      continue;
+    }
 
     // Wspólna walidacja pól (utils.validateTradeFields). Strona (K/S) wynika ze znaku
     // Liczby, więc walidujemy |Liczba| zamiast side; cena sprawdzana niżej, bo
@@ -170,7 +194,7 @@ export function parseDegiroTransactions(
     });
   }
 
-  return { data: transactions, skipped };
+  return { data: transactions, skipped, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 /**
