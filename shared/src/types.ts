@@ -1102,6 +1102,14 @@ export interface ImportStatusResponse {
   operations: number;
   /** SQLite UTC timestamp 'YYYY-MM-DD HH:MM:SS' albo null gdy brak importów. */
   lastImportDate: string | null;
+  /** Liczba wierszy oczekujących w skrzynce "Do wyjaśnienia". */
+  quarantinePending: number;
+}
+
+/** GET /api/import/quarantine */
+export interface QuarantineListResponse {
+  rows: QuarantineRow[];
+  counts: QuarantineCounts;
 }
 
 /** Kursy FX z GET /prices/live — dokładnie te pary, które serwer faktycznie wysyła. */

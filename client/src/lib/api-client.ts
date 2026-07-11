@@ -451,6 +451,19 @@ export const api = {
   // Import
   getImportStatus: () => request<ImportStatusResponse>('/import/status'),
 
+  // ── Skrzynka "Do wyjaśnienia" (kwarantanna importu) ─────────────────────────
+  getQuarantine: (status?: import('shared').QuarantineStatus) =>
+    request<import('shared').QuarantineListResponse>(
+      `/import/quarantine${status ? `?status=${status}` : ''}`,
+    ),
+  ignoreQuarantineRow: (id: number, note?: string) =>
+    request<{ success: boolean; row: import('shared').QuarantineRow }>(
+      `/import/quarantine/${id}/ignore`,
+      { method: 'POST', body: JSON.stringify({ note }) },
+    ),
+  deleteQuarantineRow: (id: number) =>
+    request<{ success: boolean }>(`/import/quarantine/${id}`, { method: 'DELETE' }),
+
   /**
    * Klasyfikacja pliku — zwraca wykryty broker + rolę (transactions/operations).
    * UI używa tego żeby zdecydować, czy drugie pole (operacje) jest potrzebne.

@@ -21,6 +21,7 @@ import {
   ChevronUp,
   PanelLeftClose,
   Landmark,
+  Inbox,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -61,12 +62,14 @@ function NavItem({
   Icon,
   collapsed,
   onNavigate,
+  badgeCount,
 }: {
   to: string;
   label: string;
   Icon: React.ComponentType<{ className?: string }>;
   collapsed: boolean;
   onNavigate?: () => void;
+  badgeCount?: number;
 }) {
   const match = useMatch({ path: to, end: to === '/app' });
   const isActive = !!match;
@@ -85,6 +88,16 @@ function NavItem({
       )}
       <Icon className="h-4 w-4" />
       {!collapsed && label}
+      {badgeCount !== undefined && badgeCount > 0 && (
+        <span
+          className={cn(
+            'flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-semibold text-warning-foreground',
+            collapsed ? 'absolute -top-0.5 -right-0.5' : 'ml-auto',
+          )}
+        >
+          {badgeCount}
+        </span>
+      )}
     </NavLink>
   );
 
@@ -112,6 +125,15 @@ function NavContent({
   // zunifikowane). Link zawsze widoczny — panel pokazuje empty state gdy brak danych.
   const navItems = baseNavItems;
 
+  // Skrzynka "Do wyjaśnienia" — link pojawia się tylko, gdy jakiś wiersz importu
+  // czeka na decyzję (inbox-zero: bez oczekujących nie zaśmiecamy nawigacji;
+  // strona pozostaje osiągalna z wyniku importu). Klucz współdzielony z AppShell.
+  const { data: importStatus } = useQuery({
+    queryKey: QUERY_KEYS.importStatus,
+    queryFn: api.getImportStatus,
+  });
+  const quarantinePending = importStatus?.quarantinePending ?? 0;
+
   return (
     <TooltipProvider delayDuration={0}>
       <nav className={cn('flex flex-col gap-1', collapsed ? 'p-2 items-center' : 'p-3')}>
@@ -136,6 +158,16 @@ function NavContent({
             onNavigate={onNavigate}
           />
         ))}
+        {quarantinePending > 0 && (
+          <NavItem
+            to="/app/import/inbox"
+            label="Do wyjaśnienia"
+            Icon={Inbox}
+            collapsed={collapsed}
+            onNavigate={onNavigate}
+            badgeCount={quarantinePending}
+          />
+        )}
       </nav>
     </TooltipProvider>
   );
