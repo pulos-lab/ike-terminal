@@ -317,6 +317,30 @@ describe('parseWithProfile — operacje gotówkowe', () => {
     const out = parseWithProfile(csv, profile, BATCH);
     expect(out.operations.skipped[0].reason).toBe('unknown_operation_type');
   });
+
+  it('unknown_operation_type niesie raw (kolumna typu z reguł classify) do skrzynki "Do wyjaśnienia"', () => {
+    const profile = opsProfile(
+      [
+        {
+          id: 'dep',
+          when: [{ col: { name: 'tytul' }, op: 'equals', values: ['Przelew'] }],
+          emit: 'deposit',
+        },
+      ],
+      { deposit: true },
+    );
+    const csv = `${OPS_HEADER}\n2026-01-10;Egzotyczna operacja;10,00;PLN\n2026-01-11;Przelew;5,00;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    const unknown = out.operations.skipped.find((s) => s.reason === 'unknown_operation_type');
+    // rawType = wartość najczęściej matchowanej kolumny classify (tu: 'tytul')
+    expect(unknown?.raw?.rawType).toBe('egzotyczna operacja');
+    expect(unknown?.raw?.headers).toEqual(['data', 'tytul', 'kwota', 'waluta']);
+    expect(unknown?.raw?.cells).toEqual(['2026-01-10', 'Egzotyczna operacja', '10,00', 'PLN']);
+
+    // Wiersz rozpoznany regułą NIE dostaje raw
+    expect(out.operations.data).toHaveLength(1);
+  });
 });
 
 describe('parseWithProfile — parowanie dywidenda ↔ WHT', () => {

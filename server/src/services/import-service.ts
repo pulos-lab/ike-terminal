@@ -66,6 +66,7 @@ import { resolveUnknownIsins } from './isin-resolver.js';
 import { reconcilePaymentCurrencies } from './payment-currency-reconciler.js';
 import { reconcileQuoteCurrencies } from './quote-currency-reconciler.js';
 import { getDb } from '../db/connection.js';
+import { insertQuarantineRows, MAX_QUARANTINE_PER_BATCH } from '../db/quarantine-repo.js';
 
 // ─── File classification ─────────────────────────────────────────────────────
 
@@ -283,6 +284,8 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   const insertedTxDuplicates: SkippedRow[] = [];
   const insertedOpsDuplicates: SkippedRow[] = [];
   let syntheticSells = 0;
+  let quarantined = 0;
+  let quarantineOverflow = 0;
   const crossFileWarnings: string[] = [...parserWarnings];
 
   const runAll = db.transaction(() => {
@@ -352,8 +355,48 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       const applied = applyTransactionTaxes(taxes, opsParser.label, pid, crossFileWarnings);
       if (applied > 0) result.taxesApplied = applied;
     }
+
+    // 4. Skrzynka "Do wyjaśnienia" — nierozpoznane wiersze z surową treścią,
+    // w tej samej transakcji co inserty (rollback importu = skrzynka bez śladu).
+    for (let i = 0; i < parsedTxFiles.length; i++) {
+      if (!txParserId) break;
+      const q = insertQuarantineRows(
+        {
+          importBatch,
+          source: txParserId,
+          fileName: txFiles[i]?.originalName,
+          skipped: parsedTxFiles[i].skipped,
+          maxRows: MAX_QUARANTINE_PER_BATCH - quarantined,
+        },
+        pid,
+      );
+      quarantined += q.inserted;
+      quarantineOverflow += q.overflow;
+    }
+    if (parsedOps && opsParserId) {
+      const q = insertQuarantineRows(
+        {
+          importBatch,
+          source: opsParserId,
+          fileName: opsFile?.originalName,
+          skipped: parsedOps.skipped,
+          maxRows: MAX_QUARANTINE_PER_BATCH - quarantined,
+        },
+        pid,
+      );
+      quarantined += q.inserted;
+      quarantineOverflow += q.overflow;
+    }
   });
   runAll();
+
+  if (quarantineOverflow > 0) {
+    crossFileWarnings.push(
+      `Skrzynka „Do wyjaśnienia": osiągnięto limit ${MAX_QUARANTINE_PER_BATCH} wierszy na import — ` +
+        `${quarantineOverflow} dalszych nierozpoznanych wierszy nie zostało zapisanych ` +
+        `(prawdopodobnie plik w nieobsługiwanym formacie).`,
+    );
+  }
 
   // Self-healing: usuń legacy stuby z ticker_map dla ISIN-ów, które trafiły do reconciliation
   // jako tender/IPO. Stare wersje kodu wpisywały tam ticker brokerowy (np. "MOSTALZAB"),
@@ -456,6 +499,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
     syntheticSells: syntheticSells > 0 ? syntheticSells : undefined,
     crossFileWarnings: crossFileWarnings.length > 0 ? crossFileWarnings : undefined,
+    quarantined: quarantined > 0 ? quarantined : undefined,
   };
 }
 
@@ -539,6 +583,8 @@ async function importCombinedFiles(
   let txInserted = 0;
   let opsInserted = 0;
   let taxesApplied = 0;
+  let quarantined = 0;
+  let quarantineOverflow = 0;
   const insertedTxDuplicates: SkippedRow[] = [];
   const insertedOpsDuplicates: SkippedRow[] = [];
 
@@ -615,8 +661,33 @@ async function importCombinedFiles(
     if (allTaxes.length > 0) {
       taxesApplied = applyTransactionTaxes(allTaxes, parser.label, pid, parserWarnings);
     }
+
+    // 6. Skrzynka "Do wyjaśnienia" — nierozpoznane wiersze z surową treścią,
+    // per plik (fileName rozróżnia roczniki multi-file IBKR).
+    for (const pf of parsedFiles) {
+      const q = insertQuarantineRows(
+        {
+          importBatch,
+          source: parser.id,
+          fileName: pf.name,
+          skipped: [...pf.output.transactions.skipped, ...pf.output.operations.skipped],
+          maxRows: MAX_QUARANTINE_PER_BATCH - quarantined,
+        },
+        pid,
+      );
+      quarantined += q.inserted;
+      quarantineOverflow += q.overflow;
+    }
   });
   run();
+
+  if (quarantineOverflow > 0) {
+    parserWarnings.push(
+      `Skrzynka „Do wyjaśnienia": osiągnięto limit ${MAX_QUARANTINE_PER_BATCH} wierszy na import — ` +
+        `${quarantineOverflow} dalszych nierozpoznanych wierszy nie zostało zapisanych ` +
+        `(prawdopodobnie plik w nieobsługiwanym formacie).`,
+    );
+  }
 
   const { resolved, unresolved } =
     allTxData.length > 0
@@ -664,6 +735,7 @@ async function importCombinedFiles(
     orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
     taxesApplied: taxesApplied > 0 ? taxesApplied : undefined,
     warnings: parserWarnings.length > 0 ? parserWarnings : undefined,
+    quarantined: quarantined > 0 ? quarantined : undefined,
   };
 }
 

@@ -11,6 +11,8 @@ import {
 import { getOperationsCount, clearImportedOperations } from '../db/operations-repo.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import importGenericRouter from './import-generic.js';
+import importQuarantineRouter from './import-quarantine.js';
+import { clearQuarantine, countQuarantineByStatus } from '../db/quarantine-repo.js';
 
 const router = Router();
 
@@ -18,6 +20,9 @@ const router = Router();
 // Montowany PRZED error-middleware multera na końcu tego routera,
 // więc błędy uploadu z sub-routera dostają te same czytelne 400/413.
 router.use('/generic', importGenericRouter);
+
+// Skrzynka "Do wyjaśnienia" — /api/import/quarantine/*.
+router.use('/quarantine', importQuarantineRouter);
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 // IBKR eksportuje wyciągi per rok × konto — kilkanaście plików w jednej paczce to norma.
@@ -123,6 +128,9 @@ router.delete(
     const pid = req.portfolioId;
     clearImportedTransactions(pid);
     clearImportedOperations(pid);
+    // Kaskada: skrzynka "Do wyjaśnienia" w całości (wpisy resolved wskazywałyby
+    // na usunięte rekordy transactions/cash_operations).
+    clearQuarantine(pid);
     res.json({ success: true });
   }),
 );
@@ -136,6 +144,7 @@ router.get('/status', (req, res) => {
     transactions: getTransactionsCount(pid),
     operations: getOperationsCount(pid),
     lastImportDate: getLastImportDate(pid),
+    quarantinePending: countQuarantineByStatus(pid).pending,
   });
 });
 

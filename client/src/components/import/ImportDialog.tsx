@@ -191,10 +191,14 @@ export function ImportDialog({ open, onOpenChange }: Props) {
           //  - close_trade_entry (XTB P/L — użyte w parze K+S)
           //  - duplicate (już liczone osobno powyżej)
           //  - redemption_reconciled (wykup/wezwanie wchodzi jako syntetyczna sprzedaż)
+          //  - cancelled_trade (anulowana przez brokera — jest osobny warning parsera)
+          //  - aliased_ignore (typ oznaczony przez admina jako nieistotny)
           const hiddenReasons = new Set<SkipReason>([
             'close_trade_entry',
             'duplicate',
             'redemption_reconciled',
+            'cancelled_trade',
+            'aliased_ignore',
           ]);
           const visible = result.skipped.filter((s) => !hiddenReasons.has(s.reason));
           if (visible.length > 0) {

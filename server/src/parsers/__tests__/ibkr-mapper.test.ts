@@ -58,6 +58,9 @@ ${row(['T 2 7/8 05/15/32 3.92547561%', '2022-10-13, 12:07:48', '2,000', '91.4222
 ${header('Forex', 'asset')}
 ${header('PLN', 'currency')}
 ${row(['USD.PLN', '2022-03-17, 06:23:59', '1,270', '4.24497', '&nbsp;', '-5,391.11', '-8.45', '&nbsp;', '&nbsp;', '-26.25', '&nbsp;'])}
+${header('Warrants', 'asset')}
+${header('USD', 'currency')}
+${row(['ABC WS', '2022-06-01, 11:00:00', '10', '1.50', '1.50', '-15.00', '-1.00', '16.00', '0.00', '0.00', 'O'])}
 </tbody></table></div>
 <div id="tblCombDivU6474045Body"><table>
 ${thead(['Date', 'Description', 'Amount'])}
@@ -187,10 +190,27 @@ describe('mapowanie Trades', () => {
     expect(glob.date).toBe('2022-07-22T09:52:06');
   });
 
-  it('anulowana transakcja (kod Ca) jest pomijana', () => {
+  it('anulowana transakcja (kod Ca) → cancelled_trade, celowy skip BEZ raw (nie do skrzynki)', () => {
     const { transactions, skipped } = parse();
     expect(transactions.find((t) => t.paperName === 'XXX')).toBeUndefined();
-    expect(skipped.some((s) => s.paperName === 'XXX')).toBe(true);
+    const ca = skipped.find((s) => s.paperName === 'XXX');
+    expect(ca?.reason).toBe('cancelled_trade');
+    expect(ca?.raw).toBeUndefined();
+  });
+
+  it('nieznana kategoria aktywów → unknown_type Z surową treścią (skrzynka "Do wyjaśnienia")', () => {
+    const { transactions, skipped } = parse();
+    expect(transactions.find((t) => t.paperName === 'ABC WS')).toBeUndefined();
+    const skip = skipped.find((s) => s.paperName === 'ABC WS');
+    expect(skip?.reason).toBe('unknown_type');
+    expect(skip?.raw?.rawType).toBe('warrants');
+    expect(skip?.raw?.cells).toContain('ABC WS');
+    expect(skip?.raw?.headers).toContain('Asset Class');
+    expect(skip?.raw?.hint).toMatchObject({
+      date: '2022-06-01',
+      currency: 'USD',
+      symbol: 'ABC WS',
+    });
   });
 
   it('opcje: sell-to-open jako S z pseudo-ISIN OPT:{OCC} i wartością z mnożnikiem', () => {
