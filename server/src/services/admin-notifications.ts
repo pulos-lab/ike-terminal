@@ -96,6 +96,57 @@ export async function notifyNewImportProfile(row: ImportProfileRow): Promise<voi
   }
 }
 
+export interface UnknownTypeReportNotification {
+  broker: string;
+  rawType: string;
+  kind: 'classified' | 'unsupported';
+  reporterUserId: string;
+}
+
+/**
+ * Powiadom admina o NOWYM agregacie zgłoszenia nieznanego typu operacji
+ * (skrzynka "Do wyjaśnienia"). Wołane tylko gdy upsert utworzył wiersz —
+ * kolejne zgłoszenia tego samego (broker, typ) inkrementują licznik bez maila.
+ */
+export async function notifyNewUnknownTypeReport(
+  report: UnknownTypeReportNotification,
+): Promise<void> {
+  try {
+    if (!isAdminNotificationsEnabled()) return;
+    const admin = getAdminRecipient();
+    if (!admin) return;
+    if (report.reporterUserId === admin.id) return; // skip-own
+
+    const isGap = report.kind === 'unsupported';
+    const reporter = getUserEmailById(report.reporterUserId);
+    const body = `
+      <p style="margin:0 0 8px;">${
+        isGap
+          ? 'Użytkownik zgłosił wiersz importu, którego aplikacja prawdopodobnie nie obsługuje:'
+          : 'Użytkownik sklasyfikował nierozpoznany typ operacji — kandydat na alias/obsługę w parserze:'
+      }</p>
+      <ul style="margin:0; padding-left:18px;">
+        <li>Broker: <b>${escapeHtml(report.broker)}</b></li>
+        <li>Typ operacji: <b>${escapeHtml(report.rawType)}</b></li>
+        ${reporter ? `<li>Zgłosił: ${escapeHtml(reporter)}</li>` : ''}
+      </ul>`;
+    await sendEmail({
+      to: admin.email,
+      subject: isGap
+        ? `Nieobsługiwana funkcjonalność: ${report.broker} / „${report.rawType}"`
+        : `Nieznany typ operacji: ${report.broker} / „${report.rawType}"`,
+      html: emailShell(
+        isGap ? 'Zgłoszenie nieobsługiwanej funkcjonalności' : 'Nieznany typ operacji',
+        body,
+        '/app/admin/type-aliases',
+        'Otwórz panel typów operacji',
+      ),
+    });
+  } catch (err) {
+    console.error('[admin-notifications] notifyNewUnknownTypeReport failed:', err);
+  }
+}
+
 export interface BugReportNotification {
   category: string;
   description: string;

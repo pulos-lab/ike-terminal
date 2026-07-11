@@ -6,10 +6,14 @@ import {
   getQuarantineRow,
   ignoreQuarantineRow,
   listQuarantineRows,
+  markQuarantineRowReported,
   resolveQuarantineRow,
 } from '../db/quarantine-repo.js';
 import { getTransactionById } from '../db/transactions-repo.js';
 import { getOperationById } from '../db/operations-repo.js';
+import { upsertUnknownTypeReport } from '../db/type-aliases-repo.js';
+import { redactSampleRows } from '../services/sample-redactor.js';
+import { notifyNewUnknownTypeReport } from '../services/admin-notifications.js';
 
 // Skrzynka "Do wyjaśnienia" — wiersze importu, których parser nie rozpoznał.
 // Montowana pod /api/import/quarantine (dziedziczy auth + portfolioMiddleware).
@@ -92,13 +96,113 @@ router.post(
       pid,
     );
     if (!ok) {
-      return res
-        .status(404)
-        .json({
-          error: 'Nie znaleziono wiersza do rozstrzygnięcia (albo jest już rozstrzygnięty)',
-        });
+      return res.status(404).json({
+        error: 'Nie znaleziono wiersza do rozstrzygnięcia (albo jest już rozstrzygnięty)',
+      });
     }
     res.json({ success: true, row: getQuarantineRow(id, pid) });
+  }),
+);
+
+/** Zredagowana treść zgłoszenia dla wiersza — jedno źródło prawdy dla podglądu
+ * (GET /report-preview) i faktycznej wysyłki (POST /report): do globalnej bazy
+ * NIGDY nie trafia nic, czego user nie zobaczył w podglądzie. */
+function buildRedactedReport(row: {
+  source: string;
+  rawType?: string;
+  headers?: string[];
+  cells: string[];
+}) {
+  const headers = row.headers ?? row.cells.map((_, i) => `Kolumna ${i + 1}`);
+  const sampleCells = redactSampleRows(headers, [row.cells])[0] ?? [];
+  return { broker: row.source, rawType: row.rawType ?? null, headers, sampleCells };
+}
+
+/**
+ * GET /api/import/quarantine/:id/report-preview — co DOKŁADNIE zostanie wysłane
+ * do globalnej bazy zgłoszeń (transparentny podgląd redakcji przed zgodą).
+ */
+router.get(
+  '/:id/report-preview',
+  asyncHandler((req, res) => {
+    const pid = req.portfolioId;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Nieprawidłowe id' });
+    const row = getQuarantineRow(id, pid);
+    if (!row) return res.status(404).json({ error: 'Nie znaleziono wiersza' });
+    if (!row.rawType) {
+      return res
+        .status(400)
+        .json({ error: 'Wiersz nie ma rozpoznanego typu operacji — nie można go zgłosić' });
+    }
+    res.json(buildRedactedReport(row));
+  }),
+);
+
+/**
+ * POST /api/import/quarantine/:id/report — zgłoszenie do globalnej bazy
+ * (za jawnym kliknięciem użytkownika, po podglądzie redakcji):
+ *  - wiersz pending → kind='unsupported' ("nie wiem / aplikacja tego nie
+ *    obsługuje"), status wiersza → 'reported';
+ *  - wiersz resolved → kind='classified' (sygnał luki parsera; classifiedAs
+ *    mówi adminowi, jak user sklasyfikował wiersz), status zostaje 'resolved'.
+ * E-mail do admina tylko przy NOWYM agregacie (broker, typ, kind).
+ */
+router.post(
+  '/:id/report',
+  asyncHandler(async (req, res) => {
+    const pid = req.portfolioId;
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Nieprawidłowe id' });
+
+    const row = getQuarantineRow(id, pid);
+    if (!row) return res.status(404).json({ error: 'Nie znaleziono wiersza' });
+    if (!row.rawType) {
+      return res
+        .status(400)
+        .json({ error: 'Wiersz nie ma rozpoznanego typu operacji — nie można go zgłosić' });
+    }
+    if (row.status === 'ignored' || row.status === 'reported') {
+      return res.status(400).json({ error: 'Wiersz jest już zgłoszony albo zignorowany' });
+    }
+
+    const { note, classifiedAs } = (req.body ?? {}) as { note?: string; classifiedAs?: string };
+    const kind = row.status === 'resolved' ? 'classified' : 'unsupported';
+    const redacted = buildRedactedReport(row);
+
+    const result = upsertUnknownTypeReport({
+      broker: row.source,
+      rawType: row.rawType,
+      kind,
+      headers: redacted.headers,
+      sampleCells: redacted.sampleCells,
+      suggestion:
+        classifiedAs || note
+          ? {
+              classifiedAs:
+                typeof classifiedAs === 'string' ? classifiedAs.slice(0, 60) : undefined,
+              note: typeof note === 'string' ? note.slice(0, 500) : undefined,
+            }
+          : undefined,
+      reporterId: userId,
+    });
+
+    if (row.status === 'pending') {
+      markQuarantineRowReported(id, pid, typeof note === 'string' ? note.slice(0, 500) : undefined);
+    }
+
+    if (result.isNew) {
+      // Fire-and-forget — notyfikacja nigdy nie blokuje odpowiedzi.
+      void notifyNewUnknownTypeReport({
+        broker: row.source,
+        rawType: row.rawType,
+        kind,
+        reporterUserId: userId,
+      });
+    }
+
+    res.json({ success: true, sent: redacted, row: getQuarantineRow(id, pid) });
   }),
 );
 

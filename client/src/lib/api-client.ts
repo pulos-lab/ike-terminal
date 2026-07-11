@@ -471,6 +471,15 @@ export const api = {
     ),
   deleteQuarantineRow: (id: number) =>
     request<{ success: boolean }>(`/import/quarantine/${id}`, { method: 'DELETE' }),
+  getQuarantineReportPreview: (id: number) =>
+    request<{ broker: string; rawType: string | null; headers: string[]; sampleCells: string[] }>(
+      `/import/quarantine/${id}/report-preview`,
+    ),
+  reportQuarantineRow: (id: number, body: { note?: string; classifiedAs?: string }) =>
+    request<{ success: boolean; row: import('shared').QuarantineRow }>(
+      `/import/quarantine/${id}/report`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
 
   /**
    * Klasyfikacja pliku — zwraca wykryty broker + rolę (transactions/operations).

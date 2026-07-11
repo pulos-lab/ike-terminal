@@ -8,7 +8,11 @@
  * Tabele:
  * - import_profiles        — wersjonowane profile keyed by fingerprint nagłówków,
  * - profile_audit          — ślad zmian (created/edited/approved/rejected/superseded),
- * - profile_import_batches — który import (portfel+batch) użył której wersji profilu.
+ * - profile_import_batches — który import (portfel+batch) użył której wersji profilu,
+ * - unknown_type_reports   — zagregowane zgłoszenia nieznanych typów operacji ze
+ *                            skrzynki "Do wyjaśnienia" (kind: classified = luka
+ *                            parsera, unsupported = brak funkcjonalności); trzyma
+ *                            WYŁĄCZNIE zredagowaną próbkę (sample-redactor).
  *
  * Prywatność: plików użytkownika NIE przechowujemy. Kolumna `raw_file_gz` to legacy
  * (niezapisywana; czyszczona przy starcie przez `purgeAllRawFiles`). Re-import po
@@ -85,6 +89,26 @@ export function getImportsDb(): Database.Database {
       );
       CREATE INDEX IF NOT EXISTS idx_batches_portfolio ON profile_import_batches(portfolio_id);
       CREATE INDEX IF NOT EXISTS idx_batches_profile ON profile_import_batches(profile_id);
+
+      CREATE TABLE IF NOT EXISTS unknown_type_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        broker TEXT NOT NULL,
+        raw_type TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('classified','unsupported')),
+        headers_json TEXT,
+        sample_cells_json TEXT,
+        suggestions_json TEXT NOT NULL DEFAULT '[]',
+        reporter_ids_json TEXT NOT NULL DEFAULT '[]',
+        occurrence_count INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','approved','rejected','wont_fix')),
+        first_reported_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_reported_at TEXT NOT NULL DEFAULT (datetime('now')),
+        reviewed_by_user_id TEXT,
+        reviewed_at TEXT,
+        review_note TEXT,
+        UNIQUE(broker, raw_type, kind)
+      );
+      CREATE INDEX IF NOT EXISTS idx_utr_status ON unknown_type_reports(status);
     `);
   }
   return db;
