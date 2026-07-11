@@ -22,8 +22,9 @@ import { getSharesAtDate } from './portfolio-engine.js';
 import { adjustTransactionsForSplits } from './split-detector.js';
 import { fetchYahooDividendEvents, fetchDividendCalendar } from './yahoo-finance.js';
 import { assumedPayoutsPerYear } from './dividend-estimate.js';
+import { buildFxToPlnLookup, type FxToPlnLookup } from './fx-history.js';
 import { DIVIDEND_TAX_REGULAR, DIVIDEND_TAX_IKE_IKZE } from 'shared';
-import type { CashOperation, PortfolioSettings, TickerMapEntry } from 'shared';
+import type { CashOperation, PortfolioSettings, TickerMapEntry, Transaction } from 'shared';
 
 export interface ScanResult {
   scanned: number;
@@ -98,6 +99,102 @@ export function isSuspiciousDividendAmount(
   const ratio = eventAmount > expected ? eventAmount / expected : expected / eventAmount;
   if (ratio <= SUSPICIOUS_DEVIATION) return { suspicious: false };
   return { suspicious: true, expected, ratio };
+}
+
+/**
+ * Waluta, w której dywidenda REALNIE wpływa na konto — u brokera zależy od tego,
+ * jak rozliczane są zakupy: papier USD kupiony za PLN (auto-FX brokera, np. Bossa
+ * z kontem PLN) dostaje dywidendy już przewalutowane na PLN; papier kupiony wprost
+ * z subkonta USD dostaje je w USD. Tę samą informację niesie `paymentCurrency`
+ * transakcji K (parsery XTB/mBank wprost, Bossa/DEGIRO przez reconciler).
+ *
+ * Dywidenda za całą pozycję wpływa w JEDNEJ walucie, nie per-lot — przybliżamy ją
+ * walutą rozliczenia dominującą po liczbie akcji wśród kupien sprzed ex-date
+ * (mieszane loty / pozycja z kilku brokerów = świadome przybliżenie). Remis
+ * rozstrzyga ostatnie kupno — odzwierciedla bieżącą konfigurację konta.
+ */
+export function inferDividendPayoutCurrency(
+  adjustedTxs: Transaction[],
+  isin: string,
+  exDate: string,
+  quoteCurrency: string,
+): string {
+  const exKey = exDate.slice(0, 10);
+  const sharesByCcy = new Map<string, number>();
+  let lastCcy: string | null = null;
+  let lastDate = '';
+
+  for (const tx of adjustedTxs) {
+    if (tx.isin !== isin || tx.side !== 'K') continue;
+    // CFD nie rozliczają się przez cash ledger; prawo do dywidendy = kupno PRZED ex-date.
+    if (tx.category === 'cfd' || tx.date.slice(0, 10) >= exKey) continue;
+    const ccy = (tx.paymentCurrency ?? tx.currency).toUpperCase();
+    sharesByCcy.set(ccy, (sharesByCcy.get(ccy) ?? 0) + tx.quantity);
+    if (tx.date >= lastDate) {
+      lastDate = tx.date;
+      lastCcy = ccy;
+    }
+  }
+
+  let maxShares = 0;
+  for (const shares of sharesByCcy.values()) {
+    if (shares > maxShares) maxShares = shares;
+  }
+  if (maxShares <= 0) return quoteCurrency.toUpperCase();
+
+  const leaders = Array.from(sharesByCcy.entries())
+    .filter(([, shares]) => Math.abs(shares - maxShares) <= SHARE_EPSILON)
+    .map(([ccy]) => ccy);
+  if (lastCcy && leaders.includes(lastCcy)) return lastCcy;
+  return leaders[0];
+}
+
+export interface DividendPayoutConversion {
+  /** Kwota netto do zaksięgowania (round2 po konwersji; bez konwersji = netQuote). */
+  amount: number;
+  currency: string;
+  /** Kurs payout-per-quote (kanoniczna konwencja jak Transaction.fxRate) — tylko gdy skonwertowano. */
+  fxRate?: number;
+  /** Para do audytu, np. 'USD/PLN' — tylko gdy skonwertowano. */
+  fxPair?: string;
+  /** true = konwersja była potrzebna, ale zabrakło kursu → fallback do waluty notowania. */
+  missingRate: boolean;
+}
+
+/**
+ * Przelicza netto dywidendy z waluty notowania na walutę faktycznej wypłaty po
+ * kursie dziennym (lookup PLN-owy działa też dla par bez PLN: quote→payout =
+ * fx(quote)/fx(payout), dla PLN mianownik = 1). Kurs rynkowy z ex-date to
+ * przybliżenie — broker przewalutowuje po własnym kursie (ze spreadem) w dniu
+ * wypłaty, którego skaner nie zna; wpis auto-yahoo jest z natury estymatą do
+ * czasu importu wyciągu brokera. Brak kursu NIE ucina wpisu — zapisujemy jak
+ * dotąd w walucie notowania (zero regresji), a wywołujący raportuje warning.
+ */
+export function convertDividendToPayoutCurrency(
+  netQuote: number,
+  quoteCurrency: string,
+  payoutCurrency: string,
+  date: string,
+  fx: FxToPlnLookup,
+): DividendPayoutConversion {
+  const quote = quoteCurrency.toUpperCase();
+  const payout = payoutCurrency.toUpperCase();
+  if (quote === payout) {
+    return { amount: netQuote, currency: quote, missingRate: false };
+  }
+  const quotePln = fx(quote, date);
+  const payoutPln = fx(payout, date);
+  if (quotePln == null || payoutPln == null || payoutPln <= 0) {
+    return { amount: netQuote, currency: quote, missingRate: true };
+  }
+  const rate = quotePln / payoutPln;
+  return {
+    amount: roundTo2(netQuote * rate),
+    currency: payout,
+    fxRate: rate,
+    fxPair: `${quote}/${payout}`,
+    missingRate: false,
+  };
 }
 
 /**
@@ -177,6 +274,32 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
     isinEntries.set(isin, entry);
   }
 
+  // Prefetch kursów do konwersji na walutę wypłaty: unia waluty notowania i WSZYSTKICH
+  // walut rozliczenia kupien danego ISIN (finalna waluta wypłaty liczona per event
+  // z realnym ex-date, więc bierzemy pełną unię, nie tylko dzisiejszego zwycięzcę).
+  // Portfel bez rozjazdu quote/payment (np. czysto PLN-GPW) → zero dodatkowych fetchy.
+  const settlementByIsin = new Map<string, Set<string>>();
+  for (const tx of adjustedTxs) {
+    if (tx.side !== 'K' || tx.category === 'cfd' || !isinEntries.has(tx.isin)) continue;
+    const set = settlementByIsin.get(tx.isin) ?? new Set<string>();
+    set.add((tx.paymentCurrency ?? tx.currency).toUpperCase());
+    settlementByIsin.set(tx.isin, set);
+  }
+  const fxCurrencies = new Set<string>();
+  for (const [isin, entry] of isinEntries) {
+    const settlements = settlementByIsin.get(isin);
+    if (!settlements) continue;
+    const quote = entry.currency.toUpperCase();
+    if (Array.from(settlements).some((ccy) => ccy !== quote)) {
+      fxCurrencies.add(quote);
+      for (const ccy of settlements) fxCurrencies.add(ccy);
+    }
+  }
+  const fx: FxToPlnLookup =
+    fxCurrencies.size > 0
+      ? await buildFxToPlnLookup(Array.from(fxCurrencies), startDate)
+      : (cur) => (cur.toUpperCase() === 'PLN' ? 1 : null);
+
   const newOperations: CashOperation[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -246,19 +369,47 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
         const taxAmount = roundTo2(grossAmount * taxRate);
         const netAmount = roundTo2(grossAmount - taxAmount);
 
+        // Księgujemy w walucie FAKTYCZNEJ wypłaty (np. PLN dla papieru USD kupionego
+        // przez auto-FX brokera), nie w walucie notowania — inaczej saldo gotówki
+        // dostaje fikcyjną walutę, której na koncie nie ma.
+        const payoutCurrency = inferDividendPayoutCurrency(
+          adjustedTxs,
+          isin,
+          event.date,
+          entry.currency,
+        );
+        const conv = convertDividendToPayoutCurrency(
+          netAmount,
+          entry.currency,
+          payoutCurrency,
+          event.date,
+          fx,
+        );
+        if (conv.missingRate) {
+          warnings.push(
+            `${entry.ticker}: brak kursu ${entry.currency}/${payoutCurrency} na ` +
+              `${event.date.slice(0, 10)} — dywidenda zapisana w ${entry.currency}; ` +
+              `skoryguj ręcznie lub zaimportuj wyciąg brokera.`,
+          );
+        }
+
         const taxPct = Math.round(taxRate * 100);
         // Zwięzły opis — ticker jest w osobnej kolumnie widoku Dywidendy, a liczba akcji
         // wynika z kwoty. Zostawiamy tylko to, czego nie widać gdzie indziej: stawkę
-        // na akcję i pobrany podatek u źródła.
-        const description = `${event.amount} ${entry.currency}/szt · podatek ${taxPct}%`;
+        // na akcję (w walucie notowania), pobrany podatek u źródła i ew. kurs konwersji.
+        const description =
+          `${event.amount} ${entry.currency}/szt · podatek ${taxPct}%` +
+          (conv.fxRate !== undefined ? ` · kurs ${conv.fxRate.toFixed(4)}` : '');
 
         newOperations.push({
           date: event.date,
           operationType: 'dividend',
           description,
-          amount: netAmount,
-          currency: entry.currency,
+          amount: conv.amount,
+          currency: conv.currency,
           ticker: entry.ticker,
+          fxRate: conv.fxRate,
+          fxPair: conv.fxPair,
           source: 'auto-yahoo',
         });
       }
