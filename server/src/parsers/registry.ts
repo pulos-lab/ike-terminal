@@ -5,6 +5,7 @@ import type {
   ParseResult,
   RedemptionMarker,
   IpoSubscriptionMarker,
+  BondAllocationMarker,
   CapitalReturnMarker,
 } from 'shared';
 import type { TransactionTax } from './degiro-operations.js';
@@ -43,6 +44,8 @@ export type OperationsParseResult = ParseResult<CashOperation> & {
   redemptions?: RedemptionMarker[];
   /** Pary "Zapisy na akcje" + "Zwrot nadpłaty" (IPO) → syntetyczna K w reconciliation */
   ipoSubscriptions?: IpoSubscriptionMarker[];
+  /** Pary "Zapisy na obligacje" + "Zwrot nadpłaty" → syntetyczna K obligacji w reconciliation */
+  bondAllocations?: BondAllocationMarker[];
   /** Zwroty kapitału (obniżenie nominału, wyrównanie wykupu) → CashOperation capital_return */
   capitalReturns?: CapitalReturnMarker[];
   /** Ostrzeżenia parsera (PL) — import-service dokleja do crossFileWarnings */

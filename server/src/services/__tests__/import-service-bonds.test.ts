@@ -37,7 +37,43 @@ describe('bulkImport — wykup obligacji (reconciliation kind=bond)', () => {
   afterAll(() => {
     connection.closeDb('test-bond-full');
     connection.closeDb('test-bond-partial');
+    connection.closeDb('test-bond-sub');
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('subskrypcja obligacji: syntetyczna K z ceną w % NOMINAŁU (nominał 1000 — regresja 10×)', async () => {
+    const PID = 'test-bond-sub';
+    // BENEFIT SYSTEMS → BFT0330, nominał 1000 PLN. Zapis 10 000, zwrot 150 → netto 9850,
+    // qty = round(9850/1000) = 10, cena = 9850/10/1000·100 = 98,5% nominału.
+    const result = await bulkImport({
+      transactionsFiles: [],
+      operationsFile: {
+        buffer: opsCsv([
+          '2025-05-29;Zapisy na obligacje BENEFIT SYSTEMS;;-10000,00;PLN',
+          '2025-06-09;Zwrot nadpłaty BENEFIT SYSTEMS;;150,00;PLN',
+        ]),
+        originalname: 'operacje_bez_transakcji.csv',
+      },
+      portfolioId: PID,
+    });
+
+    expect(result.success).toBe(true);
+
+    const txs = txRepo.getAllTransactions(PID);
+    expect(txs).toHaveLength(1);
+    const buy = txs[0];
+    expect(buy.side).toBe('K');
+    expect(buy.category).toBe('bond');
+    expect(buy.paperName).toBe('BFT0330');
+    expect(buy.quantity).toBe(10);
+    // KONWENCJA: cena obligacji w % nominału — silnik mnoży ×nominal/100.
+    // Bug przed poprawką: price = 1000 (nominał w PLN) → koszt zawyżony 10×.
+    expect(buy.price).toBeCloseTo(98.5, 4);
+    expect(buy.total).toBeCloseTo(9850, 2);
+
+    // Skonsumowane wiersze pary NIE trafiły do operacji gotówkowych
+    const ops = opsRepo.getAllOperations(PID);
+    expect(ops.filter((o) => Math.abs(o.amount) === 10000 || o.amount === 150)).toHaveLength(0);
   });
 
   it('pełny wykup: syntetyczna S zamyka pozycję po 100% nominału, kupon jako dividend+coupon', async () => {

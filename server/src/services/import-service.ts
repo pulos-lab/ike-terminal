@@ -24,10 +24,11 @@ import type {
   ImportResult,
   RedemptionMarker,
   IpoSubscriptionMarker,
+  BondAllocationMarker,
   CapitalReturnMarker,
   ParseResult,
 } from 'shared';
-import { findBondByTicker, inferBondNominal } from 'shared';
+import { findBondByTicker, findBondByName, inferBondNominal } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
 import {
   detectBroker,
@@ -319,6 +320,12 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     // 3a''. IPO subscriptions → synthetic K (znana cena emisyjna z mapy)
     if (parsedOps?.ipoSubscriptions?.length) {
       const r = reconcileBossaIpos(parsedOps.ipoSubscriptions, pid, importBatch, crossFileWarnings);
+      syntheticSells += r;
+    }
+
+    // 3a''''. Bond subscriptions → synthetic K (subskrypcja obligacji)
+    if (parsedOps?.bondAllocations?.length) {
+      const r = reconcileBossaBondSubscriptions(parsedOps.bondAllocations, pid, importBatch);
       syntheticSells += r;
     }
 
@@ -948,6 +955,60 @@ function reconcileBossaIpos(
     // Celowo NIE wpisujemy stuba do ticker_map — papier subskrybowany z IPO to normalna spółka
     // notowana na GPW/NewConnect, więc resolver znajdzie ją pod prawdziwym Yahoo tickerem
     // (np. BIOCELTIX → BCL.WA). Inaczej stub "BIOCELTIX" zablokowałby live price lookup.
+  }
+
+  return added;
+}
+
+/**
+ * Subskrypcja obligacji (Zapisy na obligacje + Zwrot nadpłaty) → syntetyczna K.
+ * Qty = round((subscriptionAmount - refundAmount) / nominal).
+ * Gdy bond-map nie rozpozna emitenta (ticker/isin/nominal optional) → pomija z warningiem.
+ */
+function reconcileBossaBondSubscriptions(
+  bonds: BondAllocationMarker[],
+  pid: string,
+  importBatch: string,
+): number {
+  if (bonds.length === 0) return 0;
+  let added = 0;
+
+  for (const bond of bonds) {
+    // Parser emituje marker tylko dla wykonalnych rozliczeń (emitent rozpoznany,
+    // netto > 0, qty ≥ 1) — patrz bossa-operations.ts. Tu zostaje sama konstrukcja
+    // syntetycznego kupna.
+    const qty = bond.quantity;
+    const nettoCost = bond.subscriptionAmount - bond.refundAmount;
+
+    // KONWENCJA (CLAUDE.md): Transaction.price obligacji jest w % nominału —
+    // silnik mnoży przez bondPriceMultiplier = nominal/100. Zapis po cenie
+    // emisyjnej ≈ 100%; liczymy z netto jak przy wykupie (reconcileRedemptions).
+    const pricePct = Math.round((nettoCost / qty / bond.nominal) * 100 * 10000) / 10000;
+
+    const originTag =
+      `Subskrypcja obligacji ${bond.ticker} — ${qty} szt @ ${pricePct}% nominału ` +
+      `${bond.nominal} PLN (bond-map)`;
+
+    const syntheticBuy: Transaction = {
+      date: `${bond.allocationDate}T00:00:00`,
+      paperName: bond.ticker,
+      isin: bond.isin,
+      quantity: qty,
+      side: 'K',
+      price: pricePct,
+      value: nettoCost,
+      commission: 0,
+      total: nettoCost,
+      currency: bond.currency,
+      paymentCurrency: 'PLN',
+      source: 'bossa',
+      importBatch,
+      syntheticOrigin: originTag,
+      category: 'bond',
+    };
+
+    const r = insertTransactionsWithDedup([syntheticBuy], pid);
+    added += r.inserted;
   }
 
   return added;
