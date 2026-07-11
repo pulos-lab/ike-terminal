@@ -1195,6 +1195,47 @@ export interface QuarantineCounts {
   reported: number;
 }
 
+// ============ Operation Type Aliases (mapa aliasów typów per broker) ============
+
+/** Cel aliasu:
+ *  - parser_type: podmiana na kanoniczny typ parsera (wiersz wchodzi w normalny
+ *    dispatch z pełnym parsowaniem — np. 'dividend equivalent' → 'dividend');
+ *  - cash_operation: bezpośrednia budowa CashOperation z surowego wiersza
+ *    (typ bez logiki w parserze — np. bonus → other);
+ *  - ignore: wiersz celowo pomijany (nieistotny — nie wraca do skrzynki). */
+export type TypeAliasTargetKind = 'parser_type' | 'cash_operation' | 'ignore';
+
+/** target_value dla kind='cash_operation' (JSON w DB). */
+export interface CashOperationAliasTarget {
+  operationType: OperationType;
+  subkind?: string;
+  /** Znak kwoty: 'file' = jak w pliku (domyślnie), '+'/'-' = wymuszony. */
+  sign?: 'file' | '+' | '-';
+}
+
+export interface TypeAliasTarget {
+  kind: TypeAliasTargetKind;
+  /** parser_type: kanoniczny typ; cash_operation: JSON CashOperationAliasTarget; ignore: brak. */
+  value?: string;
+}
+
+export type TypeAliasStatus = 'pending' | 'approved' | 'rejected' | 'revoked';
+
+/** Alias typu operacji (globalny, per broker) — zatwierdzany przez admina;
+ * parser konsultuje mapę APPROVED przed oznaczeniem wiersza jako unknown. */
+export interface OperationTypeAlias {
+  id: number;
+  broker: string;
+  /** lower(trim(surowy typ z pliku)) — klucz mapy. */
+  rawType: string;
+  targetKind: TypeAliasTargetKind;
+  targetValue?: string;
+  status: TypeAliasStatus;
+  createdAt: string;
+  reviewedAt?: string;
+  reviewNote?: string;
+}
+
 // ============ Unknown Type Reports (globalne zgłoszenia do admina) ============
 
 /** classified = user sklasyfikował wiersz (sygnał: luka parsera);

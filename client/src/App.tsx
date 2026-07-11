@@ -22,6 +22,7 @@ import { CorrectionsAndCostsPage } from '@/components/corrections-and-costs/Corr
 import { QuarantinePage } from '@/components/import/quarantine/QuarantinePage';
 import { BugReportsPage } from '@/components/admin/BugReportsPage';
 import { ImportProfilesPage } from '@/components/admin/ImportProfilesPage';
+import { TypeAliasesPage } from '@/components/admin/TypeAliasesPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -82,6 +83,7 @@ function App() {
                           <Route path="/import/inbox" element={<QuarantinePage />} />
                           <Route path="/admin/bugs" element={<BugReportsPage />} />
                           <Route path="/admin/import-profiles" element={<ImportProfilesPage />} />
+                          <Route path="/admin/type-aliases" element={<TypeAliasesPage />} />
                           <Route path="*" element={<Navigate to="/app" replace />} />
                         </Routes>
                       </AppShell>

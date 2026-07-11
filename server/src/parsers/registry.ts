@@ -7,6 +7,7 @@ import type {
   IpoSubscriptionMarker,
   BondAllocationMarker,
   CapitalReturnMarker,
+  TypeAliasTarget,
 } from 'shared';
 import type { TransactionTax } from './degiro-operations.js';
 import { parseBossaTransactions, isBossaFormat } from './bossa-transactions.js';
@@ -165,13 +166,29 @@ export interface CombinedParseOutput {
   account?: string;
 }
 
+/**
+ * Kontekst wstrzykiwany do parsera przez import-service — parsery pozostają
+ * czyste/synchroniczne, lookupy DB (mapa aliasów) robi caller przed parsowaniem.
+ */
+export interface ParserContext {
+  /** Zatwierdzone aliasy typów operacji brokera: lower(trim(raw_type)) → target.
+   *  Konsultowane PRZED oznaczeniem wiersza jako unknown_type — wbudowane
+   *  mapowania parsera zawsze mają pierwszeństwo. */
+  typeAliases?: Map<string, TypeAliasTarget>;
+}
+
 export interface CombinedBrokerParser {
   id: BrokerType;
   label: string;
   /** Rozszerzenia plików tego brokera (lowercase, z kropką). */
   extensions: string[];
   detect: (buffer: Buffer) => boolean | Promise<boolean>;
-  parse: (buffer: Buffer, importBatch: string, fileName?: string) => Promise<CombinedParseOutput>;
+  parse: (
+    buffer: Buffer,
+    importBatch: string,
+    fileName?: string,
+    ctx?: ParserContext,
+  ) => Promise<CombinedParseOutput>;
   needsNameResolution: boolean;
   /** Czy można wgrać wiele plików naraz (IBKR: jeden Activity Statement per rok/konto). */
   supportsMultipleFiles: boolean;

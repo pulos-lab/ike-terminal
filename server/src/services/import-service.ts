@@ -67,6 +67,7 @@ import { reconcilePaymentCurrencies } from './payment-currency-reconciler.js';
 import { reconcileQuoteCurrencies } from './quote-currency-reconciler.js';
 import { getDb } from '../db/connection.js';
 import { insertQuarantineRows, MAX_QUARANTINE_PER_BATCH } from '../db/quarantine-repo.js';
+import { getApprovedAliasesForBroker } from '../db/type-aliases-repo.js';
 
 // ─── File classification ─────────────────────────────────────────────────────
 
@@ -515,6 +516,10 @@ async function importCombinedFiles(
     return emptyResult(importBatch, ['Nie rozpoznano formatu pliku']);
   }
 
+  // Zatwierdzone aliasy typów operacji brokera (globalna mapa, admin-approved) —
+  // jeden lookup przed parsowaniem, parsery pozostają czyste/synchroniczne.
+  const parserCtx = { typeAliases: getApprovedAliasesForBroker(parser.id) };
+
   // Parsowanie wszystkich plików (poza transakcją SQLite — czysty CPU/IO)
   const parsedFiles: Array<{ name: string; output: CombinedParseOutput }> = [];
   const parserWarnings: string[] = [];
@@ -525,7 +530,7 @@ async function importCombinedFiles(
         `Plik "${file.originalName}" nie wygląda na eksport ${parser.label}.`,
       ]);
     }
-    const output = await parser.parse(file.buffer, importBatch, file.originalName);
+    const output = await parser.parse(file.buffer, importBatch, file.originalName, parserCtx);
     if (output.warnings?.length) parserWarnings.push(...output.warnings);
     parsedFiles.push({ name: file.originalName, output });
   }

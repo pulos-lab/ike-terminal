@@ -2,12 +2,15 @@ import ExcelJS from 'exceljs';
 import type {
   Transaction,
   CashOperation,
+  CashOperationAliasTarget,
+  OperationType,
   ParseResult,
   SkippedRow,
   SkippedRowRaw,
   InstrumentCategory,
 } from 'shared';
 import { findCfdTicker } from 'shared';
+import type { ParserContext } from './registry.js';
 import {
   roundTo2,
   roundFxRate,
@@ -136,8 +139,10 @@ function xtbToYahooTicker(symbol: string): string {
 // ── Type normalization ────────────────────────────────────────────────────────
 
 /** Normalize XTB operation type to canonical lowercase form.
- * Handles case variations ("Deposit" vs "deposit") and aliases ("Stock sell" → "Stock sale"). */
-function normalizeType(type: string): string {
+ * Handles case variations ("Deposit" vs "deposit") and aliases ("Stock sell" → "Stock sale").
+ * Globalne aliasy (ctx, admin-approved) działają TYLKO dla typów, których nie łapią
+ * wbudowane mapowania — deterministyczne, przetestowane ALIASES zawsze wygrywają. */
+function normalizeType(type: string, ctx?: ParserContext): string {
   const lower = type.toLowerCase();
   // Map aliases to canonical names used by the parser
   const ALIASES: Record<string, string> = {
@@ -169,7 +174,16 @@ function normalizeType(type: string): string {
     transfer: 'fx_conversion',
     'currency conversion': 'fx_conversion',
   };
-  return ALIASES[lower] || type;
+  const builtin = ALIASES[lower];
+  if (builtin) return builtin;
+  // Globalny alias parser_type: wiersz wchodzi w normalny dispatch (pełne
+  // parsowanie Comment/amount). Target walidowany przeciw katalogowi — zły
+  // wpis w DB nie może wpuścić wiersza w nieistniejącą gałąź.
+  const alias = ctx?.typeAliases?.get(lower.trim());
+  if (alias?.kind === 'parser_type' && alias.value && KNOWN_XTB_TYPES.has(alias.value)) {
+    return alias.value;
+  }
+  return type;
 }
 
 // ── Commission data extraction (for old-format JSW-like entries) ────────────
@@ -600,6 +614,7 @@ export async function parseXtbFile(
   buffer: Buffer,
   importBatch: string,
   fileName?: string,
+  ctx?: ParserContext,
 ): Promise<{
   transactions: ParseResult<Transaction>;
   operations: ParseResult<CashOperation>;
@@ -719,7 +734,7 @@ export async function parseXtbFile(
     rawRows.push({
       rowNum,
       id: row[col.id]?.toString().trim() || '',
-      type: normalizeType(typeCell),
+      type: normalizeType(typeCell, ctx),
       time,
       comment: row[col.comment]?.toString().trim() || '',
       symbol: row[col.symbol]?.toString().trim() || '',
@@ -1396,15 +1411,35 @@ export async function parseXtbFile(
   // odnaleźć wiersze w pliku) + jeden zagregowany warning z listą typów.
   const unknownTypes = new Map<string, number>();
   for (const raw of rawRows) {
-    if (!KNOWN_XTB_TYPES.has(raw.type)) {
-      unknownTypes.set(raw.type, (unknownTypes.get(raw.type) ?? 0) + 1);
+    if (KNOWN_XTB_TYPES.has(raw.type)) continue;
+
+    // Globalny alias (admin-approved) — konsultowany PRZED oznaczeniem unknown.
+    // parser_type obsłużone wcześniej w normalizeType; tu warianty terminalne.
+    const alias = ctx?.typeAliases?.get(raw.type.trim().toLowerCase());
+    if (alias?.kind === 'ignore') {
       opsSkipped.push({
         row: raw.rowNum,
-        reason: 'unknown_type',
+        reason: 'aliased_ignore',
         paperName: raw.symbol ? `${raw.type} (${raw.symbol})` : raw.type,
-        raw: rawRowToSkippedRaw(raw, accountCurrency),
       });
+      continue;
     }
+    if (alias?.kind === 'cash_operation' && alias.value) {
+      const op = buildAliasedCashOperation(raw, alias.value, accountCurrency, importBatch);
+      if (op) {
+        operations.push(op);
+        continue;
+      }
+      // Nieparsowalny target/data → wiersz spada do unknown (skrzynka), nie ginie.
+    }
+
+    unknownTypes.set(raw.type, (unknownTypes.get(raw.type) ?? 0) + 1);
+    opsSkipped.push({
+      row: raw.rowNum,
+      reason: 'unknown_type',
+      paperName: raw.symbol ? `${raw.type} (${raw.symbol})` : raw.type,
+      raw: rawRowToSkippedRaw(raw, accountCurrency),
+    });
   }
   if (unknownTypes.size > 0) {
     const list = [...unknownTypes.entries()]
@@ -1424,10 +1459,63 @@ export async function parseXtbFile(
   };
 }
 
+/** Dozwolone operationType dla aliasów cash_operation — bez typów specjalnych
+ * (fx_exchange wymaga parowania nóg, corporate_action_pending logiki reconciliation). */
+const ALIAS_ALLOWED_OPERATION_TYPES = new Set<OperationType>([
+  'deposit',
+  'withdrawal',
+  'dividend',
+  'fee',
+  'trade_fee',
+  'commission_refund',
+  'capital_return',
+  'other',
+]);
+
+/** Buduje CashOperation z surowego wiersza wg targetu aliasu cash_operation
+ * (JSON CashOperationAliasTarget). null = target/data nieparsowalne — caller
+ * zostawia wiersz w unknown (skrzynka), nic nie ginie po cichu. */
+function buildAliasedCashOperation(
+  raw: RawRow,
+  targetJson: string,
+  accountCurrency: string,
+  importBatch: string,
+): CashOperation | null {
+  let target: CashOperationAliasTarget;
+  try {
+    target = JSON.parse(targetJson);
+  } catch {
+    return null;
+  }
+  if (!target?.operationType || !ALIAS_ALLOWED_OPERATION_TYPES.has(target.operationType)) {
+    return null;
+  }
+  const isoTime = parseXtbTime(raw.time);
+  if (!isoTime) return null;
+
+  const sign = target.sign ?? 'file';
+  const amount =
+    sign === 'file' ? raw.amount : sign === '+' ? Math.abs(raw.amount) : -Math.abs(raw.amount);
+
+  return {
+    date: isoTime,
+    operationType: target.operationType,
+    subkind: (target.subkind as CashOperation['subkind']) ?? undefined,
+    description: raw.comment || raw.type,
+    amount,
+    currency: accountCurrency,
+    ticker: raw.symbol || undefined,
+    source: 'xtb',
+    importBatch,
+  };
+}
+
 /** Canonical operation type names that the main dispatch loop handles.
  * Any `raw.type` not in this set (after normalizeType aliasing) is silently
- * dropped today — we surface it as an aggregated warning instead. */
-const KNOWN_XTB_TYPES = new Set<string>([
+ * dropped today — we surface it as an aggregated warning instead.
+ * Eksportowane: katalog dozwolonych targetów parser_type dla walidacji
+ * approve w panelu admina (server/src/parsers/known-types.ts). */
+export const KNOWN_XTB_TYPES = new Set<string>([
   'Stock purchase',
   'Stock sale',
   'close trade',

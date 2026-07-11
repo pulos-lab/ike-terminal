@@ -1,4 +1,8 @@
 import type {
+  OperationTypeAlias,
+  TypeAliasStatus,
+  TypeAliasTarget,
+  TypeAliasTargetKind,
   UnknownTypeReport,
   UnknownTypeReportKind,
   UnknownTypeReportStatus,
@@ -169,4 +173,178 @@ export function setUnknownTypeReportStatus(
     )
     .run(status, reviewerUserId, note ?? null, id);
   return info.changes > 0;
+}
+
+// ── Aliasy typów operacji (operation_type_aliases) ──────────────────────────
+
+interface AliasDbRow {
+  id: number;
+  broker: string;
+  raw_type: string;
+  target_kind: string;
+  target_value: string | null;
+  status: string;
+  created_by_user_id: string | null;
+  created_at: string;
+  reviewed_by_user_id: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+}
+
+function toAlias(r: AliasDbRow): OperationTypeAlias {
+  return {
+    id: r.id,
+    broker: r.broker,
+    rawType: r.raw_type,
+    targetKind: r.target_kind as TypeAliasTargetKind,
+    targetValue: r.target_value ?? undefined,
+    status: r.status as TypeAliasStatus,
+    createdAt: r.created_at,
+    reviewedAt: r.reviewed_at ?? undefined,
+    reviewNote: r.review_note ?? undefined,
+  };
+}
+
+function auditAlias(
+  action: 'created' | 'approved' | 'rejected' | 'revoked' | 'edited' | 'wont_fix',
+  actorUserId: string | null,
+  aliasId: number | null,
+  reportId: number | null,
+  diff?: unknown,
+): void {
+  getImportsDb()
+    .prepare(
+      `INSERT INTO alias_audit (alias_id, report_id, action, actor_user_id, diff_json)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(aliasId, reportId, action, actorUserId, diff ? JSON.stringify(diff) : null);
+}
+
+export interface UpsertAliasInput {
+  broker: string;
+  rawType: string;
+  target: TypeAliasTarget;
+  status: TypeAliasStatus;
+  actorUserId: string;
+  note?: string;
+  /** Id zgłoszenia, z którego alias powstał (link w audycie). */
+  reportId?: number;
+}
+
+/** Tworzy albo nadpisuje alias (UNIQUE(broker, raw_type)) — korekta = UPDATE + audit. */
+export function upsertOperationTypeAlias(input: UpsertAliasInput): OperationTypeAlias {
+  const db = getImportsDb();
+  const broker = input.broker.trim().toLowerCase();
+  const rawType = input.rawType.trim().toLowerCase();
+
+  const run = db.transaction((): OperationTypeAlias => {
+    const existing = db
+      .prepare('SELECT * FROM operation_type_aliases WHERE broker = ? AND raw_type = ?')
+      .get(broker, rawType) as AliasDbRow | undefined;
+
+    if (!existing) {
+      const info = db
+        .prepare(
+          `INSERT INTO operation_type_aliases
+             (broker, raw_type, target_kind, target_value, status, created_by_user_id,
+              reviewed_by_user_id, reviewed_at, review_note)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`,
+        )
+        .run(
+          broker,
+          rawType,
+          input.target.kind,
+          input.target.value ?? null,
+          input.status,
+          input.actorUserId,
+          input.actorUserId,
+          input.note ?? null,
+        );
+      const id = Number(info.lastInsertRowid);
+      auditAlias('created', input.actorUserId, id, input.reportId ?? null, {
+        target: input.target,
+        status: input.status,
+      });
+      return toAlias(
+        db.prepare('SELECT * FROM operation_type_aliases WHERE id = ?').get(id) as AliasDbRow,
+      );
+    }
+
+    db.prepare(
+      `UPDATE operation_type_aliases
+       SET target_kind = ?, target_value = ?, status = ?,
+           reviewed_by_user_id = ?, reviewed_at = datetime('now'), review_note = COALESCE(?, review_note)
+       WHERE id = ?`,
+    ).run(
+      input.target.kind,
+      input.target.value ?? null,
+      input.status,
+      input.actorUserId,
+      input.note ?? null,
+      existing.id,
+    );
+    auditAlias('edited', input.actorUserId, existing.id, input.reportId ?? null, {
+      from: {
+        targetKind: existing.target_kind,
+        targetValue: existing.target_value,
+        status: existing.status,
+      },
+      to: { target: input.target, status: input.status },
+    });
+    return toAlias(
+      db
+        .prepare('SELECT * FROM operation_type_aliases WHERE id = ?')
+        .get(existing.id) as AliasDbRow,
+    );
+  });
+  return run();
+}
+
+export function listOperationTypeAliases(broker?: string): OperationTypeAlias[] {
+  const db = getImportsDb();
+  const rows = (
+    broker
+      ? db
+          .prepare('SELECT * FROM operation_type_aliases WHERE broker = ? ORDER BY raw_type')
+          .all(broker.trim().toLowerCase())
+      : db.prepare('SELECT * FROM operation_type_aliases ORDER BY broker, raw_type').all()
+  ) as AliasDbRow[];
+  return rows.map(toAlias);
+}
+
+export function revokeOperationTypeAlias(id: number, actorUserId: string, note?: string): boolean {
+  const info = getImportsDb()
+    .prepare(
+      `UPDATE operation_type_aliases
+       SET status = 'revoked', reviewed_by_user_id = ?, reviewed_at = datetime('now'),
+           review_note = COALESCE(?, review_note)
+       WHERE id = ? AND status = 'approved'`,
+    )
+    .run(actorUserId, note ?? null, id);
+  if (info.changes > 0) auditAlias('revoked', actorUserId, id, null, { note });
+  return info.changes > 0;
+}
+
+/**
+ * Mapa APPROVED aliasów brokera dla ParserContext — wołane przez import-service
+ * raz przed parsowaniem (parsery pozostają czyste, bez dostępu do DB).
+ */
+export function getApprovedAliasesForBroker(broker: string): Map<string, TypeAliasTarget> {
+  const rows = getImportsDb()
+    .prepare(
+      "SELECT raw_type, target_kind, target_value FROM operation_type_aliases WHERE broker = ? AND status = 'approved'",
+    )
+    .all(broker.trim().toLowerCase()) as Array<{
+    raw_type: string;
+    target_kind: string;
+    target_value: string | null;
+  }>;
+  const map = new Map<string, TypeAliasTarget>();
+  for (const r of rows) {
+    map.set(r.raw_type, {
+      kind: r.target_kind as TypeAliasTargetKind,
+      value: r.target_value ?? undefined,
+    });
+  }
+  return map;
 }

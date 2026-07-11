@@ -270,6 +270,140 @@ describe('parseXtbFile — nieznane typy operacji', () => {
   });
 });
 
+describe('parseXtbFile — globalne aliasy typów (ParserContext)', () => {
+  const rows = [
+    {
+      id: 1,
+      type: 'Dividend Equivalent',
+      time: '11/01/2024 09:00:00',
+      comment: 'DIV EQ AAPL.US',
+      symbol: 'AAPL.US',
+      amount: 12.34,
+    },
+    {
+      id: 2,
+      type: 'IKE Transfer Bonus',
+      time: '12/01/2024 09:00:00',
+      comment: 'Bonus transferowy',
+      symbol: '',
+      amount: 100,
+    },
+    {
+      id: 3,
+      type: 'Marketing Spam Fee',
+      time: '13/01/2024 09:00:00',
+      comment: 'Nieistotne',
+      symbol: '',
+      amount: 0,
+    },
+  ];
+
+  it('alias parser_type → wiersz wchodzi w normalny dispatch (pełne parsowanie)', async () => {
+    const buf = await buildXtbXlsx(rows);
+    const ctx = {
+      typeAliases: new Map([
+        ['dividend equivalent', { kind: 'parser_type' as const, value: 'dividend' }],
+      ]),
+    };
+    const result = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx', ctx);
+    const div = result.operations.data.find((o) => o.operationType === 'dividend');
+    expect(div).toMatchObject({ amount: 12.34, currency: 'PLN' });
+    // Zaliasowany typ NIE ląduje w unknown
+    expect(
+      result.operations.skipped.filter(
+        (s) => s.reason === 'unknown_type' && s.paperName?.includes('Dividend Equivalent'),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('alias parser_type z targetem SPOZA katalogu jest ignorowany (wiersz zostaje unknown)', async () => {
+    const buf = await buildXtbXlsx([rows[0]]);
+    const ctx = {
+      typeAliases: new Map([
+        ['dividend equivalent', { kind: 'parser_type' as const, value: 'nie-ma-takiego' }],
+      ]),
+    };
+    const result = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx', ctx);
+    expect(result.operations.data).toHaveLength(0);
+    expect(result.operations.skipped[0]?.reason).toBe('unknown_type');
+  });
+
+  it('alias cash_operation → CashOperation wprost z wiersza (typ/subkind/znak z targetu)', async () => {
+    const buf = await buildXtbXlsx([rows[1]]);
+    const ctx = {
+      typeAliases: new Map([
+        [
+          'ike transfer bonus',
+          {
+            kind: 'cash_operation' as const,
+            value: JSON.stringify({ operationType: 'other', subkind: 'interest', sign: '+' }),
+          },
+        ],
+      ]),
+    };
+    const result = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx', ctx);
+    expect(result.operations.data[0]).toMatchObject({
+      operationType: 'other',
+      subkind: 'interest',
+      amount: 100,
+      currency: 'PLN',
+      description: 'Bonus transferowy',
+      source: 'xtb',
+    });
+    expect(result.operations.skipped.filter((s) => s.reason === 'unknown_type')).toHaveLength(0);
+  });
+
+  it('alias cash_operation z niedozwolonym operationType → wiersz zostaje unknown', async () => {
+    const buf = await buildXtbXlsx([rows[1]]);
+    const ctx = {
+      typeAliases: new Map([
+        [
+          'ike transfer bonus',
+          {
+            kind: 'cash_operation' as const,
+            value: JSON.stringify({ operationType: 'fx_exchange' }),
+          },
+        ],
+      ]),
+    };
+    const result = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx', ctx);
+    expect(result.operations.data).toHaveLength(0);
+    expect(result.operations.skipped[0]?.reason).toBe('unknown_type');
+  });
+
+  it('alias ignore → skip aliased_ignore (bez raw, bez warninga unknown)', async () => {
+    const buf = await buildXtbXlsx([rows[2]]);
+    const ctx = {
+      typeAliases: new Map([['marketing spam fee', { kind: 'ignore' as const }]]),
+    };
+    const result = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx', ctx);
+    const skip = result.operations.skipped[0];
+    expect(skip?.reason).toBe('aliased_ignore');
+    expect(skip?.raw).toBeUndefined();
+    expect(result.warnings?.some((w) => w.includes('Nierozpoznane typy'))).toBeFalsy();
+  });
+
+  it('wbudowane ALIASES mają pierwszeństwo przed aliasem globalnym', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 9,
+        type: 'IKE Deposit',
+        time: '10/01/2024 09:00:00',
+        comment: 'Wpłata IKE',
+        symbol: '',
+        amount: 500,
+      },
+    ]);
+    // Złośliwy alias globalny próbujący przejąć wbudowany typ — nie może wygrać.
+    const ctx = {
+      typeAliases: new Map([['ike deposit', { kind: 'ignore' as const }]]),
+    };
+    const result = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx', ctx);
+    expect(result.operations.data[0]?.operationType).toBe('deposit');
+    expect(result.operations.skipped).toHaveLength(0);
+  });
+});
+
 describe('parseXtbFile — prowizje przy dwóch trade-ach w tej samej sekundzie', () => {
   it('każda prowizja konsumuje kolejny trade (FIFO), nie dubluje się na jednym', async () => {
     const time = '10/01/2024 14:30:15';

@@ -107,3 +107,59 @@ describe('type-aliases-repo — unknown_type_reports', () => {
     expect(repo.listUnknownTypeReports({ status: 'open', kind: 'unsupported' })).toHaveLength(0);
   });
 });
+
+describe('type-aliases-repo — operation_type_aliases', () => {
+  let repo: typeof import('../type-aliases-repo.js');
+
+  beforeAll(async () => {
+    repo = await import('../type-aliases-repo.js');
+  });
+
+  it('upsert tworzy alias approved; getApprovedAliasesForBroker zwraca mapę', () => {
+    const alias = repo.upsertOperationTypeAlias({
+      broker: 'XTB',
+      rawType: ' Dividend Equivalent ',
+      target: { kind: 'parser_type', value: 'dividend' },
+      status: 'approved',
+      actorUserId: 'admin-1',
+      reportId: 1,
+    });
+    expect(alias).toMatchObject({
+      broker: 'xtb',
+      rawType: 'dividend equivalent',
+      targetKind: 'parser_type',
+      targetValue: 'dividend',
+      status: 'approved',
+    });
+
+    const map = repo.getApprovedAliasesForBroker('xtb');
+    expect(map.get('dividend equivalent')).toEqual({ kind: 'parser_type', value: 'dividend' });
+    // inny broker — pusta mapa
+    expect(repo.getApprovedAliasesForBroker('ibkr').size).toBe(0);
+  });
+
+  it('drugi upsert tego samego (broker, typ) to UPDATE (UNIQUE), nie duplikat', () => {
+    repo.upsertOperationTypeAlias({
+      broker: 'xtb',
+      rawType: 'dividend equivalent',
+      target: { kind: 'ignore' },
+      status: 'approved',
+      actorUserId: 'admin-1',
+    });
+    const aliases = repo.listOperationTypeAliases('xtb');
+    expect(aliases.filter((a) => a.rawType === 'dividend equivalent')).toHaveLength(1);
+    expect(repo.getApprovedAliasesForBroker('xtb').get('dividend equivalent')).toEqual({
+      kind: 'ignore',
+      value: undefined,
+    });
+  });
+
+  it('revoke wyłącza alias — znika z mapy approved, wiersz zostaje w liście', () => {
+    const alias = repo.listOperationTypeAliases('xtb')[0];
+    expect(repo.revokeOperationTypeAlias(alias.id, 'admin-1', 'pomyłka')).toBe(true);
+    expect(repo.getApprovedAliasesForBroker('xtb').size).toBe(0);
+    expect(repo.listOperationTypeAliases('xtb')[0]?.status).toBe('revoked');
+    // revoke nie-approved → false
+    expect(repo.revokeOperationTypeAlias(alias.id, 'admin-1')).toBe(false);
+  });
+});
