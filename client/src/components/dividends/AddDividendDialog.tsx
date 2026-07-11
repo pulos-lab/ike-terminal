@@ -45,11 +45,18 @@ interface AddDividendDialogProps {
   open: boolean;
   onClose: () => void;
   defaultValues?: Partial<DividendDialogValues>;
+  /** Wołane po udanym DODANIU (nie edycji) z id nowej operacji — resolve kwarantanny. */
+  onCreated?: (id: number) => void;
 }
 
 const CURRENCY_OPTIONS = ['PLN', 'USD', 'EUR', 'CAD', 'GBP', 'CHF', 'NOK', 'SEK'];
 
-export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendDialogProps) {
+export function AddDividendDialog({
+  open,
+  onClose,
+  defaultValues,
+  onCreated,
+}: AddDividendDialogProps) {
   const qc = useQueryClient();
   const isEdit = defaultValues?.id !== undefined;
 
@@ -82,9 +89,10 @@ export function AddDividendDialog({ open, onClose, defaultValues }: AddDividendD
 
   const createMut = useMutation({
     mutationFn: () => api.createDividend({ date, ticker, amount: parseFloat(amount), currency }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       invalidateDividends(qc);
       toast.success(`Dodano dywidendę ${ticker} — ${amount} ${currency}`);
+      onCreated?.(data.id);
       onClose();
     },
     onError: (e: Error) => errorToast('Nie udało się dodać', e),

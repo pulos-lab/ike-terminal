@@ -128,6 +128,23 @@ describe('quarantine-repo', () => {
     expect(after.ignored).toBe(before.ignored);
   });
 
+  it('resolve ustawia status/kind/refId; nie działa na już rozstrzygniętych', () => {
+    const pending = repo.listQuarantineRows('pending', PID)[0];
+    expect(repo.resolveQuarantineRow(pending.id, { kind: 'cash_operation', refId: 123 }, PID)).toBe(
+      true,
+    );
+    const resolved = repo.getQuarantineRow(pending.id, PID);
+    expect(resolved).toMatchObject({
+      status: 'resolved',
+      resolutionKind: 'cash_operation',
+      resolvedRefId: 123,
+    });
+    expect(resolved?.resolvedAt).toBeTruthy();
+    // Idempotencja: drugi resolve i ignore odbijają się od statusu
+    expect(repo.resolveQuarantineRow(pending.id, { kind: 'transaction' }, PID)).toBe(false);
+    expect(repo.ignoreQuarantineRow(pending.id, undefined, PID)).toBe(false);
+  });
+
   it('clearQuarantine czyści wszystko (kaskada DELETE /api/import/clear)', () => {
     expect(repo.clearQuarantine(PID)).toBeGreaterThan(0);
     expect(repo.listQuarantineRows(undefined, PID)).toHaveLength(0);

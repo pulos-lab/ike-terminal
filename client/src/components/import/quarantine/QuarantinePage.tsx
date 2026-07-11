@@ -20,7 +20,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { CheckCircle2, ChevronDown, ChevronUp, EyeOff, Inbox, Trash2 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { CheckCircle2, ChevronDown, ChevronUp, EyeOff, Inbox, Tag, Trash2 } from 'lucide-react';
+import { AddTransactionDialog } from '@/components/transactions/AddTransactionDialog';
+import { AddDividendDialog } from '@/components/dividends/AddDividendDialog';
+import { AddDepositDialog } from '@/components/cash/AddDepositDialog';
+import { AddFxExchangeDialog } from '@/components/currency/AddFxExchangeDialog';
+import { AddCostDialog } from '@/components/corrections-and-costs/AddCostDialog';
 
 // Skrzynka "Do wyjaśnienia" — wiersze importu, których parser nie rozpoznał.
 // Surowa treść żyje wyłącznie w bazie portfela użytkownika; stąd można wiersz
@@ -58,7 +69,24 @@ function formatAmount(amount: number, currency?: string): string {
   return currency ? `${num} ${currency}` : num;
 }
 
-function QuarantineCard({ row }: { row: QuarantineRow }) {
+/** Rodzaj wpisu wybierany w pickerze "Sklasyfikuj" — mapuje na istniejący dialog dodawania. */
+type ClassifyKind = 'trade' | 'dividend' | 'deposit' | 'cost' | 'fx';
+
+const CLASSIFY_OPTIONS: Array<{ kind: ClassifyKind; label: string }> = [
+  { kind: 'trade', label: 'Kupno / sprzedaż papieru' },
+  { kind: 'dividend', label: 'Dywidenda' },
+  { kind: 'deposit', label: 'Wpłata / wypłata' },
+  { kind: 'cost', label: 'Opłata / odsetki / inne' },
+  { kind: 'fx', label: 'Wymiana walut' },
+];
+
+function QuarantineCard({
+  row,
+  onClassify,
+}: {
+  row: QuarantineRow;
+  onClassify: (kind: ClassifyKind) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const queryClient = useQueryClient();
 
@@ -152,16 +180,33 @@ function QuarantineCard({ row }: { row: QuarantineRow }) {
           </Button>
           <div className="ml-auto flex items-center gap-2">
             {(row.status === 'pending' || row.status === 'reported') && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => ignoreMutation.mutate()}
-                disabled={ignoreMutation.isPending}
-                className="text-xs"
-              >
-                <EyeOff className="h-3.5 w-3.5" />
-                Zignoruj
-              </Button>
+              <>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" className="text-xs">
+                      <Tag className="h-3.5 w-3.5" />
+                      Sklasyfikuj
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {CLASSIFY_OPTIONS.map((o) => (
+                      <DropdownMenuItem key={o.kind} onSelect={() => onClassify(o.kind)}>
+                        {o.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => ignoreMutation.mutate()}
+                  disabled={ignoreMutation.isPending}
+                  className="text-xs"
+                >
+                  <EyeOff className="h-3.5 w-3.5" />
+                  Zignoruj
+                </Button>
+              </>
             )}
             {row.status !== 'pending' && (
               <Button
@@ -211,11 +256,40 @@ function QuarantineCard({ row }: { row: QuarantineRow }) {
 
 export function QuarantinePage() {
   const [status, setStatus] = useState<QuarantineStatus>('pending');
+  /** Trwający flow klasyfikacji: wiersz + wybrany rodzaj wpisu (otwarty dialog). */
+  const [classify, setClassify] = useState<{ row: QuarantineRow; kind: ClassifyKind } | null>(null);
+  const queryClient = useQueryClient();
 
   const { data, isLoading, error } = useQuery({
     queryKey: [...QUARANTINE_QUERY_KEY, status],
     queryFn: () => api.getQuarantine(status),
   });
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: QUARANTINE_QUERY_KEY });
+    queryClient.invalidateQueries({ queryKey: QUERY_KEYS.importStatus });
+  };
+
+  // Resolve wołany PO udanym zapisie wpisu przez dialog — jeśli sam resolve
+  // padnie, wpis w portfelu już jest, a wiersz zostaje pending (nieszkodliwe:
+  // można go wtedy zignorować ręcznie).
+  const resolveMutation = useMutation({
+    mutationFn: (args: { rowId: number; kind: 'transaction' | 'cash_operation'; refId?: number }) =>
+      api.resolveQuarantineRow(args.rowId, { kind: args.kind, refId: args.refId }),
+    onSuccess: () => {
+      toast.success('Wiersz rozstrzygnięty — wpis jest już w portfelu');
+      invalidate();
+    },
+    onError: (err) =>
+      errorToast('Wpis dodany do portfela, ale nie udało się oznaczyć wiersza', err),
+  });
+
+  const handleCreated = (kind: 'transaction' | 'cash_operation', refId?: number) => {
+    if (!classify) return;
+    resolveMutation.mutate({ rowId: classify.row.id, kind, refId });
+  };
+
+  const hint = classify?.row.hint;
 
   if (error) {
     return (
@@ -267,10 +341,73 @@ export function QuarantinePage() {
       ) : (
         <div className="space-y-3">
           {rows.map((row) => (
-            <QuarantineCard key={row.id} row={row} />
+            <QuarantineCard
+              key={row.id}
+              row={row}
+              onClassify={(kind) => setClassify({ row, kind })}
+            />
           ))}
         </div>
       )}
+
+      {/* Dialogi klasyfikacji — reużyte dialogi ręcznego dodawania z prefill
+          z hinta wiersza; key wymusza świeży stan per wiersz. Po udanym zapisie
+          onCreated → resolve wiersza. */}
+      <AddTransactionDialog
+        key={`trade-${classify?.row.id ?? 'none'}`}
+        open={classify?.kind === 'trade'}
+        onClose={() => setClassify(null)}
+        defaultValues={{ date: hint?.date, ticker: hint?.symbol }}
+        onCreated={(id) => handleCreated('transaction', id)}
+      />
+      <AddDividendDialog
+        key={`dividend-${classify?.row.id ?? 'none'}`}
+        open={classify?.kind === 'dividend'}
+        onClose={() => setClassify(null)}
+        defaultValues={{
+          date: hint?.date,
+          ticker: hint?.symbol,
+          amount: hint?.amount !== undefined ? Math.abs(hint.amount) : undefined,
+          currency: hint?.currency,
+        }}
+        onCreated={(id) => handleCreated('cash_operation', id)}
+      />
+      <AddDepositDialog
+        key={`deposit-${classify?.row.id ?? 'none'}`}
+        open={classify?.kind === 'deposit'}
+        onClose={() => setClassify(null)}
+        defaultValues={{
+          date: hint?.date,
+          amount: hint?.amount !== undefined ? Math.abs(hint.amount) : undefined,
+          type: hint?.amount !== undefined && hint.amount < 0 ? 'withdrawal' : 'deposit',
+        }}
+        onCreated={(id) => handleCreated('cash_operation', id)}
+      />
+      <AddCostDialog
+        key={`cost-${classify?.row.id ?? 'none'}`}
+        open={classify?.kind === 'cost'}
+        onClose={() => setClassify(null)}
+        onSuccess={invalidate}
+        defaultCurrency={hint?.currency ?? 'PLN'}
+        defaultValues={{
+          date: hint?.date,
+          amount: hint?.amount,
+          currency: hint?.currency,
+          description: hint?.description,
+        }}
+        onCreated={(id) => handleCreated('cash_operation', id)}
+      />
+      <AddFxExchangeDialog
+        key={`fx-${classify?.row.id ?? 'none'}`}
+        open={classify?.kind === 'fx'}
+        onClose={() => setClassify(null)}
+        defaultValues={{
+          date: hint?.date,
+          amountFrom: hint?.amount !== undefined ? Math.abs(hint.amount) : undefined,
+          currencyFrom: hint?.currency,
+        }}
+        onCreated={() => handleCreated('cash_operation')}
+      />
     </div>
   );
 }

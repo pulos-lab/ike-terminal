@@ -45,9 +45,16 @@ interface AddDepositDialogProps {
   open: boolean;
   onClose: () => void;
   defaultValues?: Partial<DepositDialogValues>;
+  /** Wołane po udanym DODANIU (nie edycji) z id nowej operacji — resolve kwarantanny. */
+  onCreated?: (id: number) => void;
 }
 
-export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDialogProps) {
+export function AddDepositDialog({
+  open,
+  onClose,
+  defaultValues,
+  onCreated,
+}: AddDepositDialogProps) {
   const qc = useQueryClient();
   const isEdit = defaultValues?.id !== undefined;
 
@@ -78,11 +85,12 @@ export function AddDepositDialog({ open, onClose, defaultValues }: AddDepositDia
 
   const createMut = useMutation({
     mutationFn: () => api.createDeposit({ date, amount: parseFloat(amount) }, type),
-    onSuccess: () => {
+    onSuccess: (data) => {
       invalidateCashFlow(qc);
       toast.success(
         `Dodano ${type === 'deposit' ? 'wpłatę' : 'wypłatę'}: ${formatCurrency(parseFloat(amount), 'PLN')}`,
       );
+      onCreated?.(data.id);
       onClose();
     },
     onError: (e: Error) => errorToast('Nie udało się dodać', e),

@@ -192,6 +192,32 @@ export function ignoreQuarantineRow(
   return info.changes > 0;
 }
 
+export interface ResolveQuarantineInput {
+  kind: 'transaction' | 'cash_operation';
+  /** Id wpisu w transactions/cash_operations; null np. dla pary FX (endpoint nie zwraca id nóg). */
+  refId?: number;
+  note?: string;
+}
+
+/** Oznacza wiersz jako rozstrzygnięty — wołane PO udanym zapisie wpisu przez
+ * istniejący endpoint ręczny (dialogi dodawania). */
+export function resolveQuarantineRow(
+  id: number,
+  input: ResolveQuarantineInput,
+  portfolioId: string = 'default',
+): boolean {
+  const db = getDb(portfolioId);
+  const info = db
+    .prepare(
+      `UPDATE import_quarantine
+       SET status = 'resolved', resolution_kind = ?, resolved_ref_id = ?,
+           user_note = COALESCE(?, user_note), resolved_at = datetime('now')
+       WHERE id = ? AND status IN ('pending','reported')`,
+    )
+    .run(input.kind, input.refId ?? null, input.note ?? null, id);
+  return info.changes > 0;
+}
+
 export function deleteQuarantineRow(id: number, portfolioId: string = 'default'): boolean {
   const db = getDb(portfolioId);
   return db.prepare('DELETE FROM import_quarantine WHERE id = ?').run(id).changes > 0;

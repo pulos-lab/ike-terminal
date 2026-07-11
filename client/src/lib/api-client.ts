@@ -461,6 +461,14 @@ export const api = {
       `/import/quarantine/${id}/ignore`,
       { method: 'POST', body: JSON.stringify({ note }) },
     ),
+  resolveQuarantineRow: (
+    id: number,
+    body: { kind: 'transaction' | 'cash_operation'; refId?: number; note?: string },
+  ) =>
+    request<{ success: boolean; row: import('shared').QuarantineRow }>(
+      `/import/quarantine/${id}/resolve`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
   deleteQuarantineRow: (id: number) =>
     request<{ success: boolean }>(`/import/quarantine/${id}`, { method: 'DELETE' }),
 
