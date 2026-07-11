@@ -1,6 +1,14 @@
 import Papa from 'papaparse';
 import type { CashOperation, ParseResult, SkippedRow } from 'shared';
-import { normalizeForDetect, parseNumber, roundTo2, parseDegiroDate } from './utils.js';
+import {
+  normalizeForDetect,
+  parseNumber,
+  roundTo2,
+  parseDegiroDate,
+  detectColumnShift,
+  columnShiftWarning,
+  rawRowForWarning,
+} from './utils.js';
 
 /**
  * Parse DEGIRO Account CSV (cash operations).
@@ -20,8 +28,8 @@ import { normalizeForDetect, parseNumber, roundTo2, parseDegiroDate } from './ut
  *   6  Kurs                    - exchange rate (for FX operations)
  *   7  Zmiana                  - currency of change
  *   8  (unnamed)               - amount change (comma decimal)
- *   9  Saldo                   - balance after operation
- *  10  (currency)              - currency of balance
+ *   9  (currency)              - currency of balance
+ *  10  Saldo                   - balance after operation
  *  11  Identyfikator zlecenia  - order ID (present for trade-related FX)
  *
  * Supported operations:
@@ -63,6 +71,7 @@ export function parseDegiroOperations(
   // Parse all rows into structured format
   const parsed: AccountRow[] = [];
   const skipped: SkippedRow[] = [];
+  const warnings: string[] = [];
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
@@ -89,6 +98,23 @@ export function parseDegiroOperations(
     }
     if (!description) {
       skipped.push({ row: rowNum, reason: 'missing_description' });
+      continue;
+    }
+
+    // Ochrona przed cichym przesunięciem kolumn — kolumny czytane pozycyjnie,
+    // dodatkowy przecinek w polu (np. w opisie) przesuwa Zmianę do złych kolumn.
+    // Sygnały treści, nie liczba kolumn; sprawdzamy WYŁĄCZNIE kolumny, które
+    // parser konsumuje (0-8) — kolumny Saldo po prawej mają warianty layoutu
+    // między eksportami i nie wpływają na wynik importu.
+    const shiftProblems = detectColumnShift([
+      { label: 'Data', value: dateStr, kind: 'date' },
+      { label: 'Kurs', value: row[6], kind: 'number' },
+      { label: 'waluta zmiany', value: row[7], kind: 'currency' },
+      { label: 'Zmiana', value: row[8], kind: 'number' },
+    ]);
+    if (shiftProblems.length > 0) {
+      skipped.push({ row: rowNum, reason: 'column_shift', paperName: description });
+      warnings.push(columnShiftWarning(rowNum, shiftProblems, rawRowForWarning(row, ',')));
       continue;
     }
 
@@ -301,7 +327,7 @@ export function parseDegiroOperations(
     });
   }
 
-  return { data: operations, skipped };
+  return { data: operations, skipped, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 /**

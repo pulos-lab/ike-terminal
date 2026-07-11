@@ -1,7 +1,15 @@
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
 import { applyIsinAlias, isBondInstrument, findBondByTicker, inferBondNominal } from 'shared';
-import { normalizeForDetect, parseNumber, validateTradeFields, parseDottedDate } from './utils.js';
+import {
+  normalizeForDetect,
+  parseNumber,
+  validateTradeFields,
+  parseDottedDate,
+  detectColumnShift,
+  columnShiftWarning,
+  rawRowForWarning,
+} from './utils.js';
 
 /**
  * Bossa sufiksuje tickery instrumentów nietypowych:
@@ -74,6 +82,23 @@ export function parseBossaTransactions(
     // przeliczać computeTotal() (broker jest źródłem prawdy dla rozliczenia).
     const total = parseNumber(row['po prowizji']);
     const currency = row['waluta']?.trim();
+
+    // Ochrona przed cichym przesunięciem kolumn (dodatkowy średnik w którymś polu):
+    // sygnały treści, nie liczba kolumn — patrz utils.detectColumnShift.
+    const shiftProblems = detectColumnShift([
+      { label: 'data', value: dateStr, kind: 'date' },
+      { label: 'ilość', value: row['ilość'], kind: 'number' },
+      { label: 'cena', value: row['cena'], kind: 'number' },
+      { label: 'wartość', value: row['wartość'], kind: 'number' },
+      { label: 'prowizja', value: row['prowizja'], kind: 'number' },
+      { label: 'po prowizji', value: row['po prowizji'], kind: 'number' },
+      { label: 'waluta', value: currency, kind: 'currency' },
+    ]);
+    if (shiftProblems.length > 0) {
+      skipped.push({ row: rowNum, reason: 'column_shift', paperName });
+      warnings.push(columnShiftWarning(rowNum, shiftProblems, rawRowForWarning(row, ';')));
+      continue;
+    }
 
     // Wspólna walidacja pól (utils.validateTradeFields) — Bossa wymaga ISIN-u z CSV.
     const check = validateTradeFields({ date: dateStr, isin, side, quantity, price });

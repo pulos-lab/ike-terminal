@@ -32,6 +32,7 @@ export const SKIP_REASON_LABELS: Record<SkipReason, string> = {
   invalid_fx_rate: 'Transfer XTB — nieprawidłowy kurs wymiany',
   fx_currency_mismatch: 'Transfer XTB — waluta niezgodna z kontem',
   value_mismatch: 'wartość odbiega od ilość×cena (sprawdź mapowanie kolumn)',
+  column_shift: 'wartości nie pasują do kolumn (podejrzane przesunięcie kolumn)',
 };
 
 export const OPERATION_TYPE_LABELS: Record<OperationType, string> = {

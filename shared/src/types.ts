@@ -666,7 +666,8 @@ export type SkipReason =
   | 'unparseable_fx_comment' // XTB Transfer — brak pary walutowej + kursu w Comment
   | 'invalid_fx_rate' // XTB Transfer — Exchange rate ≤ 0 w Comment
   | 'fx_currency_mismatch' // XTB Transfer — ani fromCur ani toCur nie zgadza się z walutą konta
-  | 'value_mismatch'; // import generyczny — wartość z CSV odbiega od qty×cena (podejrzane mapowanie kolumn)
+  | 'value_mismatch' // import generyczny — wartość z CSV odbiega od qty×cena (podejrzane mapowanie kolumn)
+  | 'column_shift'; // wartości wiersza nie pasują do kolumn formatu (np. dodatkowy separator w polu) — szczegóły z surową treścią wiersza w warnings
 
 export interface SkippedRow {
   row: number;
