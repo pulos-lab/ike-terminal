@@ -1195,6 +1195,40 @@ export interface QuarantineCounts {
   reported: number;
 }
 
+// ============ Unknown Type Reports (globalne zgłoszenia do admina) ============
+
+/** classified = user sklasyfikował wiersz (sygnał: luka parsera);
+ *  unsupported = "nie wiem / aplikacja tego nie obsługuje" (sygnał: feature-gap). */
+export type UnknownTypeReportKind = 'classified' | 'unsupported';
+
+export type UnknownTypeReportStatus = 'open' | 'approved' | 'rejected' | 'wont_fix';
+
+export interface UnknownTypeReportSuggestion {
+  /** Jak użytkownik sklasyfikował wiersz (np. 'dividend', 'cost') — dla kind='classified'. */
+  classifiedAs?: string;
+  note?: string;
+  /** ISO timestamp zgłoszenia. */
+  at: string;
+}
+
+/** Zagregowane zgłoszenie nieznanego typu operacji — jeden wiersz per
+ * (broker, raw_type, kind); próbka ZREDAGOWANA przez sample-redactor. */
+export interface UnknownTypeReport {
+  id: number;
+  broker: string;
+  rawType: string;
+  kind: UnknownTypeReportKind;
+  headers?: string[];
+  sampleCells?: string[];
+  suggestions: UnknownTypeReportSuggestion[];
+  reporterCount: number;
+  occurrenceCount: number;
+  status: UnknownTypeReportStatus;
+  firstReportedAt: string;
+  lastReportedAt: string;
+  reviewNote?: string;
+}
+
 /** Result of POST /api/import/detect — used by UI to decide if second dropzone is needed */
 export interface DetectResult {
   broker: BrokerType | null;

@@ -26,7 +26,25 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { CheckCircle2, ChevronDown, ChevronUp, EyeOff, Inbox, Tag, Trash2 } from 'lucide-react';
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  EyeOff,
+  Flag,
+  Inbox,
+  Loader2,
+  Tag,
+  Trash2,
+} from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { AddTransactionDialog } from '@/components/transactions/AddTransactionDialog';
 import { AddDividendDialog } from '@/components/dividends/AddDividendDialog';
 import { AddDepositDialog } from '@/components/cash/AddDepositDialog';
@@ -72,6 +90,132 @@ function formatAmount(amount: number, currency?: string): string {
 /** Rodzaj wpisu wybierany w pickerze "Sklasyfikuj" — mapuje na istniejący dialog dodawania. */
 type ClassifyKind = 'trade' | 'dividend' | 'deposit' | 'cost' | 'fx';
 
+/**
+ * Dialog zgody na zgłoszenie typu do globalnej bazy — pokazuje DOKŁADNIE to,
+ * co zostanie wysłane (zredagowana próbka z serwera; kwoty/identyfikatory
+ * wrażliwe zamienione na ***). Dwa tryby:
+ *  - unsupported: user klika "Zgłoś" na oczekującym wierszu ("nie wiem"),
+ *  - classified: proponowany po udanej klasyfikacji (uczy parser na przyszłość).
+ */
+function ReportConsentDialog({
+  row,
+  classifiedAs,
+  onClose,
+  onReported,
+}: {
+  row: QuarantineRow | null;
+  /** Ustawione = tryb 'classified' (po klasyfikacji); brak = 'unsupported'. */
+  classifiedAs?: string;
+  onClose: () => void;
+  onReported: () => void;
+}) {
+  const [note, setNote] = useState('');
+
+  const { data: preview, isLoading: previewLoading } = useQuery({
+    queryKey: ['quarantine-report-preview', row?.id],
+    queryFn: () => api.getQuarantineReportPreview(row!.id),
+    enabled: row !== null,
+  });
+
+  const reportMutation = useMutation({
+    mutationFn: () => api.reportQuarantineRow(row!.id, { note: note.trim() || undefined, classifiedAs }),
+    onSuccess: () => {
+      toast.success('Zgłoszenie wysłane — dziękujemy, to pomaga ulepszać import');
+      onReported();
+      onClose();
+    },
+    onError: (err) => errorToast('Nie udało się wysłać zgłoszenia', err),
+  });
+
+  return (
+    <Dialog open={row !== null} onOpenChange={(o) => !o && !reportMutation.isPending && onClose()}>
+      {/* Szerokość z prefiksem sm: (footgun tailwind-merge). DialogContent jest
+          gridem — treść z szeroką tabelą MUSI mieć min-w-0, inaczej min-content
+          tabeli rozpycha dialog poza max-w zamiast przewijać się w kontenerze. */}
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>
+            {classifiedAs ? 'Zgłoś typ do ulepszenia importu' : 'Zgłoś nierozpoznany wiersz'}
+          </DialogTitle>
+          <DialogDescription>
+            {classifiedAs
+              ? 'Dzięki zgłoszeniu administrator może nauczyć import rozpoznawać ten typ automatycznie — dla Ciebie i innych użytkowników.'
+              : 'Zgłoszenie trafi do administratora jako sygnał, że aplikacja może nie obsługiwać tego typu operacji.'}{' '}
+            Wysyłane są wyłącznie poniższe, zredagowane dane (numery rachunków, e-maile i
+            identyfikatory są maskowane) — nic więcej.
+          </DialogDescription>
+        </DialogHeader>
+
+        {previewLoading || !preview ? (
+          <div className="text-sm text-muted-foreground py-4">Przygotowuję podgląd…</div>
+        ) : (
+          <div className="space-y-3 min-w-0">
+            <div className="flex flex-wrap gap-2 text-sm">
+              <Badge variant="outline" className="font-mono text-xs">
+                {preview.rawType}
+              </Badge>
+              <span className="text-muted-foreground">broker: {sourceLabel(preview.broker)}</span>
+              {classifiedAs && (
+                <span className="text-muted-foreground">
+                  sklasyfikowano jako:{' '}
+                  {CLASSIFY_OPTIONS.find((o) => o.kind === classifiedAs)?.label ?? classifiedAs}
+                </span>
+              )}
+            </div>
+            <div className="rounded-md border overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {preview.headers.map((h, i) => (
+                      <TableHead key={i} className="text-xs whitespace-nowrap">
+                        {h}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow>
+                    {preview.sampleCells.map((c, i) => (
+                      <TableCell key={i} className="text-xs font-mono whitespace-nowrap">
+                        {c || <span className="text-muted-foreground">—</span>}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">
+                Notatka dla administratora (opcjonalnie — np. co ten wiersz oznacza u brokera)
+              </label>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                maxLength={500}
+                rows={2}
+                className="mt-1 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              />
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={reportMutation.isPending}>
+            Nie teraz
+          </Button>
+          <Button
+            onClick={() => reportMutation.mutate()}
+            disabled={!preview || reportMutation.isPending}
+          >
+            {reportMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            Wyślij zgłoszenie
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const CLASSIFY_OPTIONS: Array<{ kind: ClassifyKind; label: string }> = [
   { kind: 'trade', label: 'Kupno / sprzedaż papieru' },
   { kind: 'dividend', label: 'Dywidenda' },
@@ -83,9 +227,11 @@ const CLASSIFY_OPTIONS: Array<{ kind: ClassifyKind; label: string }> = [
 function QuarantineCard({
   row,
   onClassify,
+  onReport,
 }: {
   row: QuarantineRow;
   onClassify: (kind: ClassifyKind) => void;
+  onReport: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const queryClient = useQueryClient();
@@ -196,6 +342,12 @@ function QuarantineCard({
                     ))}
                   </DropdownMenuContent>
                 </DropdownMenu>
+                {row.status === 'pending' && row.rawType && (
+                  <Button variant="outline" size="sm" onClick={onReport} className="text-xs">
+                    <Flag className="h-3.5 w-3.5" />
+                    Zgłoś
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -258,6 +410,11 @@ export function QuarantinePage() {
   const [status, setStatus] = useState<QuarantineStatus>('pending');
   /** Trwający flow klasyfikacji: wiersz + wybrany rodzaj wpisu (otwarty dialog). */
   const [classify, setClassify] = useState<{ row: QuarantineRow; kind: ClassifyKind } | null>(null);
+  /** Otwarty dialog zgody na zgłoszenie (classifiedAs = tryb po klasyfikacji). */
+  const [reporting, setReporting] = useState<{
+    row: QuarantineRow;
+    classifiedAs?: ClassifyKind;
+  } | null>(null);
   const queryClient = useQueryClient();
 
   const { data, isLoading, error } = useQuery({
@@ -274,11 +431,20 @@ export function QuarantinePage() {
   // padnie, wpis w portfelu już jest, a wiersz zostaje pending (nieszkodliwe:
   // można go wtedy zignorować ręcznie).
   const resolveMutation = useMutation({
-    mutationFn: (args: { rowId: number; kind: 'transaction' | 'cash_operation'; refId?: number }) =>
-      api.resolveQuarantineRow(args.rowId, { kind: args.kind, refId: args.refId }),
-    onSuccess: () => {
+    mutationFn: (args: {
+      row: QuarantineRow;
+      classifiedAs: ClassifyKind;
+      kind: 'transaction' | 'cash_operation';
+      refId?: number;
+    }) => api.resolveQuarantineRow(args.row.id, { kind: args.kind, refId: args.refId }),
+    onSuccess: (_, vars) => {
       toast.success('Wiersz rozstrzygnięty — wpis jest już w portfelu');
       invalidate();
+      // Pętla nauki: zaproponuj zgłoszenie typu do admina (dialog z podglądem
+      // zredagowanych danych — nic nie wychodzi bez jawnego kliknięcia).
+      if (vars.row.rawType) {
+        setReporting({ row: vars.row, classifiedAs: vars.classifiedAs });
+      }
     },
     onError: (err) =>
       errorToast('Wpis dodany do portfela, ale nie udało się oznaczyć wiersza', err),
@@ -286,7 +452,7 @@ export function QuarantinePage() {
 
   const handleCreated = (kind: 'transaction' | 'cash_operation', refId?: number) => {
     if (!classify) return;
-    resolveMutation.mutate({ rowId: classify.row.id, kind, refId });
+    resolveMutation.mutate({ row: classify.row, classifiedAs: classify.kind, kind, refId });
   };
 
   const hint = classify?.row.hint;
@@ -345,6 +511,7 @@ export function QuarantinePage() {
               key={row.id}
               row={row}
               onClassify={(kind) => setClassify({ row, kind })}
+              onReport={() => setReporting({ row })}
             />
           ))}
         </div>
@@ -407,6 +574,14 @@ export function QuarantinePage() {
           currencyFrom: hint?.currency,
         }}
         onCreated={() => handleCreated('cash_operation')}
+      />
+
+      <ReportConsentDialog
+        key={`report-${reporting?.row.id ?? 'none'}-${reporting?.classifiedAs ?? ''}`}
+        row={reporting?.row ?? null}
+        classifiedAs={reporting?.classifiedAs}
+        onClose={() => setReporting(null)}
+        onReported={invalidate}
       />
     </div>
   );

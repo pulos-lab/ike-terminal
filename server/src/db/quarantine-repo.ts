@@ -218,6 +218,23 @@ export function resolveQuarantineRow(
   return info.changes > 0;
 }
 
+/** Oznacza wiersz jako zgłoszony do admina ("nie wiem / nieobsługiwane"). */
+export function markQuarantineRowReported(
+  id: number,
+  portfolioId: string = 'default',
+  note?: string,
+): boolean {
+  const db = getDb(portfolioId);
+  const info = db
+    .prepare(
+      `UPDATE import_quarantine
+       SET status = 'reported', user_note = COALESCE(?, user_note)
+       WHERE id = ? AND status = 'pending'`,
+    )
+    .run(note ?? null, id);
+  return info.changes > 0;
+}
+
 export function deleteQuarantineRow(id: number, portfolioId: string = 'default'): boolean {
   const db = getDb(portfolioId);
   return db.prepare('DELETE FROM import_quarantine WHERE id = ?').run(id).changes > 0;
