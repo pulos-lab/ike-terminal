@@ -19,7 +19,7 @@ import { DividendsPage } from '@/components/dividends/DividendsPage';
 import { CurrencyExchangePage } from '@/components/currency/CurrencyExchangePage';
 import { CashFlowPage } from '@/components/cash/CashFlowPage';
 import { CorrectionsAndCostsPage } from '@/components/corrections-and-costs/CorrectionsAndCostsPage';
-import { QuarantinePage } from '@/components/import/quarantine/QuarantinePage';
+import { ImportHubPage } from '@/components/import/ImportHubPage';
 import { BugReportsPage } from '@/components/admin/BugReportsPage';
 import { ImportProfilesPage } from '@/components/admin/ImportProfilesPage';
 import { TypeAliasesPage } from '@/components/admin/TypeAliasesPage';
@@ -80,7 +80,12 @@ function App() {
                             path="/costs"
                             element={<Navigate to="/app/corrections-and-costs" replace />}
                           />
-                          <Route path="/import/inbox" element={<QuarantinePage />} />
+                          <Route path="/import" element={<ImportHubPage />} />
+                          {/* Stara ścieżka skrzynki — redirect na hub (bookmarki, stare CTA) */}
+                          <Route
+                            path="/import/inbox"
+                            element={<Navigate to="/app/import" replace />}
+                          />
                           <Route path="/admin/bugs" element={<BugReportsPage />} />
                           <Route path="/admin/import-profiles" element={<ImportProfilesPage />} />
                           <Route path="/admin/type-aliases" element={<TypeAliasesPage />} />

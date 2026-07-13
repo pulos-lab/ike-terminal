@@ -202,7 +202,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
               label: 'Przejrzyj skrzynkę',
               onClick: () => {
                 onOpenChange(false);
-                navigate('/app/import/inbox');
+                navigate('/app/import');
               },
             },
           });
