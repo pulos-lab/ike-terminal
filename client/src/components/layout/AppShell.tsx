@@ -21,13 +21,11 @@ import {
   ChevronUp,
   PanelLeftClose,
   Landmark,
-  Inbox,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useLocalStorage } from '@/lib/use-local-storage';
-import { formatTimestampLocal } from '@/lib/formatters';
 import { useTheme } from '@/lib/use-theme';
 import { cn } from '@/lib/utils';
 import {
@@ -39,7 +37,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { MetricsBar } from '@/components/dashboard/MetricsBar';
-import { ImportDialog } from '@/components/import/ImportDialog';
 import { BugReportDialog } from '@/components/shared/BugReportDialog';
 import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog';
 import { PortfolioSelector } from './PortfolioSelector';
@@ -125,18 +122,27 @@ function NavContent({
   // zunifikowane). Link zawsze widoczny — panel pokazuje empty state gdy brak danych.
   const navItems = baseNavItems;
 
-  // Skrzynka "Do wyjaśnienia" — link pojawia się tylko, gdy jakiś wiersz importu
-  // czeka na decyzję (inbox-zero: bez oczekujących nie zaśmiecamy nawigacji;
-  // strona pozostaje osiągalna z wyniku importu). Klucz współdzielony z AppShell.
+  // Zbiorczy licznik spraw importu na pozycji "Import": wiersze czekające
+  // w skrzynce "Do wyjaśnienia" + importy uniwersalne do ponownego wgrania po
+  // korekcie mapowania. Klucze query współdzielone z hubem/GenericBatchesSection
+  // (react-query deduplikuje).
   const { data: importStatus } = useQuery({
     queryKey: QUERY_KEYS.importStatus,
     queryFn: api.getImportStatus,
   });
-  const quarantinePending = importStatus?.quarantinePending ?? 0;
+  const { data: genericBatches } = useQuery({
+    queryKey: ['generic-batches'],
+    queryFn: api.genericBatches,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const importBadgeCount =
+    (importStatus?.quarantinePending ?? 0) +
+    (genericBatches?.batches.filter((b) => b.needsReimport).length ?? 0);
 
   return (
     <TooltipProvider delayDuration={0}>
-      <nav className={cn('flex flex-col gap-1', collapsed ? 'p-2 items-center' : 'p-3')}>
+      <nav className={cn('flex flex-col gap-1 flex-1', collapsed ? 'p-2 items-center' : 'p-3')}>
         {!collapsed && (
           <>
             <div className="px-3 py-1 mb-2">
@@ -158,16 +164,19 @@ function NavContent({
             onNavigate={onNavigate}
           />
         ))}
-        {quarantinePending > 0 && (
+        {/* Hub importu — narzędzie, nie widok danych portfela: dopchnięty na dół
+            kolumny nav i odcięty separatorem od zakładek portfelowych. */}
+        <div className={cn('mt-auto w-full flex flex-col gap-1', collapsed && 'items-center')}>
+          <Separator className="my-1" />
           <NavItem
-            to="/app/import/inbox"
-            label="Do wyjaśnienia"
-            Icon={Inbox}
+            to="/app/import"
+            label="Import"
+            Icon={Upload}
             collapsed={collapsed}
             onNavigate={onNavigate}
-            badgeCount={quarantinePending}
+            badgeCount={importBadgeCount}
           />
-        )}
+        </div>
       </nav>
     </TooltipProvider>
   );
@@ -177,7 +186,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const { data: session } = useSession();
   const { isDark: dark, toggleTheme } = useTheme();
-  const [importOpen, setImportOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [bugReportOpen, setBugReportOpen] = useState(false);
   const [collapsed, setCollapsed] = useLocalStorage('sidebar-collapsed', false);
@@ -187,25 +195,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     navigate('/login', { replace: true });
   };
 
+  // Zbiorczy licznik spraw importu do badge'a w menu mobilnym (lustro NavContent;
+  // klucze query współdzielone — react-query deduplikuje zapytania).
   const { data: importStatus } = useQuery({
     queryKey: QUERY_KEYS.importStatus,
     queryFn: api.getImportStatus,
   });
-
-  const lastImport = importStatus?.lastImportDate
-    ? formatTimestampLocal(importStatus.lastImportDate)
-    : null;
-
-  // Importy uniwersalne czekające na ponowne wgranie po korekcie mapowania przez
-  // admina. Wspólny klucz z GenericBatchesSection → jedno zapytanie; kropka
-  // aktualizuje się po re-imporcie (invalidateQueries unieważnia ten klucz).
   const { data: genericBatches } = useQuery({
     queryKey: ['generic-batches'],
     queryFn: api.genericBatches,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
-  const reimportCount = genericBatches?.batches.filter((b) => b.needsReimport).length ?? 0;
+  const importBadgeCount =
+    (importStatus?.quarantinePending ?? 0) +
+    (genericBatches?.batches.filter((b) => b.needsReimport).length ?? 0);
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -249,36 +253,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         <NavContent collapsed={collapsed} />
         {!collapsed && (
-          <div className="mt-auto p-3 space-y-2">
-            <div className="grid grid-cols-2 gap-1.5">
-              <button
-                onClick={toggleTheme}
-                className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border hover:border-border-hover hover:bg-accent text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-                {dark ? 'Light' : 'Dark'}
-              </button>
-              <button
-                onClick={() => setImportOpen(true)}
-                title={
-                  reimportCount > 0
-                    ? `${reimportCount} import(y) czeka na ponowne wgranie pliku po korekcie mapowania`
-                    : undefined
-                }
-                className="relative flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border hover:border-border-hover hover:bg-accent text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <Upload className="h-3.5 w-3.5" />
-                Import
-                {reimportCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-info px-1 text-[10px] font-semibold text-info-foreground">
-                    {reimportCount}
-                  </span>
-                )}
-              </button>
-            </div>
-            {lastImport && (
-              <p className="text-[10px] text-muted-foreground px-1">Ostatni import: {lastImport}</p>
-            )}
+          <div className="p-3 space-y-2">
+            {/* Wgrywanie mieszka na hubie /app/import (pozycja "Import" na dole nav);
+                stopka zostaje dla ustawień sesyjnych: motyw + menu użytkownika. */}
+            <button
+              onClick={toggleTheme}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-card border border-border hover:border-border-hover hover:bg-accent text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+              {dark ? 'Light' : 'Dark'}
+            </button>
             {session?.user && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -332,12 +316,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem onSelect={() => setImportOpen(true)}>
+              <DropdownMenuItem onSelect={() => navigate('/app/import')}>
                 <Upload className="h-4 w-4" />
-                Import transakcji
-                {reimportCount > 0 && (
-                  <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-info px-1.5 text-[10px] font-semibold text-info-foreground">
-                    {reimportCount}
+                Import
+                {importBadgeCount > 0 && (
+                  <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-warning px-1.5 text-[10px] font-semibold text-warning-foreground">
+                    {importBadgeCount}
                   </span>
                 )}
               </DropdownMenuItem>
@@ -375,7 +359,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <BottomTabBar />
 
-      <ImportDialog open={importOpen} onOpenChange={setImportOpen} />
       <ChangePasswordDialog
         open={changePasswordOpen}
         onOpenChange={setChangePasswordOpen}

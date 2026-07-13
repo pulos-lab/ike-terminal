@@ -406,7 +406,12 @@ function QuarantineCard({
   );
 }
 
-export function QuarantinePage() {
+/**
+ * Sekcja "Do wyjaśnienia" — renderowana na hubie /app/import (dawniej osobna
+ * strona /app/import/inbox, ta trasa robi teraz redirect). Self-contained:
+ * własne query, mutacje i dialogi klasyfikacji/zgłoszeń.
+ */
+export function QuarantineSection() {
   const [status, setStatus] = useState<QuarantineStatus>('pending');
   /** Trwający flow klasyfikacji: wiersz + wybrany rodzaj wpisu (otwarty dialog). */
   const [classify, setClassify] = useState<{ row: QuarantineRow; kind: ClassifyKind } | null>(null);
@@ -471,9 +476,9 @@ export function QuarantinePage() {
   const rows = data?.rows ?? [];
 
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold">Do wyjaśnienia</h1>
+        <h2 className="text-lg font-semibold">Do wyjaśnienia</h2>
         <p className="text-sm text-muted-foreground mt-1">
           Wiersze z importów, których nie udało się automatycznie rozpoznać. Możesz je przejrzeć
           i zdecydować, co z nimi zrobić — surowa treść pozostaje wyłącznie w Twoim portfelu.
