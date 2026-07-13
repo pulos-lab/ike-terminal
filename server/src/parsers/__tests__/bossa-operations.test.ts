@@ -96,6 +96,29 @@ describe('parseBossaOperations — P17 corporate actions', () => {
     expect(pending?.description).toBe('Wykup w ofercie skupu XYZ123');
   });
 
+  it('Wykup akcji (przymusowy) → RedemptionMarker(kind=certificate), NIE corporate_action_pending', () => {
+    // Wykup przymusowy jest deterministyczny — zamykamy pozycję automatycznie jak certyfikaty.
+    const csv = buildCsv(['2025-06-10;Wykup akcji PKNORLEN;;270000.00;PLN']);
+    const result = parseBossaOperations(csv, 'batch-test');
+
+    expect(
+      result.data.find((op) => op.operationType === 'corporate_action_pending'),
+    ).toBeUndefined();
+    expect(result.redemptions).toHaveLength(1);
+    expect(result.redemptions[0].kind).toBe('certificate');
+    expect(result.redemptions[0].ticker).toBe('PKNORLEN');
+    expect(result.redemptions[0].amount).toBe(270000);
+    expect(result.redemptions[0].currency).toBe('PLN');
+  });
+
+  it('Wykup akcji PLASTBOX-FIX → ticker = PLASTBOX (bez -FIX)', () => {
+    // Regex "Wykup akcji PLASTBOX" wyciąga PLASTBOX — to pasuje do oczekiwań reconciliation.
+    const csv = buildCsv(['2022-11-15;Wykup akcji PLASTBOX;;1200.00;PLN']);
+    const result = parseBossaOperations(csv, 'batch-test');
+    expect(result.redemptions).toHaveLength(1);
+    expect(result.redemptions[0].ticker).toBe('PLASTBOX');
+  });
+
   it('Zwykły przelew → deposit (nietknięty przez P17)', () => {
     const csv = buildCsv(['2024-01-15;Przelew do DM BO;;10000.00;PLN']);
     const result = parseBossaOperations(csv, 'batch-test');

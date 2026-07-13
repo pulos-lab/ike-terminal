@@ -832,7 +832,9 @@ function reconcileBossaRedemptions(
   if (redemptions.length === 0) return 0;
   let added = 0;
 
-  // Load all transactions once and group by ticker to avoid N+1 DB queries
+  // Load all transactions once and group by paperName to avoid N+1 DB queries.
+  // PaperName jest znormalizowany na poziomie parsera (PLASTBOX, nie PLASTBOX-FIX),
+  // więc direct match z redemption ticker działa naturalnie.
   const allTx = getAllTransactions(pid);
   const txByTicker = new Map<string, typeof allTx>();
   for (const t of allTx) {
