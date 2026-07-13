@@ -36,9 +36,23 @@ const CURRENCIES = ['PLN', 'USD', 'EUR', 'GBP'] as const;
 interface AddFxExchangeDialogProps {
   open: boolean;
   onClose: () => void;
+  /** Prefill pól przy otwarciu — np. ze skrzynki "Do wyjaśnienia". */
+  defaultValues?: {
+    date?: string;
+    amountFrom?: number;
+    currencyFrom?: string;
+    currencyTo?: string;
+  };
+  /** Wołane po udanym zapisie (para nóg FX nie ma pojedynczego id) — resolve kwarantanny. */
+  onCreated?: () => void;
 }
 
-export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps) {
+export function AddFxExchangeDialog({
+  open,
+  onClose,
+  defaultValues,
+  onCreated,
+}: AddFxExchangeDialogProps) {
   const qc = useQueryClient();
 
   const today = new Date().toISOString().slice(0, 10);
@@ -92,10 +106,10 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
   // Gdy dialog się otwiera lub zmienia para walut — prefiluj kurs.
   useEffect(() => {
     if (!open) return;
-    setDate(today);
-    setCurrencyFrom('PLN');
-    setCurrencyTo('USD');
-    setAmountFrom('');
+    setDate(defaultValues?.date ?? today);
+    setCurrencyFrom(defaultValues?.currencyFrom ?? 'PLN');
+    setCurrencyTo(defaultValues?.currencyTo ?? 'USD');
+    setAmountFrom(defaultValues?.amountFrom ? String(Math.abs(defaultValues.amountFrom)) : '');
     resetValidation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -136,6 +150,7 @@ export function AddFxExchangeDialog({ open, onClose }: AddFxExchangeDialogProps)
     onSuccess: () => {
       invalidateFx(qc);
       toast.success(`Dodano wymianę ${currencyFrom} → ${currencyTo}: ${amountFrom} @ ${rate}`);
+      onCreated?.();
       onClose();
     },
     onError: (e: Error) => errorToast('Nie udało się dodać', e),

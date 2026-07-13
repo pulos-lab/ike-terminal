@@ -53,9 +53,24 @@ function inferQuoteFromTicker(t: string): string {
 interface AddTransactionDialogProps {
   open: boolean;
   onClose: () => void;
+  /** Prefill pól przy otwarciu — np. ze skrzynki "Do wyjaśnienia" (hint pominiętego wiersza). */
+  defaultValues?: {
+    date?: string;
+    ticker?: string;
+    side?: 'K' | 'S';
+    quantity?: number;
+    price?: number;
+  };
+  /** Wołane po udanym zapisie z id nowej transakcji (resolve wiersza kwarantanny). */
+  onCreated?: (id: number) => void;
 }
 
-export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProps) {
+export function AddTransactionDialog({
+  open,
+  onClose,
+  defaultValues,
+  onCreated,
+}: AddTransactionDialogProps) {
   const qc = useQueryClient();
   const { activeSettings } = usePortfolio();
 
@@ -150,14 +165,14 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
   ]);
   const { submitGuard, fieldError, reset: resetValidation } = useFormValidation(formErrors);
 
-  // Reset state przy otwarciu dialogu
+  // Reset state przy otwarciu dialogu (defaultValues nadpisują puste wartości)
   useEffect(() => {
     if (!open) return;
-    setDate(today);
-    setTicker('');
-    setSide('K');
-    setQuantity('');
-    setPrice('');
+    setDate(defaultValues?.date ?? today);
+    setTicker(defaultValues?.ticker ?? '');
+    setSide(defaultValues?.side ?? 'K');
+    setQuantity(defaultValues?.quantity ? String(defaultValues.quantity) : '');
+    setPrice(defaultValues?.price ? String(defaultValues.price) : '');
     setCommission('0');
     setCommissionTouched(false);
     setQuoteCurrency('');
@@ -304,6 +319,7 @@ export function AddTransactionDialog({ open, onClose }: AddTransactionDialogProp
           isOption && optParsed ? optionDisplayName(optParsed) : ticker
         }: ${quantity} @ ${price}`,
       );
+      if (data.id !== undefined) onCreated?.(data.id);
       onClose();
     },
     onError: (e: Error) => errorToast('Nie udało się dodać', e),
