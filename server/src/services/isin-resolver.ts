@@ -191,9 +191,10 @@ export async function resolveIsin(
   // Detect NewConnect from paper name suffix (Bossa uses "-NC", "-NC-FIX")
   const isNewConnect = /-NC(?:-FIX)?$/i.test(paperName);
 
-  // Clean up paper names: remove Bossa suffixes like "-NC", "-NC-FIX", "-C"
+  // Clean up paper names: remove Bossa suffixes like "-NC", "-NC-FIX", "-FIX", "-C"
   const cleanName = paperName
     .replace(/-NC(?:-FIX)?$/i, '')
+    .replace(/-FIX$/i, '')
     .replace(/-C$/i, '')
     .replace(/\.WA$/i, '') // strip .WA suffix for Stooq lookups
     .trim();

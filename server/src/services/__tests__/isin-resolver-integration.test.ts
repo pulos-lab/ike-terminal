@@ -126,4 +126,23 @@ describe('resolveIsin — full integration for SEVENET-NC trap', () => {
     expect(result?.exchange).toBe('GPW');
     expect(result?.ticker).toBe('ORL.WA');
   });
+
+  it('PLASTBOX-FIX — sufiks -FIX jest stripowany, resolver szuka PLASTBOX', async () => {
+    // Bossa sufiksuje instrumenty z ceną fixowaną: "-FIX" (jak "-NC-FIX" ale bez NC).
+    // Bez stripowania cleanName = "PLASTBOX-FIX", resolver nie trafia do Yahoo/Stooq.
+    // Testuje pseudo-ISIN (mBank/XTB style) — wtedy resolver używa cleanName do lookups.
+    (tickerSearch.validateStooq as any).mockImplementation(async (query: string) => {
+      if (query.toUpperCase().includes('PLASTBOX')) {
+        return { symbol: 'PLX.WA', name: 'Plastbox' };
+      }
+      return undefined;
+    });
+    const result = await resolveIsin('PLASTBOX', 'PLASTBOX-FIX', 'PLN');
+    expect(result?.ticker).toBe('PLX.WA');
+    expect(result?.name).toBe('Plastbox');
+    // Stooq powinien zostać wywołany z czystą nazwą (bez -FIX)
+    const stooqCall = (tickerSearch.validateStooq as any).mock.calls[0]?.[0] as string | undefined;
+    expect(stooqCall?.toUpperCase()).not.toContain('FIX');
+    expect(stooqCall?.toUpperCase()).toContain('PLASTBOX');
+  });
 });
