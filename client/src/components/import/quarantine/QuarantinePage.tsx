@@ -129,7 +129,10 @@ function ReportConsentDialog({
 
   return (
     <Dialog open={row !== null} onOpenChange={(o) => !o && !reportMutation.isPending && onClose()}>
-      <DialogContent className="sm:max-w-xl">
+      {/* Szerokość z prefiksem sm: (footgun tailwind-merge). DialogContent jest
+          gridem — treść z szeroką tabelą MUSI mieć min-w-0, inaczej min-content
+          tabeli rozpycha dialog poza max-w zamiast przewijać się w kontenerze. */}
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
             {classifiedAs ? 'Zgłoś typ do ulepszenia importu' : 'Zgłoś nierozpoznany wiersz'}
@@ -146,7 +149,7 @@ function ReportConsentDialog({
         {previewLoading || !preview ? (
           <div className="text-sm text-muted-foreground py-4">Przygotowuję podgląd…</div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3 min-w-0">
             <div className="flex flex-wrap gap-2 text-sm">
               <Badge variant="outline" className="font-mono text-xs">
                 {preview.rawType}
