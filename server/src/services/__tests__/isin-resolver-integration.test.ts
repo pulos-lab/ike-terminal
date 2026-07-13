@@ -145,4 +145,18 @@ describe('resolveIsin — full integration for SEVENET-NC trap', () => {
     expect(stooqCall?.toUpperCase()).not.toContain('FIX');
     expect(stooqCall?.toUpperCase()).toContain('PLASTBOX');
   });
+
+  it('PLASTBOX-FIX z prawdziwym ISIN PLPSTBX00016 — delisted GPW, strażnik statyczny', async () => {
+    // PLASTBOX został wycofany z GPW (2022). ISIN PLPSTBX00016 jest prawdziwy ale
+    // Yahoo/Stooq nie mają danych. Strażnik delisted powinien zwrócić wpis statyczny
+    // BEZ żadnych zapytań sieciowych.
+    const result = await resolveIsin('PLPSTBX00016', 'PLASTBOX-FIX', 'PLN');
+    expect(result).not.toBeNull();
+    expect(result?.ticker).toBe('PLASTBOX');
+    expect(result?.exchange).toBe('GPW');
+    expect(result?.currency).toBe('PLN');
+    // Żadnych wywołań do Yahoo/Stooq — strażnik załatwia sprawę
+    expect(tickerSearch.searchYahoo).not.toHaveBeenCalled();
+    expect(tickerSearch.validateStooq).not.toHaveBeenCalled();
+  });
 });

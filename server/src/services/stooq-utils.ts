@@ -65,3 +65,31 @@ export function parseStooqLiveCsv(text: string): { date: string; close: number }
 export function stripTickerSuffix(ticker: string): string {
   return ticker.replace(/\.(WA|NC)$/i, '');
 }
+
+/**
+ * Normalize Bossa paper name by stripping broker-specific suffixes.
+ * Bossa adds suffixes like `-FIX` (fix price), `-NC` (NewConnect), `-NC-FIX`,
+ * `-C` (correction), `.WA` (Warsaw exchange). These cause mismatches when
+ * the operations CSV uses a different variant than the transactions CSV.
+ *
+ * @example
+ * normalizeBossaPaperName('PLASTBOX-FIX')   // 'PLASTBOX'
+ * normalizeBossaPaperName('SEVENET-NC-FIX') // 'SEVENET'
+ * normalizeBossaPaperName('CDR')            // 'CDR'
+ * normalizeBossaPaperName('JSW.WA')         // 'JSW'
+ */
+export function normalizeBossaPaperName(name: string): string {
+  return name
+    .replace(/-NC(?:-FIX)?$/i, '')
+    .replace(/-FIX$/i, '')
+    .replace(/-C$/i, '')
+    .replace(/\.WA$/i, '')
+    .trim();
+}
+
+/**
+ * Detect if a paper name indicates NewConnect (from Bossa suffix).
+ */
+export function isNewConnectPaperName(name: string): boolean {
+  return /-NC(?:-FIX)?$/i.test(name);
+}

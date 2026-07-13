@@ -10,20 +10,20 @@ import {
   columnShiftWarning,
   rawRowForWarning,
 } from './utils.js';
+import { normalizeBossaPaperName } from '../services/stooq-utils.js';
 
 /**
  * Bossa sufiksuje tickery instrumentów nietypowych:
+ * - `-FIX` — cena fixowana (np. `PLASTBOX-FIX`)
  * - `-C` — certyfikat strukturyzowany (np. `4MASS-C`, `HUUUGE-C`)
  * - `-NC-FIX` — NewConnect z ceną fix (`ROBSGROUP-NC-FIX`, `DUALITY-NC-FIX`)
  * - `-NC` — zwykły NewConnect (`PLATIGE-NC`)
  * - `_IPO` — ticker pre-IPO (`HUUUGE_IPO`)
  *
- * Usuwamy sufiks, żeby resolver (Yahoo/Stooq) mógł trafić na realnie notowany papier.
- * Oryginalny paperName zachowujemy w polu `paperName` transakcji — jest to ticker brokera
- * wyświetlany w UI. Kanoniczny ticker idzie do resolvera pośrednio przez `paperName`,
- * po stripowaniu sufiksów.
- *
- * UWAGA: NIE stripujemy dla zwykłych tickerów (nie mają tych sufiksów) — regex musi być ścisły.
+ * Normalizujemy paperName przez normalizeBossaPaperName — usuwamy sufiksy brokerowe,
+ * żeby w bazie zawsze był kanoniczny ticker aplikacji (PLASTBOX, a nie PLASTBOX-FIX).
+ * Dzięki temu reconciliation, zamknięcia pozycji i inne operacje na paperName działają
+ * naturalnie bez secondary indexes.
  */
 /**
  * Parse Bossa transaction CSV (hisPW.csv / hisPW-2.csv format)
@@ -112,10 +112,15 @@ export function parseBossaTransactions(
     // Zastosuj mapę aliasów ISIN jeśli (isin, paperName) to stary identyfikator papieru,
     // który zmienił ISIN/ticker w wyniku zdarzenia korporacyjnego (np. HUUUGE PL→US
     // redomiciliacja). Dzięki temu FIFO i ticker_map operują na jednym ISIN-ie.
-    const { isin: canonicalIsin, paperName: canonicalPaperName } = applyIsinAlias(
+    const { isin: canonicalIsin, paperName: aliasPaperName } = applyIsinAlias(
       isin,
       paperName || '',
     );
+
+    // Normalizuj nazwę brokera do kanonicznego tickera aplikacji.
+    // Usuwamy sufiksy Bossa (-FIX, -NC, -C, .WA) żeby paperName w bazie
+    // był zawsze czysty — reconciliation, zamknięcia i UI działają naturalnie.
+    const canonicalPaperName = normalizeBossaPaperName(aliasPaperName);
 
     // Obligacje Catalyst: kurs w % wartości nominalnej (np. 98,50 = 985 zł przy nominale
     // 1000 zł) — kategoria 'bond' mówi silnikowi, że wycena wymaga mnożnika nominal/100.
