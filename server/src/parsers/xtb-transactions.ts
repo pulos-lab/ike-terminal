@@ -1413,7 +1413,7 @@ export async function parseXtbFile(
       .join(', ');
     warnings.push(
       `Nierozpoznane typy operacji XTB — pominięte: ${list}. ` +
-        `Wiersze wylistowane w pominiętych. Sprawdź czy któryś nie powinien być zaimportowany.`,
+        `Wiersze znajdziesz w skrzynce „Do wyjaśnienia" — sprawdź, czy któryś nie powinien być zaimportowany.`,
     );
   }
 

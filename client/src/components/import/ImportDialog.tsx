@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Dialog,
@@ -18,6 +19,7 @@ import {
   type OrphanedSell,
   type DetectResult,
   BROKER_LABELS,
+  QUARANTINE_REASONS,
 } from 'shared';
 import { GenericImportWizard } from './generic/GenericImportWizard';
 import { GenericBatchesSection } from './generic/GenericBatchesSection';
@@ -39,6 +41,8 @@ interface Props {
 interface Message {
   kind: 'success' | 'warn' | 'error' | 'info';
   text: string;
+  /** Opcjonalny przycisk akcji pod treścią (np. przejście do skrzynki "Do wyjaśnienia"). */
+  action?: { label: string; onClick: () => void };
 }
 
 /** Wybrany ekran: null = siatka kafelków; broker | 'generic' = ekran uploadu. */
@@ -46,6 +50,7 @@ type Screen = BrokerType | 'generic' | null;
 
 export function ImportDialog({ open, onOpenChange }: Props) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const [screen, setScreen] = useState<Screen>(null);
   /** Pliki per rola (transactions/operations) dla wybranego brokera. */
@@ -186,6 +191,23 @@ export function ImportDialog({ open, onOpenChange }: Props) {
         for (const w of result.crossFileWarnings ?? []) addMessage({ kind: 'warn', text: w });
         for (const w of result.warnings ?? []) addMessage({ kind: 'warn', text: w });
 
+        if (result.quarantined && result.quarantined > 0) {
+          const n = result.quarantined;
+          addMessage({
+            kind: 'info',
+            text:
+              `${n} ${n === 1 ? 'wiersz trafił' : n < 5 ? 'wiersze trafiły' : 'wierszy trafiło'} ` +
+              `do skrzynki „Do wyjaśnienia" — możesz je przejrzeć i zdecydować, co oznaczają.`,
+            action: {
+              label: 'Przejrzyj skrzynkę',
+              onClick: () => {
+                onOpenChange(false);
+                navigate('/app/import/inbox');
+              },
+            },
+          });
+        }
+
         if (result.skipped && result.skipped.length > 0) {
           // Ukrywamy rows, których użytkownik nie traktuje jako „pominięte":
           //  - close_trade_entry (XTB P/L — użyte w parze K+S)
@@ -193,6 +215,8 @@ export function ImportDialog({ open, onOpenChange }: Props) {
           //  - redemption_reconciled (wykup/wezwanie wchodzi jako syntetyczna sprzedaż)
           //  - cancelled_trade (anulowana przez brokera — jest osobny warning parsera)
           //  - aliased_ignore (typ oznaczony przez admina jako nieistotny)
+          // Wiersze, które trafiły do skrzynki "Do wyjaśnienia" (raw + reason
+          // kwarantannowy) mają własny komunikat wyżej — nie dublujemy ich tu.
           const hiddenReasons = new Set<SkipReason>([
             'close_trade_entry',
             'duplicate',
@@ -200,7 +224,9 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             'cancelled_trade',
             'aliased_ignore',
           ]);
-          const visible = result.skipped.filter((s) => !hiddenReasons.has(s.reason));
+          const visible = result.skipped.filter(
+            (s) => !hiddenReasons.has(s.reason) && !(s.raw && QUARANTINE_REASONS.has(s.reason)),
+          );
           if (visible.length > 0) {
             const lines = visible.map((s) => {
               const name = s.paperName ? `${s.paperName} ` : '';
@@ -568,6 +594,16 @@ function FeedbackBlock({
                 .join(' ')}
             >
               {m.text}
+              {m.action && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={m.action.onClick}
+                  className="mt-1.5 block text-xs"
+                >
+                  {m.action.label}
+                </Button>
+              )}
             </span>
           </div>
         );

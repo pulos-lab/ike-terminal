@@ -28,7 +28,7 @@ import type {
   GenericSheetProfileInput,
   SkipReason,
 } from 'shared';
-import { BROKER_LABELS } from 'shared';
+import { BROKER_LABELS, QUARANTINE_REASONS } from 'shared';
 import {
   adoptProfileForDocument,
   buildProfileFromDraft,
@@ -496,7 +496,19 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
         msgs.push({ kind: 'warn', text: `Pominięto ${result.duplicatesSkipped} duplikatów` });
       }
       for (const w of result.warnings ?? []) msgs.push({ kind: 'warn', text: w });
-      const visibleSkipped = (result.skipped ?? []).filter((s) => s.reason !== 'duplicate');
+      if (result.quarantined && result.quarantined > 0) {
+        const n = result.quarantined;
+        msgs.push({
+          kind: 'info',
+          text:
+            `${n} ${n === 1 ? 'nierozpoznany wiersz trafił' : n < 5 ? 'nierozpoznane wiersze trafiły' : 'nierozpoznanych wierszy trafiło'} ` +
+            `do skrzynki „Do wyjaśnienia" (pozycja w menu) — możesz je przejrzeć i zdecydować, co oznaczają.`,
+        });
+      }
+      // Wiersze ze skrzynki "Do wyjaśnienia" mają własny komunikat wyżej.
+      const visibleSkipped = (result.skipped ?? []).filter(
+        (s) => s.reason !== 'duplicate' && !(s.raw && QUARANTINE_REASONS.has(s.reason)),
+      );
       if (visibleSkipped.length > 0) {
         const lines = visibleSkipped
           .slice(0, 20)
