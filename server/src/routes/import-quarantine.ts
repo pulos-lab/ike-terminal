@@ -92,11 +92,9 @@ router.post(
       pid,
     );
     if (!ok) {
-      return res
-        .status(404)
-        .json({
-          error: 'Nie znaleziono wiersza do rozstrzygnięcia (albo jest już rozstrzygnięty)',
-        });
+      return res.status(404).json({
+        error: 'Nie znaleziono wiersza do rozstrzygnięcia (albo jest już rozstrzygnięty)',
+      });
     }
     res.json({ success: true, row: getQuarantineRow(id, pid) });
   }),
