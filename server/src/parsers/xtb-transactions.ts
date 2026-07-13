@@ -4,6 +4,7 @@ import type {
   CashOperation,
   ParseResult,
   SkippedRow,
+  SkippedRowRaw,
   InstrumentCategory,
 } from 'shared';
 import { findCfdTicker } from 'shared';
@@ -473,6 +474,32 @@ interface RawRow {
   amount: number;
 }
 
+/** Surowa treść wiersza dla skrzynki "Do wyjaśnienia" — nagłówki kanoniczne
+ * (kolejność jak OLD EN layout), `rawType` = lower(trim) typu PO normalizeType
+ * (dla nieznanych typów normalizeType zwraca oryginał — to klucz mapy aliasów). */
+function rawRowToSkippedRaw(raw: RawRow, accountCurrency: string): SkippedRowRaw {
+  const isoTime = parseXtbTime(raw.time);
+  return {
+    rawType: raw.type.trim().toLowerCase(),
+    headers: ['ID', 'Type', 'Time', 'Comment', 'Symbol', 'Amount'],
+    cells: [
+      raw.id,
+      raw.type,
+      isoTime ?? String(raw.time),
+      raw.comment,
+      raw.symbol,
+      String(raw.amount),
+    ],
+    hint: {
+      date: isoTime ? isoTime.slice(0, 10) : undefined,
+      amount: raw.amount !== 0 ? raw.amount : undefined,
+      currency: accountCurrency,
+      symbol: raw.symbol || undefined,
+      description: raw.comment || undefined,
+    },
+  };
+}
+
 // ── Header layout detection ────────────────────────────────────────────────
 //
 // XTB exports Cash Operations with several header layouts we've seen:
@@ -800,7 +827,12 @@ export async function parseXtbFile(
           qty = commInfo.qty;
           price = commInfo.price;
         } else {
-          txSkipped.push({ row: raw.rowNum, reason: 'unparseable_comment', paperName: raw.symbol });
+          txSkipped.push({
+            row: raw.rowNum,
+            reason: 'unparseable_comment',
+            paperName: raw.symbol,
+            raw: rawRowToSkippedRaw(raw, accountCurrency),
+          });
           continue;
         }
       }
@@ -904,7 +936,12 @@ export async function parseXtbFile(
           }
           priceInAccountCurrency = true;
         } else {
-          txSkipped.push({ row: raw.rowNum, reason: 'unparseable_comment', paperName: raw.symbol });
+          txSkipped.push({
+            row: raw.rowNum,
+            reason: 'unparseable_comment',
+            paperName: raw.symbol,
+            raw: rawRowToSkippedRaw(raw, accountCurrency),
+          });
           continue;
         }
       }
@@ -1365,6 +1402,7 @@ export async function parseXtbFile(
         row: raw.rowNum,
         reason: 'unknown_type',
         paperName: raw.symbol ? `${raw.type} (${raw.symbol})` : raw.type,
+        raw: rawRowToSkippedRaw(raw, accountCurrency),
       });
     }
   }

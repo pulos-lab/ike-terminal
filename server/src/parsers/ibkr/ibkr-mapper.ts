@@ -16,7 +16,7 @@
  * - transfery Inter-Company: POMIJANE z warningiem (oba konta importowane do jednego portfela,
  *   ciągłość kosztu nabycia wynika z historii transakcji starego konta).
  */
-import type { CashOperation, OptionContract, SkippedRow, Transaction } from 'shared';
+import type { CashOperation, OptionContract, SkippedRow, SkippedRowRaw, Transaction } from 'shared';
 import type { TransactionTax } from '../degiro-operations.js';
 import { computeTotal, roundTo2 } from '../utils.js';
 import type { IbkrCashRow, IbkrStatement, IbkrTrade } from './section-types.js';
@@ -59,6 +59,42 @@ export interface IbkrMappedStatement {
 /** Pseudo-ISIN akcji nieobecnej w ContractInfo (awaryjny — ContractInfo zwykle kompletne). */
 const stockPseudoIsin = (symbol: string) => `IBKR:${symbol}`;
 
+/** Surowa treść wiersza Trades dla skrzynki "Do wyjaśnienia" — rawType niesie
+ * assetClass (to on decyduje o dispatchu; nieznana klasa = feature-gap, nie literówka). */
+function tradeToSkippedRaw(trade: IbkrTrade): SkippedRowRaw {
+  return {
+    rawType: trade.assetClass.trim().toLowerCase(),
+    headers: [
+      'Asset Class',
+      'Currency',
+      'Symbol',
+      'Date/Time',
+      'Quantity',
+      'T. Price',
+      'Proceeds',
+      'Comm/Fee',
+      'Codes',
+    ],
+    cells: [
+      trade.assetClass,
+      trade.currency,
+      trade.symbol,
+      trade.dateTime,
+      String(trade.quantity),
+      String(trade.tPrice),
+      String(trade.proceeds),
+      String(trade.commFee),
+      trade.codes.join(';'),
+    ],
+    hint: {
+      date: trade.dateTime.slice(0, 10),
+      amount: trade.proceeds !== 0 ? trade.proceeds : undefined,
+      currency: trade.currency,
+      symbol: trade.symbol,
+    },
+  };
+}
+
 /** "TSM(US8740391003) Cash Dividend ..." → { symbol, isin }. */
 function parseCashDescriptionInstrument(
   description: string,
@@ -84,7 +120,9 @@ export function mapIbkrStatement(
   for (const trade of statement.trades) {
     rowNum++;
     if (trade.codes.includes('Ca')) {
-      skipped.push({ row: rowNum, reason: 'unknown_type', paperName: trade.symbol });
+      // Celowy skip (bez `raw` — nie trafia do skrzynki "Do wyjaśnienia"):
+      // anulowana transakcja to nie luka parsera.
+      skipped.push({ row: rowNum, reason: 'cancelled_trade', paperName: trade.symbol });
       warnings.push(`IBKR: pominięto anulowaną transakcję ${trade.symbol} (${trade.dateTime})`);
       continue;
     }
@@ -104,20 +142,37 @@ export function mapIbkrStatement(
       case 'Equity and Index Options': {
         const tx = mapOptionTrade(trade, warnings);
         if (tx) transactions.push(tx);
-        else skipped.push({ row: rowNum, reason: 'unknown_type', paperName: trade.symbol });
+        else
+          skipped.push({
+            row: rowNum,
+            reason: 'unknown_type',
+            paperName: trade.symbol,
+            raw: tradeToSkippedRaw(trade),
+          });
         break;
       }
       case 'Bonds': {
         const tx = mapBondTrade(trade, bondBySymbol, warnings);
         if (tx) transactions.push(tx);
-        else skipped.push({ row: rowNum, reason: 'unknown_type', paperName: trade.symbol });
+        else
+          skipped.push({
+            row: rowNum,
+            reason: 'unknown_type',
+            paperName: trade.symbol,
+            raw: tradeToSkippedRaw(trade),
+          });
         break;
       }
       case 'Forex':
         mapForexTrade(trade, operations, warnings, importBatch);
         break;
       default:
-        skipped.push({ row: rowNum, reason: 'unknown_type', paperName: trade.symbol });
+        skipped.push({
+          row: rowNum,
+          reason: 'unknown_type',
+          paperName: trade.symbol,
+          raw: tradeToSkippedRaw(trade),
+        });
         warnings.push(
           `IBKR: nieobsługiwana kategoria aktywów "${trade.assetClass}" (${trade.symbol}) — wiersz pominięty`,
         );

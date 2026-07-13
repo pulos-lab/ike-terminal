@@ -158,6 +158,30 @@ export function initSchema(db: Database.Database): void {
       return_pct REAL NOT NULL,
       computed_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS import_quarantine (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      import_batch TEXT NOT NULL,
+      source TEXT NOT NULL,
+      file_name TEXT,
+      row_num INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      raw_type TEXT,
+      headers_json TEXT,
+      raw_cells_json TEXT NOT NULL,
+      hint_json TEXT,
+      row_hash TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','resolved','ignored','reported')),
+      resolution_kind TEXT,
+      resolved_ref_id INTEGER,
+      user_note TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      resolved_at TEXT,
+      UNIQUE(row_hash)
+    );
+    CREATE INDEX IF NOT EXISTS idx_quarantine_status ON import_quarantine(status);
+    CREATE INDEX IF NOT EXISTS idx_quarantine_batch ON import_quarantine(import_batch);
   `);
 
   // Migrations for existing databases

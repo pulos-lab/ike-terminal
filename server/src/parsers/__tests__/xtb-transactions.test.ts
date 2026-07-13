@@ -239,6 +239,35 @@ describe('parseXtbFile — nieznane typy operacji', () => {
     // Znany typ (deposit) NIE wpada do unknown_type
     expect(result.operations.skipped.filter((s) => s.reason === 'unknown_type')).toHaveLength(1);
   });
+
+  it('unknown_type niesie surową treść wiersza (raw) z hintem do skrzynki "Do wyjaśnienia"', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 7,
+        type: 'Dividend Equivalent',
+        time: '11/01/2024 09:00:00',
+        comment: 'DIV EQ AAPL.US',
+        symbol: 'AAPL.US',
+        amount: 12.34,
+      },
+    ]);
+
+    const result = await parseXtbFile(buf, 'batch-1', 'USD_12345_test.xlsx');
+    const skip = result.operations.skipped.find((s) => s.reason === 'unknown_type');
+
+    expect(skip?.raw).toBeDefined();
+    // Klucz aliasów/zgłoszeń: lower(trim) typu
+    expect(skip?.raw?.rawType).toBe('dividend equivalent');
+    expect(skip?.raw?.headers).toEqual(['ID', 'Type', 'Time', 'Comment', 'Symbol', 'Amount']);
+    expect(skip?.raw?.cells).toContain('Dividend Equivalent');
+    expect(skip?.raw?.cells).toContain('DIV EQ AAPL.US');
+    expect(skip?.raw?.hint).toMatchObject({
+      date: '2024-01-11',
+      amount: 12.34,
+      currency: 'USD',
+      symbol: 'AAPL.US',
+    });
+  });
 });
 
 describe('parseXtbFile — prowizje przy dwóch trade-ach w tej samej sekundzie', () => {

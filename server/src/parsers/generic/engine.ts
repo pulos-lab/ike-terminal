@@ -8,6 +8,7 @@ import type {
   RowClass,
   RowTrace,
   SkippedRow,
+  SkippedRowRaw,
   SkipReason,
   Transaction,
 } from 'shared';
@@ -164,6 +165,35 @@ export function parseWithProfile(
   // bierzemy z etykiety classify, nie reklasyfikujemy wg sprzecznego znaku.
   const pendingDirect: Array<{ cls: RowClass; pending: PendingCashRow }> = [];
 
+  // Kolumna "typu operacji" — najczęściej matchowana kolumna w regułach classify.
+  // Dla wierszy bez dopasowanej reguły (unknown_operation_type) jej wartość jest
+  // kluczem raw.rawType w skrzynce "Do wyjaśnienia" i w zgłoszeniach do admina.
+  const typeColVotes = new Map<number, number>();
+  for (const rule of profile.classify) {
+    for (const m of rule.when) {
+      try {
+        const idx = resolver.resolve(m.col);
+        typeColVotes.set(idx, (typeColVotes.get(idx) ?? 0) + 1);
+      } catch {
+        // kolumna spoza nagłówka — profil zwaliduje się gdzie indziej
+      }
+    }
+  }
+  let typeColIdx = 0;
+  let typeColBest = -1;
+  for (const [idx, n] of typeColVotes) {
+    if (n > typeColBest) {
+      typeColIdx = idx;
+      typeColBest = n;
+    }
+  }
+  const unknownRowRaw = (row: string[]): SkippedRowRaw => ({
+    rawType: row[typeColIdx]?.trim().toLowerCase() || undefined,
+    headers,
+    cells: row,
+    hint: { description: row[typeColIdx]?.trim().slice(0, 120) || undefined },
+  });
+
   const currencyAliases = new Map(
     Object.entries(profile.file.currencyAliases).map(([k, v]) => [
       k.toUpperCase(),
@@ -201,7 +231,14 @@ export function parseWithProfile(
       // żeby w podglądzie było widać wiersze, których profil nie rozpoznał.
       const reason: SkipReason =
         cls.ruleId !== null ? (cls.skipReason ?? 'summary_row') : 'unknown_operation_type';
-      skippedOps.push({ row: rowNum, reason, paperName: row[0]?.slice(0, 60) || undefined });
+      skippedOps.push({
+        row: rowNum,
+        reason,
+        paperName: row[0]?.slice(0, 60) || undefined,
+        // Surowa treść tylko dla wierszy BEZ dopasowanej reguły — jawne reguły
+        // skip to celowe pominięcia, nie kandydaci do skrzynki "Do wyjaśnienia".
+        raw: reason === 'unknown_operation_type' ? unknownRowRaw(row) : undefined,
+      });
       rowTraces.push({
         row: rowNum,
         matchedRuleId: cls.ruleId,

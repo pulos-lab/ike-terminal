@@ -667,12 +667,58 @@ export type SkipReason =
   | 'invalid_fx_rate' // XTB Transfer — Exchange rate ≤ 0 w Comment
   | 'fx_currency_mismatch' // XTB Transfer — ani fromCur ani toCur nie zgadza się z walutą konta
   | 'value_mismatch' // import generyczny — wartość z CSV odbiega od qty×cena (podejrzane mapowanie kolumn)
-  | 'column_shift'; // wartości wiersza nie pasują do kolumn formatu (np. dodatkowy separator w polu) — szczegóły z surową treścią wiersza w warnings
+  | 'column_shift' // wartości wiersza nie pasują do kolumn formatu (np. dodatkowy separator w polu) — szczegóły z surową treścią wiersza w warnings
+  | 'cancelled_trade' // IBKR — transakcja anulowana przez brokera (kod Ca), celowo pominięta
+  | 'aliased_ignore'; // wiersz zignorowany zatwierdzonym aliasem typu (admin uznał typ za nieistotny)
+
+/**
+ * Powody kwalifikujące wiersz do skrzynki "Do wyjaśnienia" (kwarantanny).
+ * Kwalifikacja jest podwójna: reason ∈ QUARANTINE_REASONS ORAZ parser dołączył
+ * `SkippedRow.raw` — dzięki temu celowe skipy z tym samym reasonem (np. wiersze,
+ * dla których parser świadomie nie zbiera surowej treści) nie trafiają do skrzynki.
+ * Wykluczone celowo: wady danych (invalid_*, missing_*, short_row, zero_amount —
+ * klasyfikacja użytkownika nic nie da), celowe pominięcia (duplicate, summary_row,
+ * close_trade_entry, settlement_record, *_reconciled, corporate_action) oraz
+ * problemy walidacyjne wymagające poprawy pliku (value_mismatch, column_shift,
+ * fx_currency_mismatch, invalid_fx_rate, unmatched_fx_credit).
+ */
+export const QUARANTINE_REASONS: ReadonlySet<SkipReason> = new Set<SkipReason>([
+  'unknown_type',
+  'unknown_operation_type',
+  'unparseable_comment',
+  'unparseable_fx_comment',
+]);
+
+/** Best-effort podpowiedzi do prefillu dialogów ręcznego dodawania — parser
+ * wyciąga co umie z surowego wiersza, UI kwarantanny nie parsuje komórek. */
+export interface SkippedRowHint {
+  /** ISO YYYY-MM-DD */
+  date?: string;
+  amount?: number;
+  currency?: string;
+  symbol?: string;
+  description?: string;
+}
+
+/** Surowa treść pominiętego wiersza — trafia WYŁĄCZNIE do bazy portfela
+ * użytkownika (skrzynka "Do wyjaśnienia"); do globalnej bazy zgłoszeń idzie
+ * dopiero zredagowana próbka za jawnym kliknięciem użytkownika. */
+export interface SkippedRowRaw {
+  /** Znormalizowany surowy typ operacji: lower(trim(...)) — klucz mapy aliasów i zgłoszeń. */
+  rawType?: string;
+  /** Nagłówki tabeli źródłowej (równoległe do `cells`). */
+  headers?: string[];
+  /** Surowe komórki wiersza. */
+  cells: string[];
+  hint?: SkippedRowHint;
+}
 
 export interface SkippedRow {
   row: number;
   reason: SkipReason;
   paperName?: string;
+  /** Obecność (wraz z reason ∈ QUARANTINE_REASONS) kwalifikuje wiersz do kwarantanny. */
+  raw?: SkippedRowRaw;
 }
 
 export interface ParseResult<T> {
@@ -1104,6 +1150,41 @@ export interface ImportResult {
   detectedSource?: string;
   /** Detected broker for operations file (bulk import, może się różnić) */
   detectedOperationsSource?: string;
+  /** Liczba wierszy NOWO dodanych do skrzynki "Do wyjaśnienia" w tym imporcie. */
+  quarantined?: number;
+}
+
+// ============ Import Quarantine ("Do wyjaśnienia") ============
+
+export type QuarantineStatus = 'pending' | 'resolved' | 'ignored' | 'reported';
+
+/** Wiersz skrzynki "Do wyjaśnienia" — API GET /api/import/quarantine. */
+export interface QuarantineRow {
+  id: number;
+  importBatch: string;
+  /** BrokerType lub 'generic'. */
+  source: string;
+  fileName?: string;
+  rowNum: number;
+  reason: SkipReason;
+  rawType?: string;
+  headers?: string[];
+  cells: string[];
+  hint?: SkippedRowHint;
+  status: QuarantineStatus;
+  /** Dla status='resolved': gdzie wylądował wpis użytkownika. */
+  resolutionKind?: 'transaction' | 'cash_operation';
+  resolvedRefId?: number;
+  userNote?: string;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+export interface QuarantineCounts {
+  pending: number;
+  resolved: number;
+  ignored: number;
+  reported: number;
 }
 
 /** Result of POST /api/import/detect — used by UI to decide if second dropzone is needed */

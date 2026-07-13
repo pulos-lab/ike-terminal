@@ -63,6 +63,11 @@ import {
   detectOrphanedSells,
 } from '../db/transactions-repo.js';
 import { insertOperationsWithDedup, deleteOperationsByBatch } from '../db/operations-repo.js';
+import {
+  deletePendingQuarantineByBatch,
+  insertQuarantineRows,
+  MAX_QUARANTINE_PER_BATCH,
+} from '../db/quarantine-repo.js';
 import { findIsinByName, seedTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { getDb } from '../db/connection.js';
 
@@ -691,6 +696,8 @@ async function runImportDocuments(args: {
   const db = getDb(pid);
   let txImported = 0;
   let opsImported = 0;
+  let quarantined = 0;
+  let quarantineOverflow = 0;
   const txDuplicates: SkippedRow[] = [];
   const opsDuplicates: SkippedRow[] = [];
   const runAll = db.transaction(() => {
@@ -698,9 +705,12 @@ async function runImportDocuments(args: {
       for (const { table } of parsed) {
         deleteTransactionsByBatch(table.importBatch, pid);
         deleteOperationsByBatch(table.importBatch, pid);
+        // Poprawiony profil może już rozpoznawać wiersze ze skrzynki —
+        // pending kasujemy, wciąż nieznane wrócą z insertu niżej.
+        deletePendingQuarantineByBatch(table.importBatch, pid);
       }
     }
-    for (const { output } of parsed) {
+    for (const { table, output } of parsed) {
       if (output.transactions.data.length > 0) {
         const r = insertTransactionsWithDedup(output.transactions.data, pid);
         txImported += r.inserted;
@@ -711,6 +721,19 @@ async function runImportDocuments(args: {
         opsImported += r.inserted;
         opsDuplicates.push(...r.duplicates);
       }
+      // Skrzynka "Do wyjaśnienia" — wiersze bez dopasowanej reguły classify.
+      const q = insertQuarantineRows(
+        {
+          importBatch: table.importBatch,
+          source: 'generic',
+          fileName: table.fileName ?? undefined,
+          skipped: [...output.transactions.skipped, ...output.operations.skipped],
+          maxRows: MAX_QUARANTINE_PER_BATCH - quarantined,
+        },
+        pid,
+      );
+      quarantined += q.inserted;
+      quarantineOverflow += q.overflow;
     }
   });
   runAll();
@@ -769,6 +792,13 @@ async function runImportDocuments(args: {
     ...opsDuplicates,
   ];
   const allWarnings = [...parsed.flatMap((p) => p.output.warnings), ...quoteRecon.warnings];
+  if (quarantineOverflow > 0) {
+    allWarnings.push(
+      `Skrzynka „Do wyjaśnienia": osiągnięto limit ${MAX_QUARANTINE_PER_BATCH} wierszy na import — ` +
+        `${quarantineOverflow} dalszych nierozpoznanych wierszy nie zostało zapisanych ` +
+        `(prawdopodobnie mapowanie nie pokrywa tego formatu).`,
+    );
+  }
   const duplicatesSkipped = txDuplicates.length + opsDuplicates.length;
   const orphanedSells = detectOrphanedSells(pid);
   const primary = parsed[0].table.profileRow;
@@ -790,6 +820,7 @@ async function runImportDocuments(args: {
     duplicatesSkipped: duplicatesSkipped > 0 ? duplicatesSkipped : undefined,
     orphanedSells: orphanedSells.length > 0 ? orphanedSells : undefined,
     warnings: allWarnings.length > 0 ? allWarnings : undefined,
+    quarantined: quarantined > 0 ? quarantined : undefined,
   };
 }
 
