@@ -12,7 +12,11 @@
  * - unknown_type_reports   — zagregowane zgłoszenia nieznanych typów operacji ze
  *                            skrzynki "Do wyjaśnienia" (kind: classified = luka
  *                            parsera, unsupported = brak funkcjonalności); trzyma
- *                            WYŁĄCZNIE zredagowaną próbkę (sample-redactor).
+ *                            WYŁĄCZNIE zredagowaną próbkę (sample-redactor),
+ * - operation_type_aliases — mapa (broker, surowy typ) → klasyfikacja; approved
+ *                            konsumowane przez parsery PRZED oznaczeniem unknown
+ *                            (nowy typ działa dla wszystkich bez deployu),
+ * - alias_audit            — ślad zmian aliasów/zgłoszeń (approve/reject/revoke).
  *
  * Prywatność: plików użytkownika NIE przechowujemy. Kolumna `raw_file_gz` to legacy
  * (niezapisywana; czyszczona przy starcie przez `purgeAllRawFiles`). Re-import po
@@ -109,6 +113,33 @@ export function getImportsDb(): Database.Database {
         UNIQUE(broker, raw_type, kind)
       );
       CREATE INDEX IF NOT EXISTS idx_utr_status ON unknown_type_reports(status);
+
+      CREATE TABLE IF NOT EXISTS operation_type_aliases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        broker TEXT NOT NULL,
+        raw_type TEXT NOT NULL,
+        target_kind TEXT NOT NULL CHECK(target_kind IN ('parser_type','cash_operation','ignore')),
+        target_value TEXT,
+        status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected','revoked')),
+        created_by_user_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        reviewed_by_user_id TEXT,
+        reviewed_at TEXT,
+        review_note TEXT,
+        UNIQUE(broker, raw_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_aliases_broker_status ON operation_type_aliases(broker, status);
+
+      CREATE TABLE IF NOT EXISTS alias_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        alias_id INTEGER,
+        report_id INTEGER,
+        action TEXT NOT NULL CHECK(action IN ('created','approved','rejected','revoked','edited','wont_fix')),
+        actor_user_id TEXT,
+        diff_json TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_alias_audit_alias ON alias_audit(alias_id);
     `);
   }
   return db;

@@ -18,6 +18,7 @@ import portfolioRouter from './routes/portfolio.js';
 import importRouter from './routes/import.js';
 import bugReportsRouter from './routes/bug-reports.js';
 import adminImportProfilesRouter from './routes/admin-import-profiles.js';
+import adminTypeAliasesRouter from './routes/admin-type-aliases.js';
 import { requireAdmin } from './middleware/require-admin.js';
 import { purgeAllRawFiles } from './db/import-profiles-repo.js';
 import shareRouter from './routes/share.js';
@@ -168,6 +169,7 @@ app.use('/api/portfolio', requireAuth, portfolioMiddleware, portfolioRouter);
 app.use('/api/import', requireAuth, portfolioMiddleware, importRouter);
 app.use('/api/bug-reports', requireAuth, bugReportsRouter);
 app.use('/api/admin/import-profiles', requireAuth, requireAdmin, adminImportProfilesRouter);
+app.use('/api/admin/type-aliases', requireAuth, requireAdmin, adminTypeAliasesRouter);
 app.use('/api/share', requireAuth, portfolioMiddleware, shareRouter);
 
 // ── Public share endpoints (NO auth — dostęp przez kryptograficzny token) ────

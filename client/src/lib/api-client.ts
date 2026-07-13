@@ -481,6 +481,49 @@ export const api = {
       { method: 'POST', body: JSON.stringify(body) },
     ),
 
+  // ── Admin: typy operacji (zgłoszenia + aliasy) ──────────────────────────────
+  adminTypeAliasCatalog: () =>
+    request<{ parserTypes: Record<string, string[]>; operationTypes: string[] }>(
+      '/admin/type-aliases/catalog',
+    ),
+  adminListTypeReports: (params?: { status?: string; kind?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.set('status', params.status);
+    if (params?.kind) q.set('kind', params.kind);
+    const qs = q.toString();
+    return request<{ reports: import('shared').UnknownTypeReport[] }>(
+      `/admin/type-aliases/reports${qs ? `?${qs}` : ''}`,
+    );
+  },
+  adminApproveTypeReport: (
+    id: number,
+    body: { targetKind: string; targetValue?: string; note?: string },
+  ) =>
+    request<{
+      success: boolean;
+      alias: import('shared').OperationTypeAlias;
+      report: import('shared').UnknownTypeReport;
+    }>(`/admin/type-aliases/reports/${id}/approve`, { method: 'POST', body: JSON.stringify(body) }),
+  adminRejectTypeReport: (id: number, note?: string) =>
+    request<{ success: boolean }>(`/admin/type-aliases/reports/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+  adminWontFixTypeReport: (id: number, note?: string) =>
+    request<{ success: boolean }>(`/admin/type-aliases/reports/${id}/wont-fix`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+  adminListTypeAliases: (broker?: string) =>
+    request<{ aliases: import('shared').OperationTypeAlias[] }>(
+      `/admin/type-aliases/aliases${broker ? `?broker=${broker}` : ''}`,
+    ),
+  adminRevokeTypeAlias: (id: number, note?: string) =>
+    request<{ success: boolean }>(`/admin/type-aliases/aliases/${id}/revoke`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+
   /**
    * Klasyfikacja pliku — zwraca wykryty broker + rolę (transactions/operations).
    * UI używa tego żeby zdecydować, czy drugie pole (operacje) jest potrzebne.
