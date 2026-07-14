@@ -85,7 +85,7 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
 
 ### Ceny bieżące (live)
 - **GPW (akcje .WA)**: Yahoo Finance
-- **NewConnect (NC)**: Stooq (jedyne źródło — Yahoo nie listuje NC)
+- **NewConnect (NC)**: biznesradar.pl (główne źródło, `biznesradar.ts`, kurs opóźniony ~15 min, parser `q_ch_act`, `/notowania/<ticker>` z redirectem) → Stooq (zapas). Yahoo nie listuje NC. Powód zmiany: endpoint CSV Stooqa `/q/l/` padł ~03.2026 (zwraca „lokalizacja nie istnieje" globalnie)
 - **Obligacje Catalyst (exchange `CATALYST`)**: Stooq (jedyne źródło; kurs w % nominału — silnik mnoży przez nominał z `bond-map`)
 - **Zagraniczne (NYSE, NASDAQ, XETRA, TSX)**: Yahoo Finance
 - **CFD (surowce, indeksy, forex, krypto)**: Yahoo Finance (statyczna mapa instrument → ticker w `shared/src/cfd-ticker-map.ts`, np. GOLD → GC=F)

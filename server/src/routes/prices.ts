@@ -3,6 +3,7 @@ import { DEFAULT_FX_PLN } from 'shared';
 import type { LivePrice, LivePricesResponse } from 'shared';
 import { fetchYahooPrice, fetchFxRate } from '../services/yahoo-finance.js';
 import { fetchStooqPrice } from '../services/stooq.js';
+import { fetchBiznesradarPrice } from '../services/biznesradar.js';
 import { getAllTickers } from '../db/ticker-map-repo.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { mapWithConcurrency } from '../services/concurrency.js';
@@ -18,7 +19,9 @@ router.get(
 
     await mapWithConcurrency(tickers, 5, async (entry) => {
       if (entry.exchange === 'NC') {
-        const price = await fetchStooqPrice(entry.ticker);
+        // biznesradar główne źródło NC (Stooq CSV endpoint padł ~03.2026); Stooq zapas.
+        const price =
+          (await fetchBiznesradarPrice(entry.ticker)) ?? (await fetchStooqPrice(entry.ticker));
         prices[entry.ticker] = { price, currency: entry.currency };
       } else {
         const result = await fetchYahooPrice(entry.ticker);
