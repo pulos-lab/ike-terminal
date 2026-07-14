@@ -156,9 +156,9 @@ export function PortfolioSelector() {
 
   return (
     <>
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 min-w-0">
         <Select value={activeId} onValueChange={handleValueChange}>
-          <SelectTrigger className="w-full">
+          <SelectTrigger className="w-full min-w-0">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
