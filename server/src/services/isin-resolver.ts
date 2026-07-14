@@ -274,14 +274,23 @@ export async function resolveIsin(
       }
     }
 
-    // 3. NC offline fallback — use static map before Yahoo (prevents wrong foreign matches)
-    if (isNewConnect) {
-      const ncEntry = findNcTicker(cleanName);
-      if (ncEntry) {
+    // 3. NC offline fallback — statyczna mapa NC PRZED Yahoo (zapobiega błędnym
+    //    dopasowaniom zagranicznym). Uruchamiamy dla KAŻDEGO polskiego pseudo-ISINu
+    //    z dokładnym dopasowaniem kodu tickera, nie tylko dla nazw z sufiksem -NC:
+    //    XTB/mBank podają symbol jako "EXC.WA" bez markera NC, więc gdy Stooq jest
+    //    rate-limitowany kroki 1-2 zawodzą i bez tego kod spadał do Yahoo, łapiąc
+    //    zagraniczną kolizję o tym samym oznaczeniu (EXC → Exelon Corp, USD). Ticker
+    //    jest unikalny w obrębie GPW+NewConnect, więc dokładne trafienie kodu w mapę
+    //    NC jest autorytatywne. Dla Bossa (-NC, dopasowanie po NAZWIE spółki, np.
+    //    "MINERAL" → MND) zachowujemy dawne zachowanie przez warunek isNewConnect.
+    const ncFallback = findNcTicker(cleanName);
+    if (ncFallback) {
+      const exactTickerMatch = ncFallback.ticker.toUpperCase() === cleanName.toUpperCase();
+      if (isNewConnect || exactTickerMatch) {
         return {
           isin,
-          ticker: `${ncEntry.ticker}.WA`,
-          name: ncEntry.name,
+          ticker: `${ncFallback.ticker}.WA`,
+          name: ncFallback.name,
           exchange: 'NC' as TickerMapEntry['exchange'],
           currency: 'PLN',
           priceSource: 'stooq',
@@ -289,18 +298,37 @@ export async function resolveIsin(
       }
     }
 
-    // 4. Yahoo fallback with .WA preference
+    // 4. Yahoo fallback — WYŁĄCZNIE listing .WA. Dla polskiego tickera (PLN) nigdy nie
+    //    akceptujemy zagranicznego papieru: to samo 3-literowe oznaczenie bywa innym
+    //    instrumentem na obcej giełdzie (EXC=Exelon/NASDAQ, CCC=CCC Intelligent/NASDAQ,
+    //    MNS=Monster, DADA=PT Diamond/Dżakarta). Brak .WA hita → zwracamy null: wpis
+    //    zostaje nierozwiązany i przy kolejnym imporcie/odświeżeniu (gdy Stooq odpowie)
+    //    rozwiąże się poprawnie na notowanie warszawskie — lepsze niż zła cena z Yahoo.
     const byIsin = await searchYahoo(isin);
-    if (byIsin.length > 0) {
-      const hit = byIsin.find((r) => r.symbol.endsWith('.WA')) || byIsin[0];
-      return await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
+    const byIsinWa = byIsin.find((r) => r.symbol.endsWith('.WA'));
+    if (byIsinWa) {
+      return await buildEntry(
+        isin,
+        byIsinWa.symbol,
+        byIsinWa.name,
+        byIsinWa.exchange,
+        paperName,
+        txCurrency,
+      );
     }
 
     if (cleanName !== isin) {
       const byName = await searchYahoo(cleanName);
-      if (byName.length > 0) {
-        const hit = byName.find((r) => r.symbol.endsWith('.WA')) || byName[0];
-        return await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
+      const byNameWa = byName.find((r) => r.symbol.endsWith('.WA'));
+      if (byNameWa) {
+        return await buildEntry(
+          isin,
+          byNameWa.symbol,
+          byNameWa.name,
+          byNameWa.exchange,
+          paperName,
+          txCurrency,
+        );
       }
     }
 

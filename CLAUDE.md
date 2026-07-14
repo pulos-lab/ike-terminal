@@ -109,7 +109,7 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
 3. **Fetch sieciowy** — Yahoo/Stooq API, tylko gdy cache miss
 
 ### Resolwowanie tickerów (ISIN resolver)
-- **Polskie pseudo-ISINy** (mBank/XTB): Stooq → Yahoo (z preferencją .WA)
+- **Polskie pseudo-ISINy** (mBank/XTB): Stooq → mapa NC offline (dokładne trafienie kodu tickera, bez wymogu sufiksu `-NC`) → Yahoo **wyłącznie** listing `.WA`. Dla polskiego tickera (PLN) nigdy nie akceptujemy zagranicznego papieru o tym samym oznaczeniu (EXC=Exelon, CCC=CCC Intelligent, MNS=Monster) — brak `.WA` → wpis nierozwiązany i ponawiany, gdy Stooq odpowie
 - **Prawdziwe polskie ISINy** (Bossa/DEGIRO): Yahoo by ISIN → Stooq validate → Stooq name search → NC offline map → Yahoo by name
 - **NewConnect**: statyczna mapa offline (`shared/src/nc-ticker-map.ts`, 374 spółki) jako fallback gdy Stooq rate-limited
 - **CFD**: statyczna mapa (`shared/src/cfd-ticker-map.ts`) → Yahoo ticker (np. GOLD → GC=F)
