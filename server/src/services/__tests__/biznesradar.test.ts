@@ -17,8 +17,7 @@ describe('parseBiznesradarPrice', () => {
   });
 
   it('bierze PIERWSZE wystąpienie (nagłówek), ignoruje kolejne w tabeli', () => {
-    const html =
-      '<span class="q_ch_act">0.565</span> ... <span class="q_ch_act">99.99</span>';
+    const html = '<span class="q_ch_act">0.565</span> ... <span class="q_ch_act">99.99</span>';
     expect(parseBiznesradarPrice(html)).toBe(0.565);
   });
 
