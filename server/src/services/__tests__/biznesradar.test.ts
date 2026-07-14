@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { parseBiznesradarPrice } from '../biznesradar.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  parseBiznesradarPrice,
+  detectBiznesradarBlock,
+  fetchBiznesradarPrice,
+  getBiznesradarBlockState,
+} from '../biznesradar.js';
 
 describe('parseBiznesradarPrice', () => {
   it('parsuje kurs NC (grosze) z q_ch_act', () => {
@@ -31,5 +36,52 @@ describe('parseBiznesradarPrice', () => {
 
   it('zwraca null dla zera/ujemnych (brak notowania)', () => {
     expect(parseBiznesradarPrice('<span class="q_ch_act">0</span>')).toBeNull();
+  });
+});
+
+describe('detectBiznesradarBlock', () => {
+  it('status 429/403/503 = blokada', () => {
+    expect(detectBiznesradarBlock(429, '')).toBe(true);
+    expect(detectBiznesradarBlock(403, '')).toBe(true);
+    expect(detectBiznesradarBlock(503, '')).toBe(true);
+  });
+
+  it('markery challenge w HTML = blokada', () => {
+    expect(detectBiznesradarBlock(200, '<title>Just a moment...</title>')).toBe(true);
+    expect(detectBiznesradarBlock(200, 'please solve the CAPTCHA')).toBe(true);
+    expect(detectBiznesradarBlock(200, 'Attention Required! Cloudflare')).toBe(true);
+    expect(detectBiznesradarBlock(200, 'Zbyt wiele zapytań')).toBe(true);
+  });
+
+  it('normalna strona notowań = brak blokady', () => {
+    expect(detectBiznesradarBlock(200, '<span class="q_ch_act">0.565</span>')).toBe(false);
+  });
+
+  it('404 „nie istnieje" = NIE blokada (nieznany ticker)', () => {
+    expect(detectBiznesradarBlock(404, 'Strona nie istnieje')).toBe(false);
+  });
+});
+
+describe('fetchBiznesradarPrice — bezpiecznik (circuit breaker)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('po 3 blokadach (429) otwiera bezpiecznik i short-circuituje kolejne fetch-e', async () => {
+    const fetchMock = vi.fn(async () => new Response('rate limited', { status: 429 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // 3 blokady pod rząd — próg BLOCK_THRESHOLD
+    await fetchBiznesradarPrice('BLK1');
+    await fetchBiznesradarPrice('BLK2');
+    await fetchBiznesradarPrice('BLK3');
+
+    expect(getBiznesradarBlockState().blocked).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    // 4. wywołanie: bezpiecznik otwarty → zero ruchu sieciowego
+    const price = await fetchBiznesradarPrice('BLK4');
+    expect(price).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(3); // nadal 3 — nie dobijamy odciętego serwisu
   });
 });
