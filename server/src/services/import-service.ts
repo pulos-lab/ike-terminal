@@ -63,6 +63,7 @@ import {
   deleteTickerMapEntry,
 } from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
+import { normalizeBossaPaperName } from './stooq-utils.js';
 import { reconcilePaymentCurrencies } from './payment-currency-reconciler.js';
 import { reconcileQuoteCurrencies } from './quote-currency-reconciler.js';
 import { getDb } from '../db/connection.js';
@@ -832,7 +833,8 @@ function reconcileBossaRedemptions(
   if (redemptions.length === 0) return 0;
   let added = 0;
 
-  // Load all transactions once and group by ticker to avoid N+1 DB queries
+  // Load all transactions once and group by ticker to avoid N+1 DB queries.
+  // Klucz = oryginalny paperName z bazy (z sufiksem Bossy, np. "PLASTBOX-FIX").
   const allTx = getAllTransactions(pid);
   const txByTicker = new Map<string, typeof allTx>();
   for (const t of allTx) {
@@ -845,7 +847,30 @@ function reconcileBossaRedemptions(
   }
 
   for (const red of redemptions) {
-    const allTxForTicker = txByTicker.get(red.ticker) || [];
+    // Dopasowanie zakupów do markera wykupu. Najpierw exact match po paperName;
+    // jeśli brak — fallback po nazwie znormalizowanej (bez sufiksów Bossy), żeby
+    // "Wykup akcji PLASTBOX" domknął zakupy zapisane jako "PLASTBOX-FIX".
+    // NIE normalizujemy paperName w bazie — resolver NC i parser generyczny polegają
+    // na oryginalnym sufiksie; normalizacja żyje tylko tu, w punkcie dopasowania.
+    let allTxForTicker = txByTicker.get(red.ticker) || [];
+    if (allTxForTicker.length === 0) {
+      const target = normalizeBossaPaperName(red.ticker);
+      const normMatches = [...txByTicker.entries()].filter(
+        ([name]) => normalizeBossaPaperName(name) === target,
+      );
+      if (normMatches.length === 1) {
+        allTxForTicker = normMatches[0][1];
+      } else if (normMatches.length > 1) {
+        // Kilka instrumentów mapuje się na tę samą znormalizowaną nazwę (np. akcja
+        // i jej certyfikat). Nie zgadujemy — zostawiamy do ręcznej weryfikacji.
+        warnings.push(
+          `Bossa: ${red.description} — niejednoznaczne dopasowanie do pozycji (${normMatches
+            .map(([name]) => name)
+            .join(', ')}); pomijam syntetyczną sprzedaż`,
+        );
+        continue;
+      }
+    }
     if (allTxForTicker.length === 0) {
       warnings.push(
         `Bossa: ${red.description} bez pasujących zakupów w historii (ticker: ${red.ticker}) — pomijam syntetyczną sprzedaż`,

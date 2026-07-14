@@ -12,6 +12,7 @@ import { searchYahoo, validateStooq, searchStooqByName } from './ticker-search.j
 import { fetchYahooPrice } from './yahoo-finance.js';
 import { resolveSector } from './sector-resolver.js';
 import { mapWithConcurrency } from './concurrency.js';
+import { normalizeBossaPaperName, isNewConnectPaperName } from './stooq-utils.js';
 
 interface UnresolvedIsin {
   isin: string;
@@ -131,13 +132,8 @@ export const STOOQ_ALIASES: Record<string, string> = {
  * dla SEVENET). Wyekstrahowane do osobnej funkcji żeby umożliwić czysty test.
  */
 export function tryNcOfflineGuard(isin: string, paperName: string): TickerMapEntry | null {
-  const isNewConnect = /-NC(?:-FIX)?$/i.test(paperName);
-  if (!isNewConnect) return null;
-  const cleanName = paperName
-    .replace(/-NC(?:-FIX)?$/i, '')
-    .replace(/-C$/i, '')
-    .replace(/\.WA$/i, '')
-    .trim();
+  if (!isNewConnectPaperName(paperName)) return null;
+  const cleanName = normalizeBossaPaperName(paperName);
   if (cleanName.length < 2) return null;
   const ncEntry = findNcTicker(cleanName);
   if (!ncEntry) return null;
@@ -176,6 +172,30 @@ export function tryBondGuard(
   };
 }
 
+/**
+ * Statyczna mapa spółek trwale wycofanych z obrotu na GPW (delisting). Yahoo/Stooq
+ * nie kwotują ich już cen, więc resolver bez tego guardu zwracałby null. Klucz = ISIN.
+ *
+ * TODO (patrz backlog): docelowo `status`/`category` na `ticker_map` + scraper archiwum
+ * GPW zamiast hardcode. Na teraz — analogicznie do NC/bond map — mała mapa wystarcza.
+ */
+const DELISTED_GPW = new Map<string, { ticker: string; name: string }>([
+  ['PLPSTBX00016', { ticker: 'PLASTBOX', name: 'Plast-Box S.A.' }],
+]);
+
+export function tryDelistedGuard(isin: string): TickerMapEntry | null {
+  const entry = DELISTED_GPW.get(isin);
+  if (!entry) return null;
+  return {
+    isin,
+    ticker: entry.ticker,
+    name: entry.name,
+    exchange: 'GPW',
+    currency: 'PLN',
+    priceSource: 'stooq',
+  };
+}
+
 export async function resolveIsin(
   isin: string,
   paperName: string,
@@ -189,14 +209,10 @@ export async function resolveIsin(
     isRealPolishIsin || isin.endsWith('.WA') || (isPseudoIsin && txCurrency === 'PLN');
 
   // Detect NewConnect from paper name suffix (Bossa uses "-NC", "-NC-FIX")
-  const isNewConnect = /-NC(?:-FIX)?$/i.test(paperName);
+  const isNewConnect = isNewConnectPaperName(paperName);
 
-  // Clean up paper names: remove Bossa suffixes like "-NC", "-NC-FIX", "-C"
-  const cleanName = paperName
-    .replace(/-NC(?:-FIX)?$/i, '')
-    .replace(/-C$/i, '')
-    .replace(/\.WA$/i, '') // strip .WA suffix for Stooq lookups
-    .trim();
+  // Clean up paper names: remove Bossa suffixes like "-NC", "-NC-FIX", "-FIX", "-C", ".WA"
+  const cleanName = normalizeBossaPaperName(paperName);
 
   // Wczesny guard NC: jeśli paper name ma sufiks -NC (Bossa), statyczna mapa
   // jest autorytatywna. Yahoo czasem zwraca .WA symbol dla NC spółki (np. SEV.WA
@@ -210,6 +226,12 @@ export async function resolveIsin(
   // Wczesny guard obligacji Catalyst — przed jakimkolwiek requestem do Yahoo/Stooq.
   const bondGuard = tryBondGuard(isin, paperName, txCurrency);
   if (bondGuard) return bondGuard;
+
+  // Wczesny guard spółek wycofanych z GPW — Yahoo/Stooq nie mają danych OHLC,
+  // resolver zwróciłby null i papier zostałby "Nie rozpoznano" mimo że ticker
+  // jest znany. Statyczna mapa (jak NC/bond) załatwia sprawę bez requestów.
+  const delistedGuard = tryDelistedGuard(isin);
+  if (delistedGuard) return delistedGuard;
 
   // === Polish pseudo-ISINs: Stooq FIRST (authoritative for GPW) ===
   // This covers: mBank tickers (CDR, KTY), XTB new format (Cyfrowy Polsat, PGE),

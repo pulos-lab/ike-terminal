@@ -96,6 +96,36 @@ describe('parseBossaOperations — P17 corporate actions', () => {
     expect(pending?.description).toBe('Wykup w ofercie skupu XYZ123');
   });
 
+  it('Wykup akcji (przymusowy) → RedemptionMarker(kind=certificate), NIE corporate_action_pending', () => {
+    // Przymusowy wykup (squeeze-out) jest deterministyczny — zamykamy pełną pozycję
+    // automatycznie jak certyfikaty, zamiast zostawiać do ręcznej korekty.
+    const csv = buildCsv(['2025-06-10;Wykup akcji PKNORLEN;;270000.00;PLN']);
+    const result = parseBossaOperations(csv, 'batch-test');
+
+    expect(
+      result.data.find((op) => op.operationType === 'corporate_action_pending'),
+    ).toBeUndefined();
+    expect(result.redemptions).toHaveLength(1);
+    expect(result.redemptions[0].kind).toBe('certificate');
+    expect(result.redemptions[0].ticker).toBe('PKNORLEN');
+    expect(result.redemptions[0].amount).toBe(270000);
+    expect(result.redemptions[0].currency).toBe('PLN');
+    expect(result.redemptions[0].description).toBe('Wykup akcji PKNORLEN');
+  });
+
+  it('Wykup akcji NIE koliduje z wykupem obligacji/certyfikatów/PW', () => {
+    // "Wykup akcji" musi łapać tylko akcje — obligacje i certyfikaty idą własnymi ścieżkami.
+    const csv = buildCsv([
+      '2025-06-10;Wykup akcji PLASTBOX;;5238.00;PLN',
+      '2030-10-25;Wykup obligacji DS1030;;10000.00;PLN',
+    ]);
+    const result = parseBossaOperations(csv, 'batch-test');
+    const buyback = result.redemptions.find((r) => r.ticker === 'PLASTBOX');
+    const bond = result.redemptions.find((r) => r.ticker === 'DS1030');
+    expect(buyback?.kind).toBe('certificate');
+    expect(bond?.kind).toBe('bond');
+  });
+
   it('Zwykły przelew → deposit (nietknięty przez P17)', () => {
     const csv = buildCsv(['2024-01-15;Przelew do DM BO;;10000.00;PLN']);
     const result = parseBossaOperations(csv, 'batch-test');

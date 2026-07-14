@@ -65,3 +65,36 @@ export function parseStooqLiveCsv(text: string): { date: string; close: number }
 export function stripTickerSuffix(ticker: string): string {
   return ticker.replace(/\.(WA|NC)$/i, '');
 }
+
+/**
+ * Normalizuje brokerową nazwę papieru Bossy do kanonicznego tickera notowania,
+ * ścinając sufiksy specyficzne dla Bossy:
+ *  - `-NC` / `-NC-FIX` — NewConnect (opcjonalnie z ceną fix)
+ *  - `-FIX` — instrument z ceną fixowaną (np. `PLASTBOX-FIX`)
+ *  - `-C` — certyfikat strukturyzowany (np. `4MASS-C`)
+ *  - `.WA` — sufiks giełdy warszawskiej (import w starym formacie XTB)
+ *
+ * UWAGA: funkcja jest przeznaczona do dopasowań i lookupów resolvera, NIE do
+ * nadpisywania `paperName` zapisywanego w bazie. Oryginalny sufiks pozostaje
+ * w transakcji, bo detekcja NewConnect w resolverze (`isNewConnectPaperName`)
+ * i golden-parity z parserem generycznym opierają się na obecności `-NC`.
+ *
+ * @example
+ * normalizeBossaPaperName('PLASTBOX-FIX')   // 'PLASTBOX'
+ * normalizeBossaPaperName('SEVENET-NC-FIX') // 'SEVENET'
+ * normalizeBossaPaperName('CDR')            // 'CDR'
+ * normalizeBossaPaperName('JSW.WA')         // 'JSW'
+ */
+export function normalizeBossaPaperName(name: string): string {
+  return name
+    .replace(/-NC(?:-FIX)?$/i, '')
+    .replace(/-FIX$/i, '')
+    .replace(/-C$/i, '')
+    .replace(/\.WA$/i, '')
+    .trim();
+}
+
+/** Czy nazwa papieru wskazuje na NewConnect (sufiks Bossy `-NC` / `-NC-FIX`). */
+export function isNewConnectPaperName(name: string): boolean {
+  return /-NC(?:-FIX)?$/i.test(name);
+}
