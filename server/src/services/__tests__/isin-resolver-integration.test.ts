@@ -127,3 +127,62 @@ describe('resolveIsin — full integration for SEVENET-NC trap', () => {
     expect(result?.ticker).toBe('ORL.WA');
   });
 });
+
+describe('resolveIsin — polski pseudo-ISIN vs zagraniczna kolizja tickera (Stooq down)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Domyślnie: Stooq nie odpowiada (rate-limit), Yahoo zwraca zagraniczną kolizję.
+    (tickerSearch.validateStooq as any).mockResolvedValue(null);
+    (tickerSearch.searchStooqByName as any).mockResolvedValue(null);
+  });
+
+  it('XTB EXC.WA (Excellence NC) NIE łapie Exelon Corp — offline mapa NC wygrywa bez -NC', async () => {
+    // Regresja zgłoszona z produ: EXC.WA/PLN był rozwiązywany na Exelon Corporation
+    // (NASDAQ, USD, ~44 USD) gdy Stooq był rate-limitowany. Mapa NC ma EXC=EXCELLENC.
+    (tickerSearch.searchYahoo as any).mockResolvedValue([
+      { symbol: 'EXC', name: 'Exelon Corporation', exchange: 'NMS' },
+    ]);
+    const result = await resolveIsin('EXC.WA', 'EXC.WA', 'PLN');
+    expect(result).toEqual({
+      isin: 'EXC.WA',
+      ticker: 'EXC.WA',
+      name: 'EXCELLENC',
+      exchange: 'NC',
+      currency: 'PLN',
+      priceSource: 'stooq',
+    });
+    // Yahoo nie może zdążyć zwrócić zagranicznego papieru — offline NC przerywa wcześniej.
+    expect(tickerSearch.searchYahoo).not.toHaveBeenCalled();
+  });
+
+  it('XTB MNS.WA (Mennica Skarbowa NC) NIE łapie Monster Beverage', async () => {
+    (tickerSearch.searchYahoo as any).mockResolvedValue([
+      { symbol: 'MNST', name: 'Monster Beverage Corporation', exchange: 'NMS' },
+    ]);
+    const result = await resolveIsin('MNS.WA', 'MNS.WA', 'PLN');
+    expect(result?.exchange).toBe('NC');
+    expect(result?.ticker).toBe('MNS.WA');
+    expect(result?.priceSource).toBe('stooq');
+  });
+
+  it('Polski pseudo-ISIN bez trafienia w NC i bez .WA z Yahoo → null (nie zagraniczny papier)', async () => {
+    // Ticker spoza mapy NC. Stooq down, Yahoo zwraca tylko zagraniczny listing bez .WA.
+    // Poprawnie: null (nierozwiązany) → przy następnym odświeżeniu Stooq rozwiąże na .WA.
+    (tickerSearch.searchYahoo as any).mockResolvedValue([
+      { symbol: 'ZZZ', name: 'Some Foreign Corp', exchange: 'NMS' },
+    ]);
+    const result = await resolveIsin('ZZZ.WA', 'ZZZ.WA', 'PLN');
+    expect(result).toBeNull();
+  });
+
+  it('Polski pseudo-ISIN z hitem .WA z Yahoo (spoza NC) → nadal akceptowany jako GPW', async () => {
+    // Guard nie może być zbyt agresywny: gdy Yahoo ma prawdziwy listing .WA, bierzemy go.
+    (tickerSearch.searchYahoo as any).mockResolvedValue([
+      { symbol: 'ABE.WA', name: 'AB S.A.', exchange: 'WSE' },
+    ]);
+    const result = await resolveIsin('ABE.WA', 'ABE.WA', 'PLN');
+    expect(result?.ticker).toBe('ABE.WA');
+    expect(result?.exchange).toBe('GPW');
+    expect(result?.currency).toBe('PLN');
+  });
+});
