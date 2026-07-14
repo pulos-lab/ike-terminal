@@ -390,6 +390,27 @@ export function parseBossaOperations(
       continue;
     }
 
+    // 1b. Wykup akcji (przymusowy squeeze-out) — analogicznie do certyfikatów:
+    //     all-or-nothing, emitent zamyka całą pozycję. Emit RedemptionMarker
+    //     kind='certificate' → reconciliation domknie pełne openQty. Dopasowanie
+    //     do zakupów ignoruje sufiks Bossy (np. kupno "PLASTBOX-FIX" ↔ "Wykup akcji PLASTBOX").
+    //     Bez tego "Wykup akcji" wpadało niżej w corporate_action_pending (ręczna korekta).
+    const forcedBuybackMatch = title.match(/^Wykup akcji\s+(\S+)/i);
+    if (forcedBuybackMatch) {
+      redemptions.push({
+        date: `${dateStr}T00:00:00`,
+        ticker: forcedBuybackMatch[1],
+        amount,
+        commission: 0,
+        description: humanizeDescription(title),
+        currency,
+        source: 'bossa',
+        kind: 'certificate',
+      });
+      skipped.push({ row: rowNum, reason: 'redemption_reconciled', paperName: title });
+      continue;
+    }
+
     // 2. Rozliczenie oferty (wezwanie skupu) — sprawdź mapę cen.
     const tenderMainMatch = title.match(/^Rozliczenie oferty\s+(\S+)/);
     if (tenderMainMatch) {
@@ -626,6 +647,10 @@ function humanizeDescription(title: string): string {
   // Wykup certyfikatów (głównie idzie jako RedemptionMarker)
   const certMatch = title.match(/Wykup certyfikat(?:ów|\u00f3w)\s+(\S+)/);
   if (certMatch) return `Wykup certyfikatów ${certMatch[1]}`;
+
+  // Wykup akcji (przymusowy) — głównie idzie jako RedemptionMarker
+  const buybackMatch = title.match(/^Wykup akcji\s+(\S+)/i);
+  if (buybackMatch) return `Wykup akcji ${buybackMatch[1]}`;
 
   // Zapisy na akcje: "Zapisy na akcje BIOCELTIX S.A. SERIA G" → "Subskrypcja akcji BIOCELTIX (seria G)"
   const subMatch = title.match(/Zapisy na akcje\s+(.+?)(?:\s+SERIA\s+(\S+))?$/i);

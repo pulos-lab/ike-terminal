@@ -186,3 +186,45 @@ describe('resolveIsin — polski pseudo-ISIN vs zagraniczna kolizja tickera (Sto
     expect(result?.currency).toBe('PLN');
   });
 });
+
+describe('resolveIsin — sufiks -FIX i delisted GPW', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('PLASTBOX-FIX (pseudo-ISIN) → sufiks -FIX stripowany, resolver szuka PLASTBOX', async () => {
+    // Bossa sufiksuje instrumenty z ceną fixowaną: "-FIX" (jak "-NC-FIX" ale bez NC).
+    // Bez stripowania cleanName = "PLASTBOX-FIX" i Stooq nie trafia.
+    (tickerSearch.validateStooq as any).mockImplementation(async (query: string) => {
+      if (query.toUpperCase().includes('PLASTBOX')) {
+        return { symbol: 'PLX.WA', name: 'Plastbox' };
+      }
+      return undefined;
+    });
+    const result = await resolveIsin('PLASTBOX', 'PLASTBOX-FIX', 'PLN');
+    expect(result?.ticker).toBe('PLX.WA');
+    // Stooq wywołany z czystą nazwą (bez -FIX)
+    const stooqCall = (tickerSearch.validateStooq as any).mock.calls[0]?.[0] as string | undefined;
+    expect(stooqCall?.toUpperCase()).not.toContain('FIX');
+    expect(stooqCall?.toUpperCase()).toContain('PLASTBOX');
+  });
+
+  it('PLASTBOX-FIX z prawdziwym ISIN PLPSTBX00016 → delisted guard, ZERO requestów sieciowych', async () => {
+    // PLASTBOX wycofany z GPW (2022) — Yahoo/Stooq nie mają danych. Statyczny guard
+    // zwraca wpis bez żadnych zapytań.
+    const result = await resolveIsin('PLPSTBX00016', 'PLASTBOX-FIX', 'PLN');
+    expect(result).not.toBeNull();
+    expect(result?.ticker).toBe('PLASTBOX');
+    expect(result?.exchange).toBe('GPW');
+    expect(result?.currency).toBe('PLN');
+    expect(tickerSearch.searchYahoo).not.toHaveBeenCalled();
+    expect(tickerSearch.validateStooq).not.toHaveBeenCalled();
+  });
+
+  it('sufiks -FIX NIE psuje detekcji NewConnect (SEVENET-NC-FIX nadal NC)', async () => {
+    // Regresja z odrzuconego podejścia: strip -NC w parserze wyłączał NC guard.
+    // Tu resolver dostaje pełną nazwę z sufiksem i musi rozpoznać NC offline.
+    const result = await resolveIsin('PLSEVNT00018', 'SEVENET-NC-FIX', 'PLN');
+    expect(result?.exchange).toBe('NC');
+    expect(result?.ticker).toBe('SEV.WA');
+    expect(tickerSearch.searchYahoo).not.toHaveBeenCalled();
+  });
+});
