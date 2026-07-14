@@ -105,7 +105,10 @@ describe('IBKR coverage — Corporate Actions (Reorg)', () => {
   it('HANDLED: Forward Split → marker splitu, brak warninga', () => {
     const out = parse(
       corpSection([
-        { desc: 'AMZN(US0231351067) Split 20 for 1 (AMZN, AMAZON.COM INC, US0231351067)', qty: 950 },
+        {
+          desc: 'AMZN(US0231351067) Split 20 for 1 (AMZN, AMAZON.COM INC, US0231351067)',
+          qty: 950,
+        },
       ]),
     );
     expect(out.splits).toHaveLength(1);
@@ -116,7 +119,10 @@ describe('IBKR coverage — Corporate Actions (Reorg)', () => {
   it('HANDLED: Reverse Split → marker splitu z ułamkowym ratio', () => {
     const out = parse(
       corpSection([
-        { desc: 'MCHP(US5950171042) Split 1 for 2 (MCHP, MICROCHIP TECHNOLOGY INC, US5950171042)', qty: -50 },
+        {
+          desc: 'MCHP(US5950171042) Split 1 for 2 (MCHP, MICROCHIP TECHNOLOGY INC, US5950171042)',
+          qty: -50,
+        },
       ]),
     );
     expect(out.splits).toHaveLength(1);
@@ -126,8 +132,14 @@ describe('IBKR coverage — Corporate Actions (Reorg)', () => {
   it('HANDLED: CUSIP/ISIN Change → marker zmiany ISIN, brak warninga', () => {
     const out = parse(
       corpSection([
-        { desc: 'CCIV(US1714391026) CUSIP/ISIN Change to (US5494981039) (CCIV, CHURCHILL CAPITAL CORP IV-A, US1714391026)', qty: -85 },
-        { desc: 'CCIV(US1714391026) CUSIP/ISIN Change to (US5494981039) (LCID, LUCID GROUP INC, US5494981039)', qty: 85 },
+        {
+          desc: 'CCIV(US1714391026) CUSIP/ISIN Change to (US5494981039) (CCIV, CHURCHILL CAPITAL CORP IV-A, US1714391026)',
+          qty: -85,
+        },
+        {
+          desc: 'CCIV(US1714391026) CUSIP/ISIN Change to (US5494981039) (LCID, LUCID GROUP INC, US5494981039)',
+          qty: 85,
+        },
       ]),
     );
     expect(out.isinChanges).toHaveLength(1);
@@ -142,13 +154,48 @@ describe('IBKR coverage — Corporate Actions (Reorg)', () => {
    * ale asercja (pominięcie) zależy tylko od BRAKU dopasowania do Split/ISIN Change.
    */
   const DROPPED_REORG: Array<{ code: string; name: string; desc: string; qty: number }> = [
-    { code: 'TC', name: 'Merger / przejęcie', desc: 'ABCD(US1111111111) Merged(Acquisition) 1 for 1 (WXYZ, ACQUIRER INC, US2222222222)', qty: -100 },
-    { code: 'SO', name: 'Spinoff', desc: 'ABCD(US1111111111) Spinoff  1 for 5 (SPIN, SPINCO INC, US3333333333)', qty: 20 },
-    { code: 'SD', name: 'Stock Dividend', desc: 'ABCD(US1111111111) Stock Dividend 1 for 10 (ABCD, SOME CORP, US1111111111)', qty: 10 },
-    { code: 'RI', name: 'Rights Issue', desc: 'ABCD(US1111111111) Subscribable Rights Issue 1 for 4 (ABCD.RTS, SOME CORP RIGHTS, US4444444444)', qty: 25 },
-    { code: 'TO', name: 'Tender / wezwanie', desc: 'ABCD(US1111111111) Tendered to (US5555555555) 1 for 1 (CASH, TENDER OFFER, US5555555555)', qty: -100 },
-    { code: 'DW', name: 'Delist / worthless', desc: 'ABCD(US1111111111) Delisted (Worthless) (ABCD, SOME CORP, US1111111111)', qty: -100 },
-    { code: 'BM', name: 'Bond Maturity / wykup', desc: 'T 2 7/8 05/15/32(US91282CEF10) Bond Maturity for (US91282CEF10) 1000 (T, US TREASURY, US91282CEF10)', qty: -1000 },
+    {
+      code: 'TC',
+      name: 'Merger / przejęcie',
+      desc: 'ABCD(US1111111111) Merged(Acquisition) 1 for 1 (WXYZ, ACQUIRER INC, US2222222222)',
+      qty: -100,
+    },
+    {
+      code: 'SO',
+      name: 'Spinoff',
+      desc: 'ABCD(US1111111111) Spinoff  1 for 5 (SPIN, SPINCO INC, US3333333333)',
+      qty: 20,
+    },
+    {
+      code: 'SD',
+      name: 'Stock Dividend',
+      desc: 'ABCD(US1111111111) Stock Dividend 1 for 10 (ABCD, SOME CORP, US1111111111)',
+      qty: 10,
+    },
+    {
+      code: 'RI',
+      name: 'Rights Issue',
+      desc: 'ABCD(US1111111111) Subscribable Rights Issue 1 for 4 (ABCD.RTS, SOME CORP RIGHTS, US4444444444)',
+      qty: 25,
+    },
+    {
+      code: 'TO',
+      name: 'Tender / wezwanie',
+      desc: 'ABCD(US1111111111) Tendered to (US5555555555) 1 for 1 (CASH, TENDER OFFER, US5555555555)',
+      qty: -100,
+    },
+    {
+      code: 'DW',
+      name: 'Delist / worthless',
+      desc: 'ABCD(US1111111111) Delisted (Worthless) (ABCD, SOME CORP, US1111111111)',
+      qty: -100,
+    },
+    {
+      code: 'BM',
+      name: 'Bond Maturity / wykup',
+      desc: 'T 2 7/8 05/15/32(US91282CEF10) Bond Maturity for (US91282CEF10) 1000 (T, US TREASURY, US91282CEF10)',
+      qty: -1000,
+    },
   ];
 
   it.each(DROPPED_REORG)('DROPPED: [$code] $name → warning + brak markera', ({ desc, qty }) => {
@@ -162,13 +209,17 @@ describe('IBKR coverage — Corporate Actions (Reorg)', () => {
 // ── Operacje gotówkowe (CashAction / CombInt) ──────────────────────────────────
 describe('IBKR coverage — operacje gotówkowe (CombInt / opłaty)', () => {
   it('HANDLED: Credit Interest (dodatni) → operacja "other", brak warninga', () => {
-    const out = parse(cashSection('CombInt', [{ desc: 'USD Credit Interest for Jun-2024', amount: 1.23 }]));
+    const out = parse(
+      cashSection('CombInt', [{ desc: 'USD Credit Interest for Jun-2024', amount: 1.23 }]),
+    );
     expect(out.operations.some((o) => o.operationType === 'other')).toBe(true);
     expect(out.warnings.some((w) => /nierozpoznany wiersz odsetek/.test(w))).toBe(false);
   });
 
   it('HANDLED: Debit Interest (margin) → fee/margin_interest, brak warninga', () => {
-    const out = parse(cashSection('CombInt', [{ desc: 'USD Debit Interest for Jun-2024', amount: -2.5 }]));
+    const out = parse(
+      cashSection('CombInt', [{ desc: 'USD Debit Interest for Jun-2024', amount: -2.5 }]),
+    );
     const fee = out.operations.find((o) => o.operationType === 'fee');
     expect(fee?.subkind).toBe('margin_interest');
     expect(out.warnings.some((w) => /nierozpoznany wiersz odsetek/.test(w))).toBe(false);
@@ -179,16 +230,39 @@ describe('IBKR coverage — operacje gotówkowe (CombInt / opłaty)', () => {
    * generyczne other/fee + warning. Ekonomicznie „są w saldzie", ale nie mają
    * właściwego subkind (nie wpadną do panelu odsetek/dywidend/pożyczek).
    */
-  const FALLBACK_CASH: Array<{ name: string; desc: string; amount: number; expectType: 'fee' | 'other' }> = [
-    { name: 'Payment In Lieu Of Dividend', desc: 'ABCD (US1111111111) Payment In Lieu Of Dividend', amount: 4.2, expectType: 'other' },
-    { name: 'Broker Interest Paid', desc: 'USD Broker Interest Paid for Jun-2024', amount: -0.8, expectType: 'fee' },
-    { name: 'Commission Adjustment', desc: 'Commission Adjustment - trade correction', amount: -0.15, expectType: 'fee' },
+  const FALLBACK_CASH: Array<{
+    name: string;
+    desc: string;
+    amount: number;
+    expectType: 'fee' | 'other';
+  }> = [
+    {
+      name: 'Payment In Lieu Of Dividend',
+      desc: 'ABCD (US1111111111) Payment In Lieu Of Dividend',
+      amount: 4.2,
+      expectType: 'other',
+    },
+    {
+      name: 'Broker Interest Paid',
+      desc: 'USD Broker Interest Paid for Jun-2024',
+      amount: -0.8,
+      expectType: 'fee',
+    },
+    {
+      name: 'Commission Adjustment',
+      desc: 'Commission Adjustment - trade correction',
+      amount: -0.15,
+      expectType: 'fee',
+    },
     { name: 'Advisor Fees', desc: 'Advisor Fees for Q2-2024', amount: -12.0, expectType: 'fee' },
   ];
 
-  it.each(FALLBACK_CASH)('FALLBACK: $name → generyczne $expectType + warning', ({ desc, amount, expectType }) => {
-    const out = parse(cashSection('CombInt', [{ desc, amount }]));
-    expect(out.warnings.some((w) => /nierozpoznany wiersz odsetek\/opłat/.test(w))).toBe(true);
-    expect(out.operations.some((o) => o.operationType === expectType && !o.subkind)).toBe(true);
-  });
+  it.each(FALLBACK_CASH)(
+    'FALLBACK: $name → generyczne $expectType + warning',
+    ({ desc, amount, expectType }) => {
+      const out = parse(cashSection('CombInt', [{ desc, amount }]));
+      expect(out.warnings.some((w) => /nierozpoznany wiersz odsetek\/opłat/.test(w))).toBe(true);
+      expect(out.operations.some((o) => o.operationType === expectType && !o.subkind)).toBe(true);
+    },
+  );
 });
