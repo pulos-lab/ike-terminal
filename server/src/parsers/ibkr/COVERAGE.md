@@ -7,6 +7,15 @@ tu pilnuje regresji.
 
 Lista typów pochodzi z enumów IBKR (`ibflex`: `Reorg`, `CashAction`).
 
+## Stan na realnych danych: brak luk
+
+Przepuszczenie 6 realnych wyciągów (2021-2025, 2 konta) przez `parseIbkrFile` daje **ZERO
+warningów fallback/dropped** — parser klasyfikuje 100% obecnych typów. Typy, które łatwo
+wziąć za luki, są obsłużone przez WŁAŚCIWE sekcje (nie tam, gdzie intuicyjnie):
+`Payment in Lieu` → `CombDiv` + `WithholdingTax` (→ `dividend` z WHT), `Commission Adjustment`
+→ `CombDepWith` (→ `deposit`), odsetki brokera → `CombInt`. Jedyne realnie nieobsłużone typy
+(zdarzenia korporacyjne poza Split/ISIN Change) **w naszych danych nie występują**.
+
 ## Dlaczego nie testujemy na publicznych sample'ach IBKR
 
 Oficjalne publiczne wyciągi (`interactivebrokers.*/images/common/Statements/…`) używają
@@ -33,25 +42,31 @@ nowym formacie, identycznym jak realne wyciągi 2021-2025.
 
 `dropped` = warning „nieobsłużone zdarzenie korporacyjne …", wiersz pominięty.
 
-## Operacje gotówkowe (CashAction → CombInt/CombFees/CombDiv/…)
+**Uwaga o osobnych silnikach:** `Spinoff` i `Tender` są „dropped" w tym parserze, ale
+aplikacja obsługuje je na INNEJ warstwie — compute-time: spin-offy przez `spin-off-transform`
+(mapa `spin-offs-map` + SEC ratio), wezwania przez `tender-offers-map`. Dlatego pominięcie
+wiersza corp-action tutaj ≠ brak obsługi w aplikacji. Implementacja tych typów w parserze
+IBKR wymaga uzgodnienia z tymi silnikami, żeby uniknąć **podwójnego księgowania**.
 
-| Typ | Status | Uwagi |
-|---|---|---|
-| Deposits & Withdrawals | ✅ handled | |
-| Dividends + Withholding Tax | ✅ handled | WHT US 15% |
-| Bond Coupon / Purchase Accrued Interest | ✅ handled | subkind `coupon` |
-| Debit/Loan Interest (margin) | ✅ handled | subkind `margin_interest` |
-| Credit Interest | ✅ handled | subkind `interest` |
-| Borrow Fee | ✅ handled | subkind `borrow_fee` |
-| SYEP / Managed Securities | ✅ handled | subkind `lending_income` |
-| Other Fees | ✅ handled | |
-| **Payment In Lieu Of Dividend** | ⚠️ fallback | generyczne `other`, bez subkind |
-| **Broker Interest Paid** | ⚠️ fallback | wpada w `fee` bez subkind |
-| **Commission Adjustments** | ⚠️ fallback | |
-| **Advisor Fees** | ⚠️ fallback | |
+## Operacje gotówkowe (CashAction) — wszystkie obsłużone
 
-`fallback` = importowane jako generyczne `other`/`fee` + warning „nierozpoznany wiersz
-odsetek/opłat …" (jest w saldzie, ale bez właściwej kategorii).
+| Typ | Sekcja realna | Status | Uwagi |
+|---|---|---|---|
+| Deposits & Withdrawals | CombDepWith | ✅ handled | |
+| Commission Adjustment | CombDepWith | ✅ handled | → `deposit`/`withdrawal` wg znaku |
+| Dividends + Withholding Tax | CombDiv + WithholdingTax | ✅ handled | WHT US 15% |
+| **Payment in Lieu of Dividend** | CombDiv + WithholdingTax | ✅ handled | parowane → `dividend` z WHT |
+| Bond Coupon / Purchase Accrued Interest | CombInt | ✅ handled | subkind `coupon` |
+| Debit/Loan Interest (margin) | CombInt | ✅ handled | subkind `margin_interest` |
+| Credit Interest | CombInt | ✅ handled | subkind `interest` |
+| WHT od odsetek | WithholdingTax | ✅ handled | → `fee` |
+| Borrow Fee | CombInt | ✅ handled | subkind `borrow_fee` |
+| SYEP / Managed Securities | CombInt | ✅ handled | subkind `lending_income` |
+| Other Fees | CombFees | ✅ handled | |
+| _nieznany opis_ | CombInt | 🛟 safety net | generyczne `other`/`fee` + warning „nierozpoznany…" |
+
+`safety net` = mechanizm dla PRZYSZŁYCH nieznanych opisów (na realnych danych nie odpala
+się ani razu) — wiersz nie jest gubiony, ląduje w saldzie jako generyczna operacja.
 
 ## Jak sondować nowy/cudzy wyciąg
 

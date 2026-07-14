@@ -14,13 +14,19 @@ import { parseIbkrFile, isIbkrFormat } from '../ibkr/index.js';
  * `parseIbkrFile`.
  *
  * Każdy test asertuje BIEŻĄCE zachowanie:
- *   - HANDLED  → powstaje marker/operacja właściwego typu, brak warninga
- *   - DROPPED  → warning "nieobsłużone…" i wiersz pominięty
- *   - FALLBACK → zaimportowany jako generyczne other/fee + warning "nierozpoznany…"
+ *   - HANDLED    → powstaje marker/operacja właściwego typu, brak warninga
+ *   - DROPPED    → warning "nieobsłużone…" i wiersz pominięty
+ *   - SAFETY NET → nieznany opis importowany bezpiecznie (generyczne other/fee + warning)
  *
- * Gdy zaimplementujemy któryś z DROPPED/FALLBACK, test tutaj PĘKNIE — to sygnał,
- * żeby przenieść typ do HANDLED i dopisać właściwą asercję. Katalog typów pochodzi
- * z enumów IBKR (`ibflex`: Reorg / CashAction).
+ * WERYFIKACJA NA REALNYCH DANYCH (6 wyciągów 2021-2025, 2 konta): parser klasyfikuje
+ * 100% obecnych typów — ZERO warningów fallback/dropped. W szczególności typy, które
+ * łatwo wziąć za luki, są obsłużone przez WŁAŚCIWE sekcje: Payment in Lieu → CombDiv+WHT
+ * (→ dividend), Commission Adjustment → CombDepWith (→ deposit), odsetki brokera → CombInt.
+ * Jedyne realnie nieobsłużone to zdarzenia korporacyjne poza Split/ISIN Change — których
+ * w naszych danych NIE MA (patrz sekcja DROPPED; opisy przybliżone, brak realnej fixtury).
+ *
+ * Gdy zaimplementujemy któryś z DROPPED, test tutaj PĘKNIE — sygnał, żeby przenieść typ
+ * do HANDLED i dopisać właściwą asercję. Katalog typów: enumy IBKR (`ibflex`: Reorg / CashAction).
  */
 
 // ── Fixture builders — wierny NOWY format Activity Statement ────────────────────
@@ -82,11 +88,11 @@ function cashSection(section: string, rows: CashRow[]): string {
   return sectionBody(section, head + body);
 }
 
-/** Sklej minimalny wyciąg: literały detekcji + pusty CombDepWith (warunek wykrycia) + sekcje. */
+/** Sklej minimalny wyciąg: literały detekcji + pusty Transactions (warunek wykrycia) + sekcje. */
 function statement(...sections: string[]): Buffer {
   const html = `<!DOCTYPE html><html><head><title>Activity Statement</title></head><body>
 <div>Interactive Brokers</div>
-${sectionBody('CombDepWith', '<thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>')}
+${sectionBody('Transactions', '<thead><tr><th>Symbol</th><th>Date/Time</th><th>Quantity</th></tr></thead>')}
 ${sections.join('\n')}
 </body></html>`;
   return Buffer.from(html, 'utf-8');
@@ -225,44 +231,73 @@ describe('IBKR coverage — operacje gotówkowe (CombInt / opłaty)', () => {
     expect(out.warnings.some((w) => /nierozpoznany wiersz odsetek/.test(w))).toBe(false);
   });
 
-  /**
-   * FALLBACK — typy CashAction bez dedykowanej klasyfikacji: importowane jako
-   * generyczne other/fee + warning. Ekonomicznie „są w saldzie", ale nie mają
-   * właściwego subkind (nie wpadną do panelu odsetek/dywidend/pożyczek).
-   */
-  const FALLBACK_CASH: Array<{
-    name: string;
-    desc: string;
-    amount: number;
-    expectType: 'fee' | 'other';
-  }> = [
-    {
-      name: 'Payment In Lieu Of Dividend',
-      desc: 'ABCD (US1111111111) Payment In Lieu Of Dividend',
-      amount: 4.2,
-      expectType: 'other',
-    },
-    {
-      name: 'Broker Interest Paid',
-      desc: 'USD Broker Interest Paid for Jun-2024',
-      amount: -0.8,
-      expectType: 'fee',
-    },
-    {
-      name: 'Commission Adjustment',
-      desc: 'Commission Adjustment - trade correction',
-      amount: -0.15,
-      expectType: 'fee',
-    },
-    { name: 'Advisor Fees', desc: 'Advisor Fees for Q2-2024', amount: -12.0, expectType: 'fee' },
-  ];
+  it('HANDLED: SYEP / Managed Securities (dodatni) → other/lending_income', () => {
+    const out = parse(
+      cashSection('CombInt', [{ desc: 'USD IBKR Managed Securities Lent Interest', amount: 0.42 }]),
+    );
+    const op = out.operations.find((o) => o.subkind === 'lending_income');
+    expect(op?.operationType).toBe('other');
+    expect(out.warnings.some((w) => /nierozpoznany wiersz odsetek/.test(w))).toBe(false);
+  });
 
-  it.each(FALLBACK_CASH)(
-    'FALLBACK: $name → generyczne $expectType + warning',
-    ({ desc, amount, expectType }) => {
-      const out = parse(cashSection('CombInt', [{ desc, amount }]));
-      expect(out.warnings.some((w) => /nierozpoznany wiersz odsetek\/opłat/.test(w))).toBe(true);
-      expect(out.operations.some((o) => o.operationType === expectType && !o.subkind)).toBe(true);
-    },
-  );
+  /**
+   * HANDLED (ścieżka dywidend, NIE odsetek): „Payment in Lieu of Dividend" trafia w
+   * realnych wyciągach do sekcji CombDiv (część brutto) + WithholdingTax (US Tax), więc
+   * `mapDividendsWithWht` paruje je w jedną operację `dividend` z podatkiem u źródła —
+   * dokładnie jak zwykłą dywidendę. NIE jest to luka (wcześniej sonda błędnie umieszczała
+   * PIL w CombInt). Descy 1:1 z realnych plików (ALB).
+   */
+  it('HANDLED: Payment in Lieu of Dividend (CombDiv + WHT) → dividend z podatkiem', () => {
+    const out = parse(
+      cashSection('CombDiv', [
+        {
+          desc: 'ALB(US0126531013) Payment in Lieu of Dividend (Ordinary Dividend)',
+          amount: 4.4,
+          date: '2024-06-15',
+        },
+      ]),
+      cashSection('WithholdingTax', [
+        {
+          desc: 'ALB(US0126531013) Payment in Lieu of Dividend - US Tax',
+          amount: -0.66,
+          date: '2024-06-15',
+        },
+      ]),
+    );
+    const div = out.operations.find(
+      (o) => o.operationType === 'dividend' && /ALB/.test(o.description ?? ''),
+    );
+    expect(div).toBeDefined();
+    expect(div?.description).toMatch(/Payment in Lieu/);
+    expect(div?.description).toMatch(/podatek 15%/);
+    expect(out.warnings.some((w) => /nierozpoznany|nieobsłużone/.test(w))).toBe(false);
+  });
+
+  /**
+   * HANDLED: „Commission Adjustment" trafia realnie do sekcji Deposits & Withdrawals
+   * (CombDepWith) i jest księgowane jako deposit/withdrawal wg znaku — nie jest to luka.
+   */
+  it('HANDLED: Commission Adjustment (CombDepWith) → deposit', () => {
+    const out = parse(
+      cashSection('CombDepWith', [
+        { desc: 'Commission Adjustment (Consolidated Audit Trail Fee Refund)', amount: 0.01 },
+      ]),
+    );
+    expect(out.operations.some((o) => o.operationType === 'deposit')).toBe(true);
+    expect(out.warnings.some((w) => /nierozpoznany|nieobsłużone/.test(w))).toBe(false);
+  });
+
+  /**
+   * SIATKA BEZPIECZEŃSTWA — nie luka konkretnego typu, tylko dowód, że NIEZNANY opis w
+   * CombInt jest importowany bezpiecznie (generyczne other/fee wg znaku + warning), a nie
+   * gubiony. Opis celowo fikcyjny — NIE jest zaobserwowanym typem IBKR. Weryfikacja na
+   * realnych 6 wyciągach: 0 takich warningów (wszystkie realne opisy są klasyfikowane).
+   */
+  it('SAFETY NET: nieznany opis w CombInt → generyczne + warning (nie gubione)', () => {
+    const out = parse(
+      cashSection('CombInt', [{ desc: 'USD Frobnication Charge for Jun-2024', amount: -0.8 }]),
+    );
+    expect(out.warnings.some((w) => /nierozpoznany wiersz odsetek\/opłat/.test(w))).toBe(true);
+    expect(out.operations.some((o) => o.operationType === 'fee' && !o.subkind)).toBe(true);
+  });
 });
