@@ -149,7 +149,10 @@ async function reResolve(c: Candidate, apply: boolean): Promise<Outcome> {
     };
   }
 
-  if (apply) upsertTickerMapEntry(entry, c.portfolioId);
+  // force=true — nadpisujemy istniejący (błędny) wpis. Domyślne upsert traktuje
+  // istniejący ISIN jako "anchor" i robi return bez zapisu, przez co backfill był
+  // no-opem mimo raportowania "fixed".
+  if (apply) upsertTickerMapEntry(entry, c.portfolioId, true);
   return { portfolioId: c.portfolioId, isin: c.row.isin, oldDesc, newDesc, status: 'fixed' };
 }
 
