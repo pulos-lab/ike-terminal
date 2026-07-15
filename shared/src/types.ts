@@ -990,6 +990,24 @@ export interface PortfolioHistoryResponse {
  * oraz `fxImpact`. `currentValue`/`totalReturn` mogą być nadpisane wyceną LIVE
  * (spójność z panelem Portfel), XIRR zostaje z historii close-of-day.
  */
+/**
+ * Zalewarowanie portfela (konto margin / krótkie pozycje). Wskaźnik księgowy
+ * liczony z transakcji — NIE odzwierciedla wymogów depozytowych brokera
+ * (buying power / excess liquidity), których nie znamy.
+ */
+export interface LeverageInfo {
+  /** Pozycje brutto: Σ|wartość rynkowa pozycji| (long + |short|), w PLN. */
+  grossExposurePln: number;
+  /** Ekspozycja krótka: |Σ wartości pozycji short|, w PLN (0 gdy brak shortów). */
+  shortExposurePln: number;
+  /** Kapitał własny: pozycje netto + gotówka netto (= wartość portfela), w PLN. */
+  equityPln: number;
+  /** Kredyt margin: suma ujemnych sald gotówkowych, w PLN (dodatnia liczba). */
+  marginDebtPln: number;
+  /** Dźwignia = grossExposurePln / equityPln (1.0 = brak dźwigni). */
+  ratio: number;
+}
+
 export interface PortfolioMetricsResponse {
   currentValue: number;
   totalInvested: number;
@@ -1001,6 +1019,8 @@ export interface PortfolioMetricsResponse {
   baseCurrency: string;
   /** null gdy portfel czysto PLN-owy lub brak danych o kursach wejścia. */
   fxImpact: FxImpact | null;
+  /** null gdy kapitał własny ≤ 0 (dane niepełne) — UI pokazuje badge tylko przy realnej dźwigni. */
+  leverage: LeverageInfo | null;
 }
 
 export interface ClosedTradesResponse {

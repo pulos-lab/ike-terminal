@@ -1255,6 +1255,36 @@ router.get(
     // XIRR pozostaje z engine — bazuje na historii close (stabilna linia).
     // Dla portfeli nie-PLN engine liczy w baseCurrency; pomijamy override i zostawiamy
     // metrics.currentValue (totalPortfolioValuePln zawsze w PLN).
+    // Dźwignia: pozycje brutto (long + |short|) vs kapitał własny (pozycje netto
+    // + gotówka netto). Proceeds z shortów siedzą w gotówce, więc equity wychodzi
+    // poprawnie, a ekspozycja shorta wchodzi do brutto przez abs(). Kredyt margin
+    // = wyłącznie ujemne salda walutowe (dodatnie nie netują długu w innej walucie).
+    let grossExposurePln = 0;
+    let shortExposurePln = 0;
+    for (const pos of positions) {
+      const v = pos.currentValuePln ?? 0;
+      grossExposurePln += Math.abs(v);
+      if (v < 0) shortExposurePln += -v;
+    }
+    let marginDebtPln = 0;
+    for (const [cur, balance] of Object.entries(cashBalances)) {
+      if (balance >= 0) continue;
+      const upperCur = cur.toUpperCase();
+      const rate =
+        upperCur === 'PLN' ? 1 : todayFxRatesToPln.get(upperCur === 'GBX' ? 'GBP' : upperCur) || 0;
+      marginDebtPln += -balance * rate;
+    }
+    const leverage =
+      totalPortfolioValuePln > 0
+        ? {
+            grossExposurePln,
+            shortExposurePln,
+            equityPln: totalPortfolioValuePln,
+            marginDebtPln,
+            ratio: grossExposurePln / totalPortfolioValuePln,
+          }
+        : null;
+
     const useLiveValue = baseCurrency === 'PLN';
     const currentValue = useLiveValue ? totalPortfolioValuePln : metrics.currentValue;
     const totalReturn = useLiveValue
@@ -1274,6 +1304,7 @@ router.get(
       totalDividends: metrics.totalDividends,
       baseCurrency,
       fxImpact,
+      leverage,
     });
   }),
 );

@@ -2,10 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { plColor } from '@/components/ui/pl-badge';
-import { formatCurrency, formatPercent, formatPLN } from '@/lib/formatters';
+import { formatCurrency, formatNumber, formatPercent, formatPLN } from '@/lib/formatters';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { TrendingUp, TrendingDown, DollarSign, Target, ArrowLeftRight } from 'lucide-react';
-import type { FxImpact } from 'shared';
+import { TrendingUp, TrendingDown, DollarSign, Target, ArrowLeftRight, Gauge } from 'lucide-react';
+import type { FxImpact, LeverageInfo } from 'shared';
 
 export function MetricsBar() {
   const { data } = useQuery({
@@ -35,6 +35,32 @@ export function MetricsBar() {
         </span>
         <span className="font-semibold tabular-nums">{fmt(data.currentValue)}</span>
       </div>
+      {/* Badge tylko przy realnej dźwigni — próg 1.01× odcina drobne ujemne
+          rezydua gotówkowe (literówki cen itp.) na kontach bez marginu. */}
+      {data.leverage && data.leverage.ratio >= 1.01 && (
+        <TooltipProvider delayDuration={150}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-2 cursor-help">
+                <Gauge
+                  className={`h-3.5 w-3.5 ${data.leverage.ratio >= 2 ? 'text-loss' : 'text-amber-600 dark:text-amber-500'}`}
+                />
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                  Dźwignia
+                </span>
+                <span
+                  className={`font-semibold tabular-nums ${data.leverage.ratio >= 2 ? 'text-loss' : 'text-amber-600 dark:text-amber-500'}`}
+                >
+                  {formatNumber(data.leverage.ratio, 2)}×
+                </span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-sm">
+              <LeverageTooltipBody leverage={data.leverage} />
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
       <div className="flex items-center gap-2">
         <Target className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
@@ -85,6 +111,30 @@ export function MetricsBar() {
           </Tooltip>
         </TooltipProvider>
       )}
+    </div>
+  );
+}
+
+function LeverageTooltipBody({ leverage }: { leverage: LeverageInfo }) {
+  return (
+    <div className="text-xs space-y-2">
+      <p className="font-semibold">
+        Dźwignia {formatNumber(leverage.ratio, 2)}× — pozycje brutto / kapitał własny
+      </p>
+      <ul className="space-y-0.5 text-muted-foreground">
+        <li>• Pozycje brutto (long + |short|): {formatPLN(leverage.grossExposurePln)}</li>
+        {leverage.shortExposurePln > 0 && (
+          <li className="pl-2">w tym krótkie: {formatPLN(leverage.shortExposurePln)}</li>
+        )}
+        <li>• Kapitał własny (pozycje netto + gotówka): {formatPLN(leverage.equityPln)}</li>
+        {leverage.marginDebtPln > 0 && (
+          <li>• Kredyt margin (ujemna gotówka): {formatPLN(leverage.marginDebtPln)}</li>
+        )}
+      </ul>
+      <p className="text-muted-foreground text-[10px] pt-1 border-t border-border">
+        Wskaźnik liczony z historii transakcji. Nie uwzględnia wymogów depozytowych brokera (buying
+        power / odległość od margin call).
+      </p>
     </div>
   );
 }
