@@ -98,9 +98,10 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
 
 ### Ceny historyczne (dashboard/benchmark)
 - **GPW (.WA)**: Yahoo Finance (priorytet) → Stooq (fallback gdy Yahoo < 10 punktów)
-- **NewConnect (NC)**: Stooq
+- **NewConnect (NC)**: biznesradar `/notowania-historyczne/` (główne — `fetchBiznesradarHistory`, tabela `qTableFull` server-side, paginacja przyrostowa, ten sam klucz cache co Stooq) → Stooq/cache zapas. Stooq historyczny padł ~07.2026 (challenge anti-bot), Yahoo nie listuje NC
+- **Obligacje Catalyst**: biznesradar `/notowania-historyczne/` (główne; kurs w % nominału — spójne z `bondPriceMultiplier`) → Stooq/cache zapas
 - **Zagraniczne**: Yahoo Finance
-- **Benchmarki polskie (WIG, WIG20, mWIG40, sWIG80)**: SQLite cache (seed z CSV w `benchmark/`) + Stooq auto-update co 6h (`benchmark-updater.ts`)
+- **Benchmarki polskie (WIG, WIG20, mWIG40, sWIG80)**: SQLite cache (seed z CSV w `benchmark/`) + auto-update co 6h (`benchmark-updater.ts`: Stooq live padł → **fallback Yahoo `WIG.WA` itd.**, `BENCHMARK_YAHOO_FALLBACK`)
 - **Benchmarki zagraniczne (S&P 500, NASDAQ)**: Yahoo Finance
 
 ### Cache (3 warstwy)

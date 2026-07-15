@@ -23,7 +23,7 @@ import {
   fetchYahooSplitEvents,
 } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
-import { fetchBiznesradarPrice } from './biznesradar.js';
+import { fetchBiznesradarPrice, fetchBiznesradarHistory } from './biznesradar.js';
 import { fetchStockwatchBondPrice } from './stockwatch-bonds.js';
 import {
   detectSplits,
@@ -1840,8 +1840,15 @@ export async function computePortfolioHistory(
     const entry = tickerMap.get(isin);
     let data: Array<{ date: string; close: number }>;
     if (entry?.exchange === 'NC' || entry?.exchange === 'CATALYST') {
-      // NewConnect + Catalyst: Stooq only (Yahoo nie listuje NC ani obligacji Catalyst)
-      data = await fetchStooqHistory(ticker, start);
+      // NewConnect + Catalyst: biznesradar główne źródło historii (Stooq historyczny
+      // za challenge od ~07.2026), Stooq/cache jako zapas. Yahoo nie listuje NC ani
+      // obligacji. Oba czytają ten sam klucz cache, więc zamrożone dane Stooqa są
+      // reużyte, a biznesradar dokłada brakujące dni.
+      data = await fetchBiznesradarHistory(ticker, start);
+      if (data.length < 10) {
+        const stooqData = await fetchStooqHistory(ticker, start);
+        if (stooqData.length > data.length) data = stooqData;
+      }
     } else if (ticker.endsWith('.WA')) {
       // GPW: Yahoo first, Stooq fallback (to preserve Stooq daily quota)
       data = await fetchYahooHistory(ticker, start, end);
