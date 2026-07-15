@@ -679,6 +679,12 @@ export async function computeOpenPositions(
       const yp = await fetchYahooPrice(entry.ticker);
       currentPrice = yp?.price || null;
       previousClose = yp?.previousClose ?? null;
+      // GPW: zapas biznesradar przy chybieniu Yahoo (rate limit/awaria) — tylko .WA.
+      // previousClose zostaje z Yahoo: biznesradar nie daje poprzedniego zamknięcia,
+      // więc zmiana dzienna będzie null zamiast wartości z mieszanych źródeł.
+      if (currentPrice === null && (entry.exchange === 'GPW' || entry.ticker.endsWith('.WA'))) {
+        currentPrice = await fetchBiznesradarPrice(entry.ticker);
+      }
     }
 
     // Fallback: if live price unavailable, use last transaction price.
