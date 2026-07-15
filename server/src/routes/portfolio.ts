@@ -64,6 +64,7 @@ import {
   computeFifoMatching,
   computeSmartDeletePlan,
 } from '../services/portfolio-engine.js';
+import { resolveOptionExpirySettlements } from '../services/option-expiry-transform.js';
 import {
   BENCHMARKS,
   type BenchmarkKey,
@@ -119,13 +120,22 @@ router.get(
     const operations = getAllOperations(pid);
     const savedSplits = loadSplitsForEngine(pid);
     const spinOffs = loadSpinOffsForEngine(pid);
+    const optionContractsMap = getOptionContractsMap(pid);
+    // Ceny rozliczenia opcji po terminie (intrinsic w dniu wygaśnięcia) — pre-fetch raz,
+    // spójnie z widokiem otwartych pozycji, żeby auto-domknięte round-tripy miały realny P/L.
+    const optionSettlementPrices = await resolveOptionExpirySettlements(
+      transactions,
+      optionContractsMap,
+      new Date().toISOString().slice(0, 10),
+    );
     const trades = computeClosedTrades(
       transactions,
       tickerMap,
       operations,
       savedSplits,
       spinOffs,
-      getOptionContractsMap(pid),
+      optionContractsMap,
+      optionSettlementPrices,
     );
     await annotateClosedTradesPln(trades);
     res.json({ trades });

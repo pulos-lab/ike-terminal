@@ -158,9 +158,13 @@ describe.skipIf(!hasFiles)('IBKR golden — import 6 realnych wyciągów', () =>
 
   it('otwarte pozycje opcyjne zgadzają się z sekcją Open Positions ostatniego wyciągu', async () => {
     const txs = txRepo.getAllTransactions(PID);
+    // asOf = koniec okresu wyciągu 2025: sekcja Open Positions jest stanem na tę datę.
+    // Bez tego auto-domknięcie opcji po terminie (np. QBTS 16JAN26) usunęłoby je z otwartych
+    // względem realnego „dziś", zależnie od kalendarza — tu reprodukujemy stan wyciągu.
     const { positions } = await engine.computeOpenPositions(txs, new Map(), [], undefined, {
       skipSplitDetection: true,
       optionContracts: optRepo.getOptionContractsMap(PID),
+      asOf: '2025-12-31',
     });
     const options = positions.filter((p) => p.category === 'option');
     // Wyciąg U16474045_2025: 8 otwartych pozycji opcyjnych (wszystkie long puty)
