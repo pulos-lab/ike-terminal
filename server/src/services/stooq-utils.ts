@@ -14,13 +14,22 @@ export const BENCHMARK_YAHOO_FALLBACK: Record<string, string> = {
   swig80: 'SWIG80.WA',
 };
 
-/** Detect Stooq block/rate-limit responses (including new API key requirement) */
+/**
+ * Detect Stooq block/rate-limit responses (including new API key requirement).
+ * Od ~07.2026 Stooq serwuje też challenge anti-bot (JS proof-of-work z POST na
+ * /__verify) — bez tych markerów strona challenge była parsowana jako CSV
+ * (0 wierszy) i fetch po cichu wracał do stale cache.
+ */
 export function isStooqBlocked(text: string): boolean {
+  const lower = text.toLowerCase();
   return (
     text.includes('Przekroczony') ||
-    text.includes('limit') ||
+    lower.includes('limit') ||
     text.includes('www@stooq.pl') ||
-    text.includes('apikey')
+    lower.includes('apikey') ||
+    lower.includes('requires javascript') ||
+    lower.includes('verify your browser') ||
+    text.includes('/__verify')
   );
 }
 
