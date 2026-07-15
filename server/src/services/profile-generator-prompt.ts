@@ -69,7 +69,7 @@ export interface UserPromptInput {
  * operacji z wieloletniej historii zapadają się do kilkunastu wzorców —
  * dokładnie tego potrzebuje model, żeby napisać reguły contains/regex.
  */
-export function valuePattern(value: string): string {
+function valuePattern(value: string): string {
   return value
     .replace(/\d[\d\s.,:/-]*\d|\d/g, '{N}')
     .replace(/(?<![\p{L}\d])[A-Z][A-Z0-9]{1,7}(?![\p{L}\d])/gu, '{SYM}')
@@ -84,7 +84,7 @@ export function valuePattern(value: string): string {
  * i przykładem. Liczone z wierszy ZREDAGOWANYCH — nic ponad to nie idzie
  * do promptu.
  */
-export function buildColumnDigests(headers: string[], sampleRows: string[][]): string[] {
+function buildColumnDigests(headers: string[], sampleRows: string[][]): string[] {
   // 40: kolumny-dyskryminatory (typ operacji) miewają ~30 wartości w pełnej
   // historii — pełna lista to najcenniejsza informacja w całym prompcie.
   const MAX_DISTINCT = 40;

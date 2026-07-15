@@ -19,7 +19,7 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 }
 
 /** Czy dany użytkownik jest adminem (pierwsze konto w bazie). */
-export function isAdminUser(userId: string): boolean {
+function isAdminUser(userId: string): boolean {
   const firstUser = getAuthDb()
     .prepare('SELECT id FROM "user" ORDER BY createdAt ASC LIMIT 1')
     .get() as { id: string } | undefined;
