@@ -1,6 +1,16 @@
-import { BOND_MAP, type BondMapEntry } from './bond-map-data.js';
+import { BOND_MAP as GENERATED_BOND_MAP, type BondMapEntry } from './bond-map-data.js';
+import { BOND_OVERRIDES } from './bond-overrides-map.js';
 
-export { BOND_MAP, type BondMapEntry };
+export type { BondMapEntry };
+
+/**
+ * Mapa obligacji = wygenerowana scraperem (`bond-map-data.ts`) ∪ ręczne wpisy
+ * (`bond-overrides-map.ts`). Overrides WYGRYWAJĄ przy kolizji tickera — pozwala uzupełnić/
+ * skorygować dane, których scraper nie widzi (obligacje wykupione, nigdy nienotowane w jego
+ * przebiegu — np. BST0728). Cała reszta pliku (indeks ISIN, findBond*, isBondInstrument)
+ * operuje na tym scalonym `BOND_MAP`. Patrz #167.
+ */
+export const BOND_MAP: Record<string, BondMapEntry> = { ...GENERATED_BOND_MAP, ...BOND_OVERRIDES };
 
 /**
  * Obligacje skarbowe (Skarb Państwa) i gwarantowane przez SP (BGK: FPC, IDS) notowane
