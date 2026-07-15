@@ -24,6 +24,7 @@ import {
 } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
 import { fetchBiznesradarPrice } from './biznesradar.js';
+import { fetchStockwatchBondPrice } from './stockwatch-bonds.js';
 import {
   detectSplits,
   rescaleHistoricalPrices,
@@ -667,10 +668,12 @@ export async function computeOpenPositions(
         (await fetchBiznesradarPrice(entry.ticker)) ?? (await fetchStooqPrice(entry.ticker));
       previousClose = await fetchStooqPreviousClose(entry.ticker);
     } else if (entry.exchange === 'CATALYST') {
-      // Catalyst: Stooq (biznesradar nie kwotuje obligacji — 404; Yahoo też nie).
-      // Przy martwym live Stooqa pozycja spada na ostatnią cenę tx (priceManual).
-      currentPrice = await fetchStooqPrice(entry.ticker);
-      previousClose = await fetchStooqPreviousClose(entry.ticker);
+      // Catalyst: stockwatch (zbiorcze tabele sektorowe, kurs w % nominału,
+      // kurs odniesienia = previousClose), Stooq zapas — biznesradar nie
+      // kwotuje obligacji (404), Yahoo też nie.
+      const sw = await fetchStockwatchBondPrice(entry.ticker);
+      currentPrice = sw?.price ?? (await fetchStooqPrice(entry.ticker));
+      previousClose = sw?.referencePrice ?? (await fetchStooqPreviousClose(entry.ticker));
     } else {
       // GPW (.WA) + foreign: Yahoo (to preserve Stooq daily quota)
       const yp = await fetchYahooPrice(entry.ticker);

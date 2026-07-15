@@ -86,7 +86,7 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
 ### Ceny bieżące (live)
 - **GPW (akcje .WA)**: Yahoo Finance
 - **NewConnect (NC)**: biznesradar.pl (główne źródło, `biznesradar.ts`, kurs opóźniony ~15 min, parser `q_ch_act`, `/notowania/<ticker>` z redirectem) → Stooq (zapas). Yahoo nie listuje NC. Powód zmiany: endpoint CSV Stooqa `/q/l/` padł ~03.2026 (zwraca „lokalizacja nie istnieje" globalnie). Kolejność OBOWIĄZUJE w obu ścieżkach: silnik pozycji (`portfolio-engine.ts`) i `/api/prices/live`
-- **Obligacje Catalyst (exchange `CATALYST`)**: Stooq (jedyne źródło; biznesradar NIE kwotuje obligacji — 404; kurs w % nominału — silnik mnoży przez nominał z `bond-map`); przy martwym live Stooqa pozycja spada na ostatnią cenę tx (`priceManual`)
+- **Obligacje Catalyst (exchange `CATALYST`)**: stockwatch.pl (`stockwatch-bonds.ts` — JEDEN lazy fetch 5 tabel sektorowych `/obligacje/notowania/sektor/…` → mapa ticker→{kurs, kurs odniesienia=previousClose, data transakcji}, TTL 1h, circuit breaker) → Stooq (zapas). Kurs w % nominału — silnik mnoży przez nominał z `bond-map`. biznesradar NIE kwotuje obligacji (404), Yahoo też nie; seria spoza tabel (np. wykupiona) → fallback ostatnia cena tx (`priceManual`). Kolejność OBOWIĄZUJE w obu ścieżkach: silnik pozycji i `/api/prices/live`
 - **Zagraniczne (NYSE, NASDAQ, XETRA, TSX)**: Yahoo Finance
 - **CFD (surowce, indeksy, forex, krypto)**: Yahoo Finance (statyczna mapa instrument → ticker w `shared/src/cfd-ticker-map.ts`, np. GOLD → GC=F)
 - **FX (kursy walut)**: Yahoo Finance (USDPLN=X, EURPLN=X, CADPLN=X, GBPPLN=X)
