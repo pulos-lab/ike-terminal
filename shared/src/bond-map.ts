@@ -13,6 +13,36 @@ export type { BondMapEntry };
 export const BOND_MAP: Record<string, BondMapEntry> = { ...GENERATED_BOND_MAP, ...BOND_OVERRIDES };
 
 /**
+ * Rejestr obligacji dogranych w RUNTIME (Etap 2 #167) — dodatkowa warstwa poza statycznym
+ * `BOND_MAP`. Serwer zasila go z tabeli `bonds` w `price_history.db` (przy starcie) oraz
+ * on-demand z detalu obligacje.pl podczas importu, gdy trafi na obligację spoza mapy.
+ * Klient nigdy tu nie pisze (klasyfikacja importu jest wyłącznie serwerowa). Statyczna mapa
+ * ma PIERWSZEŃSTWO; rejestr tylko WYPEŁNIA luki (brakujące/wykupione serie).
+ */
+const extraBonds = new Map<string, BondMapEntry>(); // ticker (upper) → entry
+const extraBondsByIsin = new Map<string, BondMapEntry>(); // isin (upper) → entry
+
+export function registerExtraBonds(entries: BondMapEntry[]): void {
+  for (const e of entries) {
+    const ticker = e.ticker?.toUpperCase().trim();
+    if (!ticker) continue;
+    extraBonds.set(ticker, e);
+    if (e.isin) extraBondsByIsin.set(e.isin.toUpperCase().trim(), e);
+  }
+}
+
+/** Migawka warstwy runtime — do diagnostyki i testów. */
+export function getRegisteredExtraBonds(): BondMapEntry[] {
+  return [...extraBonds.values()];
+}
+
+/** Wyczyść warstwę runtime (re-seed / izolacja testów). */
+export function clearExtraBonds(): void {
+  extraBonds.clear();
+  extraBondsByIsin.clear();
+}
+
+/**
  * Obligacje skarbowe (Skarb Państwa) i gwarantowane przez SP (BGK: FPC, IDS) notowane
  * na Catalyst — zamknięta lista prefiksów serii + 4 cyfry MMRR (np. DS1030, WZ1131,
  * FPC0733). Regex celowo ścisły: korporacyjne (np. KGH0629) NIE są łapane regexem,
@@ -41,11 +71,13 @@ function getIsinIndex(): Map<string, BondMapEntry> {
 }
 
 export function findBondByTicker(ticker: string): BondMapEntry | null {
-  return BOND_MAP[ticker.toUpperCase().trim()] ?? null;
+  const t = ticker.toUpperCase().trim();
+  return BOND_MAP[t] ?? extraBonds.get(t) ?? null;
 }
 
 export function findBondByIsin(isin: string): BondMapEntry | null {
-  return getIsinIndex().get(isin.toUpperCase().trim()) ?? null;
+  const i = isin.toUpperCase().trim();
+  return getIsinIndex().get(i) ?? extraBondsByIsin.get(i) ?? null;
 }
 
 /**
@@ -100,9 +132,14 @@ export function findBondByName(name: string): BondMapEntry | null {
 export function isBondInstrument(paperName: string, isin?: string): boolean {
   const ticker = (paperName || '').toUpperCase().trim();
   if (ticker && BOND_MAP[ticker]) return true;
+  if (ticker && extraBonds.has(ticker)) return true;
   if (TREASURY_BOND_RE.test(ticker)) return true;
-  if (isin && getIsinIndex().has(isin.toUpperCase().trim())) return true;
-  if (isin && TREASURY_ISIN_RE.test(isin.toUpperCase().trim())) return true;
+  if (isin) {
+    const i = isin.toUpperCase().trim();
+    if (getIsinIndex().has(i)) return true;
+    if (extraBondsByIsin.has(i)) return true;
+    if (TREASURY_ISIN_RE.test(i)) return true;
+  }
   return false;
 }
 

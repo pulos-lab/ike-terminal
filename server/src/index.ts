@@ -24,6 +24,7 @@ import { purgeAllRawFiles } from './db/import-profiles-repo.js';
 import shareRouter from './routes/share.js';
 import publicShareRouter from './routes/public-share.js';
 import { updateBenchmarkPrices } from './services/benchmark-updater.js';
+import { getBondCatalog } from './services/bond-catalog.js';
 import { backfillTickerNamesForPortfolio } from './services/ticker-name-backfill.js';
 import { scanAllPortfolios } from './services/dividend-scanner.js';
 
@@ -301,6 +302,14 @@ setInterval(
   },
   12 * 60 * 60 * 1000,
 );
+
+// ── Katalog obligacji: wczytaj on-demand dograne serie do rejestru runtime (Etap 2 #167) ──
+try {
+  const loaded = getBondCatalog().loadStoredBondsIntoRegistry();
+  if (loaded > 0) console.log(`[bond-catalog] ${loaded} obligacji z bazy w rejestrze runtime`);
+} catch (err) {
+  console.error('[bond-catalog] load przy starcie nieudany:', err);
+}
 
 // ── Graceful shutdown ───────────────────────────────────────────────────────
 function shutdown(signal: string) {
