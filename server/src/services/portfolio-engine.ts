@@ -224,6 +224,89 @@ export async function resolveSplitEventDates(
 }
 
 /**
+ * Proaktywnie pobiera zdarzenia split z Yahoo dla spółek, których WSZYSTKIE transakcje
+ * wypadają PRZED początkiem dostępnej historii cen providera — i zwraca je jako DetectedSplit.
+ *
+ * Detekcja cenowa (detectSplits) porównuje cenę transakcji z ceną providera W DNIU
+ * TRANSAKCJI. Gdy najwcześniejsza cena providera jest późniejsza niż wszystkie zakupy
+ * (Yahoo oddaje ~5 lat historii — starsze transakcje są poza oknem), split nigdy nie
+ * zostaje wykryty, a Yahoo podaje ceny SKORYGOWANE o (późniejszy) reverse-split. Efekt:
+ * pozycja wyceniana N-krotnie za wysoko od momentu pojawienia się notowań i skok wyceny na
+ * granicy okna (realny przypadek: import DEGIRO — Churchill/Lucid 1:10, Virgin Galactic 1:20;
+ * transakcje z 2020–2021 sprzed startu serii LCID/SPCE, które zaczynają się w VII 2021).
+ *
+ * Zapytania ograniczamy DOKŁADNIE do tego przypadku (pierwsza transakcja < pierwsza cena
+ * providera), więc portfele „w oknie" nie generują ani jednego dodatkowego strzału do
+ * Yahoo — obsługuje je jak dotąd heurystyka. Ratio+datę bierzemy wprost z Yahoo
+ * (autorytatywne); ratio spoza skali splitu (np. 1,05 = dywidenda akcyjna) odrzucamy.
+ */
+export async function fetchSplitsForHeldTickers(
+  transactions: Transaction[],
+  tickerMap: Map<string, TickerMapEntry>,
+  historicalPrices: Map<string, Map<string, number>>,
+  opts: {
+    skipIsins?: Set<string>;
+    skipTickers?: Set<string>;
+    fetchEvents?: (
+      ticker: string,
+      startDate: string,
+    ) => Promise<Array<{ date: string; ratio: number }>>;
+  } = {},
+): Promise<DetectedSplit[]> {
+  const fetchEvents = opts.fetchEvents ?? ((t, s) => fetchYahooSplitEvents(t, s));
+
+  // Najwcześniejsza transakcja per ISIN — dolne ograniczenie okna pobierania eventów.
+  const firstTx = new Map<string, { date: string; price: number }>();
+  for (const tx of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
+    if (tx.category === 'bond' || tx.category === 'option') continue;
+    if (!firstTx.has(tx.isin)) {
+      firstTx.set(tx.isin, { date: tx.date.split('T')[0], price: tx.price });
+    }
+  }
+
+  const results: DetectedSplit[] = [];
+  await Promise.all(
+    [...firstTx.entries()].map(async ([isin, first]) => {
+      if (opts.skipIsins?.has(isin)) return;
+      const entry = tickerMap.get(isin);
+      if (!entry) return;
+      // NewConnect / Catalyst nie są notowane na Yahoo — brak eventów.
+      if (entry.exchange === 'NC' || entry.exchange === 'CATALYST') return;
+      if (opts.skipTickers?.has(entry.ticker)) return;
+
+      // Warunek błędu: pierwsza transakcja LEŻY PRZED najwcześniejszą ceną providera.
+      // Gdy provider ma cenę na/po dacie zakupu — detekcja cenowa i tak zadziała, nie
+      // dublujemy zapytań. Brak historii providera w ogóle = brak zawyżonej ceny (pozycja
+      // forward-fill po cenie tx), więc też pomijamy.
+      const priceMap = historicalPrices.get(entry.ticker);
+      if (!priceMap || priceMap.size === 0) return;
+      let firstProviderDate: string | undefined;
+      for (const d of priceMap.keys()) {
+        if (firstProviderDate === undefined || d < firstProviderDate) firstProviderDate = d;
+      }
+      if (firstProviderDate === undefined || first.date >= firstProviderDate) return;
+
+      const events = await fetchEvents(entry.ticker, first.date);
+      for (const e of events) {
+        // Ufamy Yahoo, ale ratio spoza skali splitu (np. 1,05 = dywidenda akcyjna / drobna
+        // korekta) NIE może przeskalowywać ilości pozycji.
+        if (!isPlausibleSplitRatio(e.ratio)) continue;
+        results.push({
+          ticker: entry.ticker,
+          isin,
+          date: e.date,
+          ratio: e.ratio,
+          txPrice: first.price > 0 ? first.price : 0,
+          providerPrice: priceMap.get(firstProviderDate) ?? 0,
+          source: 'auto',
+        });
+      }
+    }),
+  );
+  return results;
+}
+
+/**
  * Lightweight split detection for open positions.
  *
  * Fetches one fresh historical price per ISIN directly from Yahoo (bypassing
@@ -2030,7 +2113,19 @@ export async function computePortfolioHistory(
     'price',
   );
   const newlyDetected = await resolveSplitEventDates(heuristicSplits, tickerMap);
-  const allSplits = mergeDetectedSplits(splits, newlyDetected);
+  // Uzupełnienie detekcji cenowej: spółek z transakcjami sprzed startu historii providera
+  // nie da się złapać porównaniem cen (brak ceny na dacie tx), a Yahoo zwraca ceny
+  // skorygowane o późniejszy reverse-split → skok wyceny na granicy okna. Dociągamy
+  // zdarzenia split z Yahoo wprost dla tych pozycji (patrz fetchSplitsForHeldTickers).
+  const preWindowSplits = filterDetectedSplitsForSpinOffs(
+    await fetchSplitsForHeldTickers(transactions, tickerMap, historicalPrices, {
+      skipIsins: savedSplitIsins,
+      skipTickers: new Set(newlyDetected.map((s) => s.ticker)),
+    }),
+    historySpinOffGuard,
+    'price',
+  );
+  const allSplits = mergeDetectedSplits(splits, [...newlyDetected, ...preWindowSplits]);
 
   // Adjust transactions for splits: convert pre-split transactions to post-split scale
   // (quantity * ratio, price / ratio). Provider prices are already split-adjusted, so
