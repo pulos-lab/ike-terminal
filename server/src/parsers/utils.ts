@@ -68,6 +68,15 @@ export function roundFxRate(rate: number): number {
 /**
  * Total transakcji wg konwencji K/S: kupno powiększa wartość o prowizję,
  * sprzedaż ją pomniejsza. Zaokrąglone do 2 miejsc (waluta).
+ *
+ * Konwencja prowizji per broker (celowa dywergencja — nowy parser musi wybrać
+ * świadomie jedną z trzech ścieżek):
+ * - mBank / IBKR / silnik generic: przeliczają total TĄ funkcją z wartości
+ *   i prowizji (broker podaje składniki osobno);
+ * - Bossa: ufa kolumnie CSV „po prowizji" wprost, bez przeliczania (kwota
+ *   rozliczenia brokera jest źródłem prawdy);
+ * - DEGIRO: commission=0 i total=value — opłaty księgowane osobno w EUR
+ *   (wiersze „DEGIRO Opłata Transakcyjna" w Account.csv).
  */
 export function computeTotal(side: 'K' | 'S', value: number, commission: number): number {
   return side === 'K' ? roundTo2(value + commission) : roundTo2(value - commission);
