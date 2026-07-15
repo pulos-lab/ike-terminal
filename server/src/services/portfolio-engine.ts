@@ -36,6 +36,7 @@ import {
   filterDetectedSplitsForSpinOffs,
   type SpinOffGuardEvent,
 } from './spin-off-transform.js';
+import { expireOptions, resolveOptionExpirySettlements } from './option-expiry-transform.js';
 import { getDb } from '../db/connection.js';
 import {
   BENCHMARKS,
@@ -437,6 +438,18 @@ export async function computeOpenPositions(
     skipSplitDetection?: boolean;
     /** Metadane kontraktów opcyjnych (mnożnik, expiry) — z getOptionContractsMap(pid). */
     optionContracts?: Map<string, OptionContract>;
+    /**
+     * Ceny rozliczenia (intrinsic) opcji po terminie — z resolveOptionExpirySettlements.
+     * Gdy pominięte, funkcja rozwiązuje je sama (są cache'owane). Wstrzykiwane przez callery,
+     * które i tak liczą je raz dla wielu obliczeń (spójnie z computeClosedTrades).
+     */
+    optionSettlementPrices?: Map<string, number>;
+    /**
+     * Dzień odniesienia (YYYY-MM-DD) dla wygaśnięcia opcji (expiryPassed + auto-domknięcie).
+     * Domyślnie „dziś". Golden/testy point-in-time podają datę wyciągu, żeby odtworzyć jego
+     * sekcję Open Positions deterministycznie.
+     */
+    asOf?: string;
   },
   spinOffs: AppliedSpinOff[] = [],
 ): Promise<{ positions: Position[]; totalValuePln: number; detectedSplits: DetectedSplit[] }> {
@@ -487,9 +500,21 @@ export async function computeOpenPositions(
     allSplits,
   );
 
+  // Auto-domknięcie opcji po terminie (bez wiersza zamykającego z brokera) — syntetyczne
+  // zamknięcie po wartości wewnętrznej w dniu wygaśnięcia, żeby nie wisiały jako otwarte.
+  const optionContracts = opts?.optionContracts;
+  const today = opts?.asOf ?? new Date().toISOString().slice(0, 10);
+  let expiredTxs = adjustedTxs;
+  if (optionContracts) {
+    const settlementPrices =
+      opts?.optionSettlementPrices ??
+      (await resolveOptionExpirySettlements(adjustedTxs, optionContracts, today));
+    expiredTxs = expireOptions(adjustedTxs, optionContracts, today, settlementPrices);
+  }
+
   // Group by ISIN
   const byIsin = new Map<string, Transaction[]>();
-  for (const tx of adjustedTxs) {
+  for (const tx of expiredTxs) {
     const arr = byIsin.get(tx.isin) || [];
     arr.push(tx);
     byIsin.set(tx.isin, arr);
@@ -618,9 +643,7 @@ export async function computeOpenPositions(
               multiplier: optionContract.multiplier,
             }
           : undefined,
-        expiryPassed: optionContract
-          ? optionContract.expiry < new Date().toISOString().slice(0, 10)
-          : undefined,
+        expiryPassed: optionContract ? optionContract.expiry < today : undefined,
         buyLots: effLots.map((lot) => ({
           date: lot.date,
           quantity: lot.quantity,
@@ -772,9 +795,7 @@ export async function computeOpenPositions(
             multiplier: optionContract.multiplier,
           }
         : undefined,
-      expiryPassed: optionContract
-        ? optionContract.expiry < new Date().toISOString().slice(0, 10)
-        : undefined,
+      expiryPassed: optionContract ? optionContract.expiry < today : undefined,
       buyLots: effLots.map((lot) => {
         // Convert lot price to the paper's native currency for consistent display
         const lotFx = fxRates[lot.currency] || 1;
@@ -818,6 +839,8 @@ export function computeClosedTrades(
   splits: DetectedSplit[] = [],
   spinOffs: AppliedSpinOff[] = [],
   optionContracts?: Map<string, OptionContract>,
+  /** Ceny rozliczenia (intrinsic) opcji po terminie — z resolveOptionExpirySettlements; brak → 0. */
+  optionSettlementPrices?: Map<string, number>,
 ): ClosedTrade[] {
   // Adjust transactions for stock splits (quantity/price correction),
   // then apply spin-offs — sprzedaż dziecka musi FIFO-wać z wstrzykniętym kosztem
@@ -827,9 +850,20 @@ export function computeClosedTrades(
     splits,
   );
 
+  // Auto-domknięcie opcji po terminie — syntetyczny round-trip z realnym P/L (jak w
+  // computeOpenPositions). Guard w expireOptions pilnuje, by realny Ep/Ex/A nie dublował się.
+  const withExpiry = optionContracts
+    ? expireOptions(
+        adjustedTxs,
+        optionContracts,
+        new Date().toISOString().slice(0, 10),
+        optionSettlementPrices,
+      )
+    : adjustedTxs;
+
   // Group transactions by ISIN (or ISIN + positionId for CFD to prevent mixing overlapping positions)
   const byGroup = new Map<string, Transaction[]>();
-  for (const tx of adjustedTxs) {
+  for (const tx of withExpiry) {
     const groupKey = tx.cfdPositionId ? `${tx.isin}|cfd|${tx.cfdPositionId}` : tx.isin;
     const arr = byGroup.get(groupKey) || [];
     arr.push(tx);

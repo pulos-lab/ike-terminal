@@ -166,15 +166,19 @@ function DteCell({ expiry }: { expiry: string }) {
   return <>{dte} dni</>;
 }
 
+// Safety-net: od wprowadzenia auto-domknięcia opcji po terminie (silnik zamyka wygasłe
+// pozycje po wartości wewnętrznej) `expiryPassed` na OTWARTEJ pozycji jest teraz RZADKI —
+// głównie gdy brak metadanych kontraktu (expiry). Ostrzeżenie zostaje jako sygnał tych
+// przypadków brzegowych; nie usuwamy.
 const ExpiryWarning = () => (
   <Tooltip>
     <TooltipTrigger asChild>
       <AlertTriangle className="h-4 w-4 text-amber-500 inline ml-1 cursor-help" />
     </TooltipTrigger>
     <TooltipContent side="right" className="max-w-[280px]">
-      Opcja po dacie wygaśnięcia, a pozycja wciąż otwarta — prawdopodobnie brakuje wiersza
-      wygaśnięcia/wykonania w zaimportowanych wyciągach. Zaimportuj nowszy Activity Statement albo
-      dodaj transakcję zamykającą ręcznie.
+      Opcja po dacie wygaśnięcia, a pozycja wciąż otwarta — prawdopodobnie brakuje metadanych
+      kontraktu (data wygaśnięcia) albo wiersza wygaśnięcia/wykonania. Zaimportuj nowszy Activity
+      Statement albo dodaj transakcję zamykającą ręcznie.
     </TooltipContent>
   </Tooltip>
 );

@@ -74,6 +74,27 @@ const optionContracts = new Map([[OPT_ISIN, OPT_CONTRACT]]);
 const tickerMap = new Map([[OPT_ISIN, OPT_ENTRY]]);
 const engineOpts = { skipSplitDetection: true, optionContracts };
 
+// Wariant z PRZYSZŁĄ datą wygaśnięcia — do testów WYCENY otwartej pozycji (opcja po terminie
+// jest teraz auto-domykana, więc pozycja pozostaje otwarta tylko gdy termin jeszcze nie minął).
+const OPT_ISIN_FUT = 'OPT:DKNG271217P00060000';
+const OPT_CONTRACT_FUT: OptionContract = {
+  ...OPT_CONTRACT,
+  isin: OPT_ISIN_FUT,
+  occTicker: 'DKNG271217P00060000',
+  expiry: '2027-12-17',
+};
+const OPT_ENTRY_FUT: TickerMapEntry = {
+  ...OPT_ENTRY,
+  isin: OPT_ISIN_FUT,
+  ticker: 'DKNG271217P00060000',
+  name: 'DKNG 17DEC27 60.0 P',
+};
+const optionContractsFut = new Map([[OPT_ISIN_FUT, OPT_CONTRACT_FUT]]);
+const tickerMapFut = new Map([[OPT_ISIN_FUT, OPT_ENTRY_FUT]]);
+const engineOptsFut = { skipSplitDetection: true, optionContracts: optionContractsFut };
+const optTxFut = (o: Partial<Transaction> = {}): Transaction =>
+  optTx({ isin: OPT_ISIN_FUT, paperName: 'DKNG 17DEC27 60.0 P', ...o });
+
 describe('computeOpenPositions — otwarte pozycje krótkie opcji', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -83,11 +104,11 @@ describe('computeOpenPositions — otwarte pozycje krótkie opcji', () => {
   it('sell-to-open bez pokrycia → pozycja z ujemną ilością i ujemną wartością (zobowiązanie)', async () => {
     (yahoo.fetchYahooPrice as any).mockResolvedValue({ price: 10.0, previousClose: 11.0 });
     const { positions, totalValuePln } = await computeOpenPositions(
-      [optTx()],
-      tickerMap,
+      [optTxFut()],
+      tickerMapFut,
       [],
       undefined,
-      engineOpts,
+      engineOptsFut,
     );
     expect(positions).toHaveLength(1);
     const pos = positions[0];
@@ -103,7 +124,7 @@ describe('computeOpenPositions — otwarte pozycje krótkie opcji', () => {
     // Średnia cena otwarcia = premia per akcja
     expect(pos.avgBuyPrice).toBeCloseTo(16.32, 2);
     expect(pos.optionMeta).toMatchObject({ underlying: 'DKNG', strike: 60, optionType: 'P' });
-    expect(pos.expiryPassed).toBe(true); // 2022-05-20 < dziś
+    expect(pos.expiryPassed).toBeFalsy(); // 2027-12-17 > dziś → otwarta, nie auto-domknięta
     // Ujemna wartość pomniejsza total
     expect(totalValuePln).toBeCloseTo(-4000, 2);
   });
@@ -111,11 +132,11 @@ describe('computeOpenPositions — otwarte pozycje krótkie opcji', () => {
   it('long opcja: wartość i koszt z mnożnikiem ×100', async () => {
     (yahoo.fetchYahooPrice as any).mockResolvedValue({ price: 8.0, previousClose: 8.0 });
     const { positions } = await computeOpenPositions(
-      [optTx({ side: 'K', price: 6.32, value: 632, total: 632.67, commission: 0.67 })],
-      tickerMap,
+      [optTxFut({ side: 'K', price: 6.32, value: 632, total: 632.67, commission: 0.67 })],
+      tickerMapFut,
       [],
       undefined,
-      engineOpts,
+      engineOptsFut,
     );
     const pos = positions[0];
     expect(pos.shares).toBe(1);
@@ -140,9 +161,9 @@ describe('computeOpenPositions — otwarte pozycje krótkie opcji', () => {
   });
 
   it('fallback bez ticker_map: wycena po ostatniej transakcji, short nadal ujemny', async () => {
-    const { positions } = await computeOpenPositions([optTx()], new Map(), [], undefined, {
+    const { positions } = await computeOpenPositions([optTxFut()], new Map(), [], undefined, {
       skipSplitDetection: true,
-      optionContracts,
+      optionContracts: optionContractsFut,
     });
     const pos = positions[0];
     expect(pos.priceManual).toBe(true);
@@ -157,11 +178,11 @@ describe('computeOpenPositions — otwarte pozycje krótkie opcji', () => {
       t === 'DKNG' ? { price: 45, previousClose: 46 } : null,
     );
     const { positions } = await computeOpenPositions(
-      [optTx()],
-      tickerMap,
+      [optTxFut()],
+      tickerMapFut,
       [],
       undefined,
-      engineOpts,
+      engineOptsFut,
     );
     const pos = positions[0];
     // Put 60: intrinsic = max(60 − 45, 0) = 15 → wartość -1 × 15 × 100 = -1500 USD = -6000 PLN
