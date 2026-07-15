@@ -23,6 +23,7 @@ import {
   fetchYahooSplitEvents,
 } from './yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
+import { fetchBiznesradarPrice } from './biznesradar.js';
 import {
   detectSplits,
   rescaleHistoricalPrices,
@@ -659,8 +660,15 @@ export async function computeOpenPositions(
     let currentPrice: number | null = null;
     let previousClose: number | null = null;
     let priceManual = false;
-    if (entry.exchange === 'NC' || entry.exchange === 'CATALYST') {
-      // NewConnect + Catalyst: Stooq only (Yahoo nie listuje NC ani obligacji Catalyst)
+    if (entry.exchange === 'NC') {
+      // NC: biznesradar główne źródło (Stooq live CSV padł ~03.2026), Stooq zapas —
+      // ta sama kolejność co /api/prices/live. Yahoo nie listuje NC.
+      currentPrice =
+        (await fetchBiznesradarPrice(entry.ticker)) ?? (await fetchStooqPrice(entry.ticker));
+      previousClose = await fetchStooqPreviousClose(entry.ticker);
+    } else if (entry.exchange === 'CATALYST') {
+      // Catalyst: Stooq (biznesradar nie kwotuje obligacji — 404; Yahoo też nie).
+      // Przy martwym live Stooqa pozycja spada na ostatnią cenę tx (priceManual).
       currentPrice = await fetchStooqPrice(entry.ticker);
       previousClose = await fetchStooqPreviousClose(entry.ticker);
     } else {
@@ -696,9 +704,11 @@ export async function computeOpenPositions(
       priceManual = true;
     }
 
-    // Daily change %
+    // Daily change % — tylko dla realnej ceny live. Po fallbacku (priceManual)
+    // currentPrice = ostatnia cena tx, a previousClose bywa ze Stooq — różnica
+    // tych dwóch źródeł nie jest żadną „zmianą dzienną".
     const dailyChangePct =
-      currentPrice != null && previousClose != null && previousClose > 0
+      !priceManual && currentPrice != null && previousClose != null && previousClose > 0
         ? ((currentPrice - previousClose) / previousClose) * 100
         : null;
 

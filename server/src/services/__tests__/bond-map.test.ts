@@ -56,6 +56,20 @@ describe('bond-map lookups', () => {
   });
 });
 
+describe('bond-overrides — obligacje spoza scrapera (#167)', () => {
+  it('rozpoznaje BST0728 (wykupiona przedterminowo, nigdy nienotowana w przebiegu scrapera)', () => {
+    // Scraper listuje tylko aktualnie notowane serie → BST0728 nie ma w bond-map-data.ts.
+    // ISIN nie zaczyna się od PL0000, ticker nie pasuje do TREASURY_BOND_RE → bez ręcznej
+    // mapy isBondInstrument zwracałby false i cały cykl życia obligacji byłby nierozpoznany.
+    expect(isBondInstrument('BST0728', 'PLBEST000390')).toBe(true);
+    const bond = findBondByTicker('BST0728');
+    expect(bond?.isin).toBe('PLBEST000390');
+    expect(bond?.nominal).toBe(100);
+    expect(bond?.segment).toBe('corporate');
+    expect(findBondByIsin('PLBEST000390')?.ticker).toBe('BST0728');
+  });
+});
+
 describe('inferBondNominal', () => {
   it('inferuje 1000 zł z transakcji (kurs 98,50%, 10 szt, 9850 zł)', () => {
     expect(inferBondNominal(10, 98.5, 9850)).toBe(1000);
