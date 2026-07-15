@@ -504,20 +504,25 @@ export function PortfolioPage() {
                       <CcyChip ccy={cp.currency} />
                     </TableCell>
                     <TableCell
-                      className={`text-right tabular-nums ${cp.balance < 0 ? 'text-red-600 font-medium' : ''}`}
+                      className={`text-right tabular-nums ${cp.balance < 0 ? 'text-loss font-medium' : ''}`}
                     >
-                      {formatCurrency(cp.balance, cp.currency)}
-                      {cp.balance < 0 && (
-                        <span
-                          className="ml-1 text-[10px] text-muted-foreground/60"
-                          title="Ujemne saldo — kredyt margin u brokera"
-                        >
-                          ⚠
-                        </span>
+                      {cp.balance < 0 ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help">
+                              {formatCurrency(cp.balance, cp.currency)}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-[280px]">
+                            Ujemne saldo — kredyt (margin) u brokera.
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        formatCurrency(cp.balance, cp.currency)
                       )}
                     </TableCell>
                     <TableCell
-                      className={`text-right font-medium tabular-nums ${cp.valuePln < 0 ? 'text-red-600' : ''}`}
+                      className={`text-right font-medium tabular-nums ${cp.valuePln < 0 ? 'text-loss' : ''}`}
                     >
                       {formatPLN(cp.valuePln)}
                     </TableCell>
