@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/async-handler.js';
+import { isIsoDate, isFiniteNumber } from './validation.js';
 import { getDb } from '../db/connection.js';
 import {
   getAllTransactions,
@@ -161,6 +162,12 @@ router.post(
     const { date, ticker, amount, currency } = req.body as DividendInput;
     if (!date || !ticker || !amount || !currency) {
       return res.status(400).json({ error: 'Wymagane pola: date, ticker, amount, currency' });
+    }
+    if (!isIsoDate(date)) {
+      return res.status(400).json({ error: 'Pole date musi mieć format YYYY-MM-DD' });
+    }
+    if (!isFiniteNumber(amount)) {
+      return res.status(400).json({ error: 'Pole amount musi być skończoną liczbą' });
     }
     const id = insertOperation(
       {
@@ -554,6 +561,12 @@ router.post(
     if (!date || !amount || amount <= 0) {
       return res.status(400).json({ error: 'Wymagane pola: date, amount (> 0)' });
     }
+    if (!isIsoDate(date)) {
+      return res.status(400).json({ error: 'Pole date musi mieć format YYYY-MM-DD' });
+    }
+    if (!isFiniteNumber(amount)) {
+      return res.status(400).json({ error: 'Pole amount musi być skończoną liczbą' });
+    }
     const isWithdrawal = type === 'withdrawal';
     const id = insertOperation(
       {
@@ -676,6 +689,11 @@ router.post(
     if (!quantity || !price || quantity <= 0 || price <= 0) {
       return res.status(400).json({ error: 'Wymagane pola: quantity (>0), price (>0)' });
     }
+    if (!isFiniteNumber(quantity) || !isFiniteNumber(price)) {
+      return res
+        .status(400)
+        .json({ error: 'Pola quantity i price muszą być skończonymi liczbami' });
+    }
 
     const targetTicker = ticker?.trim() || existing.ticker || '';
     if (!targetTicker) {
@@ -715,17 +733,21 @@ router.post(
       source: 'bossa' as const,
       syntheticOrigin: `Domknięcie: ${existing.description} — ${quantity} szt @ ${price.toFixed(2)} ${existing.currency} (ręczne domknięcie przez user)`,
     };
-    const insertResult = insertTransactionsWithDedup([syntheticSell], pid);
-
     // Usuwamy operację pending tylko gdy synthetic SELL faktycznie wszedł — inaczej
     // (dedupe = duplikat) cash inflow nie ma reprezentacji w transakcjach i usunięcie
     // operacji zgubiłoby go bezpowrotnie. Operacja zostaje, user widzi info o duplikacie.
+    // Insert + delete w jednej transakcji: crash między nimi nie zostawi
+    // podwójnej reprezentacji cash inflow (SELL + operacja pending).
+    const insertResult = getDb(pid).transaction(() => {
+      const result = insertTransactionsWithDedup([syntheticSell], pid);
+      if (result.inserted > 0) {
+        // Cash inflow jest teraz reprezentowany przez synthetic SELL
+        // (przez transactionsCashFlow w engine).
+        deleteOperation(id, pid);
+      }
+      return result;
+    })();
     const operationDeleted = insertResult.inserted > 0;
-    if (operationDeleted) {
-      // Cash inflow jest teraz reprezentowany przez synthetic SELL
-      // (przez transactionsCashFlow w engine).
-      deleteOperation(id, pid);
-    }
 
     res.json({
       success: true,
@@ -1322,6 +1344,15 @@ router.post(
     if (side !== 'K' && side !== 'S') {
       return res.status(400).json({ error: 'Pole side musi być K lub S' });
     }
+    if (!isIsoDate(date)) {
+      return res.status(400).json({ error: 'Pole date musi mieć format YYYY-MM-DD' });
+    }
+    if (!isFiniteNumber(quantity) || quantity <= 0) {
+      return res.status(400).json({ error: 'Pole quantity musi być skończoną liczbą > 0' });
+    }
+    if (!isFiniteNumber(price) || price < 0) {
+      return res.status(400).json({ error: 'Pole price musi być skończoną liczbą ≥ 0' });
+    }
 
     // Opcje: kontrakt identyfikowany parametrami (underlying/strike/expiry/typ), nie tickerem.
     // Generujemy ticker OCC + pseudo-ISIN i seedujemy option_contracts + ticker_map —
@@ -1333,6 +1364,7 @@ router.post(
         !option.underlying?.trim() ||
         !option.expiry ||
         !option.strike ||
+        !Number.isFinite(option.strike) ||
         option.strike <= 0 ||
         (option.optionType !== 'C' && option.optionType !== 'P')
       ) {
@@ -1535,6 +1567,23 @@ router.put(
 
     const { date, ticker, side, quantity, price, commission, paymentCurrency, fxRate } =
       req.body as Partial<TransactionInput>;
+
+    // Guardy tylko dla pól faktycznie podanych (PUT jest częściowy).
+    if (date !== undefined && !isIsoDate(date)) {
+      return res.status(400).json({ error: 'Pole date musi mieć format YYYY-MM-DD' });
+    }
+    if (quantity !== undefined && (!isFiniteNumber(quantity) || quantity <= 0)) {
+      return res.status(400).json({ error: 'Pole quantity musi być skończoną liczbą > 0' });
+    }
+    if (price !== undefined && (!isFiniteNumber(price) || price < 0)) {
+      return res.status(400).json({ error: 'Pole price musi być skończoną liczbą ≥ 0' });
+    }
+    if (commission !== undefined && !isFiniteNumber(commission)) {
+      return res.status(400).json({ error: 'Pole commission musi być skończoną liczbą' });
+    }
+    if (fxRate !== undefined && !isFiniteNumber(fxRate)) {
+      return res.status(400).json({ error: 'Pole fxRate musi być skończoną liczbą' });
+    }
 
     const updates: Partial<import('shared').Transaction> = {};
     if (date) updates.date = date;

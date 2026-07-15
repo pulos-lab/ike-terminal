@@ -126,7 +126,25 @@ if (isProduction) {
 // ── Better Auth handler (MUST be before express.json) ───────────────────────
 app.all('/api/auth/*', toNodeHandler(auth));
 
-app.use(express.json());
+// Limit 1 MB: największy legalny JSON to bulk-delete (~10k id ≈ 90 KB);
+// pliki importu idą multipartem (multer, osobne limity 5 MB).
+app.use(express.json({ limit: '1mb' }));
+
+// ── Rate limit mutacji (POST/PUT/PATCH/DELETE na /api) ─────────────────────
+// GET-y zostają na globalnym 500/15min; auth ma własne, ciaśniejsze limitery
+// (mountowane wyżej). Multi-plikowy import = jeden multipart POST, więc
+// 300/15min nie ogranicza legalnych scenariuszy.
+app.use(
+  '/api',
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS',
+    message: { error: 'Too many write requests. Try again later.' },
+  }),
+);
 
 // ── Health check (public, no auth) ──────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
@@ -200,8 +218,16 @@ if (isProduction) {
 
 // ── Global error handler ────────────────────────────────────────────────────
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  // Honoruj status błędów middleware (np. 413 body-parsera przy limicie 1 MB)
+  // zamiast spłaszczać wszystko do 500; 4xx to błąd klienta, nie serwera.
+  const status =
+    (err as { status?: number; statusCode?: number }).status ??
+    (err as { statusCode?: number }).statusCode ??
+    500;
   console.error('Unhandled error:', err.message);
-  res.status(500).json({ error: isProduction ? 'Internal server error' : err.message });
+  res
+    .status(status)
+    .json({ error: isProduction && status >= 500 ? 'Internal server error' : err.message });
 });
 
 // ── Start server ────────────────────────────────────────────────────────────

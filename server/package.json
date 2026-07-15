@@ -34,7 +34,8 @@
     "node-cache": "^5.1.2",
     "papaparse": "^5.5.2",
     "resend": "^6.10.0",
-    "shared": "1.0.0"
+    "shared": "1.0.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
@@ -42,6 +43,7 @@
     "@types/express": "^5.0.0",
     "@types/multer": "^1.4.12",
     "@types/papaparse": "^5.3.15",
+    "domhandler": "^5.0.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^4.1.2"

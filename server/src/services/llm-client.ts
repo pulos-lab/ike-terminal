@@ -62,7 +62,16 @@ function getConfig(): LlmConfig {
     );
   }
   const baseUrl = (process.env.LLM_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
-  if (/api\.deepseek\.com/i.test(baseUrl)) {
+  // Blokada po hostname z URL, nie regexem na całym stringu: regex dawał się
+  // obejść (host w ścieżce/query nie jest hostem docelowym) i odwrotnie —
+  // fałszywie blokował URL-e jedynie WSPOMINAJĄCE deepseek.
+  let hostname: string;
+  try {
+    hostname = new URL(baseUrl).hostname.toLowerCase();
+  } catch {
+    throw new LlmUnavailableError(`LLM_BASE_URL nie jest poprawnym adresem URL: ${baseUrl}`);
+  }
+  if (hostname === 'deepseek.com' || hostname.endsWith('.deepseek.com')) {
     // Decyzja produktowa: dane klientów nie mogą iść do api.deepseek.com (Chiny).
     throw new LlmUnavailableError(
       'LLM_BASE_URL wskazuje na api.deepseek.com — niedozwolone (przetwarzanie danych ' +
