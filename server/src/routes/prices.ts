@@ -32,7 +32,12 @@ router.get(
         prices[entry.ticker] = { price, currency: entry.currency };
       } else {
         const result = await fetchYahooPrice(entry.ticker);
-        prices[entry.ticker] = result || { price: null, currency: entry.currency };
+        let price = result?.price ?? null;
+        // GPW: zapas biznesradar przy chybieniu Yahoo — jak w silniku pozycji.
+        if (price === null && (entry.exchange === 'GPW' || entry.ticker.endsWith('.WA'))) {
+          price = await fetchBiznesradarPrice(entry.ticker);
+        }
+        prices[entry.ticker] = { price, currency: result?.currency ?? entry.currency };
       }
     });
 
