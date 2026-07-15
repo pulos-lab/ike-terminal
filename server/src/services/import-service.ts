@@ -42,6 +42,7 @@ import type { TransactionTax } from '../parsers/degiro-operations.js';
 import { upsertSplits } from '../db/splits-repo.js';
 import { upsertOptionContracts } from '../db/option-contracts-repo.js';
 import { computeTotal } from '../parsers/utils.js';
+import { getBondCatalog } from './bond-catalog.js';
 import {
   insertTransactionsWithDedup,
   getAllTransactions,
@@ -228,6 +229,24 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   const parsedTxFiles: ParseResult<Transaction>[] = [];
   // Ostrzeżenia z parserów (PL) — doklejane do crossFileWarnings po jego deklaracji.
   const parserWarnings: string[] = [];
+
+  // PRE-PASS (Etap 2 #167): self-heal obligacji Catalyst spoza mapy PRZED klasyfikacją.
+  // Parsery klasyfikują synchronicznie (isBondInstrument), więc obligacje wykupione/nienotowane
+  // (nieobecne w statycznym BOND_MAP) muszą trafić do rejestru runtime zanim ruszy parse.
+  // Skanujemy surową treść po kodach Catalyst (2-4 litery + 4 cyfry) spoza mapy, dogrywamy
+  // detal z obligacje.pl i rejestrujemy. Odporne — import przechodzi mimo awarii obligacje.pl.
+  // BOND_CATALOG_ONDEMAND=off — kill-switch (m.in. hermetyczne testy importu bez sieci).
+  if (process.env.BOND_CATALOG_ONDEMAND !== 'off') {
+    try {
+      const bondScan = [
+        ...txFiles.map((f) => decodeCSVBuffer(f.buffer)),
+        ...(opsFile ? [decodeCSVBuffer(opsFile.buffer)] : []),
+      ];
+      await getBondCatalog().resolveBondCandidatesFromContent(bondScan);
+    } catch (err) {
+      console.warn('[bond-catalog] pre-pass obligacji nieudany (import kontynuowany):', err);
+    }
+  }
 
   if (txFiles.length > 0) {
     // Parsuj każdy plik osobno. Pierwszy wykryty broker dyktuje
