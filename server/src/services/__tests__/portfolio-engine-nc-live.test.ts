@@ -9,6 +9,7 @@ vi.mock('../stooq.js', () => ({
 }));
 vi.mock('../biznesradar.js', () => ({
   fetchBiznesradarPrice: vi.fn().mockResolvedValue(null),
+  fetchBiznesradarHistory: vi.fn().mockResolvedValue([]),
 }));
 vi.mock('../yahoo-finance.js', () => ({
   fetchYahooPrice: vi.fn().mockResolvedValue(null),

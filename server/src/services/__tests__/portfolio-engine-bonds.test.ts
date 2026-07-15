@@ -12,6 +12,12 @@ vi.mock('../stockwatch-bonds.js', () => ({
   // fetchStooqPrice zostają w mocy); kolejność źródeł testuje osobny przypadek.
   fetchStockwatchBondPrice: vi.fn().mockResolvedValue(null),
 }));
+vi.mock('../biznesradar.js', () => ({
+  // Historia domyślnie pusta → gałąź NC/CATALYST spada na zapas fetchStooqHistory
+  // (istniejące asercje historii ze Stooqa zostają w mocy).
+  fetchBiznesradarPrice: vi.fn().mockResolvedValue(null),
+  fetchBiznesradarHistory: vi.fn().mockResolvedValue([]),
+}));
 vi.mock('../yahoo-finance.js', () => ({
   fetchYahooPrice: vi.fn().mockResolvedValue(null),
   fetchFxRate: vi.fn().mockResolvedValue(null),

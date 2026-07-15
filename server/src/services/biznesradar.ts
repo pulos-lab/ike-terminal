@@ -1,20 +1,30 @@
 /**
- * Ceny bieżące spółek GPW/NewConnect z biznesradar.pl.
+ * Ceny bieżące i historyczne spółek GPW/NewConnect oraz obligacji Catalyst
+ * z biznesradar.pl.
  *
- * Powód: endpoint CSV Stooqa (`/q/l/`) przestał działać (~03.2026 zwraca stronę
- * „Wybrana lokalizacja nie istnieje" dla wszystkich symboli), a Yahoo nie listuje
- * NewConnect. biznesradar renderuje kurs server-side i pokrywa NC — używamy go jako
- * główne źródło cen live dla NC (Stooq zostaje jako zapas, gdyby wrócił).
+ * Powód: endpointy CSV Stooqa padły (~03.2026 live `/q/l/` = „lokalizacja nie
+ * istnieje"; ~07.2026 historyczny `/q/d/l/` za challenge anti-bot), a Yahoo nie
+ * listuje NewConnect ani obligacji Catalyst. biznesradar renderuje SERVER-SIDE
+ * i kurs bieżący, i tabelę notowań historycznych — używamy go jako główne źródło
+ * cen live NC (Stooq zapas) i główne źródło HISTORII wykresów NC + Catalyst.
  *
- * Dane są opóźnione ~15 min (akceptowalne dla widoku portfela), stąd krótki TTL.
- * Strona `/notowania/<TICKER>` robi 301 na slug nazwy (np. EXC → /notowania/EXCELLENCE),
- * więc podajemy sam ticker i pozwalamy fetchowi podążyć za przekierowaniem.
+ * Dane live są opóźnione ~15 min (akceptowalne dla widoku portfela), stąd krótki TTL.
+ * Strona `/notowania/<TICKER>` i `/notowania-historyczne/<TICKER>` robią 301 na slug
+ * nazwy (np. EXC → EXCELLENCE); podajemy sam ticker i podążamy za przekierowaniem,
+ * a slug do paginacji odczytujemy z finalnego URL.
  */
 
 import { getCached, setCached } from './price-cache.js';
 import { config } from '../config.js';
 import { createConcurrencyLimiter } from './concurrency.js';
 import { stripTickerSuffix } from './stooq-utils.js';
+import {
+  storeHistoricalPrices,
+  loadHistoricalPrices,
+  getLastCachedDate,
+  getFirstCachedDate,
+} from './history-cache.js';
+import { parseNumber } from '../parsers/utils.js';
 
 const withBrLimit = createConcurrencyLimiter(3);
 const FETCH_TIMEOUT = 12_000;
@@ -134,5 +144,129 @@ export async function fetchBiznesradarPrice(ticker: string): Promise<number | nu
       console.error(`biznesradar price fetch failed for ${ticker}:`, error);
       return null;
     }
+  });
+}
+
+// ── Historia notowań (wykresy NC + Catalyst) ────────────────────────────────
+// Strona `/notowania-historyczne/<TICKER>` renderuje SERVER-SIDE tabelę
+// `qTableFull`: Data | Otwarcie | Max | Min | Zamknięcie | Wolumen | Obrót
+// (50 sesji/stronę, data DD.MM.YYYY). Obligacje Catalyst kwotowane w % nominału
+// — spójne z konwencją silnika (bondPriceMultiplier), jak wcześniej Stooq.
+
+const HISTORY_PAGE_CAP = 40; // ~2000 sesji ≈ 8 lat; bound na jednorazowy backfill
+
+function ddmmyyyyToIso(s: string): string | null {
+  const m = s.trim().match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+/**
+ * Parser tabeli notowań historycznych (czysta funkcja, bez I/O). Nagłówek ma
+ * `<th>`, więc wiersze danych (`<td>`) filtrują się naturalnie. Zwraca (date, close)
+ * z kolumny „Zamknięcie" (indeks 4); wiersze bez daty/kursu są pomijane.
+ */
+export function parseBiznesradarHistoryTable(html: string): Array<{ date: string; close: number }> {
+  const tbl = html.match(/<table[^>]*qTableFull[^>]*>([\s\S]*?)<\/table>/);
+  if (!tbl) return [];
+  const out: Array<{ date: string; close: number }> = [];
+  for (const row of tbl[1].match(/<tr[^>]*>[\s\S]*?<\/tr>/g) ?? []) {
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) =>
+      m[1].replace(/<[^>]+>/g, '').trim(),
+    );
+    if (cells.length < 5) continue;
+    const date = ddmmyyyyToIso(cells[0]);
+    const close = parseNumber(cells[4]);
+    if (date && close > 0) out.push({ date, close });
+  }
+  return out;
+}
+
+interface HistoryPage {
+  rows: Array<{ date: string; close: number }>;
+  slug: string | null;
+  blocked: boolean;
+}
+
+async function fetchHistoryPage(url: string): Promise<HistoryPage> {
+  const response = await fetch(url, {
+    headers: { 'User-Agent': BR_USER_AGENT },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(FETCH_TIMEOUT),
+  });
+  if (response.status === 404) return { rows: [], slug: null, blocked: false };
+  const html = response.ok ? await response.text() : '';
+  if (detectBiznesradarBlock(response.status, html)) return { rows: [], slug: null, blocked: true };
+  if (!response.ok) return { rows: [], slug: null, blocked: false };
+  // Slug do paginacji z finalnego URL po 301 (np. EXC → EXCELLENCE); dla obligacji
+  // ticker = slug. Ticker+`,N` gubi numer strony w redirect, więc paginujemy slugiem.
+  const m = response.url.match(/\/notowania-historyczne\/([^,/?]+)/);
+  return { rows: parseBiznesradarHistoryTable(html), slug: m ? m[1] : null, blocked: false };
+}
+
+/**
+ * Historia dzienna (date, close) dla NC/Catalyst. Główne źródło wykresów po
+ * śmierci Stooqa. Strategia przyrostowa: cache SQLite (ten sam klucz co Stooq —
+ * `stripTickerSuffix().toLowerCase()`), a z sieci dociągamy tylko brakujące
+ * strony (str.1 = 50 najnowszych sesji) wstecz do startDate lub do ostatniej
+ * zakeszowanej daty, z twardym capem stron. Zwraca scalony wynik (cache ∪ świeże).
+ */
+export async function fetchBiznesradarHistory(
+  ticker: string,
+  startDate?: string,
+): Promise<Array<{ date: string; close: number }>> {
+  const key = stripTickerSuffix(ticker).toLowerCase();
+  if (!key) return [];
+
+  const cached = loadHistoricalPrices(key, startDate);
+  const lastCached = getLastCachedDate(key);
+  const firstCached = getFirstCachedDate(key);
+  const today = new Date().toISOString().split('T')[0];
+
+  const cacheCoversStart = !startDate || (firstCached != null && firstCached <= startDate);
+  const daysDiff = lastCached
+    ? Math.floor((new Date(today).getTime() - new Date(lastCached).getTime()) / 86_400_000)
+    : Infinity;
+  // Cache świeży i pokrywa żądany początek → bez sieci.
+  if (cached.length > 10 && daysDiff <= 3 && cacheCoversStart) return cached;
+
+  // Bezpiecznik otwarty — oddaj co mamy, nie ruszaj sieci.
+  if (Date.now() < blockedUntil) return cached;
+
+  const lowerBound = startDate ?? '2000-01-01';
+
+  return withBrLimit(async () => {
+    const fresh: Array<{ date: string; close: number }> = [];
+    let slug = stripTickerSuffix(ticker).toUpperCase(); // str.1 tickerem (podąża za 301)
+    for (let page = 1; page <= HISTORY_PAGE_CAP; page++) {
+      const base = `https://www.biznesradar.pl/notowania-historyczne/${encodeURIComponent(slug)}`;
+      const {
+        rows,
+        slug: resolvedSlug,
+        blocked,
+      } = await fetchHistoryPage(page === 1 ? base : `${base},${page}`);
+      if (blocked) {
+        registerBlock();
+        break;
+      }
+      if (page === 1 && resolvedSlug) slug = resolvedSlug; // slug do dalszej paginacji
+      if (rows.length === 0) break;
+      fresh.push(...rows);
+      const oldest = rows.reduce((min, r) => (r.date < min ? r.date : min), rows[0].date);
+      // Stop: sięgnęliśmy żądanego początku ALBO dobiliśmy do tego, co już w cache.
+      if (oldest <= lowerBound || (lastCached && oldest <= lastCached)) break;
+    }
+
+    if (fresh.length > 0) {
+      registerSuccess();
+      storeHistoricalPrices(key, fresh, 'biznesradar');
+    }
+
+    const merged = new Map<string, number>();
+    for (const d of cached) merged.set(d.date, d.close);
+    for (const d of fresh) merged.set(d.date, d.close);
+    const out = [...merged.entries()]
+      .map(([date, close]) => ({ date, close }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return startDate ? out.filter((d) => d.date >= startDate) : out;
   });
 }
