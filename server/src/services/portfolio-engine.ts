@@ -2141,7 +2141,7 @@ export async function computePortfolioHistory(
 
   // Compute daily values
   const history: PortfolioHistoryPoint[] = [];
-  let firstDepositSeen = false;
+  let firstActivitySeen = false;
   const cashByCurrency = new Map<string, number>(); // currency -> balance
   let investedCumulative = 0;
   let totalDeposited = 0; // sum of all deposits (always positive, for MWR base)
@@ -2183,12 +2183,17 @@ export async function computePortfolioHistory(
       }
     }
 
-    // Track first deposit (any currency) for chart start guard
-    const hadDepositToday = dailyDepositByCur.has(date);
-    if (hadDepositToday) firstDepositSeen = true;
+    // Track first portfolio activity — a deposit OR an opening trade. Bramkowanie tylko
+    // na wpłatach ucinało wykres portfeli, w których pierwsza pozycja (kupno albo
+    // przeniesienie papierów in-kind) wyprzedza pierwszą zaksięgowaną wpłatę gotówki
+    // (#165): wcześniejsze dni wypadały z `history`, więc oś startowała za późno. Saldo
+    // i pozycje aktualizujemy WYŻEJ (przed tym guardem), więc przesunięcie startu nie
+    // zmienia stanu skumulowanego — wpływa tylko na to, które dni trafiają do serii.
+    const hadActivityToday = dailyDepositByCur.has(date) || changes !== undefined;
+    if (hadActivityToday) firstActivitySeen = true;
 
-    // Skip days before first deposit (no money in account yet)
-    if (!firstDepositSeen) continue;
+    // Skip leading days before the portfolio has any activity (no money/positions yet).
+    if (!firstActivitySeen) continue;
 
     // Get FX rates for the day. Pierwszy krok: fetch wszystkie cur→PLN rates z
     // Yahoo (standardowa ścieżka). Potem konwertujemy via PLN do baseCurrency:
