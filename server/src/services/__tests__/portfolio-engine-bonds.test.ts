@@ -7,6 +7,11 @@ vi.mock('../stooq.js', () => ({
   fetchStooqPreviousClose: vi.fn().mockResolvedValue(null),
   fetchStooqHistory: vi.fn().mockResolvedValue([]),
 }));
+vi.mock('../stockwatch-bonds.js', () => ({
+  // Domyślnie null → gałąź CATALYST spada na zapas Stooq (istniejące asercje
+  // fetchStooqPrice zostają w mocy); kolejność źródeł testuje osobny przypadek.
+  fetchStockwatchBondPrice: vi.fn().mockResolvedValue(null),
+}));
 vi.mock('../yahoo-finance.js', () => ({
   fetchYahooPrice: vi.fn().mockResolvedValue(null),
   fetchFxRate: vi.fn().mockResolvedValue(null),
@@ -21,6 +26,7 @@ import {
   computePortfolioHistory,
 } from '../portfolio-engine.js';
 import * as stooq from '../stooq.js';
+import * as stockwatchBonds from '../stockwatch-bonds.js';
 
 function bondTx(overrides: Partial<Transaction> = {}): Transaction {
   return {
@@ -88,6 +94,26 @@ describe('computeOpenPositions — obligacje', () => {
     expect(positions).toHaveLength(1);
     expect(positions[0].currentValuePln).toBeCloseTo(9850);
     expect(positions[0].priceManual).toBe(true);
+  });
+
+  it('stockwatch-first: kurs + previousClose z tabeli, Stooq nie jest wołany', async () => {
+    // mockResolvedValueOnce — jednorazowo, żeby nie przeciekło do innych testów
+    (stockwatchBonds.fetchStockwatchBondPrice as any).mockResolvedValueOnce({
+      price: 99.2,
+      referencePrice: 98.9,
+      lastTradeDate: '2026-07-15',
+    });
+    const tickerMap = new Map([[DS1030_ENTRY.isin, DS1030_ENTRY]]);
+
+    const { positions } = await computeOpenPositions([bondTx()], tickerMap, [], undefined, {
+      skipSplitDetection: true,
+    });
+
+    expect(positions[0].currentPrice).toBe(99.2);
+    expect(positions[0].priceManual).toBeUndefined();
+    expect(positions[0].dailyChangePct).toBeCloseTo(((99.2 - 98.9) / 98.9) * 100, 6);
+    expect(stooq.fetchStooqPrice).not.toHaveBeenCalled();
+    expect(stooq.fetchStooqPreviousClose).not.toHaveBeenCalled();
   });
 });
 

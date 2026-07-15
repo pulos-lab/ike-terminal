@@ -20,6 +20,7 @@ export const config = {
     priceTtl: 60 * 60, // 1h — live prices (was 15min)
     stooqLiveTtl: 4 * 60 * 60, // 4h — Stooq NewConnect (preserve daily quota)
     biznesradarLiveTtl: 15 * 60, // 15min — biznesradar NC (dane i tak opóźnione ~15min)
+    stockwatchBondsTtl: 60 * 60, // 1h — zbiorcza mapa notowań Catalyst (obligacje handlują rzadko)
     historyTtl: 12 * 60 * 60, // 12h — historical data
   },
 };
