@@ -108,6 +108,8 @@ export async function fetchDividendCalendar(ticker: string): Promise<DividendCal
 export interface AssetProfile {
   sector: string | null;
   industry: string | null;
+  /** Kraj siedziby (EN, np. "United States"); null dla ETF-ów/futures. */
+  country: string | null;
 }
 
 /**
@@ -119,7 +121,8 @@ export interface AssetProfile {
  * Cache: 7 dni — sektor/industry nie zmieniają się często.
  */
 export async function fetchAssetProfile(ticker: string): Promise<AssetProfile | null> {
-  const cacheKey = `yahoo_profile_${ticker}`;
+  // v2: + country — bump klucza unieważnia wpisy z czasów bez tego pola
+  const cacheKey = `yahoo_profile_v2_${ticker}`;
   const cached = getCached<AssetProfile>(cacheKey);
   if (cached) return cached;
 
@@ -135,6 +138,7 @@ export async function fetchAssetProfile(ticker: string): Promise<AssetProfile | 
     const profile: AssetProfile = {
       sector: ap?.sector || fp?.categoryName || null,
       industry: ap?.industry || null,
+      country: ap?.country || null,
     };
 
     // Cache for 7 days

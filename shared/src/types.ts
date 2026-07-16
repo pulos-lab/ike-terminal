@@ -230,6 +230,8 @@ export interface Position {
   exchange?: string;
   sector?: string;
   supersector?: string;
+  /** Kraj siedziby z ticker_map (EN, np. "United States") — patrz country-region-map. */
+  country?: string;
   dailyChangePct: number | null;
   category?: InstrumentCategory;
   buyLots?: OpenBuyLot[];
@@ -510,6 +512,9 @@ export interface TickerMapEntry {
   priceSource: 'yahoo' | 'stooq' | 'auto';
   sector?: string;
   supersector?: string;
+  /** Kraj siedziby spółki (kanoniczna angielska nazwa z Yahoo assetProfile.country,
+   *  np. "United States"; GPW/NC/Catalyst → "Poland"). Źródło wykresu „Regiony". */
+  country?: string;
 }
 
 // ============ Stock Split Types ============

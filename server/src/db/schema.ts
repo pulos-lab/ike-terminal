@@ -53,7 +53,8 @@ export function initSchema(db: Database.Database): void {
       currency TEXT DEFAULT 'PLN',
       price_source TEXT DEFAULT 'auto',
       sector TEXT,
-      supersector TEXT
+      supersector TEXT,
+      country TEXT
     );
 
     CREATE TABLE IF NOT EXISTS manual_positions (
@@ -191,6 +192,9 @@ export function initSchema(db: Database.Database): void {
   }
   if (!tmColumns.some((c: any) => c.name === 'supersector')) {
     db.exec('ALTER TABLE ticker_map ADD COLUMN supersector TEXT');
+  }
+  if (!tmColumns.some((c: any) => c.name === 'country')) {
+    db.exec('ALTER TABLE ticker_map ADD COLUMN country TEXT');
   }
 
   const txColumns = db.prepare('PRAGMA table_info(transactions)').all() as any[];

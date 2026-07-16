@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useTheme } from '@/lib/use-theme';
+import { regionLabel } from 'shared';
 import type { Position } from 'shared';
 
 interface Props {
@@ -52,14 +53,11 @@ function getEmberPalette(isDark: boolean) {
   return isDark ? EMBER_PALETTE_DARK : EMBER_PALETTE_LIGHT;
 }
 
-const REGION_MAP: Record<string, string> = {
-  GPW: 'Polska',
-  NC: 'Polska',
-  NYSE: 'USA',
-  NASDAQ: 'USA',
-  TSX: 'Kanada',
-  OTHER: 'Inne',
-};
+/** Region pozycji: kraj siedziby z ticker_map (poprawny dla ADR-ów), fallback
+ *  giełda notowania — logika współdzielona w shared/country-region-map. */
+function positionRegion(p: Position): string {
+  return regionLabel(p.country, p.exchange);
+}
 
 function groupBy(
   positions: Position[],
@@ -477,7 +475,7 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
     // Liczymy liczbę unikalnych nadsektorów (Sektory u góry KPI = 8 jeżeli
     // portfel pokrywa wszystkie). Jeżeli nadsektor brak — fallback na "Inne".
     const supers = new Set(positions.map((p) => p.supersector || 'Inne'));
-    const regions = new Set(positions.map((p) => REGION_MAP[p.exchange || ''] || 'Inne'));
+    const regions = new Set(positions.map(positionRegion));
 
     return {
       count: positions.length,
@@ -491,13 +489,7 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
   }, [positions]);
 
   const regionData = useMemo(
-    () =>
-      groupBy(
-        positions,
-        (p) => REGION_MAP[p.exchange || ''] || 'Inne',
-        getEmberPalette(isDark),
-        totalValuePln,
-      ),
+    () => groupBy(positions, positionRegion, getEmberPalette(isDark), totalValuePln),
     [positions, totalValuePln, isDark],
   );
 

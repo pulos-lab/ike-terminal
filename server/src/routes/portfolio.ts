@@ -28,6 +28,7 @@ import {
   upsertTickerMapEntry,
   getAllTickers,
   updateTickerSectors,
+  updateTickerCountry,
 } from '../db/ticker-map-repo.js';
 import { resolveSector } from '../services/sector-resolver.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
@@ -969,16 +970,25 @@ router.post(
   asyncHandler(async (req, res) => {
     const pid = req.portfolioId;
     const entries = getAllTickers(pid);
-    const toUpdate = entries.filter((e) => !e.supersector);
+    const toUpdate = entries.filter((e) => !e.supersector || !e.country);
 
     let updatedCount = 0;
     const failed: string[] = [];
 
     for (const entry of toUpdate) {
       try {
-        const { supersector, subsector } = await resolveSector(entry);
-        if (supersector || subsector) {
+        const { supersector, subsector, country } = await resolveSector(entry);
+        let touched = false;
+        // Sektory tylko gdy brakowało — nie nadpisujemy ręcznie przypisanych.
+        if (!entry.supersector && (supersector || subsector)) {
           updateTickerSectors(entry.isin, supersector, subsector, pid);
+          touched = true;
+        }
+        if (!entry.country && country) {
+          updateTickerCountry(entry.isin, country, pid);
+          touched = true;
+        }
+        if (touched) {
           updatedCount++;
         } else {
           failed.push(entry.ticker);

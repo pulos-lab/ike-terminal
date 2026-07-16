@@ -1,13 +1,18 @@
 /**
  * Sector resolver — pojedyncze źródło prawdy dla klasyfikacji sektorowej
- * zunifikowanej ze stockwatch.pl (8 nadsektorów × 40 podsektorów).
+ * zunifikowanej ze stockwatch.pl (8 nadsektorów × 40 podsektorów) oraz kraju
+ * siedziby (źródło wykresu „Regiony").
  *
- * Kolejność źródeł:
+ * Kolejność źródeł (sektor):
  *   1. GPW/NC  → GPW_SECTOR_MAP po tickerze (stripped .WA/.NC)
  *              → fallback: GPW_NAME_TO_TICKER po nazwie spółki
  *   2. CFD     → getCfdSector (Surowce/Indeksy/Forex/Krypto) jako supersector
  *   3. Inne    → Yahoo fetchAssetProfile → mapGicsToStockwatch (GICS → PL)
  *   4. Miss    → { supersector: null, subsector: null } (caller → "Inne")
+ *
+ * Kraj: GPW/NC/Catalyst → "Poland" (statycznie); CFD → null (surowce/indeksy/FX
+ * nie mają kraju); zagraniczne → Yahoo assetProfile.country (poprawnie
+ * klasyfikuje ADR-y — spółka duńska na NYSE dostaje "Denmark", nie USA).
  */
 
 import type { TickerMapEntry } from 'shared';
@@ -23,6 +28,8 @@ import { fetchAssetProfile } from './yahoo-finance.js';
 export interface ResolvedSector {
   supersector: string | null;
   subsector: string | null;
+  /** Kraj siedziby, kanoniczna nazwa EN (jak Yahoo assetProfile.country). */
+  country: string | null;
 }
 
 import { stripTickerSuffix } from './stooq-utils.js';
@@ -69,44 +76,62 @@ function findGpwByName(name: string | undefined | null): string | null {
 export async function resolveSector(entry: TickerMapEntry): Promise<ResolvedSector> {
   const { ticker, exchange, name } = entry;
 
+  // Kraj dla polskich rynków znany statycznie — niezależnie od trafienia sektora.
+  const isPolish = exchange === 'GPW' || exchange === 'NC' || exchange === 'CATALYST';
+  const staticCountry = isPolish ? 'Poland' : null;
+
+  // 0) Obligacje Catalyst — serie nie istnieją w Yahoo (fetch zawsze chybia),
+  //    sektor zostaje pusty; zwracamy od razu sam kraj.
+  if (exchange === 'CATALYST') {
+    return { supersector: null, subsector: null, country: staticCountry };
+  }
+
   // 1) GPW / NewConnect — statyczna mapa stockwatch.
   if (exchange === 'GPW' || exchange === 'NC') {
     const stripped = stripTickerSuffix(ticker).toUpperCase();
     const byTicker = GPW_SECTOR_MAP[stripped];
     if (byTicker) {
-      return { supersector: byTicker.supersector, subsector: byTicker.subsector };
+      return {
+        supersector: byTicker.supersector,
+        subsector: byTicker.subsector,
+        country: staticCountry,
+      };
     }
     const byNameTicker = findGpwByName(name);
     if (byNameTicker) {
       const hit = GPW_SECTOR_MAP[byNameTicker];
-      if (hit) return { supersector: hit.supersector, subsector: hit.subsector };
+      if (hit) {
+        return { supersector: hit.supersector, subsector: hit.subsector, country: staticCountry };
+      }
     }
     // GPW miss → spróbuj Yahoo jako fallback (często small-cap ma sektor w Yahoo)
   }
 
-  // 2) CFD — autorytatywna statyczna mapa.
+  // 2) CFD — autorytatywna statyczna mapa. Surowce/indeksy/FX nie mają kraju.
   const cfdEntry = findCfdTicker(name) || findCfdTicker(ticker);
   if (cfdEntry) {
-    return { supersector: getCfdSector(cfdEntry), subsector: null };
+    return { supersector: getCfdSector(cfdEntry), subsector: null, country: staticCountry };
   }
 
-  // 3) Yahoo GICS → stockwatch.
+  // 3) Yahoo GICS → stockwatch (+ kraj siedziby z tego samego profilu).
   try {
     const profile = await fetchAssetProfile(ticker);
     if (profile) {
+      const country = staticCountry ?? profile.country;
       const mapped = mapGicsToStockwatch(profile.sector, profile.industry);
       if (mapped) {
-        return { supersector: mapped.supersector, subsector: mapped.subsector };
+        return { supersector: mapped.supersector, subsector: mapped.subsector, country };
       }
       // Mapowanie nie znalazło — zachowaj przynajmniej angielski sector jako subsector
       if (profile.sector) {
-        return { supersector: null, subsector: profile.sector };
+        return { supersector: null, subsector: profile.sector, country };
       }
+      return { supersector: null, subsector: null, country };
     }
   } catch {
     // silent — caller nie blokuje się na pojedynczym faile
   }
 
   // 4) Nic nie rozpoznane
-  return { supersector: null, subsector: null };
+  return { supersector: null, subsector: null, country: staticCountry };
 }

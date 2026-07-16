@@ -884,6 +884,7 @@ export async function computeOpenPositions(
       exchange: entry.exchange,
       sector: entry.sector,
       supersector: entry.supersector,
+      country: entry.country,
       dailyChangePct,
       category,
       priceManual: priceManual || undefined,
