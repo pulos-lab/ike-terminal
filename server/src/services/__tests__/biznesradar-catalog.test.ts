@@ -425,6 +425,41 @@ describe('createBrCatalogService — GlobalConnect i kolizja NC', () => {
     svc.close();
   });
 
+  it('niezgodna wersja schematu wymusza odświeżenie mimo świeżego last_success (deploy nad starą bazą)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-catalog-ver-'));
+    const dbFile = path.join(dir, 'price_history.db');
+    try {
+      // Baza w stanie "prod po deployu": katalog zapisany STARĄ logiką
+      // (zawiera wpis GlobalConnect), świeży last_success, BRAK schema_version.
+      const Database = (await import('better-sqlite3')).default;
+      const legacy = new Database(dbFile);
+      legacy.exec(`
+        CREATE TABLE br_ticker_catalog (ticker TEXT PRIMARY KEY, name TEXT NOT NULL, short_name TEXT NOT NULL DEFAULT '');
+        CREATE TABLE br_catalog_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO br_ticker_catalog VALUES ('AAPL', 'APPLE INC.', 'APPLE');
+        INSERT INTO br_catalog_state VALUES ('last_success', '2026-07-16T09:59:00Z');
+        INSERT INTO br_catalog_state VALUES ('last_attempt', '2026-07-16T08:59:00Z');
+      `);
+      legacy.close();
+
+      const { fn, calls } = makeFetch({ catalog: [makePayload()] });
+      const svc = createBrCatalogService({
+        dbFile,
+        fetchFn: fn,
+        now: () => new Date('2026-07-16T10:00:00Z'),
+        politenessDelayMs: 0,
+      });
+
+      expect((await svc.search('APPLE')).find((r) => r.symbol === 'AAPL.WA')).toBeUndefined();
+      expect(calls()).toBe(1); // refetch wymuszony wersją, nie TTL-em
+      expect((await svc.search('KGHM')).find((r) => r.symbol === 'KGH.WA')).toBeDefined();
+      expect(calls()).toBe(1); // wersja zgodna po odświeżeniu — bez kolejnych fetchy
+      svc.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('awaria strony GC = awaria odświeżenia (katalog bez GC albo wcale)', async () => {
     const { fn, calls } = makeFetch({
       catalog: [makePayload()],

@@ -45,6 +45,13 @@ const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // ≤1×/24h
 const RETRY_INTERVAL_MS = 60 * 60 * 1000; // po awarii: ponów najwcześniej po 1h
 /** Przerwa grzecznościowa między katalogiem a stroną GC (wzorzec z gpw-dividend-calendar). */
 const POLITENESS_DELAY_MS = 1_000;
+/**
+ * Wersja schematu/filtrów persystowanego katalogu. Niezgodność (stara baza po
+ * deployu nowego kodu) wymusza odświeżenie mimo świeżego `last_success` —
+ * inaczej katalog zapisany starą logiką (np. v1 bez wykluczenia GlobalConnect)
+ * serwowałby się do 24 h. Podbij przy każdej zmianie filtrów parsera/wykluczeń.
+ */
+const CATALOG_SCHEMA_VERSION = '2';
 /** Zimny start: nie każ użytkownikowi czekać na 1,2 MB dłużej niż to. */
 const COLD_START_WAIT_MS = 2_500;
 /**
@@ -270,19 +277,24 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
     return db;
   }
 
-  function getStateMs(key: string): number | null {
+  function getState(key: string): string | null {
     const row = getDb().prepare('SELECT value FROM br_catalog_state WHERE key = ?').get(key) as
       | { value: string }
       | undefined;
-    if (!row) return null;
-    const ms = Date.parse(row.value);
+    return row?.value ?? null;
+  }
+
+  function getStateMs(key: string): number | null {
+    const value = getState(key);
+    if (!value) return null;
+    const ms = Date.parse(value);
     return Number.isFinite(ms) ? ms : null;
   }
 
-  function setState(key: string, isoTimestamp: string): void {
+  function setState(key: string, value: string): void {
     getDb()
       .prepare('INSERT OR REPLACE INTO br_catalog_state (key, value) VALUES (?, ?)')
-      .run(key, isoTimestamp);
+      .run(key, value);
   }
 
   function loadIndexFromDb(): void {
@@ -330,6 +342,7 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
         for (const e of entries) insert.run(e.ticker, e.name, e.shortName);
       })();
       setState('last_success', now().toISOString());
+      setState('schema_version', CATALOG_SCHEMA_VERSION);
       index = entries;
     } catch (err) {
       // Stale-while-error: stary index/baza zostają; retry po RETRY_INTERVAL_MS.
@@ -343,8 +356,14 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
     const nowMs = now().getTime();
     const lastSuccess = getStateMs('last_success');
     const lastAttempt = getStateMs('last_attempt');
-    const isStale = lastSuccess === null || nowMs - lastSuccess > REFRESH_INTERVAL_MS;
-    const canAttempt = lastAttempt === null || nowMs - lastAttempt > RETRY_INTERVAL_MS;
+    // Katalog zapisany starszą wersją filtrów = stale niezależnie od wieku
+    // (po deployu wymusza jednorazowe odświeżenie).
+    const versionOk = getState('schema_version') === CATALOG_SCHEMA_VERSION;
+    const isStale = !versionOk || lastSuccess === null || nowMs - lastSuccess > REFRESH_INTERVAL_MS;
+    // Backoff RETRY_INTERVAL_MS dotyczy tylko prób PO PORAŻCE (ostatnia próba
+    // bez sukcesu). Po udanym fetchu odświeżenie (TTL/wersja) może iść od razu.
+    const lastFailed = lastAttempt !== null && (lastSuccess === null || lastAttempt > lastSuccess);
+    const canAttempt = !lastFailed || nowMs - lastAttempt > RETRY_INTERVAL_MS;
     if (!isStale || !canAttempt) return null;
     inFlightRefresh = doRefresh().finally(() => {
       inFlightRefresh = null;
@@ -354,15 +373,26 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
 
   /**
    * Index gotowy do przeszukania (lazy load z DB + refresh gdy stale).
-   * Zimny start (pusta baza): daj fetchowi krótką szansę, potem nie blokuj —
-   * refresh i tak dokończy się w tle (single-flight). Pusta tablica = katalog
-   * (jeszcze) niedostępny.
+   * Na odświeżenie czekamy (z ograniczeniem coldStartWaitMs) tylko gdy obecny
+   * index jest bezużyteczny: pusty (zimny start) LUB zapisany starą wersją
+   * filtrów (mógłby serwować aktywnie złe wpisy, np. GlobalConnect). Zwykły
+   * refresh po TTL leci w tle (stale-while-revalidate). Pusta tablica =
+   * katalog (jeszcze) niedostępny.
    */
   async function ensureIndex(): Promise<BrCatalogEntry[]> {
     if (index === null) loadIndexFromDb();
     const refresh = refreshIfDue();
-    if (refresh && index !== null && index.length === 0) {
-      await Promise.race([refresh, new Promise((resolve) => setTimeout(resolve, coldStartWaitMs))]);
+    if (refresh) {
+      const unusable =
+        index === null ||
+        index.length === 0 ||
+        getState('schema_version') !== CATALOG_SCHEMA_VERSION;
+      if (unusable) {
+        await Promise.race([
+          refresh,
+          new Promise((resolve) => setTimeout(resolve, coldStartWaitMs)),
+        ]);
+      }
     }
     return index ?? [];
   }
