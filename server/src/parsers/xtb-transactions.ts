@@ -163,6 +163,11 @@ function normalizeType(type: string, ctx?: ParserContext): string {
     dividend: 'dividend',
     // PL template has "DIVIDENT" typo
     divident: 'dividend',
+    // Dywidenda spółki zagranicznej notowanej na GPW (np. ASB.PL/Asbis, USD/SHR
+    // w komentarzu, kwota już w walucie konta) — semantycznie zwykła dywidenda.
+    // Alias celowo DOKŁADNY, nie prefiksowy: inne przyszłe warianty "Dividend…"
+    // mają spadać do kwarantanny/aliasów admina, nie księgować się w ciemno.
+    'dividend from foreign company on pl market': 'dividend',
     'withholding tax': 'withholding tax',
     swap: 'swap',
     'tax iftt': 'tax iftt',
@@ -300,11 +305,13 @@ function resolveTradeCurrency(args: {
   /** P/L z wiersza "close trade" (tylko sprzedaż; undefined gdy brak pary). */
   closePl: number | undefined;
   /**
-   * true, gdy plik NIE zawiera żadnych wierszy "close trade" — w tym szablonie
-   * (nowy EN z kolumną Ticker, np. eksporty IKE_*) Amount sprzedaży to PEŁNA
-   * wartość sprzedaży w walucie konta (zweryfikowane: PEO 0.3507 @ 228.90 →
-   * Amount 80.28, ratio 1.0; UBI.FR ratio = EURPLN), nie zwrócony nominał.
-   * Stosunek liczy się wtedy wprost, jak dla kupna.
+   * true, gdy Amount sprzedaży to PEŁNA wartość sprzedaży w walucie konta
+   * (zweryfikowane: PEO 0.3507 @ 228.90 → Amount 80.28, ratio 1.0; UBI.FR
+   * ratio = EURPLN; VRC 2 @ 126.60 → Amount 253.20), nie zwrócony nominał
+   * otwarcia. Stosunek liczy się wtedy wprost, jak dla kupna. Sygnały:
+   * nagłówek z kolumną Ticker (nowy szablon EN — jego wiersze "close trade"
+   * dotyczą wyłącznie CFD, nie zmieniają semantyki sprzedaży akcji) ALBO
+   * plik bez żadnego wiersza "close trade".
    */
   saleAmountIsFullValue: boolean;
   ids: { currency: string; placeholder: boolean };
@@ -531,6 +538,10 @@ interface HeaderLayout {
   headerIdx: number;
   /** Canonical column name → column index within the row. */
   col: { id: number; type: number; time: number; comment: number; symbol: number; amount: number };
+  /** true, gdy kolumnę symbolu wyłonił nagłówek 'Ticker' — marker NOWEGO szablonu
+   * EN+TICKER. W nim Amount sprzedaży to PEŁNA wartość sprzedaży, nawet gdy plik
+   * zawiera wiersze "close trade" (te występują tam wyłącznie dla CFD). */
+  hasTicker: boolean;
 }
 
 const HEADER_SYNONYMS = {
@@ -586,7 +597,11 @@ function detectHeaderLayout(rows: any[][]): HeaderLayout | null {
       amount !== null &&
       symbol !== null
     ) {
-      return { headerIdx: i, col: { id, type, time, comment, symbol, amount } };
+      return {
+        headerIdx: i,
+        col: { id, type, time, comment, symbol, amount },
+        hasTicker: 'ticker' in labels,
+      };
     }
   }
   return null;
@@ -598,14 +613,14 @@ function detectHeaderLayout(rows: any[][]): HeaderLayout | null {
 function currencyFromFileName(fileName: string | undefined): string | null {
   if (!fileName) return null;
   const base = fileName.split(/[\\/]/).pop() || fileName;
-  if (/^(IKE|IKZE)_\d+_/i.test(base)) return 'PLN';
-  const m = base.match(/^([A-Z]{3})_\d+_/);
-  if (!m) return null;
-  const cur = m[1];
-  // Known XTB base currencies — filter to avoid false positives
-  if (['PLN', 'USD', 'EUR', 'GBP', 'CHF', 'SEK', 'NOK', 'DKK', 'HUF', 'CZK'].includes(cur))
-    return cur;
-  return null;
+  // Wzorzec nie jest kotwiczony na początku nazwy: aplikacja XTB (PL) nazywa
+  // eksporty "konto IKE_52015814_…" / "konto PLN_51763181_…" — dopuszczamy
+  // dowolny prefiks zakończony separatorem (spacja/_/-).
+  if (/(?:^|[\s_-])(IKE|IKZE)_\d+_/i.test(base)) return 'PLN';
+  // Known XTB base currencies — whitelist (wielkość liter znacząca) chroni przed
+  // fałszywymi trafieniami typu "account_1506062_…".
+  const m = base.match(/(?:^|[\s_-])(PLN|USD|EUR|GBP|CHF|SEK|NOK|DKK|HUF|CZK)_\d+_/);
+  return m ? m[1] : null;
 }
 
 // ── Main parser ─────────────────────────────────────────────────────────────
@@ -781,9 +796,13 @@ export async function parseXtbFile(
   }
   // Semantyka Amount sprzedaży zależy od szablonu: stary format (są wiersze
   // "close trade") → zwrócony nominał otwarcia; nowy szablon z kolumną Ticker
-  // (eksporty IKE_*, zero wierszy close trade w pliku) → pełna wartość
-  // sprzedaży. Brak jakiegokolwiek close trade w pliku = wiarygodny sygnał.
+  // → pełna wartość sprzedaży. Kolumna Ticker jest sygnałem NADRZĘDNYM nad
+  // obecnością close trades: nowy szablon emituje "close trade" wyłącznie dla
+  // pozycji CFD (np. OIL na koncie z akcjami), co nie zmienia semantyki Amount
+  // sprzedaży akcji. Bez kolumny Ticker sygnałem pozostaje brak jakiegokolwiek
+  // wiersza close trade w pliku.
   const fileHasCloseTrades = closeTradePL.size > 0;
+  const saleAmountIsFullValue = layout.hasTicker || !fileHasCloseTrades;
   const closeTradeCursor = new Map<string, number>();
   /** Zdejmij kolejny niezużyty P/L pod kluczem (FIFO, jak prowizje). */
   const takeClosePl = (key: string): number | undefined => {
@@ -872,7 +891,7 @@ export async function parseXtbFile(
         price,
         amountAbs: Math.abs(raw.amount),
         closePl: undefined,
-        saleAmountIsFullValue: !fileHasCloseTrades,
+        saleAmountIsFullValue,
         ids,
         accountCurrency,
         symbolFx,
@@ -986,7 +1005,7 @@ export async function parseXtbFile(
           price,
           amountAbs: Math.abs(raw.amount),
           closePl: takeClosePl(`${raw.symbol}|${isoTime}`),
-          saleAmountIsFullValue: !fileHasCloseTrades,
+          saleAmountIsFullValue,
           ids,
           accountCurrency,
           symbolFx,
@@ -1088,16 +1107,33 @@ export async function parseXtbFile(
   }
 
   // ── Pre-pass: Build WHT lookup for dividend netting ──
-  const whtLookup = new Map<string, { amount: number; comment: string; rowNum: number }>();
+  // LISTA per klucz konsumowana FIFO (jak prowizje i close trade P/L): dywidendy
+  // partial filli księgowane w tej samej sekundzie mają po WŁASNYM wierszu WHT.
+  // Mapa z nadpisywaniem dawała każdej dywidendzie pod kluczem ten sam (ostatni)
+  // podatek — np. brutto 3.75 z cudzym WHT -4.75 → dywidenda -1 — a nadmiarowe
+  // wiersze WHT znikały z outputu.
+  const whtLookup = new Map<string, { amount: number; comment: string; rowNum: number }[]>();
   for (const raw of rawRows) {
     if (raw.type === 'withholding tax') {
       const isoTime = parseXtbTime(raw.time);
       if (!isoTime || !raw.symbol) continue;
       const key = `${raw.symbol}|${isoTime}`;
-      whtLookup.set(key, { amount: raw.amount, comment: raw.comment, rowNum: raw.rowNum });
+      const entry = { amount: raw.amount, comment: raw.comment, rowNum: raw.rowNum };
+      const list = whtLookup.get(key);
+      if (list) list.push(entry);
+      else whtLookup.set(key, [entry]);
     }
   }
-  const usedWht = new Set<string>(); // track paired WHTs
+  const whtCursor = new Map<string, number>();
+  /** Zdejmij kolejny niezużyty WHT pod kluczem (FIFO, kolejność pliku). */
+  const takeWht = (key: string) => {
+    const list = whtLookup.get(key);
+    if (!list) return undefined;
+    const i = whtCursor.get(key) ?? 0;
+    if (i >= list.length) return undefined;
+    whtCursor.set(key, i + 1);
+    return list[i];
+  };
 
   // ── Pass 3a: Process dividends first (to pair with WHT before WHT is processed) ──
   const operations: CashOperation[] = [];
@@ -1114,16 +1150,15 @@ export async function parseXtbFile(
       let netAmount = grossAmount;
       let description = raw.comment || `Dividend: ${raw.symbol}`;
 
-      // Try to pair with WHT
+      // Try to pair with WHT (FIFO — n-ta dywidenda pod kluczem bierze n-ty WHT)
       const whtKey = `${raw.symbol}|${isoTime}`;
-      const wht = whtLookup.get(whtKey);
+      const wht = takeWht(whtKey);
       if (wht) {
         const whtAbs = Math.abs(wht.amount);
         netAmount = roundTo2(grossAmount - whtAbs);
         const pctMatch = wht.comment.match(/WHT (\d+)%/);
         const pctStr = pctMatch ? ` WHT ${pctMatch[1]}%` : ' WHT';
         description = `${raw.comment} (brutto ${grossAmount},${pctStr} -${whtAbs})`;
-        usedWht.add(whtKey);
       }
 
       operations.push({
@@ -1143,6 +1178,9 @@ export async function parseXtbFile(
   }
 
   // ── Pass 3b: Build remaining cash operations ──
+  // Licznik wystąpień WHT per klucz (kolejność pliku) — pierwsze `whtCursor(key)`
+  // wystąpień zjadły dywidendy (FIFO w pass 3a), dopiero kolejne emitują fee.
+  const whtSeen = new Map<string, number>();
   for (const raw of rawRows) {
     if (raw.type === 'dividend') continue; // already processed in pass 3a
 
@@ -1186,9 +1224,13 @@ export async function parseXtbFile(
         continue;
       }
 
-      // Only create fee if not already paired with a dividend
+      // Only create fee if not already paired with a dividend — n-te wystąpienie
+      // pod kluczem porównywane z liczbą sparowanych (FIFO): nadmiarowy WHT
+      // (bez własnej dywidendy) NIE ginie, tylko wchodzi jako fee.
       const whtKey = `${raw.symbol}|${isoTime}`;
-      if (usedWht.has(whtKey)) continue; // already netted into dividend
+      const seen = whtSeen.get(whtKey) ?? 0;
+      whtSeen.set(whtKey, seen + 1);
+      if (seen < (whtCursor.get(whtKey) ?? 0)) continue; // already netted into dividend
 
       operations.push({
         date: isoTime,

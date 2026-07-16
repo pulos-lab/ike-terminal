@@ -868,4 +868,239 @@ describe('parseXtbFile — prefiks IKE_/IKZE_ implikuje PLN', () => {
     expect(unknown.transactions.data[0].currency).toBe('PLN');
     expect(unknown.warnings?.some((w) => w.includes(NO_CURRENCY_WARNING))).toBe(true);
   });
+
+  it('prefiks „konto " przed IKE_/WALUTA_ (nazwy z aplikacji XTB PL) → waluta wykryta', async () => {
+    const ike = await parseXtbFile(
+      await buildXtbXlsx([plnBuy]),
+      'b1',
+      'konto IKE_52015814_2024-12-31_2026-07-15.xlsx',
+    );
+    expect(ike.transactions.data[0].currency).toBe('PLN');
+    expect(ike.warnings?.some((w) => w.includes(NO_CURRENCY_WARNING))).toBeFalsy();
+
+    const pln = await parseXtbFile(
+      await buildXtbXlsx([plnBuy]),
+      'b1',
+      'konto PLN_51763181_2024-12-31_2026-07-15.xlsx',
+    );
+    expect(pln.warnings?.some((w) => w.includes(NO_CURRENCY_WARNING))).toBeFalsy();
+
+    const usd = await parseXtbFile(
+      await buildXtbXlsx([{ ...plnBuy, symbol: 'PLTR.US' }]),
+      'b1',
+      'konto USD_12345_2024-12-31_2026-07-15.xlsx',
+    );
+    expect(usd.transactions.data[0].currency).toBe('USD');
+    expect(usd.warnings?.some((w) => w.includes(NO_CURRENCY_WARNING))).toBeFalsy();
+  });
+});
+
+// ── Dywidenda spółki zagranicznej notowanej na GPW (nowy typ XTB) ────────────
+
+describe('parseXtbFile — „Dividend from foreign company on PL market"', () => {
+  const t = '28/05/2026 11:59:03';
+
+  it('księguje się jak zwykła dywidenda (nie unknown_type)', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Dividend from foreign company on PL market',
+        time: t,
+        comment: 'ASB.PL USD 0.3500/ SHR',
+        symbol: 'ASB.PL',
+        amount: 35,
+      },
+    ]);
+    const result = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    expect(result.operations.skipped.filter((s) => s.reason === 'unknown_type')).toHaveLength(0);
+    expect(result.operations.data).toHaveLength(1);
+    const div = result.operations.data[0];
+    expect(div.operationType).toBe('dividend');
+    expect(div.amount).toBe(35);
+    expect(div.currency).toBe('PLN');
+    expect(div.ticker).toBe('ASB.WA');
+  });
+
+  it('paruje się z withholding tax jak zwykła dywidenda (netto + opis brutto/WHT)', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Dividend from foreign company on PL market',
+        time: t,
+        comment: 'XYZ.PL USD 1.0000/ SHR',
+        symbol: 'XYZ.PL',
+        amount: 100,
+      },
+      {
+        id: 2,
+        type: 'withholding tax',
+        time: t,
+        comment: 'XYZ.PL USD WHT 19%',
+        symbol: 'XYZ.PL',
+        amount: -19,
+      },
+    ]);
+    const result = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const div = result.operations.data.find((o) => o.operationType === 'dividend');
+    expect(div?.amount).toBe(81);
+    expect(div?.description).toContain('WHT 19%');
+    // WHT skonsumowany w netting — nie powstaje osobny fee
+    expect(result.operations.data.filter((o) => o.operationType === 'fee')).toHaveLength(0);
+  });
+});
+
+// ── Kilka dywidend + kilka WHT w tej samej sekundzie (partial fille) ─────────
+
+describe('parseXtbFile — dywidendy i WHT pod wspólnym kluczem symbol|czas (FIFO)', () => {
+  const t = '03/07/2026 23:01:11';
+
+  it('każda dywidenda konsumuje WŁASNY wiersz WHT (nie ostatni pod kluczem)', async () => {
+    // Wzorzec z realnych plików: dwie dywidendy partial filli w tej samej
+    // sekundzie, każda z własnym WHT. Mapa z nadpisywaniem dawała obu ten sam
+    // (ostatni) podatek — mała dywidenda z cudzym, większym WHT wychodziła
+    // ujemna, a nadmiarowe wiersze WHT znikały.
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'dividend',
+        time: t,
+        comment: 'XYZ.PL PLN 2.5000/ SHR',
+        symbol: 'XYZ.PL',
+        amount: 25,
+      },
+      {
+        id: 2,
+        type: 'dividend',
+        time: t,
+        comment: 'XYZ.PL PLN 2.5000/ SHR',
+        symbol: 'XYZ.PL',
+        amount: 5,
+      },
+      {
+        id: 3,
+        type: 'withholding tax',
+        time: t,
+        comment: 'XYZ.PL PLN WHT 19%',
+        symbol: 'XYZ.PL',
+        amount: -4.75,
+      },
+      {
+        id: 4,
+        type: 'withholding tax',
+        time: t,
+        comment: 'XYZ.PL PLN WHT 19%',
+        symbol: 'XYZ.PL',
+        amount: -0.95,
+      },
+    ]);
+    const result = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const divs = result.operations.data.filter((o) => o.operationType === 'dividend');
+    expect(divs.map((d) => d.amount)).toEqual([20.25, 4.05]);
+    // Oba WHT skonsumowane — brak osobnych fee
+    expect(result.operations.data.filter((o) => o.operationType === 'fee')).toHaveLength(0);
+  });
+
+  it('nadmiarowy WHT bez własnej dywidendy NIE ginie — wchodzi jako fee', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'dividend',
+        time: t,
+        comment: 'XYZ.PL PLN 2.5000/ SHR',
+        symbol: 'XYZ.PL',
+        amount: 10,
+      },
+      {
+        id: 2,
+        type: 'withholding tax',
+        time: t,
+        comment: 'XYZ.PL PLN WHT 19%',
+        symbol: 'XYZ.PL',
+        amount: -1.9,
+      },
+      {
+        id: 3,
+        type: 'withholding tax',
+        time: t,
+        comment: 'XYZ.PL PLN WHT 19%',
+        symbol: 'XYZ.PL',
+        amount: -4.75,
+      },
+    ]);
+    const result = await parseXtbFile(buf, 'b1', 'PLN_12345_test.xlsx');
+    const div = result.operations.data.find((o) => o.operationType === 'dividend');
+    expect(div?.amount).toBe(8.1);
+    const fees = result.operations.data.filter((o) => o.operationType === 'fee');
+    expect(fees).toHaveLength(1);
+    expect(fees[0].amount).toBe(-4.75);
+  });
+});
+
+// ── Nowy szablon (kolumna Ticker) + wiersze close trade CFD ──────────────────
+
+/** Buduje plik XTB w NOWYM szablonie EN+TICKER (arkusz "Cash Operations"):
+ *  Type | Ticker | Instrument | Time | Amount | ID | Comment | Product. */
+async function buildXtbXlsxTicker(
+  rows: Array<{
+    id: number;
+    type: string;
+    time: string;
+    comment: string;
+    ticker: string;
+    instrument?: string;
+    amount: number;
+  }>,
+): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Cash Operations');
+  ws.addRow(['Type', 'Ticker', 'Instrument', 'Time', 'Amount', 'ID', 'Comment', 'Product']);
+  for (const r of rows) {
+    ws.addRow([
+      r.type,
+      r.ticker,
+      r.instrument ?? r.ticker,
+      r.time,
+      r.amount,
+      r.id,
+      r.comment,
+      'My Trades',
+    ]);
+  }
+  const out = await wb.xlsx.writeBuffer();
+  return Buffer.from(out as ArrayBuffer);
+}
+
+describe('parseXtbFile — szablon z kolumną Ticker a wiersze close trade (CFD)', () => {
+  it('Amount sprzedaży pozostaje pełną wartością → implied fxRate, nie dziedziczenie', async () => {
+    // Nowy szablon emituje "close trade" WYŁĄCZNIE dla CFD (np. OIL) — obecność
+    // takich wierszy nie może przełączać sprzedaży akcji na starą semantykę
+    // "Amount = zwrócony nominał otwarcia".
+    const buf = await buildXtbXlsxTicker([
+      {
+        id: 1,
+        type: 'Close trade',
+        time: '09/04/2026 12:01:07',
+        comment: 'Profit of position #2498250532',
+        ticker: 'OIL',
+        amount: -345.31,
+      },
+      {
+        id: 2,
+        type: 'Stock sell',
+        time: '14/07/2026 16:32:53',
+        comment: 'CLOSE BUY 4 @ 620.00',
+        ticker: 'NOVOB.DK',
+        amount: 1438.4, // pełna wartość sprzedaży w PLN (kurs DKK/PLN ≈ 0.58)
+      },
+    ]);
+    const result = await parseXtbFile(buf, 'b1', 'konto PLN_12345_2024-01-01_2026-01-01.xlsx');
+    const sell = result.transactions.data.find((x) => x.side === 'S');
+    expect(sell).toBeDefined();
+    expect(sell?.currency).toBe('DKK');
+    expect(sell?.paymentCurrency).toBe('PLN');
+    expect(sell?.price).toBe(620);
+    expect(sell?.fxRate).toBeCloseTo(1438.4 / (4 * 620), 5);
+    // Przed fixem plik z jakimkolwiek close trade szedł ścieżką salesWithoutPl
+    expect(result.warnings?.some((w) => w.includes('bez wiersza "close trade"'))).toBeFalsy();
+  });
 });
