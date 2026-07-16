@@ -49,8 +49,8 @@ import {
   getTransactionsByIsin,
   updateTransaction,
   recordAppliedTransactionTax,
-  detectOrphanedSells,
 } from '../db/transactions-repo.js';
+import { getActionableOrphanedSells } from './orphaned-sells.js';
 import {
   insertOperationsWithDedup,
   insertOperation,
@@ -508,7 +508,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   ];
   const duplicatesSkipped = insertedTxDuplicates.length + insertedOpsDuplicates.length;
 
-  const orphanedSells = detectOrphanedSells(pid);
+  const orphanedSells = getActionableOrphanedSells(pid);
 
   return {
     ...result,
@@ -740,11 +740,10 @@ async function importCombinedFiles(
     ...insertedTxDuplicates,
     ...insertedOpsDuplicates,
   ];
-  // detectOrphanedSells liczy surowe sumy K/S — sprzedaż po splicie "przekracza" kupno
-  // sprzed splitu. Dla ISIN-ów ze splitem zapisanym w tym imporcie (realne ex-daty z
-  // wyciągu) korektę robi silnik, więc warning byłby fałszywym alarmem.
-  const splitIsins = new Set(allSplits.map((s) => s.isin));
-  const orphanedSells = detectOrphanedSells(pid).filter((o) => !splitIsins.has(o.isin));
+  // Filtr splitowych fałszywych alarmów (sprzedaż po splicie "przekracza" kupno
+  // sprzed splitu) siedzi w getActionableOrphanedSells — splity z tego importu są
+  // już zapisane w bazie (upsertSplits wyżej), więc helper widzi je w getSplits.
+  const orphanedSells = getActionableOrphanedSells(pid);
 
   return {
     success: true,

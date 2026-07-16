@@ -13,6 +13,13 @@ import { asyncHandler } from '../middleware/async-handler.js';
 import importGenericRouter from './import-generic.js';
 import importQuarantineRouter from './import-quarantine.js';
 import { clearQuarantine, countQuarantineByStatus } from '../db/quarantine-repo.js';
+import {
+  dismissOrphanedSell,
+  restoreOrphanedSell,
+  clearOrphanDismissals,
+} from '../db/orphaned-sells-repo.js';
+import { getOrphanedSellsView } from '../services/orphaned-sells.js';
+import { isFiniteNumber } from './validation.js';
 
 const router = Router();
 
@@ -129,8 +136,10 @@ router.delete(
     clearImportedTransactions(pid);
     clearImportedOperations(pid);
     // Kaskada: skrzynka "Do wyjaśnienia" w całości (wpisy resolved wskazywałyby
-    // na usunięte rekordy transactions/cash_operations).
+    // na usunięte rekordy transactions/cash_operations) + decyzje "Ignoruj"
+    // dla sprzedaży bez kupna (dotyczyły usuniętych transakcji).
     clearQuarantine(pid);
+    clearOrphanDismissals(pid);
     res.json({ success: true });
   }),
 );
@@ -145,7 +154,40 @@ router.get('/status', (req, res) => {
     operations: getOperationsCount(pid),
     lastImportDate: getLastImportDate(pid),
     quarantinePending: countQuarantineByStatus(pid).pending,
+    orphanedSellsPending: getOrphanedSellsView(pid).pending.length,
   });
+});
+
+// ── Sprzedaże bez kupna ──────────────────────────────────────────────────────
+// Detekcja liczona na żywo z transakcji (znika sama po dodaniu kupna spin-off);
+// trwała jest tylko decyzja "Ignoruj" — patrz services/orphaned-sells.ts.
+
+/** GET /api/import/orphaned-sells → { pending, dismissed } */
+router.get('/orphaned-sells', (req, res) => {
+  res.json(getOrphanedSellsView(req.portfolioId));
+});
+
+/** POST /api/import/orphaned-sells/dismiss — trwałe "Ignoruj" pozycji. */
+router.post('/orphaned-sells/dismiss', (req, res) => {
+  const { isin, missingQuantity } = req.body as { isin?: string; missingQuantity?: number };
+  if (!isin || typeof isin !== 'string') {
+    return res.status(400).json({ error: 'Wymagane pole: isin' });
+  }
+  if (!isFiniteNumber(missingQuantity)) {
+    return res.status(400).json({ error: 'Pole missingQuantity musi być skończoną liczbą' });
+  }
+  dismissOrphanedSell(isin, missingQuantity, req.portfolioId);
+  res.json({ success: true });
+});
+
+/** POST /api/import/orphaned-sells/restore — cofnięcie "Ignoruj" (ISIN w body:
+ * pseudo-ISINy OPT: zawierają znaki niewygodne w ścieżce URL). */
+router.post('/orphaned-sells/restore', (req, res) => {
+  const { isin } = req.body as { isin?: string };
+  if (!isin || typeof isin !== 'string') {
+    return res.status(400).json({ error: 'Wymagane pole: isin' });
+  }
+  res.json({ success: restoreOrphanedSell(isin, req.portfolioId) });
 });
 
 /**

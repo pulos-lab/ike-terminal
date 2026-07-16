@@ -183,6 +183,12 @@ export function initSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_quarantine_status ON import_quarantine(status);
     CREATE INDEX IF NOT EXISTS idx_quarantine_batch ON import_quarantine(import_batch);
+
+    CREATE TABLE IF NOT EXISTS orphaned_sell_dismissals (
+      isin TEXT PRIMARY KEY,
+      missing_quantity REAL NOT NULL,
+      dismissed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Migrations for existing databases
