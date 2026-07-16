@@ -3,6 +3,7 @@ import { getAllTickers } from '../db/ticker-map-repo.js';
 import type { TickerSearchResult } from 'shared';
 import { stripTickerSuffix } from './stooq-utils.js';
 import { getYahooAuth } from './yahoo-auth.js';
+import { getBrCatalogService } from './biznesradar-catalog.js';
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 
@@ -50,6 +51,11 @@ export async function searchYahoo(query: string): Promise<TickerSearchResult[]> 
 /**
  * Validate a ticker on Stooq (Polish GPW + NewConnect)
  * Returns a result if the ticker exists on Stooq
+ *
+ * UWAGA: endpoint CSV `/q/l/` padł ~03.2026 (zwraca „lokalizacja nie
+ * istnieje" globalnie) — w praktyce funkcja zwraca null. Zostaje wyłącznie
+ * dla isin-resolvera (ma własne fallbacki); wyszukiwarka podpowiedzi używa
+ * katalogu biznesradar (biznesradar-catalog.ts).
  */
 export async function validateStooq(
   query: string,
@@ -143,11 +149,13 @@ export async function searchStooqByName(companyName: string): Promise<TickerSear
 }
 
 /**
- * Search local ticker_map database
+ * Search local ticker_map database (instrumenty AKTYWNEGO portfela —
+ * bez portfolioId repo czyta portfel 'default', który na multi-tenant
+ * prodzie jest pusty).
  */
-function searchLocal(query: string): TickerSearchResult[] {
+function searchLocal(query: string, portfolioId?: string): TickerSearchResult[] {
   const lower = query.toLowerCase();
-  const all = getAllTickers();
+  const all = getAllTickers(portfolioId);
   return all
     .filter(
       (t) =>
@@ -194,43 +202,43 @@ function relevanceScore(r: TickerSearchResult, q: string): number {
 }
 
 /**
- * Search tickers across Yahoo, Stooq, and local database
+ * Search tickers across Yahoo, katalog biznesradar (GPW+NC) and local database.
+ *
+ * Cache per-query obejmuje WYŁĄCZNIE wynik Yahoo (jedyne źródło sieciowe
+ * per zapytanie) — źródła lokalne (ticker_map aktywnego portfela, index BR
+ * w pamięci) są tanie i liczone na żywo; wyniki zależne od portfela nie mogą
+ * trafiać do globalnego cache'a.
  */
-export async function searchTickers(query: string): Promise<TickerSearchResult[]> {
+export async function searchTickers(
+  query: string,
+  portfolioId?: string,
+): Promise<TickerSearchResult[]> {
   if (!query || query.length < 1) return [];
 
-  const cacheKey = `ticker_search_${query.toLowerCase()}`;
-  const cached = getCached<TickerSearchResult[]>(cacheKey);
-  if (cached) return cached;
+  const yahooCacheKey = `ticker_search_yahoo_${query.toLowerCase()}`;
+  const cachedYahoo = getCached<TickerSearchResult[]>(yahooCacheKey);
+  const yahooPromise = cachedYahoo
+    ? Promise.resolve(cachedYahoo)
+    : searchYahoo(query).then((r) => {
+        // Krótszy TTL dla pustych wyników — chwilowy 500 z Yahoo nie blokuje podpowiedzi na 5 min
+        setCached(yahooCacheKey, r, r.length === 0 ? 30 : 300);
+        return r;
+      });
 
-  // Run all three searches in parallel
-  const [yahooResults, stooqResult, localResults] = await Promise.all([
-    searchYahoo(query),
-    validateStooq(query),
-    Promise.resolve(searchLocal(query)),
+  const [yahooResults, brResults, localResults] = await Promise.all([
+    yahooPromise,
+    getBrCatalogService().search(query),
+    Promise.resolve(searchLocal(query, portfolioId)),
   ]);
 
   // Merge and deduplicate by symbol — local first so its richer metadata
-  // (e.g. real currency from ticker_map) survives the dedupe; ordering will
-  // be redone by relevance score below.
+  // (e.g. real currency from ticker_map) survives the dedupe, BR before Yahoo
+  // so `.WA` entries keep PLN + rozróżnienie GPW/NC; ordering will be redone
+  // by relevance score below.
   const seen = new Set<string>();
   const results: TickerSearchResult[] = [];
 
-  for (const r of localResults) {
-    const key = r.symbol.toUpperCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      results.push(r);
-    }
-  }
-  if (stooqResult) {
-    const key = stooqResult.symbol.toUpperCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      results.push(stooqResult);
-    }
-  }
-  for (const r of yahooResults) {
+  for (const r of [...localResults, ...brResults, ...yahooResults]) {
     const key = r.symbol.toUpperCase();
     if (!seen.has(key)) {
       seen.add(key);
@@ -243,10 +251,7 @@ export async function searchTickers(query: string): Promise<TickerSearchResult[]
   // ahead of an exact Yahoo symbol match (e.g. SOMEFIG.WA before FIG for "fig").
   results.sort((a, b) => relevanceScore(b, query) - relevanceScore(a, query));
 
-  const limited = results.slice(0, 15);
-  // Krótszy TTL dla pustych wyników — chwilowy 500 z Yahoo nie blokuje podpowiedzi na 5 min
-  setCached(cacheKey, limited, limited.length === 0 ? 30 : 300);
-  return limited;
+  return results.slice(0, 15);
 }
 
 /**
