@@ -31,11 +31,20 @@ import type { TickerSearchResult } from 'shared';
 import { config } from '../config.js';
 
 const CATALOG_URL = 'https://www.biznesradar.pl/service-data-short-js/1';
+/**
+ * Listing GPW GlobalConnect (zagraniczne spółki notowane na GPW w PLN) —
+ * w katalogu BDM są nieodróżnialne od zwykłych spółek GPW, a w podpowiedziach
+ * tylko mylą (AAPL.WA obok prawdziwego AAPL z NASDAQ). Strona listingu jest
+ * renderowana server-side i służy jako zbiór wykluczeń.
+ */
+const GLOBALCONNECT_URL = 'https://www.biznesradar.pl/gielda/akcje_globalconnect';
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 const FETCH_TIMEOUT_MS = 15_000;
 const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // ≤1×/24h
 const RETRY_INTERVAL_MS = 60 * 60 * 1000; // po awarii: ponów najwcześniej po 1h
+/** Przerwa grzecznościowa między katalogiem a stroną GC (wzorzec z gpw-dividend-calendar). */
+const POLITENESS_DELAY_MS = 1_000;
 /** Zimny start: nie każ użytkownikowi czekać na 1,2 MB dłużej niż to. */
 const COLD_START_WAIT_MS = 2_500;
 /**
@@ -57,8 +66,28 @@ export interface BrCatalogEntry {
   shortName: string;
 }
 
-/** Tickery NewConnect ze statycznej mapy — rozróżnienie NC vs GPW. */
-const NC_TICKERS = new Set(NC_TICKER_MAP.map((e) => e.ticker.toUpperCase()));
+/**
+ * Ticker → nazwa NC ze statycznej mapy — rozróżnienie NC vs GPW.
+ * Samo trafienie tickera NIE wystarcza: kody bywają reużywane między rynkami
+ * (ORL = Orlen na GPW, ale w mapie NC ORZLOPONY) — klasyfikujemy NC tylko gdy
+ * nazwa z katalogu potwierdza wpis mapy (ta sama reguła co buildEntry
+ * w isin-resolverze).
+ */
+const NC_NAME_BY_TICKER = new Map(
+  NC_TICKER_MAP.map((e) => [e.ticker.toUpperCase(), e.name.toUpperCase()]),
+);
+
+function isNcCatalogEntry(e: BrCatalogEntry): boolean {
+  const ncName = NC_NAME_BY_TICKER.get(e.ticker);
+  if (!ncName) return false;
+  const name = e.name.toUpperCase();
+  const short = e.shortName.toUpperCase();
+  return (
+    name.includes(ncName) ||
+    ncName.includes(name) ||
+    (short.length >= 3 && (short.includes(ncName) || ncName.includes(short)))
+  );
+}
 
 /**
  * Parser payloadu `service-data-short-js/1` (czysta funkcja, bez I/O).
@@ -116,9 +145,53 @@ function toResult(e: BrCatalogEntry): TickerSearchResult {
   return {
     symbol: `${e.ticker}.WA`,
     name: e.name,
-    exchange: NC_TICKERS.has(e.ticker) ? 'NC' : 'GPW',
+    exchange: isNcCatalogEntry(e) ? 'NC' : 'GPW',
     currency: 'PLN',
   };
+}
+
+/**
+ * Parser strony listingu GlobalConnect (czysta funkcja): tickery z linków
+ * `/notowania/<TICKER>` (slug == ticker dla wpisów GC). Zwraca zbiór wykluczeń.
+ */
+export function parseGcTickers(html: string): Set<string> {
+  const tickers = new Set<string>();
+  for (const m of html.matchAll(/href="\/notowania\/([0-9A-Za-z-]+)"/g)) {
+    tickers.add(m[1].toUpperCase());
+  }
+  return tickers;
+}
+
+/**
+ * Normalizacja do porównań nazw: uppercase, bez polskich znaków (Ł→L, NFD),
+ * tylko [A-Z0-9 ]. Nazwy brokerów są ASCII ("KGHM POLSKA MIEDZ"), katalog BR
+ * ma pełne nazwy z diakrytykami ("KGHM POLSKA MIEDŹ SPÓŁKA AKCYJNA").
+ */
+function normalizeForMatch(s: string): string {
+  return s
+    .toUpperCase()
+    .replace(/Ł/g, 'L')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Weryfikacja nazwy przy dopasowaniu po tickerze (reguła z dawnego
+ * validateStooq): dokładna równość LUB jedna nazwa zaczyna się od pierwszych
+ * 4 znaków drugiej (obie ≥4 znaki). Chroni przed fałszywymi trafieniami
+ * skróconych kandydatów (np. "MOL" = MOL Magyar, nie Molecure).
+ */
+function namesOverlap(expected: string, actual: string): boolean {
+  const e = normalizeForMatch(expected);
+  const a = normalizeForMatch(actual);
+  if (!e || !a) return false;
+  if (e === a) return true;
+  const minLen = Math.min(e.length, a.length);
+  if (minLen < 4) return false;
+  return a.startsWith(e.substring(0, 4)) || e.startsWith(a.substring(0, 4));
 }
 
 /** Fallback offline: sama statyczna mapa NC (ticker + skrócona nazwa). */
@@ -143,11 +216,23 @@ export interface BrCatalogServiceOptions {
   /** Ścieżka bazy persystencji; ':memory:' w testach. */
   dbFile?: string;
   coldStartWaitMs?: number;
+  politenessDelayMs?: number;
 }
 
 export interface BrCatalogService {
   /** Dopasowania z katalogu (lazy refresh w tle; nigdy nie rzuca). */
   search(query: string): Promise<TickerSearchResult[]>;
+  /**
+   * Dokładne dopasowanie tickera (dla isin-resolvera — następca validateStooq).
+   * `expectedName` włącza weryfikację nazwy (ochrona skróconych kandydatów
+   * przed fałszywymi trafieniami). Zwraca null też gdy katalog niedostępny.
+   */
+  findByTicker(ticker: string, expectedName?: string): Promise<TickerSearchResult | null>;
+  /**
+   * Konserwatywne dopasowanie po nazwie spółki (następca searchStooqByName):
+   * dokładny skrót lub prefiks nazwy/skrótu. Zwraca najlepsze trafienie.
+   */
+  findByName(name: string): Promise<TickerSearchResult | null>;
   close(): void;
 }
 
@@ -156,6 +241,7 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
   const now = options.now ?? (() => new Date());
   const dbFile = options.dbFile ?? path.join(config.dataDir, 'price_history.db');
   const coldStartWaitMs = options.coldStartWaitMs ?? COLD_START_WAIT_MS;
+  const politenessDelayMs = options.politenessDelayMs ?? POLITENESS_DELAY_MS;
 
   let db: Database.Database | null = null;
   let index: BrCatalogEntry[] | null = null; // null = jeszcze nie ładowany z DB
@@ -206,18 +292,35 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
     index = rows.map((r) => ({ ticker: r.ticker, name: r.name, shortName: r.short_name }));
   }
 
+  async function fetchPage(url: string): Promise<string> {
+    const resp = await fetchFn(url, {
+      headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${url}`);
+    return await resp.text();
+  }
+
   async function doRefresh(): Promise<void> {
     setState('last_attempt', now().toISOString());
     try {
-      const resp = await fetchFn(CATALOG_URL, {
-        headers: { 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const entries = parseBrCatalog(await resp.text());
-      if (entries.length < MIN_PLAUSIBLE_ENTRIES) {
-        throw new Error(`podejrzanie mało wpisów (${entries.length}) — nie nadpisuję katalogu`);
+      const rawEntries = parseBrCatalog(await fetchPage(CATALOG_URL));
+      if (rawEntries.length < MIN_PLAUSIBLE_ENTRIES) {
+        throw new Error(`podejrzanie mało wpisów (${rawEntries.length}) — nie nadpisuję katalogu`);
       }
+
+      // Wykluczenie GlobalConnect. Awaria strony GC = awaria całego odświeżenia
+      // (stary katalog zostaje, retry ≥1h) — inaczej złamalibyśmy niezmiennik
+      // "katalog w bazie jest wolny od GC".
+      await new Promise((resolve) => setTimeout(resolve, politenessDelayMs));
+      const gcTickers = parseGcTickers(await fetchPage(GLOBALCONNECT_URL));
+      if (gcTickers.size < 5) {
+        throw new Error(
+          `podejrzanie mało tickerów GlobalConnect (${gcTickers.size}) — możliwa zmiana strony`,
+        );
+      }
+      const entries = rawEntries.filter((e) => !gcTickers.has(e.ticker));
+
       const database = getDb();
       const insert = database.prepare(
         'INSERT OR REPLACE INTO br_ticker_catalog (ticker, name, short_name) VALUES (?, ?, ?)',
@@ -249,23 +352,29 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
     return inFlightRefresh;
   }
 
+  /**
+   * Index gotowy do przeszukania (lazy load z DB + refresh gdy stale).
+   * Zimny start (pusta baza): daj fetchowi krótką szansę, potem nie blokuj —
+   * refresh i tak dokończy się w tle (single-flight). Pusta tablica = katalog
+   * (jeszcze) niedostępny.
+   */
+  async function ensureIndex(): Promise<BrCatalogEntry[]> {
+    if (index === null) loadIndexFromDb();
+    const refresh = refreshIfDue();
+    if (refresh && index !== null && index.length === 0) {
+      await Promise.race([refresh, new Promise((resolve) => setTimeout(resolve, coldStartWaitMs))]);
+    }
+    return index ?? [];
+  }
+
   return {
     async search(query: string): Promise<TickerSearchResult[]> {
       const q = query.trim().toLowerCase();
       if (!q) return [];
       try {
-        if (index === null) loadIndexFromDb();
-        const refresh = refreshIfDue();
-        if (refresh && index !== null && index.length === 0) {
-          // Zimny start (pusta baza): daj fetchowi krótką szansę, potem nie blokuj —
-          // refresh i tak dokończy się w tle (single-flight), fallback = mapa NC.
-          await Promise.race([
-            refresh,
-            new Promise((resolve) => setTimeout(resolve, coldStartWaitMs)),
-          ]);
-        }
-        if (index === null || index.length === 0) return searchNcStatic(query);
-        return index
+        const entries = await ensureIndex();
+        if (entries.length === 0) return searchNcStatic(query);
+        return entries
           .map((e) => ({ e, score: matchScore(e, q) }))
           .filter((m) => m.score > 0)
           .sort((a, b) => b.score - a.score)
@@ -277,6 +386,64 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
         return searchNcStatic(query);
       }
     },
+
+    async findByTicker(ticker: string, expectedName?: string): Promise<TickerSearchResult | null> {
+      const base = ticker
+        .trim()
+        .toUpperCase()
+        .replace(/\.(WA|NC)$/, '');
+      if (!base) return null;
+      try {
+        const entries = await ensureIndex();
+        const hit = entries.find((e) => e.ticker === base);
+        if (!hit) return null;
+        if (expectedName) {
+          // Furtka tożsamości tickera: user podał sam kod ("CDR", "ORL.WA") —
+          // wtedy dokładne trafienie kodu JEST potwierdzeniem, nazwy nie ma z czym
+          // porównywać. Weryfikacja nazwy chroni tylko kandydatów obciętych/
+          // aliasowanych (expectedName ≠ kod trafionego wpisu).
+          const expectedTicker = expectedName
+            .trim()
+            .toUpperCase()
+            .replace(/\.(WA|NC)$/, '');
+          const isTickerItself = expectedTicker === hit.ticker;
+          if (
+            !isTickerItself &&
+            !namesOverlap(expectedName, hit.name) &&
+            !namesOverlap(expectedName, hit.shortName)
+          ) {
+            return null;
+          }
+        }
+        return toResult(hit);
+      } catch (err) {
+        console.warn('[biznesradar-catalog] findByTicker failed:', err);
+        return null;
+      }
+    },
+
+    async findByName(name: string): Promise<TickerSearchResult | null> {
+      const q = normalizeForMatch(name);
+      if (q.length < 3) return null;
+      try {
+        const entries = await ensureIndex();
+        let best: { e: BrCatalogEntry; score: number } | null = null;
+        for (const e of entries) {
+          const short = normalizeForMatch(e.shortName);
+          const full = normalizeForMatch(e.name);
+          let score = 0;
+          if (short && short === q) score = 3;
+          else if (full.startsWith(q)) score = 2;
+          else if (short && short.startsWith(q)) score = 1;
+          if (score > (best?.score ?? 0)) best = { e, score };
+        }
+        return best ? toResult(best.e) : null;
+      } catch (err) {
+        console.warn('[biznesradar-catalog] findByName failed:', err);
+        return null;
+      }
+    },
+
     close(): void {
       db?.close();
       db = null;

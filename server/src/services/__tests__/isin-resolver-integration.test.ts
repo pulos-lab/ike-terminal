@@ -3,8 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock external services BEFORE importing the resolver
 vi.mock('../ticker-search.js', () => ({
   searchYahoo: vi.fn(),
-  validateStooq: vi.fn(),
-  searchStooqByName: vi.fn(),
+}));
+const findByTicker = vi.fn();
+const findByName = vi.fn();
+vi.mock('../biznesradar-catalog.js', () => ({
+  getBrCatalogService: () => ({ findByTicker, findByName, search: vi.fn(), close: vi.fn() }),
 }));
 vi.mock('../yahoo-finance.js', () => ({
   fetchYahooPrice: vi.fn(),
@@ -40,9 +43,9 @@ describe('resolveIsin — full integration for SEVENET-NC trap', () => {
       priceSource: 'stooq',
     });
 
-    // Gwarancja że Yahoo nie został wywołany — guard przerwał wcześniej
+    // Gwarancja że Yahoo/katalog BR nie zostały wywołane — guard przerwał wcześniej
     expect(tickerSearch.searchYahoo).not.toHaveBeenCalled();
-    expect(tickerSearch.validateStooq).not.toHaveBeenCalled();
+    expect(findByTicker).not.toHaveBeenCalled();
   });
 
   it('SEVENET-NC z PSEUDO-ISIN (mBank/XTB style) też → NC entry', async () => {
@@ -68,21 +71,25 @@ describe('resolveIsin — full integration for SEVENET-NC trap', () => {
 
   it('GPW big-cap (CDR z mBank pseudo-ISIN) NIE jest klasyfikowany jako NC', async () => {
     // CDR (CD Projekt) jest na GPW, nie NC. paperName bez -NC → guard NIE odpala.
-    (tickerSearch.validateStooq as any).mockResolvedValue({
+    findByTicker.mockResolvedValue({
       symbol: 'CDR.WA',
-      name: 'CD Projekt',
+      name: 'CD PROJEKT RED SPÓŁKA AKCYJNA',
+      exchange: 'GPW',
+      currency: 'PLN',
     });
     const result = await resolveIsin('CDR', 'CDR', 'PLN');
     expect(result?.exchange).toBe('GPW');
     expect(result?.ticker).toBe('CDR.WA');
   });
 
-  it('XTB-style SEVENET (paperName="SEV.WA", isin="SEV.WA") → NC (cross-check Stooq name)', async () => {
-    // XTB importuje NC ticker jako "SEV.WA" (bez -NC suffix). Bez fix'a validateStooq
-    // hardkodowało exchange='GPW'. Teraz cross-check z NC offline map name match.
-    (tickerSearch.validateStooq as any).mockResolvedValue({
+  it('XTB-style SEVENET (paperName="SEV.WA", isin="SEV.WA") → NC (klasyfikacja katalogu BR)', async () => {
+    // XTB importuje NC ticker jako "SEV.WA" (bez -NC suffix). Katalog BR sam
+    // klasyfikuje NC (krzyżowanie z mapą NC + zgodność nazwy) — resolver ufa.
+    findByTicker.mockResolvedValue({
       symbol: 'SEV.WA',
-      name: 'SEVENET',
+      name: 'SEVENET SPÓŁKA AKCYJNA',
+      exchange: 'NC',
+      currency: 'PLN',
     });
     const result = await resolveIsin('SEV.WA', 'SEV.WA', 'PLN');
     expect(result?.exchange).toBe('NC');
@@ -90,12 +97,14 @@ describe('resolveIsin — full integration for SEVENET-NC trap', () => {
     expect(result?.priceSource).toBe('stooq');
   });
 
-  it('XTB-style Orlen (paperName="ORL.WA") → GPW (NC name nie matchuje Stooq name)', async () => {
+  it('XTB-style Orlen (paperName="ORL.WA") → GPW (kolizję ORZLOPONY rozstrzyga katalog)', async () => {
     // Kolizja ticker code'u: ORL jest w NC map jako ORZLOPONY, ale na GPW to Orlen.
-    // Stooq zwraca "Orlen" → NC name "ORZLOPONY" nie pasuje → klasyfikuj GPW.
-    (tickerSearch.validateStooq as any).mockResolvedValue({
+    // Katalog BR weryfikuje nazwę przy krzyżowaniu z mapą NC → zwraca GPW.
+    findByTicker.mockResolvedValue({
       symbol: 'ORL.WA',
-      name: 'Orlen',
+      name: 'ORLEN SPÓŁKA AKCYJNA',
+      exchange: 'GPW',
+      currency: 'PLN',
     });
     const result = await resolveIsin('ORL.WA', 'ORL.WA', 'PLN');
     expect(result?.exchange).toBe('GPW');
@@ -128,12 +137,12 @@ describe('resolveIsin — full integration for SEVENET-NC trap', () => {
   });
 });
 
-describe('resolveIsin — polski pseudo-ISIN vs zagraniczna kolizja tickera (Stooq down)', () => {
+describe('resolveIsin — polski pseudo-ISIN vs zagraniczna kolizja tickera (katalog BR niedostępny)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Domyślnie: Stooq nie odpowiada (rate-limit), Yahoo zwraca zagraniczną kolizję.
-    (tickerSearch.validateStooq as any).mockResolvedValue(null);
-    (tickerSearch.searchStooqByName as any).mockResolvedValue(null);
+    // Domyślnie: katalog BR niedostępny (zimny start, awaria BR), Yahoo zwraca zagraniczną kolizję.
+    findByTicker.mockResolvedValue(null);
+    findByName.mockResolvedValue(null);
   });
 
   it('XTB EXC.WA (Excellence NC) NIE łapie Exelon Corp — offline mapa NC wygrywa bez -NC', async () => {
@@ -193,18 +202,23 @@ describe('resolveIsin — sufiks -FIX i delisted GPW', () => {
   it('PLASTBOX-FIX (pseudo-ISIN) → sufiks -FIX stripowany, resolver szuka PLASTBOX', async () => {
     // Bossa sufiksuje instrumenty z ceną fixowaną: "-FIX" (jak "-NC-FIX" ale bez NC).
     // Bez stripowania cleanName = "PLASTBOX-FIX" i Stooq nie trafia.
-    (tickerSearch.validateStooq as any).mockImplementation(async (query: string) => {
+    findByTicker.mockImplementation(async (query: string) => {
       if (query.toUpperCase().includes('PLASTBOX')) {
-        return { symbol: 'PLX.WA', name: 'Plastbox' };
+        return {
+          symbol: 'PLX.WA',
+          name: 'PLASTBOX SPÓŁKA AKCYJNA',
+          exchange: 'GPW',
+          currency: 'PLN',
+        };
       }
-      return undefined;
+      return null;
     });
     const result = await resolveIsin('PLASTBOX', 'PLASTBOX-FIX', 'PLN');
     expect(result?.ticker).toBe('PLX.WA');
-    // Stooq wywołany z czystą nazwą (bez -FIX)
-    const stooqCall = (tickerSearch.validateStooq as any).mock.calls[0]?.[0] as string | undefined;
-    expect(stooqCall?.toUpperCase()).not.toContain('FIX');
-    expect(stooqCall?.toUpperCase()).toContain('PLASTBOX');
+    // Katalog odpytany czystą nazwą (bez -FIX)
+    const brCall = findByTicker.mock.calls[0]?.[0] as string | undefined;
+    expect(brCall?.toUpperCase()).not.toContain('FIX');
+    expect(brCall?.toUpperCase()).toContain('PLASTBOX');
   });
 
   it('PLASTBOX-FIX z prawdziwym ISIN PLPSTBX00016 → delisted guard, ZERO requestów sieciowych', async () => {
@@ -216,7 +230,7 @@ describe('resolveIsin — sufiks -FIX i delisted GPW', () => {
     expect(result?.exchange).toBe('GPW');
     expect(result?.currency).toBe('PLN');
     expect(tickerSearch.searchYahoo).not.toHaveBeenCalled();
-    expect(tickerSearch.validateStooq).not.toHaveBeenCalled();
+    expect(findByTicker).not.toHaveBeenCalled();
   });
 
   it('sufiks -FIX NIE psuje detekcji NewConnect (SEVENET-NC-FIX nadal NC)', async () => {
