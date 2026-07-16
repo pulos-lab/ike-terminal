@@ -787,7 +787,7 @@ router.get(
     if (!q || q.length < 1) {
       return res.json([]);
     }
-    const results = await searchTickers(q);
+    const results = await searchTickers(q, req.portfolioId);
     res.json(results);
   }),
 );
