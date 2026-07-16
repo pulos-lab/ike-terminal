@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { parseBrCatalog, createBrCatalogService, searchNcStatic } from '../biznesradar-catalog.js';
+import {
+  parseBrCatalog,
+  parseGcTickers,
+  createBrCatalogService,
+  searchNcStatic,
+} from '../biznesradar-catalog.js';
 
 // ── Payload testowy ─────────────────────────────────────────────────────────
 // Realne kształty wpisów z service-data-short-js/1 (2026-07-16). MIN_PLAUSIBLE
@@ -121,7 +126,60 @@ const INTERESTING = [
     r: 'EUR',
     q: 2,
   }, // zagranica
+  {
+    i: 98244,
+    s: 'AAPL',
+    f: 'APPLE INC.',
+    m: 'APPLE',
+    d: 'AAPL (APPLE)',
+    u: 'AAPL',
+    c: 1213.4,
+    o: 'BDM',
+    r: null,
+    q: 2,
+  }, // GlobalConnect — wykluczany przez stronę listingu GC (nie przez parser)
+  {
+    i: 118,
+    s: 'PKN',
+    f: 'ORLEN SPÓŁKA AKCYJNA',
+    m: 'PKNORLEN',
+    d: 'PKN (PKNORLEN)',
+    u: 'ORLEN',
+    c: 145.88,
+    o: 'BDM',
+    r: 'PLN',
+    q: 2,
+  }, // Orlen: BR i Yahoo kwotują pod PKN (rebrand PKN→ORL istniał tylko u Stooqa)
+  {
+    i: 5104,
+    s: 'ORL',
+    f: 'ORZEŁ SPÓŁKA AKCYJNA',
+    m: 'ORZLOPONY',
+    d: 'ORL (ORZLOPONY)',
+    u: 'ORZEL',
+    c: 1.02,
+    o: 'BDM',
+    r: null,
+    q: 3,
+  }, // ORL = Orzeł (NC, w mapie NC jako ORZLOPONY — zgodność nazwy → NC)
+  {
+    i: 5105,
+    s: 'ABK',
+    f: 'ABC KAPITAŁ SPÓŁKA AKCYJNA',
+    m: 'ABCKAP',
+    d: 'ABK (ABCKAP)',
+    u: 'ABCKAP',
+    c: 3.4,
+    o: 'BDM',
+    r: null,
+    q: 2,
+  }, // fikcyjna kolizja w drugą stronę: ABK jest w mapie NC jako ABAK, nazwa NIE pasuje → GPW
 ];
+
+/** Strona GlobalConnect: AAPL + wypełniacze (guard wymaga ≥5 tickerów). */
+const GC_HTML = ['AAPL', 'TSLA', 'MSFT', 'NVDA', 'AMZN', 'META']
+  .map((t) => `<tr><td><a href="/notowania/${t}">${t}</a></td></tr>`)
+  .join('\n');
 
 function makePayload(fillerCount = 600): string {
   const filler = Array.from({ length: fillerCount }, (_, i) => ({
@@ -153,15 +211,25 @@ function makePayload(fillerCount = 600): string {
   return `var symbols = ${JSON.stringify([...INTERESTING, ...filler, trailingExact])};`;
 }
 
-function makeFetch(responses: Array<string | Error>) {
-  let call = 0;
-  const fn = (async () => {
+/**
+ * Mock fetch routowany po URL: osobne sekwencje odpowiedzi dla katalogu
+ * (service-data-short-js) i strony GlobalConnect. Domyślnie GC zwraca GC_HTML.
+ */
+function makeFetch(opts: { catalog: Array<string | Error>; gc?: Array<string | Error> }) {
+  const catalogResponses = opts.catalog;
+  const gcResponses = opts.gc ?? [GC_HTML];
+  let catalogCalls = 0;
+  let gcCalls = 0;
+  const fn = (async (url: string | URL) => {
+    const u = String(url);
+    const isCatalog = u.includes('service-data-short-js');
+    const responses = isCatalog ? catalogResponses : gcResponses;
+    const call = isCatalog ? catalogCalls++ : gcCalls++;
     const resp = responses[Math.min(call, responses.length - 1)];
-    call += 1;
     if (resp instanceof Error) throw resp;
     return { ok: true, status: 200, text: async () => resp } as Response;
   }) as unknown as typeof fetch;
-  return { fn, calls: () => call };
+  return { fn, calls: () => catalogCalls, gcCalls: () => gcCalls };
 }
 
 // ── parseBrCatalog ──────────────────────────────────────────────────────────
@@ -180,7 +248,7 @@ describe('parseBrCatalog', () => {
     expect(tickers).not.toContain('2B76-GY.DE'); // IEX (zagranica)
     expect(tickers).not.toContain('DS0432'); // seria skarbowa (wzorzec serii)
     expect(tickers).not.toContain('ABE0227'); // seria Catalyst (długość)
-    expect(entries.length).toBe(3 + 600 + 1); // interesting + filler + trailing Z0
+    expect(entries.length).toBe(7 + 600 + 1); // interesting (AIT,KGH,GTN,AAPL,PKN,ORL,ABK) + filler + trailing Z0
   });
 
   it('mapuje pola: ticker uppercase, pełna nazwa, skrót', () => {
@@ -215,8 +283,8 @@ describe('searchNcStatic', () => {
 
 describe('createBrCatalogService', () => {
   it('NC po tickerze/nazwie → .WA/NC/PLN; GPW → GPW/PLN; jeden fetch na wiele wyszukiwań', async () => {
-    const { fn, calls } = makeFetch([makePayload()]);
-    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn });
+    const { fn, calls } = makeFetch({ catalog: [makePayload()] });
+    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
 
     for (const q of ['AIT', 'AITON', 'aiton caldwell']) {
       const hit = (await svc.search(q)).find((r) => r.symbol === 'AIT.WA');
@@ -239,8 +307,8 @@ describe('createBrCatalogService', () => {
   });
 
   it('dokładne trafienie tickera nie ginie pod capem dopasowań', async () => {
-    const { fn } = makeFetch([makePayload(600)]);
-    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn });
+    const { fn } = makeFetch({ catalog: [makePayload(600)] });
+    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
     // "Z0" prefiksowo łapie Z000–Z099 (100 wpisów przed Z0 w katalogu);
     // exact ticker Z0 siedzi na KOŃCU — bez pre-sortu wypadłby za capem.
     const results = await svc.search('Z0');
@@ -250,8 +318,13 @@ describe('createBrCatalogService', () => {
   });
 
   it('awaria fetchu → fallback statyczna mapa NC (search nigdy nie rzuca)', async () => {
-    const { fn } = makeFetch([new Error('network down')]);
-    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, coldStartWaitMs: 10 });
+    const { fn } = makeFetch({ catalog: [new Error('network down')] });
+    const svc = createBrCatalogService({
+      dbFile: ':memory:',
+      fetchFn: fn,
+      coldStartWaitMs: 10,
+      politenessDelayMs: 0,
+    });
 
     const results = await svc.search('AITON');
     const hit = results.find((r) => r.symbol === 'AIT.WA');
@@ -262,12 +335,13 @@ describe('createBrCatalogService', () => {
 
   it('podejrzanie mały payload nie nadpisuje dobrego katalogu (sanity guard)', async () => {
     const truncated = `var symbols = ${JSON.stringify(INTERESTING.slice(0, 2))};`;
-    const { fn, calls } = makeFetch([makePayload(), truncated]);
+    const { fn, calls } = makeFetch({ catalog: [makePayload(), truncated] });
     const nowRef = { value: new Date('2026-07-16T10:00:00Z') };
     const svc = createBrCatalogService({
       dbFile: ':memory:',
       fetchFn: fn,
       now: () => nowRef.value,
+      politenessDelayMs: 0,
     });
 
     expect((await svc.search('GETIN')).length).toBeGreaterThan(0);
@@ -285,15 +359,15 @@ describe('createBrCatalogService', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-catalog-test-'));
     const dbFile = path.join(dir, 'price_history.db');
     try {
-      const first = makeFetch([makePayload()]);
-      const svc1 = createBrCatalogService({ dbFile, fetchFn: first.fn });
+      const first = makeFetch({ catalog: [makePayload()] });
+      const svc1 = createBrCatalogService({ dbFile, fetchFn: first.fn, politenessDelayMs: 0 });
       expect((await svc1.search('KGHM')).length).toBeGreaterThan(0);
       expect(first.calls()).toBe(1);
       svc1.close();
 
       // „Restart": nowa instancja, ta sama baza — index z DB, zero fetchy
-      const second = makeFetch([makePayload()]);
-      const svc2 = createBrCatalogService({ dbFile, fetchFn: second.fn });
+      const second = makeFetch({ catalog: [makePayload()] });
+      const svc2 = createBrCatalogService({ dbFile, fetchFn: second.fn, politenessDelayMs: 0 });
       const kgh = (await svc2.search('KGHM')).find((r) => r.symbol === 'KGH.WA');
       expect(kgh).toBeDefined();
       expect(second.calls()).toBe(0);
@@ -304,13 +378,16 @@ describe('createBrCatalogService', () => {
   });
 
   it('po awarii retry najwcześniej po godzinie (bez retry-storm)', async () => {
-    const { fn, calls } = makeFetch([new Error('down'), new Error('down'), makePayload()]);
+    const { fn, calls } = makeFetch({
+      catalog: [new Error('down'), new Error('down'), makePayload()],
+    });
     const nowRef = { value: new Date('2026-07-16T10:00:00Z') };
     const svc = createBrCatalogService({
       dbFile: ':memory:',
       fetchFn: fn,
       now: () => nowRef.value,
       coldStartWaitMs: 10,
+      politenessDelayMs: 0,
     });
 
     await svc.search('AITON');
@@ -321,6 +398,171 @@ describe('createBrCatalogService', () => {
     nowRef.value = new Date('2026-07-16T11:30:00Z'); // >1h — wolno ponowić
     await svc.search('AITON');
     expect(calls()).toBe(2);
+    svc.close();
+  });
+});
+
+// ── GlobalConnect + kolizje tickerów ────────────────────────────────────────
+
+describe('createBrCatalogService — GlobalConnect i kolizja NC', () => {
+  it('parseGcTickers wyciąga tickery z linków /notowania/', () => {
+    const gc = parseGcTickers(GC_HTML);
+    expect(gc.has('AAPL')).toBe(true);
+    expect(gc.has('META')).toBe(true);
+    expect(gc.size).toBe(6);
+  });
+
+  it('spółki GlobalConnect NIE są podpowiadane (AAPL.WA wycięty przez stronę GC)', async () => {
+    const { fn, gcCalls } = makeFetch({ catalog: [makePayload()] });
+    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+
+    const results = await svc.search('APPLE');
+    expect(results.find((r) => r.symbol === 'AAPL.WA')).toBeUndefined();
+    expect(gcCalls()).toBe(1); // strona GC pobrana raz, razem z katalogiem
+
+    // zwykłe GPW/NC nietknięte
+    expect((await svc.search('KGHM')).find((r) => r.symbol === 'KGH.WA')).toBeDefined();
+    svc.close();
+  });
+
+  it('niezgodna wersja schematu wymusza odświeżenie mimo świeżego last_success (deploy nad starą bazą)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-catalog-ver-'));
+    const dbFile = path.join(dir, 'price_history.db');
+    try {
+      // Baza w stanie "prod po deployu": katalog zapisany STARĄ logiką
+      // (zawiera wpis GlobalConnect), świeży last_success, BRAK schema_version.
+      const Database = (await import('better-sqlite3')).default;
+      const legacy = new Database(dbFile);
+      legacy.exec(`
+        CREATE TABLE br_ticker_catalog (ticker TEXT PRIMARY KEY, name TEXT NOT NULL, short_name TEXT NOT NULL DEFAULT '');
+        CREATE TABLE br_catalog_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO br_ticker_catalog VALUES ('AAPL', 'APPLE INC.', 'APPLE');
+        INSERT INTO br_catalog_state VALUES ('last_success', '2026-07-16T09:59:00Z');
+        INSERT INTO br_catalog_state VALUES ('last_attempt', '2026-07-16T08:59:00Z');
+      `);
+      legacy.close();
+
+      const { fn, calls } = makeFetch({ catalog: [makePayload()] });
+      const svc = createBrCatalogService({
+        dbFile,
+        fetchFn: fn,
+        now: () => new Date('2026-07-16T10:00:00Z'),
+        politenessDelayMs: 0,
+      });
+
+      expect((await svc.search('APPLE')).find((r) => r.symbol === 'AAPL.WA')).toBeUndefined();
+      expect(calls()).toBe(1); // refetch wymuszony wersją, nie TTL-em
+      expect((await svc.search('KGHM')).find((r) => r.symbol === 'KGH.WA')).toBeDefined();
+      expect(calls()).toBe(1); // wersja zgodna po odświeżeniu — bez kolejnych fetchy
+      svc.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('awaria strony GC = awaria odświeżenia (katalog bez GC albo wcale)', async () => {
+    const { fn, calls } = makeFetch({
+      catalog: [makePayload()],
+      gc: [new Error('gc down'), GC_HTML],
+    });
+    const nowRef = { value: new Date('2026-07-16T10:00:00Z') };
+    const svc = createBrCatalogService({
+      dbFile: ':memory:',
+      fetchFn: fn,
+      now: () => nowRef.value,
+      coldStartWaitMs: 10,
+      politenessDelayMs: 0,
+    });
+
+    // Pierwsza próba: GC padło → refresh nieudany → fallback statyczna mapa NC
+    const cold = await svc.search('AITON');
+    expect(cold.find((r) => r.symbol === 'AIT.WA')).toBeDefined(); // z mapy NC
+    expect(calls()).toBe(1);
+
+    // Po backoffie: obie strony OK → pełny katalog bez AAPL
+    nowRef.value = new Date('2026-07-16T11:30:00Z');
+    await svc.search('KGHM');
+    expect((await svc.search('APPLE')).find((r) => r.symbol === 'AAPL.WA')).toBeUndefined();
+    expect((await svc.search('GETIN')).find((r) => r.symbol === 'GTN.WA')).toBeDefined();
+    svc.close();
+  });
+
+  it('kolizja kodu tickera z mapą NC rozstrzygana nazwą: ORL=Orzeł → NC, ABK≠ABAK → GPW', async () => {
+    const { fn } = makeFetch({ catalog: [makePayload()] });
+    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+
+    // ORL jest w mapie NC jako ORZLOPONY i skrót BR to potwierdza → NC
+    const orl = (await svc.findByTicker('ORL'))!;
+    expect(orl.exchange).toBe('NC');
+    expect(orl.name).toBe('ORZEŁ SPÓŁKA AKCYJNA');
+    // ABK jest w mapie NC jako ABAK, ale nazwa/skrót katalogu NIE pasują → GPW
+    expect((await svc.findByTicker('ABK'))!.exchange).toBe('GPW');
+    // Orlen kwotuje pod PKN (GPW)
+    const pkn = (await svc.findByTicker('PKN'))!;
+    expect(pkn.exchange).toBe('GPW');
+    expect(pkn.name).toBe('ORLEN SPÓŁKA AKCYJNA');
+    svc.close();
+  });
+});
+
+// ── findByTicker / findByName (następcy validateStooq / searchStooqByName) ──
+
+describe('findByTicker / findByName', () => {
+  it('findByTicker: dokładne trafienie, akceptuje sufiks .WA, klasyfikuje NC/GPW', async () => {
+    const { fn } = makeFetch({ catalog: [makePayload()] });
+    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+
+    expect((await svc.findByTicker('KGH'))?.symbol).toBe('KGH.WA');
+    expect((await svc.findByTicker('kgh.wa'))?.symbol).toBe('KGH.WA');
+    expect((await svc.findByTicker('AIT'))?.exchange).toBe('NC');
+    expect((await svc.findByTicker('ABK'))?.exchange).toBe('GPW'); // kolizja z mapą NC chroniona nazwą
+    expect(await svc.findByTicker('XXXX')).toBeNull();
+    svc.close();
+  });
+
+  it('findByTicker z expectedName: weryfikacja nazwy odrzuca fałszywe trafienia', async () => {
+    const { fn } = makeFetch({ catalog: [makePayload()] });
+    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+
+    // zgodna nazwa (diakrytyki znormalizowane): przechodzi
+    expect(await svc.findByTicker('KGH', 'KGHM POLSKA MIEDZ')).not.toBeNull();
+    // zgodny skrót giełdowy: przechodzi
+    expect(await svc.findByTicker('AIT', 'AITON')).not.toBeNull();
+    // niezgodna nazwa: odrzucone (ochrona skróconych kandydatów)
+    expect(await svc.findByTicker('KGH', 'MOLECURE')).toBeNull();
+    // furtka tożsamości tickera: user podał sam kod → przechodzi mimo braku nazwy
+    expect(await svc.findByTicker('ORL', 'ORL')).not.toBeNull();
+    expect(await svc.findByTicker('ORL', 'ORL.WA')).not.toBeNull();
+    // obcięty kandydat "ORLEN"→"ORL" NIE łapie Orła (nazwa nie pasuje)
+    expect(await svc.findByTicker('ORL', 'ORLEN')).toBeNull();
+    svc.close();
+  });
+
+  it('findByName: dokładny skrót i prefiks nazwy; null dla nieznanych', async () => {
+    const { fn } = makeFetch({ catalog: [makePayload()] });
+    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+
+    expect((await svc.findByName('KGHM'))?.symbol).toBe('KGH.WA'); // skrót exact
+    expect((await svc.findByName('AITON CALDWELL'))?.symbol).toBe('AIT.WA'); // prefiks nazwy
+    expect((await svc.findByName('ORLEN'))?.symbol).toBe('PKN.WA'); // Orlen → PKN, nie Orzeł
+    expect((await svc.findByName('PKNORLEN'))?.symbol).toBe('PKN.WA'); // skrót mBank
+    expect((await svc.findByName('kghm polska miedz'))?.symbol).toBe('KGH.WA'); // bez diakrytyków
+    expect(await svc.findByName('NIEISTNIEJACA SPOLKA XYZ')).toBeNull();
+    expect(await svc.findByName('AB')).toBeNull(); // za krótkie (<3)
+    svc.close();
+  });
+
+  it('findByTicker/findByName przy niedostępnym katalogu → null (bez rzucania)', async () => {
+    const { fn } = makeFetch({ catalog: [new Error('down')] });
+    const svc = createBrCatalogService({
+      dbFile: ':memory:',
+      fetchFn: fn,
+      coldStartWaitMs: 10,
+      politenessDelayMs: 0,
+    });
+
+    expect(await svc.findByTicker('KGH')).toBeNull();
+    expect(await svc.findByName('KGHM')).toBeNull();
     svc.close();
   });
 });

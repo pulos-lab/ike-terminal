@@ -8,7 +8,8 @@ import {
   findBondByTicker,
 } from 'shared';
 import { getTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
-import { searchYahoo, validateStooq, searchStooqByName } from './ticker-search.js';
+import { searchYahoo } from './ticker-search.js';
+import { getBrCatalogService } from './biznesradar-catalog.js';
 import { fetchYahooPrice } from './yahoo-finance.js';
 import { resolveSector } from './sector-resolver.js';
 import { mapWithConcurrency } from './concurrency.js';
@@ -98,7 +99,9 @@ export const STOOQ_ALIASES: Record<string, string> = {
   VGN: 'TEC', // Vinci Gen → Tecnovatica (2026)
   EON: 'EUV', // EO Networks → Euvic (2026)
   DTL: 'VAI', // Detalion Games → Volaria AI (2025)
-  PKN: 'ORL', // PKN Orlen → Orlen (2023)
+  // UWAGA: brak aliasu PKN→ORL. To był rebrand WYŁĄCZNIE w schemacie Stooqa
+  // (martwy od 2026); biznesradar i Yahoo kwotują Orlen pod PKN/PKN.WA,
+  // a ORL.WA to Orzeł S.A. (NewConnect) — alias kierował Orlen na Orzeł.
   LVC: 'TXT', // LiveChat → Text (2023)
   FMF: 'GNE', // Famur → Grenevia (2023)
   GBK: 'CPT', // GetBack → Capitea (2023)
@@ -233,14 +236,17 @@ export async function resolveIsin(
   const delistedGuard = tryDelistedGuard(isin);
   if (delistedGuard) return delistedGuard;
 
-  // === Polish pseudo-ISINs: Stooq FIRST (authoritative for GPW) ===
+  // === Polish pseudo-ISINs: katalog biznesradar FIRST (authoritative for GPW+NC) ===
+  // Dawniej Stooq; oba jego endpointy padły (CSV /q/l/ ~03.2026, /cmp/ challenge
+  // anti-bot ~07.2026). Katalog BR pokrywa GPW+NC (bez GlobalConnect) i sam
+  // klasyfikuje NC vs GPW z weryfikacją nazwy (kolizje typu ORL→ORZLOPONY/Orlen).
   // This covers: mBank tickers (CDR, KTY), XTB new format (Cyfrowy Polsat, PGE),
   // XTB old format (.WA suffix like JSW.WA, ANR.WA)
   if (isPolishTicker && isPseudoIsin && cleanName.length >= 2) {
     // Check aliases for ambiguous names (e.g., "Dino" → "DNP")
     const aliasedName = STOOQ_ALIASES[cleanName.toUpperCase()] || cleanName;
 
-    // 1. Stooq ticker validation (works for short tickers: PGE, CDR, JSW, DNP)
+    // 1. Dokładne dopasowanie tickera w katalogu BR (short tickers: PGE, CDR, JSW, DNP)
     const candidates = [aliasedName];
     if (
       !aliasedName.toUpperCase().startsWith('ETF') &&
@@ -251,47 +257,40 @@ export async function resolveIsin(
     }
 
     for (const candidate of candidates) {
-      const stooqResult = await validateStooq(candidate);
-      if (stooqResult) {
-        // NC detection: validateStooq potwierdza ticker, ale endpoint /q/l/ nie
-        // zwraca exchange code (XWAR vs XNCO). Cross-check z NC offline map:
-        // jeśli ticker code jest w NC byName *i* nazwa z Stooqu pasuje do NC
-        // entry (uniknięcie kolizji typu ORL→ORZLOPONY/Orlen), klasyfikuj NC.
-        // Naprawia case XTB import "SEV.WA" → SEVENET (NewConnect).
-        const tickerBase = stooqResult.symbol.replace(/\.WA$/i, '').toUpperCase();
-        const ncEntry = findNcTicker(tickerBase);
-        const stooqNameUpper = (stooqResult.name || '').toUpperCase();
-        const isNc =
-          ncEntry !== null &&
-          ncEntry.ticker.toUpperCase() === tickerBase &&
-          (stooqNameUpper.includes(ncEntry.name.toUpperCase()) ||
-            ncEntry.name.toUpperCase().includes(stooqNameUpper));
-        const exchange = (isNc ? 'NC' : 'GPW') as TickerMapEntry['exchange'];
+      // expectedName=cleanName: kandydaci obcięci/aliasowani nie mogą łapać
+      // obcych spółek o tym samym kodzie (np. "ORLEN"→"ORL" = Orzeł S.A. na NC).
+      // Gdy user podał sam ticker (cleanName == kod w katalogu), weryfikacja
+      // przechodzi przez furtkę tożsamości tickera w findByTicker.
+      const brResult = await getBrCatalogService().findByTicker(candidate, cleanName);
+      if (brResult) {
+        // Katalog klasyfikuje NC (krzyżowanie z mapą NC + zgodność nazwy);
+        // sufiks -NC z Bossy zostaje dodatkowym, autorytatywnym sygnałem.
+        const exchange = (
+          isNewConnect || brResult.exchange === 'NC' ? 'NC' : 'GPW'
+        ) as TickerMapEntry['exchange'];
         return {
           isin,
-          ticker: stooqResult.symbol,
-          name: stooqResult.name !== candidate.toUpperCase() ? stooqResult.name : paperName,
+          ticker: brResult.symbol,
+          name: brResult.name,
           exchange,
           currency: 'PLN',
-          priceSource: inferPriceSource(stooqResult.symbol, exchange),
+          priceSource: inferPriceSource(brResult.symbol, exchange),
         };
       }
     }
 
-    // 2. Stooq company name search (works for full names: mBank, Tauron, Budimex)
+    // 2. Dopasowanie po nazwie spółki w katalogu BR (full names: mBank, Tauron, Budimex)
     if (cleanName.length >= 3) {
-      const stooqSearch = await searchStooqByName(cleanName);
-      if (stooqSearch) {
-        const exchange = (
-          stooqSearch.exchange === 'NC' ? 'NC' : 'GPW'
-        ) as TickerMapEntry['exchange'];
+      const brByName = await getBrCatalogService().findByName(cleanName);
+      if (brByName) {
+        const exchange = (brByName.exchange === 'NC' ? 'NC' : 'GPW') as TickerMapEntry['exchange'];
         return {
           isin,
-          ticker: stooqSearch.symbol,
-          name: stooqSearch.name,
+          ticker: brByName.symbol,
+          name: brByName.name,
           exchange,
           currency: 'PLN',
-          priceSource: inferPriceSource(stooqSearch.symbol, exchange),
+          priceSource: inferPriceSource(brByName.symbol, exchange),
         };
       }
     }
@@ -394,11 +393,13 @@ export async function resolveIsin(
     }
   }
 
-  // Strategy 2: Stooq check for real Polish ISINs BEFORE Yahoo name search.
+  // Strategy 2: katalog BR check for real Polish ISINs BEFORE Yahoo name search.
   // This prevents Yahoo from matching "MINERAL" → NAK (Northern Dynasty)
   // when the actual stock is MINERAL-NC on NewConnect.
   if (isRealPolishIsin && cleanName.length >= 2) {
-    // 2a. Stooq ticker validation (short tickers: MNR, KBT, BCT)
+    // 2a. Dokładne dopasowanie tickera (short tickers: MNR, KBT, BCT) —
+    //     z weryfikacją nazwy (skrócone kandydaty ≠ fałszywe trafienia,
+    //     np. "MOL" = MOL Magyar, nie Molecure).
     const candidates = [cleanName];
     if (!cleanName.toUpperCase().startsWith('ETF') && !cleanName.toUpperCase().startsWith('BETA')) {
       if (cleanName.length > 4) candidates.push(cleanName.substring(0, 4));
@@ -406,35 +407,34 @@ export async function resolveIsin(
     }
 
     for (const candidate of candidates) {
-      const stooqResult = await validateStooq(candidate, cleanName);
-      if (stooqResult) {
-        // Use paper name suffix (-NC) or searchStooqByName exchange info to detect NC
-        const exchange = (isNewConnect ? 'NC' : 'GPW') as TickerMapEntry['exchange'];
+      const brResult = await getBrCatalogService().findByTicker(candidate, cleanName);
+      if (brResult) {
+        const exchange = (
+          isNewConnect || brResult.exchange === 'NC' ? 'NC' : 'GPW'
+        ) as TickerMapEntry['exchange'];
         return {
           isin,
-          ticker: stooqResult.symbol,
-          name: stooqResult.name !== candidate.toUpperCase() ? stooqResult.name : paperName,
+          ticker: brResult.symbol,
+          name: brResult.name,
           exchange,
           currency: 'PLN',
-          priceSource: inferPriceSource(stooqResult.symbol, exchange),
+          priceSource: inferPriceSource(brResult.symbol, exchange),
         };
       }
     }
 
-    // 2b. Stooq company name search (works for full names on GPW/NC)
+    // 2b. Dopasowanie po nazwie spółki w katalogu BR (full names on GPW/NC)
     if (cleanName.length >= 3) {
-      const stooqSearch = await searchStooqByName(cleanName);
-      if (stooqSearch) {
-        const exchange = (
-          stooqSearch.exchange === 'NC' ? 'NC' : 'GPW'
-        ) as TickerMapEntry['exchange'];
+      const brByName = await getBrCatalogService().findByName(cleanName);
+      if (brByName) {
+        const exchange = (brByName.exchange === 'NC' ? 'NC' : 'GPW') as TickerMapEntry['exchange'];
         return {
           isin,
-          ticker: stooqSearch.symbol,
-          name: stooqSearch.name,
+          ticker: brByName.symbol,
+          name: brByName.name,
           exchange,
           currency: 'PLN',
-          priceSource: inferPriceSource(stooqSearch.symbol, exchange),
+          priceSource: inferPriceSource(brByName.symbol, exchange),
         };
       }
     }
