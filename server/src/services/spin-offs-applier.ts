@@ -74,16 +74,24 @@ async function firstCloseAfter(
 }
 
 /**
- * Suma realnych (nie syntetycznych) zakupów dziecka w oknie wokół ex-date —
- * sygnał, że broker sam zaksięgował dystrybucję i syntetyk ma się wycofać.
+ * Realne (nie syntetyczne) zakupy dziecka — sygnał, że dystrybucja jest już
+ * zaksięgowana w tabeli transakcji i syntetyk ma się wycofać. Dwa tory:
+ *  - zakup PŁATNY liczy się tylko w oknie ±BROKER_DEDUP_WINDOW_DAYS wokół ex
+ *    (broker księguje dystrybucję przy ex-date),
+ *  - zakup po CENIE 0 na/po ex (albo w oknie) liczy się bez górnego limitu
+ *    daty I sam w sobie jest markerem ręcznego rozliczenia spin-offu —
+ *    przycisk „Sprzedaże bez kupna" datuje kupno-0 dzień przed pierwszą
+ *    sprzedażą, często wiele tygodni po ex; bez tego zdarzenie zaaplikowane
+ *    PO ręcznej naprawie dublowałoby akcje dziecka.
  */
-function realChildBuyQty(
+function realChildBuys(
   transactions: Transaction[],
   childIsin: string,
   childTicker: string,
   exDate: string,
-): number {
-  let sum = 0;
+): { qty: number; zeroCostMarker: boolean } {
+  let qty = 0;
+  let zeroCostMarker = false;
   for (const tx of transactions) {
     if (tx.side !== 'K' || tx.syntheticOrigin) continue;
     const matchesChild =
@@ -91,11 +99,20 @@ function realChildBuyQty(
       tx.paperName?.toUpperCase() === childTicker.toUpperCase() ||
       tx.isin === `AUTO_${childTicker.toUpperCase()}`;
     if (!matchesChild) continue;
-    if (isoDaysDiff(tx.date.split('T')[0], exDate) <= BROKER_DEDUP_WINDOW_DAYS) {
-      sum += tx.quantity;
-    }
+    const txDate = tx.date.split('T')[0];
+    const withinWindow = isoDaysDiff(txDate, exDate) <= BROKER_DEDUP_WINDOW_DAYS;
+    const zeroCost = tx.price === 0 && (txDate >= exDate || withinWindow);
+    if (zeroCost) zeroCostMarker = true;
+    if (withinWindow || zeroCost) qty += tx.quantity;
   }
-  return sum;
+  return { qty, zeroCostMarker };
+}
+
+/** Decyzja dedupu: realne wiersze wygrywają przy pokryciu ≥ progu ALBO przy
+ * markerze kupna-0 (ręczne rozliczenie — nawet częściowe — oznacza, że user
+ * prowadzi pozycję dziecka sam; auto-syntetyk dołożony obok dublowałby akcje). */
+function realRowsWin(real: { qty: number; zeroCostMarker: boolean }, expectedQty: number): boolean {
+  return real.zeroCostMarker || real.qty >= BROKER_DEDUP_COVERAGE * expectedQty;
 }
 
 type Candidate = SpinOffMapEntry & { origin: 'map' | 'table' };
@@ -225,13 +242,14 @@ export async function applyPendingSpinOffs(
   // Realne wiersze zawsze wygrywają — syntetyk cicho się wycofuje.
   for (const row of existing) {
     if (row.status !== 'applied') continue;
-    const realQty = realChildBuyQty(transactions, row.childIsin, row.childTicker, row.exDate);
-    if (realQty >= BROKER_DEDUP_COVERAGE * row.childQty && row.childQty > 0 && row.id) {
+    const real = realChildBuys(transactions, row.childIsin, row.childTicker, row.exDate);
+    if (realRowsWin(real, row.childQty) && row.childQty > 0 && row.id) {
       updateSpinOffStatus(pid, row.id, 'skipped_broker');
       bumpPortfolioDataVersion(pid);
       console.log(
-        `[spin-offs] ${row.parentTicker}→${row.childTicker} (${row.exDate}): broker zaksięgował ` +
-          `${realQty} szt. dziecka — syntetyk wycofany (skipped_broker)`,
+        `[spin-offs] ${row.parentTicker}→${row.childTicker} (${row.exDate}): realne wiersze ` +
+          `dziecka (${real.qty} szt.${real.zeroCostMarker ? ', w tym kupno-0' : ''}) — ` +
+          `syntetyk wycofany (skipped_broker)`,
       );
     }
   }
@@ -270,15 +288,16 @@ export async function applyPendingSpinOffs(
     const parentBuy = adjustedTxs.find((t) => t.isin === parentIsin && t.side === 'K');
     const currency = parentBuy?.currency ?? parentEntry.currency ?? 'USD';
 
-    // ── Problem D cz. 1: broker już zaksięgował dziecko → skipped_broker ──
+    // ── Problem D cz. 1: dziecko już zaksięgowane (broker albo ręczne
+    //    kupno-0 z sekcji „Sprzedaże bez kupna") → skipped_broker ──
     const childIsinGuess = candidate.childIsin ?? `AUTO_${candidate.childTicker.toUpperCase()}`;
-    const preRealQty = realChildBuyQty(
+    const preReal = realChildBuys(
       transactions,
       childIsinGuess,
       candidate.childTicker,
       candidate.exDate,
     );
-    if (preRealQty >= BROKER_DEDUP_COVERAGE * expectedChildQty) {
+    if (realRowsWin(preReal, expectedChildQty)) {
       const inserted = insertSpinOff(pid, {
         parentIsin,
         parentTicker: parentEntry.ticker,

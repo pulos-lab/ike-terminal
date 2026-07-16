@@ -32,6 +32,7 @@ describe('orphaned-sells', () => {
   let repo: typeof import('../../db/orphaned-sells-repo.js');
   let txRepo: typeof import('../../db/transactions-repo.js');
   let splitsRepo: typeof import('../../db/splits-repo.js');
+  let spinOffsRepo: typeof import('../../db/spin-offs-repo.js');
   let connection: typeof import('../../db/connection.js');
 
   beforeAll(async () => {
@@ -39,6 +40,7 @@ describe('orphaned-sells', () => {
     repo = await import('../../db/orphaned-sells-repo.js');
     txRepo = await import('../../db/transactions-repo.js');
     splitsRepo = await import('../../db/splits-repo.js');
+    spinOffsRepo = await import('../../db/spin-offs-repo.js');
     connection = await import('../../db/connection.js');
   });
 
@@ -52,6 +54,7 @@ describe('orphaned-sells', () => {
     repo.clearOrphanDismissals(PID);
     const db = connection.getDb(PID);
     db.prepare('DELETE FROM stock_splits').run();
+    db.prepare('DELETE FROM spin_offs').run();
   });
 
   it('sprzedaż bez kupna trafia do pending; kupno domykające usuwa detekcję', () => {
@@ -114,6 +117,56 @@ describe('orphaned-sells', () => {
     const view = svc.getOrphanedSellsView(PID);
     expect(view.pending).toHaveLength(0);
     expect(view.dismissed).toHaveLength(0);
+  });
+
+  it('dziecko ZAAPLIKOWANEGO spin-offu jest wykluczone (pozycję tworzy syntetyk); reverted przywraca detekcję', () => {
+    // Sprzedaż dziecka spin-offu bez kupna w bazie — syntetyczny zakup jest
+    // compute-time i nie trafia do tabeli transactions.
+    txRepo.insertTransactions([tx({ isin: 'AUTO_MBGL', paperName: 'MBGL' })], PID);
+    expect(svc.getOrphanedSellsView(PID).pending).toHaveLength(1);
+
+    spinOffsRepo.insertSpinOff(PID, {
+      parentIsin: 'US78409V1044',
+      parentTicker: 'SPGI',
+      childIsin: 'AUTO_MBGL',
+      childTicker: 'MBGL',
+      childName: 'Mobility Global',
+      exDate: '2026-04-01',
+      ratio: 1,
+      allocationPct: 0.08,
+      childQty: 12,
+      currency: 'USD',
+      status: 'applied',
+      source: 'map',
+    });
+    let view = svc.getOrphanedSellsView(PID);
+    expect(view.pending).toHaveLength(0);
+    expect(view.dismissed).toHaveLength(0);
+
+    // Tombstone (reverted) = syntetyka nie ma → decyzja wraca do użytkownika
+    const row = spinOffsRepo.getSpinOffs(PID)[0];
+    spinOffsRepo.updateSpinOffStatus(PID, row.id!, 'reverted');
+    view = svc.getOrphanedSellsView(PID);
+    expect(view.pending).toHaveLength(1);
+  });
+
+  it('spin-off skipped_broker NIE filtruje detekcji (syntetyka nie ma, realne wiersze są niekompletne)', () => {
+    txRepo.insertTransactions([tx({ isin: 'AUTO_MBGL', paperName: 'MBGL' })], PID);
+    spinOffsRepo.insertSpinOff(PID, {
+      parentIsin: 'US78409V1044',
+      parentTicker: 'SPGI',
+      childIsin: 'AUTO_MBGL',
+      childTicker: 'MBGL',
+      childName: 'Mobility Global',
+      exDate: '2026-04-01',
+      ratio: 1,
+      allocationPct: 0,
+      childQty: 12,
+      currency: 'USD',
+      status: 'skipped_broker',
+      source: 'map',
+    });
+    expect(svc.getOrphanedSellsView(PID).pending).toHaveLength(1);
   });
 
   it('clearOrphanDismissals usuwa decyzje (kaskada /api/import/clear)', () => {

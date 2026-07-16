@@ -324,6 +324,137 @@ describe('applyPendingSpinOffs', () => {
     expect(dataVersion.getPortfolioDataVersion(pid)).toBeGreaterThan(versionAfterApply);
   });
 
+  it('dedup pre-apply: kupno-0 DALEKO po ex (naprawa „sprzedaży bez kupna") → skipped_broker', async () => {
+    // Przycisk w hubie Importu datuje kupno-0 dzień przed pierwszą sprzedażą —
+    // często wiele tygodni po ex-date, poza oknem ±14 dni. Bez markera ceny 0
+    // zdarzenie zaaplikowałoby syntetyk OBOK ręcznego kupna → podwojone akcje.
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 500 }),
+      makeTx({
+        side: 'K',
+        quantity: 10,
+        price: 0,
+        date: '2026-09-14', // 75 dni po ex
+        isin: 'AUTO_MBGL',
+        paperName: 'MBGL',
+      }),
+      makeTx({
+        side: 'S',
+        quantity: 10,
+        price: 40,
+        date: '2026-09-15',
+        isin: 'AUTO_MBGL',
+        paperName: 'MBGL',
+      }),
+    ];
+    const { appliedNow } = await applier.applyPendingSpinOffs(
+      pid,
+      txs,
+      makeTickerMap(),
+      [],
+      [CANDIDATE],
+    );
+    expect(appliedNow).toHaveLength(0);
+    const rows = repo.getSpinOffs(pid);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('skipped_broker');
+  });
+
+  it('dedup pre-apply: kupno-0 po ex z CZĘŚCIOWYM pokryciem też wycofuje syntetyk (user prowadzi pozycję sam)', async () => {
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 500 }),
+      // sprzedał tylko 4 z 10 otrzymanych akcji → naprawa pokrywa 40% < progu 90%
+      makeTx({
+        side: 'K',
+        quantity: 4,
+        price: 0,
+        date: '2026-09-14',
+        isin: 'AUTO_MBGL',
+        paperName: 'MBGL',
+      }),
+    ];
+    const { appliedNow } = await applier.applyPendingSpinOffs(
+      pid,
+      txs,
+      makeTickerMap(),
+      [],
+      [CANDIDATE],
+    );
+    expect(appliedNow).toHaveLength(0);
+    expect(repo.getSpinOffs(pid)[0].status).toBe('skipped_broker');
+  });
+
+  it('dedup post-apply: kupno-0 dodane PO aplikacji (poza oknem) → flip na skipped_broker', async () => {
+    // Scenariusz odwrotny: automat zaaplikował pierwszy, a user mimo to dodał
+    // ręczne kupno-0 (np. potwierdził confirmSpinOff) — realne wiersze wygrywają.
+    const txs = [makeTx({ side: 'K', quantity: 10, price: 500 })];
+    await applier.applyPendingSpinOffs(pid, txs, makeTickerMap(), [], [CANDIDATE]);
+    expect(repo.getSpinOffs(pid)[0].status).toBe('applied');
+
+    const txsWithManualFix = [
+      ...txs,
+      makeTx({
+        side: 'K',
+        quantity: 10,
+        price: 0,
+        date: '2026-09-14',
+        isin: 'AUTO_MBGL',
+        paperName: 'MBGL',
+      }),
+    ];
+    await applier.applyPendingSpinOffs(pid, txsWithManualFix, makeTickerMap(), [], [CANDIDATE]);
+    expect(repo.getSpinOffs(pid)[0].status).toBe('skipped_broker');
+  });
+
+  it('regresja: PŁATNE kupno dziecka poza oknem ±14 dni NIE wycofuje syntetyka', async () => {
+    // Zwykłe dokupienie dziecka na rynku miesiące po ex to nie dystrybucja —
+    // zdarzenie aplikuje się normalnie.
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 500 }),
+      makeTx({
+        side: 'K',
+        quantity: 10,
+        price: 45,
+        date: '2026-09-14',
+        isin: 'AUTO_MBGL',
+        paperName: 'MBGL',
+      }),
+    ];
+    const { appliedNow } = await applier.applyPendingSpinOffs(
+      pid,
+      txs,
+      makeTickerMap(),
+      [],
+      [CANDIDATE],
+    );
+    expect(appliedNow).toHaveLength(1);
+    expect(repo.getSpinOffs(pid)[0].status).toBe('applied');
+  });
+
+  it('kupno-0 PRZED ex (poza oknem) nie liczy się jako marker — zdarzenie aplikuje się', async () => {
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 500 }),
+      // np. stary zapis 0-kosztowy sprzed miesięcy — niezwiązany ze spin-offem
+      makeTx({
+        side: 'K',
+        quantity: 10,
+        price: 0,
+        date: '2026-03-01', // 4 miesiące przed ex
+        isin: 'AUTO_MBGL',
+        paperName: 'MBGL',
+      }),
+    ];
+    const { appliedNow } = await applier.applyPendingSpinOffs(
+      pid,
+      txs,
+      makeTickerMap(),
+      [],
+      [CANDIDATE],
+    );
+    expect(appliedNow).toHaveLength(1);
+    expect(repo.getSpinOffs(pid)[0].status).toBe('applied');
+  });
+
   it('tombstone: wiersz reverted blokuje ponowną auto-aplikację', async () => {
     const txs = [makeTx({ side: 'K', quantity: 10, price: 500 })];
     await applier.applyPendingSpinOffs(pid, txs, makeTickerMap(), [], [CANDIDATE]);
