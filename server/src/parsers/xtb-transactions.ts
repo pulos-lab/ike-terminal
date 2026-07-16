@@ -47,7 +47,7 @@ function inferCategoryFromSymbol(symbol: string): InstrumentCategory | null {
  * - Tax IFTT            → CashOperation fee (Italian Financial Transaction Tax)
  * - rights issue        → CashOperation other
  * - rollover            → CashOperation fee
- * - Free funds interest → CashOperation other
+ * - Free funds interest → CashOperation other + subkind='interest' (kategoria "Odsetki")
  * - close trade         → skipped (P/L accounting entry)
  *
  * Type matching is case-insensitive ("Deposit" = "deposit").
@@ -1208,14 +1208,19 @@ export async function parseXtbFile(
       const isoTime = parseXtbTime(raw.time);
       if (!isoTime) continue;
 
+      // Odsetki od wolnych środków → 'other' + subkind='interest' (wirtualna
+      // kategoria "Odsetki" w panelu "Korekty i koszty"; bez subkind wpadały do
+      // "Inne"). Podatek od tych odsetek zostaje kosztem — 'fee' bez subkind.
+      const isTax = raw.type.includes('tax');
       operations.push({
         date: isoTime,
-        operationType: raw.type.includes('tax') ? 'fee' : 'other',
+        operationType: isTax ? 'fee' : 'other',
         description: raw.comment || raw.type,
         amount: raw.amount,
         currency: accountCurrency,
         source: 'xtb',
         importBatch,
+        ...(isTax ? {} : { subkind: 'interest' as const }),
       });
     } else if (raw.type === 'withholding tax') {
       const isoTime = parseXtbTime(raw.time);

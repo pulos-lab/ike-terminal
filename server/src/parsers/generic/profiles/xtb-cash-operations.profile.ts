@@ -126,8 +126,9 @@ export function buildXtbCashOperationsProfile(
         when: [{ col: TYPE, op: 'equals', values: ['withdrawal'] }],
         emit: 'withdrawal',
       },
-      // Odsetki od wolnych środków: parser wbudowany daje 'other' (bez subkind),
-      // wariant "tax" → fee. Klasa 'other' zamiast 'interest' dla parytetu 1:1.
+      // Odsetki od wolnych środków → klasa 'interest' ('other' + subkind='interest',
+      // kategoria "Odsetki" w UI) — lustro parsera wbudowanego. Wariant "tax" to
+      // podatek od tych odsetek, czyli koszt → fee.
       {
         id: 'funds-interest-tax',
         when: [{ col: TYPE, op: 'equals', values: ['Free funds interest tax'] }],
@@ -136,7 +137,7 @@ export function buildXtbCashOperationsProfile(
       {
         id: 'funds-interest',
         when: [{ col: TYPE, op: 'equals', values: ['Free funds interest'] }],
-        emit: 'other',
+        emit: 'interest',
       },
       {
         id: 'rights-issue',
@@ -202,6 +203,8 @@ export function buildXtbCashOperationsProfile(
     withholdingTax: cashWithTicker,
     deposit: cash,
     withdrawal: cash,
+    // Odsetki od salda gotówki nie dotyczą papieru → bez tickera (jak wbudowany).
+    interest: cash,
     fee: cashWithTicker,
     tradeFee: cashWithTicker,
     other: cashWithTicker,

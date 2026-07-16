@@ -138,6 +138,62 @@ describe('parseXtbFile — deposits/withdrawals', () => {
   });
 });
 
+describe('parseXtbFile — odsetki od wolnych środków', () => {
+  // Warianty pisowni XTB: EN ze spacją i z dywizem (normalizowane aliasem typu).
+  const interestRows = [
+    {
+      id: 1,
+      type: 'Free funds interest',
+      time: '31/01/2024 23:59:00',
+      comment: 'Free-funds Interest',
+      symbol: '',
+      amount: 12.5,
+    },
+    {
+      id: 2,
+      type: 'Free-funds Interest Tax',
+      time: '31/01/2024 23:59:00',
+      comment: 'Free-funds Interest Tax',
+      symbol: '',
+      amount: -2.38,
+    },
+  ];
+
+  it('odsetki → other + subkind=interest (kategoria „Odsetki", nie „Inne")', async () => {
+    const buf = await buildXtbXlsx([interestRows[0]]);
+    const { operations } = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx');
+
+    expect(operations.data).toHaveLength(1);
+    expect(operations.data[0]).toMatchObject({
+      operationType: 'other',
+      subkind: 'interest',
+      amount: 12.5,
+      currency: 'PLN',
+      source: 'xtb',
+    });
+  });
+
+  it('podatek od odsetek zostaje kosztem → fee bez subkind', async () => {
+    const buf = await buildXtbXlsx([interestRows[1]]);
+    const { operations } = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx');
+
+    expect(operations.data).toHaveLength(1);
+    expect(operations.data[0]).toMatchObject({ operationType: 'fee', amount: -2.38 });
+    // Podatek NIE może dostać subkind='interest' — inaczej wpadłby do przychodowej
+    // kategorii "Odsetki" zamiast do kosztów.
+    expect(operations.data[0].subkind).toBeUndefined();
+  });
+
+  it('oba warianty w jednym pliku nie mieszają się (żaden nie ląduje w unknown)', async () => {
+    const buf = await buildXtbXlsx(interestRows);
+    const { operations } = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx');
+
+    expect(operations.data.filter((o) => o.subkind === 'interest')).toHaveLength(1);
+    expect(operations.data.filter((o) => o.operationType === 'fee')).toHaveLength(1);
+    expect(operations.skipped.filter((s) => s.reason === 'unknown_type')).toHaveLength(0);
+  });
+});
+
 describe('parseXtbFile — stary format: cena sprzedaży z P/L', () => {
   const oldFormatRows = (pl: number) => [
     {
