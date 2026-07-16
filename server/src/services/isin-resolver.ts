@@ -574,14 +574,14 @@ async function buildEntry(
   // For .WA tickers, we know it's PLN — skip Yahoo price lookup,
   // ale sektor/supersektor próbujemy pobrać (stockwatch map + Yahoo fallback).
   if (ticker.endsWith('.WA')) {
-    const { supersector, subsector } = await resolveSector({
+    const { supersector, subsector, country } = await resolveSector({
       isin,
       ticker,
       name: resolvedName,
       exchange,
       currency: 'PLN',
       priceSource,
-    }).catch(() => ({ supersector: null, subsector: null }));
+    }).catch(() => ({ supersector: null, subsector: null, country: 'Poland' }));
     return {
       isin,
       ticker,
@@ -591,6 +591,7 @@ async function buildEntry(
       priceSource,
       sector: subsector || undefined,
       supersector: supersector || undefined,
+      country: country || undefined,
     };
   }
 
@@ -598,6 +599,7 @@ async function buildEntry(
   let currency = txCurrency;
   let subsector: string | null = null;
   let supersector: string | null = null;
+  let country: string | null = null;
   try {
     const [priceData, sectors] = await Promise.all([
       fetchYahooPrice(ticker).catch(() => null),
@@ -608,11 +610,12 @@ async function buildEntry(
         exchange,
         currency: txCurrency,
         priceSource,
-      }).catch(() => ({ supersector: null, subsector: null })),
+      }).catch(() => ({ supersector: null, subsector: null, country: null })),
     ]);
     if (priceData?.currency) currency = priceData.currency;
     subsector = sectors.subsector;
     supersector = sectors.supersector;
+    country = sectors.country;
   } catch {
     // Fall back to transaction currency, no sector
   }
@@ -626,6 +629,7 @@ async function buildEntry(
     priceSource,
     sector: subsector || undefined,
     supersector: supersector || undefined,
+    country: country || undefined,
   };
 }
 

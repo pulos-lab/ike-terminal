@@ -123,6 +123,9 @@ Zunifikowana taksonomia: 8 nadsektorów × 40 podsektorów ze stockwatch.pl/gpw/
 - **CFD**: `getCfdSector` → supersektor Surowce/Indeksy/Forex/Krypto (podsektor = null)
 - Resolver: `server/src/services/sector-resolver.ts` — jedno źródło prawdy dla lazyBackfillSectors + endpointu refresh-sectors + isin-resolver
 
+### Regiony (kraj siedziby)
+Pole `country` w `ticker_map` (kanoniczna nazwa EN z Yahoo `assetProfile.country`; GPW/NC/Catalyst → statycznie "Poland", CFD → null). Backfillowane tym samym mechanizmem co sektory (lazy + `refresh-sectors`; opcje `OPT:` pomijane; backfill kraju NIE nadpisuje ręcznie przypisanych sektorów). Wykres „Regiony" w `PortfolioDiversification`: kraj (poprawny dla ADR-ów, np. NVO→Dania) → fallback giełda (`EXCHANGE_REGION_PL`) → „Inne"; tłumaczenia i helper `regionLabel` w `shared/src/country-region-map.ts`. Opcje (category `option`) są celowo wyłączone z wykresów dywersyfikacji (krótkie pozycje mają ujemną wartość).
+
 ## Konwencje
 - TypeScript strict mode
 - Encoding: UTF-8 (nowe pliki), Windows-1250 (parsery Bossa/mBank)

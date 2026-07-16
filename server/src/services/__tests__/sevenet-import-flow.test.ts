@@ -10,7 +10,7 @@ vi.mock('../yahoo-finance.js', () => ({
   fetchYahooPrice: vi.fn(),
 }));
 vi.mock('../sector-resolver.js', () => ({
-  resolveSector: vi.fn().mockResolvedValue({ supersector: null, subsector: null }),
+  resolveSector: vi.fn().mockResolvedValue({ supersector: null, subsector: null, country: null }),
 }));
 
 import { resolveIsin } from '../isin-resolver.js';

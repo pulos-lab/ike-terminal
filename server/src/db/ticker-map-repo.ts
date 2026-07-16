@@ -10,8 +10,8 @@ import type { TickerMapEntry } from 'shared';
 export function seedTickerMap(portfolioId: string = 'default'): void {
   const db = getDb(portfolioId);
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO ticker_map (isin, ticker, name, exchange, currency, price_source, sector, supersector)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO ticker_map (isin, ticker, name, exchange, currency, price_source, sector, supersector, country)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const seedAll = db.transaction(() => {
@@ -25,6 +25,7 @@ export function seedTickerMap(portfolioId: string = 'default'): void {
         entry.priceSource,
         entry.sector || null,
         entry.supersector || null,
+        entry.country || null,
       );
     }
   });
@@ -48,6 +49,7 @@ export function getTickerByIsin(
     priceSource: row.price_source,
     sector: row.sector || undefined,
     supersector: row.supersector || undefined,
+    country: row.country || undefined,
   };
 }
 
@@ -63,6 +65,7 @@ export function getAllTickers(portfolioId: string = 'default'): TickerMapEntry[]
     priceSource: row.price_source,
     sector: row.sector || undefined,
     supersector: row.supersector || undefined,
+    country: row.country || undefined,
   }));
 }
 
@@ -87,6 +90,7 @@ export function getTickerBySymbol(
     priceSource: row.price_source,
     sector: row.sector || undefined,
     supersector: row.supersector || undefined,
+    country: row.country || undefined,
   };
 }
 
@@ -134,6 +138,7 @@ function mapTickerRow(row: any): TickerMapEntry {
     priceSource: row.price_source,
     sector: row.sector || undefined,
     supersector: row.supersector || undefined,
+    country: row.country || undefined,
   };
 }
 
@@ -178,8 +183,8 @@ export function upsertTickerMapEntry(
   }
   db.prepare(
     `
-    INSERT OR REPLACE INTO ticker_map (isin, ticker, name, exchange, currency, price_source, sector, supersector)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO ticker_map (isin, ticker, name, exchange, currency, price_source, sector, supersector, country)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     entry.isin,
@@ -190,6 +195,7 @@ export function upsertTickerMapEntry(
     entry.priceSource,
     entry.sector || null,
     entry.supersector || null,
+    entry.country || null,
   );
   bumpPortfolioDataVersion(portfolioId);
 }
@@ -215,6 +221,20 @@ export function updateTickerSectors(
   const res = db
     .prepare('UPDATE ticker_map SET sector = ?, supersector = ? WHERE isin = ?')
     .run(subsector, supersector, isin);
+  if (res.changes > 0) bumpPortfolioDataVersion(portfolioId);
+  return res.changes > 0;
+}
+
+/** Update kraju siedziby (Yahoo assetProfile.country / "Poland" dla GPW/NC/Catalyst).
+ *  Osobno od updateTickerSectors, żeby backfill kraju nie nadpisywał ręcznie
+ *  przypisanych sektorów. */
+export function updateTickerCountry(
+  isin: string,
+  country: string,
+  portfolioId: string = 'default',
+): boolean {
+  const db = getDb(portfolioId);
+  const res = db.prepare('UPDATE ticker_map SET country = ? WHERE isin = ?').run(country, isin);
   if (res.changes > 0) bumpPortfolioDataVersion(portfolioId);
   return res.changes > 0;
 }
