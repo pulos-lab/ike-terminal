@@ -451,6 +451,19 @@ export const api = {
   // Import
   getImportStatus: () => request<ImportStatusResponse>('/import/status'),
 
+  // ── Sprzedaże bez kupna (hub Importu) ───────────────────────────────────────
+  getOrphanedSells: () => request<import('shared').OrphanedSellsResponse>('/import/orphaned-sells'),
+  dismissOrphanedSell: (isin: string, missingQuantity: number) =>
+    request<{ success: boolean }>('/import/orphaned-sells/dismiss', {
+      method: 'POST',
+      body: JSON.stringify({ isin, missingQuantity }),
+    }),
+  restoreOrphanedSell: (isin: string) =>
+    request<{ success: boolean }>('/import/orphaned-sells/restore', {
+      method: 'POST',
+      body: JSON.stringify({ isin }),
+    }),
+
   // ── Skrzynka "Do wyjaśnienia" (kwarantanna importu) ─────────────────────────
   getQuarantine: (status?: import('shared').QuarantineStatus) =>
     request<import('shared').QuarantineListResponse>(

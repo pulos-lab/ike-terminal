@@ -1129,6 +1129,16 @@ export interface ImportStatusResponse {
   lastImportDate: string | null;
   /** Liczba wierszy oczekujących w skrzynce "Do wyjaśnienia". */
   quarantinePending: number;
+  /** Liczba wykrytych sprzedaży bez kupna czekających na decyzję użytkownika. */
+  orphanedSellsPending: number;
+}
+
+/** GET /api/import/orphaned-sells */
+export interface OrphanedSellsResponse {
+  /** Oczekujące na decyzję (spin-off / Ignoruj). */
+  pending: OrphanedSell[];
+  /** Trwale zignorowane, ale wciąż wykrywane — hub pokazuje z opcją "Przywróć". */
+  dismissed: OrphanedSell[];
 }
 
 /** GET /api/import/quarantine */

@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api-client';
+import { QUERY_KEYS } from '@/lib/query-keys';
 import { CheckCircle, AlertCircle, AlertTriangle, Loader2, Info, ChevronLeft } from 'lucide-react';
 import { formatDate, formatQuantity } from '@/lib/formatters';
 import {
@@ -23,6 +24,7 @@ import {
 } from 'shared';
 import { GenericImportWizard } from './generic/GenericImportWizard';
 import { GenericBatchesSection } from './generic/GenericBatchesSection';
+import { createSpinoffBuy } from './OrphanedSellsSection';
 import { SKIP_REASON_LABELS } from '@/lib/import-labels';
 import {
   BROKER_IMPORT_CONFIG,
@@ -309,20 +311,13 @@ export function ImportDialog({ open, onOpenChange }: Props) {
     async (orphan: OrphanedSell) => {
       setResolving(orphan.isin);
       try {
-        const buyDate = new Date(orphan.firstSellDate);
-        buyDate.setDate(buyDate.getDate() - 1);
-        const dateStr = buyDate.toISOString().split('T')[0] + 'T00:00:00';
-
-        await api.createTransaction({
-          date: dateStr,
-          ticker: orphan.ticker,
-          side: 'K',
-          quantity: orphan.missingQuantity,
-          price: 0,
-          commission: 0,
-          currency: orphan.currency,
-        });
-
+        const result = await createSpinoffBuy(orphan);
+        if (result.requiresConfirmation) {
+          // Walor jest dzieckiem zastosowanego spin-offu — pozycja mogła już
+          // powstać automatycznie; nie dodajemy kupna po cichu.
+          addMessage({ kind: 'warn', text: result.warning.message });
+          return;
+        }
         setOrphanedSells((prev) => prev.filter((o) => o.isin !== orphan.isin));
         addMessage({
           kind: 'success',
@@ -489,9 +484,20 @@ export function ImportDialog({ open, onOpenChange }: Props) {
               orphanedSells={orphanedSells}
               resolving={resolving}
               onAddSpinoff={handleAddSpinoffBuy}
-              onDismissOrphan={(isin) =>
-                setOrphanedSells((prev) => prev.filter((x) => x.isin !== isin))
-              }
+              onDismissOrphan={(isin) => {
+                // Tylko chowamy z dialogu — detekcja jest liczona na żywo z bazy,
+                // więc pozycja czeka dalej w hubie Importu (sekcja + badge w nav).
+                const orphan = orphanedSells.find((x) => x.isin === isin);
+                if (orphan) {
+                  addMessage({
+                    kind: 'info',
+                    text: `Pominięto ${orphan.paperName} — pozycja czeka w sekcji „Sprzedaże bez kupna" w hubie Import.`,
+                  });
+                }
+                setOrphanedSells((prev) => prev.filter((x) => x.isin !== isin));
+                queryClient.invalidateQueries({ queryKey: QUERY_KEYS.importStatus });
+                queryClient.invalidateQueries({ queryKey: QUERY_KEYS.orphanedSells });
+              }}
             />
           </div>
         )}

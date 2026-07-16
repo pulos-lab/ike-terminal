@@ -23,6 +23,8 @@ export const QUERY_KEYS = {
   share: ['portfolio', 'share'] as const,
   livePrices: ['prices', 'live'] as const,
   importStatus: ['import', 'status'] as const,
+  /** Sprzedaże bez kupna (hub Importu) — detekcja liczona na żywo z transakcji. */
+  orphanedSells: ['import', 'orphaned-sells'] as const,
   /** Prefix wszystkich analiz FIFO — do invalidacji po mutacjach transakcji. */
   fifoMatchingAll: ['portfolio', 'fifo-matching'] as const,
   /** Analiza dopasowań FIFO per ISIN (DeleteTransactionDialog). */

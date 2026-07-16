@@ -138,6 +138,7 @@ function NavContent({
   });
   const importBadgeCount =
     (importStatus?.quarantinePending ?? 0) +
+    (importStatus?.orphanedSellsPending ?? 0) +
     (genericBatches?.batches.filter((b) => b.needsReimport).length ?? 0);
 
   return (
@@ -209,6 +210,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   });
   const importBadgeCount =
     (importStatus?.quarantinePending ?? 0) +
+    (importStatus?.orphanedSellsPending ?? 0) +
     (genericBatches?.batches.filter((b) => b.needsReimport).length ?? 0);
 
   return (
