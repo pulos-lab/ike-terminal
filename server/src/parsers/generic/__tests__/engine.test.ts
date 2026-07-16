@@ -811,6 +811,22 @@ describe('parseWithProfile — quoteCurrencyFromSettlement', () => {
     expect(sell.fxRate).toBeCloseTo(252.04 / 60, 4);
   });
 
+  it('saleAmountIsFullValue: kurs sprzedaży wprost MIMO obecnych wierszy closepl (szablon z Tickerem)', () => {
+    // Nowy szablon XTB emituje closepl wyłącznie dla CFD — flaga profilu wyłącza
+    // starą semantykę "Amount = nominał otwarcia" (lustro parsera wbudowanego).
+    const csv = [
+      QCS_HEADER,
+      'closepl;02.03.2024 10:00:00;INNY.US;;;10,00', // CFD-owy wiersz P/L
+      'S;05.03.2024 10:00:00;PLTR.US;10;30,00;1200,00', // pełna wartość → kurs 4.0
+    ].join('\n');
+    const profile = qcsProfile();
+    profile.trade!.quoteCurrencyFromSettlement!.saleAmountIsFullValue = true;
+    const out = parseWithProfile(csv, profile, BATCH);
+    const sell = out.transactions.data.find((t) => t.side === 'S')!;
+    expect(sell.currency).toBe('USD');
+    expect(sell.fxRate).toBeCloseTo(4.0, 5);
+  });
+
   it('symbol bez etykiety (nazwa spółki) + FX → cena przeliczona na walutę konta', () => {
     const csv = `${QCS_HEADER}\nK;05.03.2024 10:00:00;Firma Zagraniczna;10;45,73;-1830,00`;
     const out = parseWithProfile(csv, qcsProfile(), BATCH);

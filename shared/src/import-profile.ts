@@ -318,6 +318,12 @@ export const TradeMappingSchema = z.object({
        *  'convertToSettlement' → cena = kwota/ilość w walucie konta (spójność z gotówką);
        *  'keep' → status quo (mapowanie `currency` profilu, bez fxRate). */
       unlabeledFallback: z.enum(['convertToSettlement', 'keep']).default('convertToSettlement'),
+      /** true → kwota SPRZEDAŻY to zawsze pełna wartość sprzedaży, nawet gdy
+       *  plik zawiera wiersze 'trade_close_pl' (nowy szablon XTB z kolumną
+       *  Ticker: close trades występują tam wyłącznie dla CFD i nie zmieniają
+       *  semantyki kwoty sprzedaży akcji). Lustro saleAmountIsFullValue
+       *  parsera wbudowanego — warunek parytetu compare:generic. */
+      saleAmountIsFullValue: z.boolean().optional(),
     })
     .optional(),
   side: SideRuleSchema,

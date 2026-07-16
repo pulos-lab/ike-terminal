@@ -100,7 +100,15 @@ export function buildXtbCashOperationsProfile(
       },
       {
         id: 'dividend',
-        when: [{ col: TYPE, op: 'oneOf', values: ['dividend', 'divident'] }],
+        // Trzecia wartość: dywidenda spółki zagranicznej notowanej na GPW
+        // (np. ASB.PL/Asbis) — lustro aliasu parsera wbudowanego.
+        when: [
+          {
+            col: TYPE,
+            op: 'oneOf',
+            values: ['dividend', 'divident', 'Dividend from foreign company on PL market'],
+          },
+        ],
         emit: 'dividend',
       },
       {
@@ -177,6 +185,10 @@ export function buildXtbCashOperationsProfile(
         suffixFallback: 'USD',
         ...(options.symbolCurrency ? { symbolCurrency: options.symbolCurrency } : {}),
         unlabeledFallback: 'convertToSettlement',
+        // Szablon z kolumną Ticker: Amount sprzedaży = pełna wartość sprzedaży
+        // także przy obecnych wierszach close trade (występują tam tylko dla
+        // CFD) — lustro layout.hasTicker parsera wbudowanego.
+        ...(options.hasTickerColumn ? { saleAmountIsFullValue: true } : {}),
       },
       side: {
         strategy: 'column',
