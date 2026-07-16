@@ -20,16 +20,18 @@
  *     silnik traktuje 'other' z subkind i bez tak samo (cash tak, MWR nie),
  *     więc wartość portfela i MWR/TWR nie drgną
  *
- * Usage:
- *   cd server && npx tsx src/scripts/fix-xtb-interest-subkind.ts            # dry-run
- *   cd server && npx tsx src/scripts/fix-xtb-interest-subkind.ts --apply    # commit
- *   cd server && npx tsx src/scripts/fix-xtb-interest-subkind.ts --only=ID  # 1 portfel
+ * Usage (lokalnie):
+ *   npm run fix:xtb-interest-subkind -w server              # dry-run
+ *   npm run fix:xtb-interest-subkind -w server -- --apply   # commit
+ *   npm run fix:xtb-interest-subkind -w server -- --only=ID # 1 portfel
  *
- * Production:
- *   ssh root@tixterminal.app 'cd /opt/ike-terminal/server && npx tsx src/scripts/fix-xtb-interest-subkind.ts'
- *   ssh root@tixterminal.app 'cd /opt/ike-terminal/server && npx tsx src/scripts/fix-xtb-interest-subkind.ts --apply'
- *   # Po --apply zrestartuj serwer — memo historii portfela (history-memo) jest
- *   # in-memory i nie zobaczy zmiany z zewnętrznego procesu.
+ * Production (prod ma tylko skompilowany dist — `node`, NIE tsx; DATA_DIR jest
+ * OBOWIĄZKOWY: bez niego config.ts rozwiąże ścieżkę do /opt/ike-terminal/app/data,
+ * gdzie leży wyłącznie zastane price_history.db → skrypt cicho nic nie zrobi):
+ *   ssh root@tixterminal.app 'cd /opt/ike-terminal/app && DATA_DIR=/opt/ike-terminal/data node server/dist/scripts/fix-xtb-interest-subkind.js'
+ *   ssh root@tixterminal.app 'cd /opt/ike-terminal/app && DATA_DIR=/opt/ike-terminal/data node server/dist/scripts/fix-xtb-interest-subkind.js --apply'
+ *   # Po --apply zrestartuj serwer (systemctl restart ike-terminal) — memo historii
+ *   # portfela (history-memo) jest in-memory i nie zobaczy zmiany z zewnętrznego procesu.
  */
 
 import { readdirSync } from 'node:fs';
