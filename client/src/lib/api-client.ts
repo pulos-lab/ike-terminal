@@ -178,6 +178,11 @@ export const api = {
     ),
   getUpcomingDividends: () =>
     request<{ upcoming: import('shared').UpcomingDividend[] }>('/portfolio/dividends/upcoming'),
+  postRiskReturn: (tickers: string[]) =>
+    request<import('shared').RiskReturnResponse>('/portfolio/risk-return', {
+      method: 'POST',
+      body: JSON.stringify({ tickers }),
+    }),
   deleteDividend: (id: number) =>
     request<{ success: boolean }>(`/portfolio/dividends/${id}`, {
       method: 'DELETE',

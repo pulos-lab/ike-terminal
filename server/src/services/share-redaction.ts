@@ -55,6 +55,8 @@ export function toPublicHistory(
     history: showAmounts ? view.history : scaleHistory(view.history),
     metrics,
     baseCurrency: view.baseCurrency,
+    // Rynkowa stopa (UST 1Y) — nie jest daną portfela, przechodzi bez redakcji.
+    riskFreeRatePct: view.riskFreeRatePct,
   };
 }
 

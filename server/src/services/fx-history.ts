@@ -250,25 +250,30 @@ export function summarizeDividendsByCurrency(
 }
 
 /**
- * Wrapper dla endpointu: buduje lookup kursów (od najwcześniejszej daty wśród
- * walut obcych) i woła `summarizeDividendsByCurrency`. Same PLN-y → bez sieci.
+ * Lookup kursów pod zbiór dywidend: od najwcześniejszej daty wśród walut
+ * obcych. Same PLN-y → bez sieci (identity dla PLN).
  */
-export async function summarizeDividendsInPln(
-  dividends: DividendLike[],
-): Promise<DividendsPlnSummary> {
-  if (dividends.length === 0) return { totalPln: 0, totalPlnApprox: false, byCurrency: [] };
-
+export async function buildDividendFxLookup(dividends: DividendLike[]): Promise<FxToPlnLookup> {
   const foreign = dividends.filter((d) => d.currency.toUpperCase() !== 'PLN');
   let minDate = '9999-12-31';
   for (const d of foreign) {
     const key = d.date.slice(0, 10);
     if (key < minDate) minDate = key;
   }
-  const fx: FxToPlnLookup =
-    foreign.length > 0
-      ? await buildFxToPlnLookup(Array.from(new Set(foreign.map((d) => d.currency))), minDate)
-      : (cur) => (cur.toUpperCase() === 'PLN' ? 1 : null);
+  return foreign.length > 0
+    ? buildFxToPlnLookup(Array.from(new Set(foreign.map((d) => d.currency))), minDate)
+    : (cur) => (cur.toUpperCase() === 'PLN' ? 1 : null);
+}
 
+/**
+ * Wrapper dla endpointu: buduje lookup kursów i woła
+ * `summarizeDividendsByCurrency`. Same PLN-y → bez sieci.
+ */
+export async function summarizeDividendsInPln(
+  dividends: DividendLike[],
+): Promise<DividendsPlnSummary> {
+  if (dividends.length === 0) return { totalPln: 0, totalPlnApprox: false, byCurrency: [] };
+  const fx = await buildDividendFxLookup(dividends);
   return summarizeDividendsByCurrency(dividends, fx);
 }
 

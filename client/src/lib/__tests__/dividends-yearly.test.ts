@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { groupDividendsByYearAndCurrency } from '../dividends-yearly';
+import {
+  groupDividendsByMonthAndCurrency,
+  groupDividendsByYearAndCurrency,
+} from '../dividends-yearly';
 
 describe('groupDividendsByYearAndCurrency', () => {
   it('zwraca pusty wynik dla braku danych', () => {
@@ -52,5 +55,59 @@ describe('groupDividendsByYearAndCurrency', () => {
     ]);
     expect(result.rows).toEqual([{ year: '2024', PLN: 10 }]);
     expect(result.currencies).toEqual(['PLN']);
+  });
+});
+
+describe('groupDividendsByMonthAndCurrency', () => {
+  it('grupuje po miesiącu (klucz YYYY-MM) i sumuje w obrębie miesiąca', () => {
+    const result = groupDividendsByMonthAndCurrency([
+      { date: '2026-03-05', amount: 100, currency: 'PLN' },
+      { date: '2026-03-28', amount: 50, currency: 'PLN' },
+      { date: '2026-04-10', amount: 30, currency: 'USD' },
+    ]);
+    expect(result.rows).toEqual([
+      { year: '2026-03', PLN: 150 },
+      { year: '2026-04', USD: 30 },
+    ]);
+  });
+
+  it('uzupełnia miesiące bez wypłat pustymi słupkami (sezonowość widoczna)', () => {
+    const result = groupDividendsByMonthAndCurrency([
+      { date: '2026-01-15', amount: 10, currency: 'PLN' },
+      { date: '2026-04-15', amount: 20, currency: 'PLN' },
+    ]);
+    expect(result.rows).toEqual([
+      { year: '2026-01', PLN: 10 },
+      { year: '2026-02' },
+      { year: '2026-03' },
+      { year: '2026-04', PLN: 20 },
+    ]);
+  });
+
+  it('uzupełnianie przechodzi przez granicę roku', () => {
+    const result = groupDividendsByMonthAndCurrency([
+      { date: '2025-11-15', amount: 10, currency: 'PLN' },
+      { date: '2026-02-15', amount: 20, currency: 'PLN' },
+    ]);
+    expect(result.rows.map((r) => r.year)).toEqual(['2025-11', '2025-12', '2026-01', '2026-02']);
+  });
+
+  it('klucz z surowego stringa — data domenowa nie przechodzi przez strefę czasową', () => {
+    // new Date('2026-07-01') to UTC-północ: w strefach na zachód od UTC dałoby '2026-06'
+    const result = groupDividendsByMonthAndCurrency([
+      { date: '2026-07-01', amount: 10, currency: 'PLN' },
+    ]);
+    expect(result.rows).toEqual([{ year: '2026-07', PLN: 10 }]);
+  });
+
+  it('obsługuje datę z częścią czasową (rekordy brokerskie)', () => {
+    const result = groupDividendsByMonthAndCurrency([
+      { date: '2025-10-31T00:00:00', amount: 330, currency: 'PLN' },
+    ]);
+    expect(result.rows).toEqual([{ year: '2025-10', PLN: 330 }]);
+  });
+
+  it('pusty wynik dla braku danych', () => {
+    expect(groupDividendsByMonthAndCurrency([])).toEqual({ rows: [], currencies: [] });
   });
 });

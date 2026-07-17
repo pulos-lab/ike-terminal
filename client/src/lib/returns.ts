@@ -28,6 +28,44 @@ export function computeDrawdownSeries(cumulativePcts: number[]): number[] {
   });
 }
 
+/**
+ * Beta i alfa Jensena portfela względem benchmarku z PAROWANYCH dziennych
+ * zwrotów (portfel, benchmark). Beta = cov/var (populacyjna); alfa = nadwyżka
+ * dzienna annualizowana ×252, w %. Null gdy za mało par (szum) albo benchmark
+ * bez wariancji (płaska seria = brak danych).
+ */
+export function computeBetaAlpha(
+  pairs: Array<[number, number]>,
+  riskFreeAnnualPct: number,
+): { beta: number; alphaAnnualPct: number } | null {
+  if (pairs.length < 30) return null;
+
+  const n = pairs.length;
+  let meanP = 0;
+  let meanB = 0;
+  for (const [p, b] of pairs) {
+    meanP += p;
+    meanB += b;
+  }
+  meanP /= n;
+  meanB /= n;
+
+  let cov = 0;
+  let varB = 0;
+  for (const [p, b] of pairs) {
+    cov += (p - meanP) * (b - meanB);
+    varB += (b - meanB) ** 2;
+  }
+  cov /= n;
+  varB /= n;
+  if (varB <= 1e-12) return null;
+
+  const beta = cov / varB;
+  const rfDaily = riskFreeAnnualPct / 100 / 252;
+  const alphaDaily = meanP - rfDaily - beta * (meanB - rfDaily);
+  return { beta, alphaAnnualPct: alphaDaily * 252 * 100 };
+}
+
 /** Data początku zakresu dla presetów 1M/3M/6M/YTD/1Y/3Y; ALL → undefined. */
 export function getPresetStartDate(range: string): string | undefined {
   const now = new Date();
