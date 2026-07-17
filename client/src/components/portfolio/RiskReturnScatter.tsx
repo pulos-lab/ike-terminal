@@ -88,6 +88,48 @@ function refColor(key: string): string {
 }
 
 /**
+ * Podpisy odniesień rozsuwane deterministycznie wokół kropki: portfel i indeksy
+ * kotwiczą się w tym samym rejonie (niska zmienność, umiarkowany zwrot), więc
+ * jednakowa pozycja dla wszystkich trzech dawała zlepek („S&P Portfel 500").
+ * Kropki pozycji podpisują się u góry — odniesienia omijają tę strefę.
+ */
+type TextAnchor = 'start' | 'middle' | 'end';
+
+const REF_LABEL_OFFSET: Record<string, { dx: number; dy: number; anchor: TextAnchor }> = {
+  portfolio: { dx: 14, dy: 4, anchor: 'start' }, // w prawo
+  wig: { dx: -14, dy: 4, anchor: 'end' }, // w lewo
+  sp500: { dx: 0, dy: 22, anchor: 'middle' }, // pod spodem
+};
+
+function RefLabel(props: {
+  x?: number;
+  y?: number;
+  value?: string;
+  index?: number;
+  data: ScatterPoint[];
+}) {
+  const { x, y, value, index, data } = props;
+  if (x == null || y == null || index == null) return null;
+  const offset = REF_LABEL_OFFSET[data[index]?.refKey ?? ''] ?? {
+    dx: 0,
+    dy: 22,
+    anchor: 'middle' as TextAnchor,
+  };
+  return (
+    <text
+      x={x + offset.dx}
+      y={y + offset.dy}
+      textAnchor={offset.anchor}
+      className="fill-foreground"
+      fontSize={10}
+      fontWeight={600}
+    >
+      {value}
+    </text>
+  );
+}
+
+/**
  * Osie nieliniowe: pojedynczy outlier (np. spółka z +160% przy 290% zmienności)
  * na skali liniowej zgniata resztę punktów w rogu. X = skala √ (zmienność ≥ 0),
  * Y = symlog (liniowa przy zerze, logarytmiczna na ogonach — działa z ujemnymi
@@ -261,29 +303,13 @@ export function RiskReturnScatter({ positions }: Props) {
                     strokeWidth={2}
                   />
                 ))}
-                {/* Bez etykiet na płótnie — odniesienia kotwiczą się w tym samym
-                    rejonie (niska zmienność, umiarkowany zwrot) i podpisy zachodziły
-                    na siebie; identyfikuje je legenda pod wykresem. */}
+                {/* Podpisy na płótnie — tak samo jak pozycje, ale rozsuwane wokół
+                    kropki (patrz RefLabel), bo cała trójka siedzi blisko siebie. */}
+                <LabelList dataKey="ticker" content={<RefLabel data={refPoints} />} />
               </Scatter>
             )}
           </ScatterChart>
         </ResponsiveContainer>
-        {refPoints.length > 0 && (
-          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
-            {refPoints.map((p) => (
-              <span key={p.refKey} className="flex items-center gap-1.5 text-xs">
-                <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: refColor(p.refKey ?? '') }}
-                />
-                <span className="font-medium">{p.ticker}</span>
-                <span className="tabular-nums text-muted-foreground">
-                  {formatPercent(p.y)} · {formatNumber(p.x)}% zmienności
-                </span>
-              </span>
-            ))}
-          </div>
-        )}
         {data.skipped.length > 0 && (
           <p className="mt-1 text-[11px] text-muted-foreground">
             Poza wykresem (za krótka historia cen): {data.skipped.join(', ')}
