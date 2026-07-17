@@ -78,9 +78,13 @@ function PointTooltip({
   );
 }
 
-/** Kolory punktów odniesienia: portfel spójny z linią portfela na dashboardzie. */
+/**
+ * Kolory punktów odniesienia: portfel amber (jak jego linia na dashboardzie),
+ * indeksy niebieskie — obie barwy są poza paletą gain/loss kropek pozycji,
+ * więc odniesienia czytają się na pierwszy rzut oka mimo tego samego kształtu.
+ */
 function refColor(key: string): string {
-  return key === 'portfolio' ? 'var(--primary)' : 'var(--muted-foreground)';
+  return key === 'portfolio' ? 'var(--primary)' : 'var(--info)';
 }
 
 /**
@@ -175,10 +179,11 @@ export function RiskReturnScatter({ positions }: Props) {
               <TooltipContent className="max-w-[340px] text-xs">
                 Każda kropka to pozycja: oś X — annualizowana zmienność dziennych zwrotów, oś Y —
                 zwrot ceny za ostatnie ~12 miesięcy (w walucie notowania, bez wpływu FX), wielkość
-                kropki — udział w portfelu. Romby to punkty odniesienia: Portfel (TWR), WIG i S&P
-                500 — pozycje nad rombem indeksu biją go przy danym ryzyku. Osie są nieliniowe (√ /
-                symlog), żeby pojedynczy outlier nie zgniatał reszty punktów. Uwaga: WIG jest
-                indeksem dochodowym (z dywidendami) w PLN, S&P 500 cenowym w USD.
+                kropki — udział w portfelu. Punkty odniesienia mają własne kolory: Portfel (amber,
+                TWR) oraz indeksy WIG i S&P 500 (niebieskie) — pozycje powyżej indeksu biją go przy
+                danym ryzyku. Osie są nieliniowe (√ / symlog), żeby pojedynczy outlier nie zgniatał
+                reszty punktów. Uwaga: WIG jest indeksem dochodowym (z dywidendami) w PLN, S&P 500
+                cenowym w USD.
               </TooltipContent>
             </UITooltip>
           </CardTitle>
@@ -225,7 +230,9 @@ export function RiskReturnScatter({ positions }: Props) {
               width={44}
             />
             <ZAxis type="number" dataKey="z" range={[60, 400]} name="Udział" />
-            <ZAxis type="number" dataKey="z" range={[180, 180]} zAxisId="ref" />
+            {/* Stały rozmiar punktów odniesienia (nie mają „udziału") — u górnej
+                granicy kropek pozycji, żeby czytały się jako kotwice wykresu. */}
+            <ZAxis type="number" dataKey="z" range={[360, 360]} zAxisId="ref" />
             <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeDasharray="4 4" />
             <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<PointTooltip />} />
             <Scatter data={points} isAnimationActive={false}>
@@ -244,20 +251,39 @@ export function RiskReturnScatter({ positions }: Props) {
               />
             </Scatter>
             {refPoints.length > 0 && (
-              <Scatter data={refPoints} zAxisId="ref" shape="diamond" isAnimationActive={false}>
+              <Scatter data={refPoints} zAxisId="ref" shape="circle" isAnimationActive={false}>
                 {refPoints.map((p) => (
-                  <Cell key={p.refKey} fill={refColor(p.refKey ?? '')} fillOpacity={0.9} />
+                  <Cell
+                    key={p.refKey}
+                    fill={refColor(p.refKey ?? '')}
+                    fillOpacity={0.95}
+                    stroke="var(--card)"
+                    strokeWidth={2}
+                  />
                 ))}
-                <LabelList
-                  dataKey="ticker"
-                  position="bottom"
-                  className="fill-foreground font-medium"
-                  fontSize={10}
-                />
+                {/* Bez etykiet na płótnie — odniesienia kotwiczą się w tym samym
+                    rejonie (niska zmienność, umiarkowany zwrot) i podpisy zachodziły
+                    na siebie; identyfikuje je legenda pod wykresem. */}
               </Scatter>
             )}
           </ScatterChart>
         </ResponsiveContainer>
+        {refPoints.length > 0 && (
+          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+            {refPoints.map((p) => (
+              <span key={p.refKey} className="flex items-center gap-1.5 text-xs">
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: refColor(p.refKey ?? '') }}
+                />
+                <span className="font-medium">{p.ticker}</span>
+                <span className="tabular-nums text-muted-foreground">
+                  {formatPercent(p.y)} · {formatNumber(p.x)}% zmienności
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
         {data.skipped.length > 0 && (
           <p className="mt-1 text-[11px] text-muted-foreground">
             Poza wykresem (za krótka historia cen): {data.skipped.join(', ')}
