@@ -573,7 +573,10 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
 
       {/* Pie charts grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <DiversificationChart title="Klasy aktywów" data={assetClassData} />
+        {/* Jedna klasa aktywów = donut 100% bez treści — pokazujemy dopiero przy ≥2 klasach */}
+        {assetClassData.length > 1 && (
+          <DiversificationChart title="Klasy aktywów" data={assetClassData} />
+        )}
         <DiversificationChart title="Regiony" data={regionData} />
         <DiversificationChart title="Waluty" data={currencyData} />
         <SectorsChart positions={positions} totalValuePln={totalValuePln} />
