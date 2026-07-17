@@ -88,48 +88,6 @@ function refColor(key: string): string {
 }
 
 /**
- * Podpisy odniesień rozsuwane deterministycznie wokół kropki: portfel i indeksy
- * kotwiczą się w tym samym rejonie (niska zmienność, umiarkowany zwrot), więc
- * jednakowa pozycja dla wszystkich trzech dawała zlepek („S&P Portfel 500").
- * Kropki pozycji podpisują się u góry — odniesienia omijają tę strefę.
- */
-type TextAnchor = 'start' | 'middle' | 'end';
-
-const REF_LABEL_OFFSET: Record<string, { dx: number; dy: number; anchor: TextAnchor }> = {
-  portfolio: { dx: 14, dy: 4, anchor: 'start' }, // w prawo
-  wig: { dx: -14, dy: 4, anchor: 'end' }, // w lewo
-  sp500: { dx: 0, dy: 22, anchor: 'middle' }, // pod spodem
-};
-
-function RefLabel(props: {
-  x?: number;
-  y?: number;
-  value?: string;
-  index?: number;
-  data: ScatterPoint[];
-}) {
-  const { x, y, value, index, data } = props;
-  if (x == null || y == null || index == null) return null;
-  const offset = REF_LABEL_OFFSET[data[index]?.refKey ?? ''] ?? {
-    dx: 0,
-    dy: 22,
-    anchor: 'middle' as TextAnchor,
-  };
-  return (
-    <text
-      x={x + offset.dx}
-      y={y + offset.dy}
-      textAnchor={offset.anchor}
-      className="fill-foreground"
-      fontSize={10}
-      fontWeight={600}
-    >
-      {value}
-    </text>
-  );
-}
-
-/**
  * Osie nieliniowe: pojedynczy outlier (np. spółka z +160% przy 290% zmienności)
  * na skali liniowej zgniata resztę punktów w rogu. X = skala √ (zmienność ≥ 0),
  * Y = symlog (liniowa przy zerze, logarytmiczna na ogonach — działa z ujemnymi
@@ -303,9 +261,15 @@ export function RiskReturnScatter({ positions }: Props) {
                     strokeWidth={2}
                   />
                 ))}
-                {/* Podpisy na płótnie — tak samo jak pozycje, ale rozsuwane wokół
-                    kropki (patrz RefLabel), bo cała trójka siedzi blisko siebie. */}
-                <LabelList dataKey="ticker" content={<RefLabel data={refPoints} />} />
+                {/* Podpisy nad ikoną — dokładnie jak przy pozycjach; wyróżnia je
+                    tylko pogrubienie i pełny kontrast. */}
+                <LabelList
+                  dataKey="ticker"
+                  position="top"
+                  className="fill-foreground"
+                  fontSize={10}
+                  fontWeight={600}
+                />
               </Scatter>
             )}
           </ScatterChart>
