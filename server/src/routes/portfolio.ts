@@ -88,6 +88,7 @@ import {
 } from '../services/dividend-position-link.js';
 import { computeRiskReturnFromPrices } from '../services/risk-return.js';
 import { loadHistoricalPrices } from '../services/history-cache.js';
+import { fetchStooqHistory } from '../services/stooq.js';
 import {
   buildHistoryView,
   buildPositionsView,
@@ -947,13 +948,14 @@ router.post(
 // Tickery przysyła klient z własnych pozycji (unika drugiego przeliczenia silnika).
 router.post(
   '/risk-return',
-  asyncHandler((req, res) => {
+  asyncHandler(async (req, res) => {
     const { tickers } = req.body as { tickers?: unknown };
     if (!Array.isArray(tickers) || tickers.some((t) => typeof t !== 'string')) {
       return res.status(400).json({ error: 'Pole tickers musi być tablicą stringów' });
     }
     const unique = Array.from(new Set(tickers.map((t) => t.trim()).filter(Boolean))).slice(0, 200);
 
+    const today = new Date().toISOString().slice(0, 10);
     const since = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
     const metrics = [];
     const skipped: string[] = [];
@@ -965,7 +967,50 @@ router.post(
         skipped.push(ticker);
       }
     }
-    res.json({ metrics, skipped, since });
+
+    // Punkty odniesienia — każdy niezależnie best-effort (brak danych ≠ 500).
+    const references = [];
+
+    // Portfel: indeks TWR (1 + twr/100) jako seria "cen" — zwrot okna = chain-link
+    // 12M, zmienność = dzienne zwroty TWR. buildHistoryView jest memoizowane
+    // (ten sam klucz co dashboard z domyślnym benchmarkiem sp500).
+    try {
+      const view = await buildHistoryView(req.portfolioId, 'sp500');
+      const twrSeries = view.history
+        .filter((p) => p.date >= since)
+        .map((p) => ({ date: p.date, close: 1 + p.twrPct / 100 }));
+      const m = computeRiskReturnFromPrices(twrSeries);
+      if (m) references.push({ key: 'portfolio', label: 'Portfel', currency: 'PLN', ...m });
+    } catch {
+      // portfel bez historii — punkt po prostu nie wystąpi
+    }
+
+    // Benchmarki: te same źródła co wykres główny (WIG = cache benchmarków
+    // przez fetchStooqHistory, S&P 500 = Yahoo ^GSPC z cache price_history).
+    const benchmarkDefs = [
+      {
+        key: 'wig' as const,
+        label: 'WIG',
+        currency: 'PLN',
+        fetch: () => fetchStooqHistory('wig', since),
+      },
+      {
+        key: 'sp500' as const,
+        label: 'S&P 500',
+        currency: 'USD',
+        fetch: () => fetchYahooHistory('^GSPC', since, today),
+      },
+    ];
+    for (const def of benchmarkDefs) {
+      try {
+        const m = computeRiskReturnFromPrices(await def.fetch());
+        if (m) references.push({ key: def.key, label: def.label, currency: def.currency, ...m });
+      } catch {
+        // źródło niedostępne — pomiń punkt
+      }
+    }
+
+    res.json({ metrics, skipped, since, references });
   }),
 );
 

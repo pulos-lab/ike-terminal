@@ -37,6 +37,9 @@ interface ScatterPoint {
   y: number; // returnPct
   z: number; // weight
   currency: string;
+  /** Punkt odniesienia (portfel/benchmark) — bez udziału, romb zamiast kropki. */
+  isRef?: boolean;
+  refKey?: string;
 }
 
 function PointTooltip({
@@ -52,7 +55,9 @@ function PointTooltip({
     <div className="rounded-md border bg-popover px-3 py-2 text-xs shadow-md">
       <p className="font-semibold mb-1">
         {p.ticker}
-        <span className="ml-2 font-normal text-muted-foreground">{p.paperName}</span>
+        {p.paperName && (
+          <span className="ml-2 font-normal text-muted-foreground">{p.paperName}</span>
+        )}
       </p>
       <p className="tabular-nums">
         <span className="text-muted-foreground">Zwrot 12M: </span>
@@ -63,12 +68,19 @@ function PointTooltip({
         <span className="text-muted-foreground">Zmienność: </span>
         {formatNumber(p.x)}%
       </p>
-      <p className="tabular-nums">
-        <span className="text-muted-foreground">Udział: </span>
-        {formatNumber(p.z, 1)}%
-      </p>
+      {!p.isRef && (
+        <p className="tabular-nums">
+          <span className="text-muted-foreground">Udział: </span>
+          {formatNumber(p.z, 1)}%
+        </p>
+      )}
     </div>
   );
+}
+
+/** Kolory punktów odniesienia: portfel spójny z linią portfela na dashboardzie. */
+function refColor(key: string): string {
+  return key === 'portfolio' ? 'var(--primary)' : 'var(--muted-foreground)';
 }
 
 /**
@@ -114,6 +126,22 @@ export function RiskReturnScatter({ positions }: Props) {
     });
   }, [data, positions]);
 
+  // Punkty odniesienia (portfel + WIG + S&P 500) — romby o stałym rozmiarze.
+  const refPoints = useMemo<ScatterPoint[]>(
+    () =>
+      (data?.references ?? []).map((r) => ({
+        ticker: r.label,
+        paperName: '',
+        x: r.volatilityPct,
+        y: r.returnPct,
+        z: 1,
+        currency: r.currency,
+        isRef: true,
+        refKey: r.key,
+      })),
+    [data],
+  );
+
   if (!data || points.length < 2) return null;
 
   return (
@@ -126,11 +154,12 @@ export function RiskReturnScatter({ positions }: Props) {
               <TooltipTrigger asChild>
                 <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/60 hover:text-muted-foreground transition-colors" />
               </TooltipTrigger>
-              <TooltipContent className="max-w-[320px] text-xs">
+              <TooltipContent className="max-w-[340px] text-xs">
                 Każda kropka to pozycja: oś X — annualizowana zmienność dziennych zwrotów, oś Y —
                 zwrot ceny za ostatnie ~12 miesięcy (w walucie notowania, bez wpływu FX), wielkość
-                kropki — udział w portfelu. Lewy górny róg = wysoki zwrot przy niskim ryzyku; prawy
-                dolny = wysokie ryzyko bez nagrody.
+                kropki — udział w portfelu. Romby to punkty odniesienia: Portfel (TWR), WIG i S&P
+                500 — pozycje nad rombem indeksu biją go przy danym ryzyku. Uwaga: WIG jest indeksem
+                dochodowym (z dywidendami) w PLN, S&P 500 cenowym w USD.
               </TooltipContent>
             </UITooltip>
           </CardTitle>
@@ -171,6 +200,7 @@ export function RiskReturnScatter({ positions }: Props) {
               width={44}
             />
             <ZAxis type="number" dataKey="z" range={[60, 400]} name="Udział" />
+            <ZAxis type="number" dataKey="z" range={[180, 180]} zAxisId="ref" />
             <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeDasharray="4 4" />
             <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<PointTooltip />} />
             <Scatter data={points} isAnimationActive={false}>
@@ -188,6 +218,19 @@ export function RiskReturnScatter({ positions }: Props) {
                 fontSize={9}
               />
             </Scatter>
+            {refPoints.length > 0 && (
+              <Scatter data={refPoints} zAxisId="ref" shape="diamond" isAnimationActive={false}>
+                {refPoints.map((p) => (
+                  <Cell key={p.refKey} fill={refColor(p.refKey ?? '')} fillOpacity={0.9} />
+                ))}
+                <LabelList
+                  dataKey="ticker"
+                  position="bottom"
+                  className="fill-foreground font-medium"
+                  fontSize={10}
+                />
+              </Scatter>
+            )}
           </ScatterChart>
         </ResponsiveContainer>
         {data.skipped.length > 0 && (

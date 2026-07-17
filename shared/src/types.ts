@@ -1019,6 +1019,20 @@ export interface RiskReturnMetric {
   dataPoints: number;
 }
 
+/**
+ * Punkt odniesienia na mapie ryzyko–zwrot: cały portfel (z indeksu TWR,
+ * PLN-znormalizowany) albo benchmark (WIG = indeks dochodowy w PLN,
+ * S&P 500 = cenowy w USD — ta sama konwencja walutowa co punkty pozycji).
+ */
+export interface RiskReturnRefPoint {
+  key: 'portfolio' | 'wig' | 'sp500';
+  label: string;
+  returnPct: number;
+  volatilityPct: number;
+  dataPoints: number;
+  currency: string;
+}
+
 /** POST /portfolio/risk-return — body: { tickers: string[] }. */
 export interface RiskReturnResponse {
   metrics: RiskReturnMetric[];
@@ -1026,6 +1040,8 @@ export interface RiskReturnResponse {
   skipped: string[];
   /** Początek okna analizy (ISO) — ~12 miesięcy wstecz. */
   since: string;
+  /** Punkty odniesienia: portfel + WIG + S&P 500 (pomijane gdy brak danych). */
+  references: RiskReturnRefPoint[];
 }
 
 /**
