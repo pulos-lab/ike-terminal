@@ -77,7 +77,17 @@ import {
   optionDisplayName,
 } from 'shared';
 import { computePortfolioHistoryMemoized } from '../services/history-memo.js';
-import { annotateClosedTradesPln, summarizeDividendsInPln } from '../services/fx-history.js';
+import {
+  annotateClosedTradesPln,
+  buildDividendFxLookup,
+  summarizeDividendsByCurrency,
+} from '../services/fx-history.js';
+import {
+  annotateDividendRecords,
+  buildDividendIsinResolver,
+} from '../services/dividend-position-link.js';
+import { computeRiskReturnFromPrices } from '../services/risk-return.js';
+import { loadHistoricalPrices } from '../services/history-cache.js';
 import {
   buildHistoryView,
   buildPositionsView,
@@ -148,10 +158,15 @@ router.get(
 router.get(
   '/dividends',
   asyncHandler(async (req, res) => {
-    const operations = getAllOperations(req.portfolioId);
+    const pid = req.portfolioId;
+    const operations = getAllOperations(pid);
     const dividends = extractDividends(operations);
-    const { totalPln, totalPlnApprox, byCurrency } = await summarizeDividendsInPln(dividends);
-    res.json({ dividends, totalPln, totalPlnApprox, byCurrency });
+    // Jeden lookup FX obsługuje i sumę, i anotację per-rekord (kurs z dnia wypłaty).
+    const fx = await buildDividendFxLookup(dividends);
+    const { totalPln, totalPlnApprox, byCurrency } = summarizeDividendsByCurrency(dividends, fx);
+    const resolveIsin = buildDividendIsinResolver(getAllTransactions(pid), getTickerMap(pid));
+    const annotated = annotateDividendRecords(dividends, fx, resolveIsin);
+    res.json({ dividends: annotated, totalPln, totalPlnApprox, byCurrency });
   }),
 );
 
@@ -923,6 +938,34 @@ router.post(
       return res.status(400).json({ error: 'Invalid benchmark' });
     }
     res.json(await buildHistoryView(req.portfolioId, benchmark as BenchmarkKey));
+  }),
+);
+
+// POST /api/portfolio/risk-return — metryki zwrot/zmienność per ticker z ~rocznej
+// historii cen. Czyta WYŁĄCZNIE cache price_history.db (zapełniany przy liczeniu
+// historii portfela) — zero sieci; ticker bez wystarczającej historii → skipped.
+// Tickery przysyła klient z własnych pozycji (unika drugiego przeliczenia silnika).
+router.post(
+  '/risk-return',
+  asyncHandler((req, res) => {
+    const { tickers } = req.body as { tickers?: unknown };
+    if (!Array.isArray(tickers) || tickers.some((t) => typeof t !== 'string')) {
+      return res.status(400).json({ error: 'Pole tickers musi być tablicą stringów' });
+    }
+    const unique = Array.from(new Set(tickers.map((t) => t.trim()).filter(Boolean))).slice(0, 200);
+
+    const since = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+    const metrics = [];
+    const skipped: string[] = [];
+    for (const ticker of unique) {
+      const computed = computeRiskReturnFromPrices(loadHistoricalPrices(ticker, since));
+      if (computed) {
+        metrics.push({ ticker, ...computed });
+      } else {
+        skipped.push(ticker);
+      }
+    }
+    res.json({ metrics, skipped, since });
   }),
 );
 

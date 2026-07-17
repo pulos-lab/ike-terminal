@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chainLinkPct, computeDrawdownSeries } from '../returns';
+import { chainLinkPct, computeBetaAlpha, computeDrawdownSeries } from '../returns';
 
 describe('chainLinkPct', () => {
   it('portfel +100% → +110% to +5% w okresie (nie +10 p.p.)', () => {
@@ -80,5 +80,46 @@ describe('computeDrawdownSeries', () => {
 
   it('pusta seria → pusta seria', () => {
     expect(computeDrawdownSeries([])).toEqual([]);
+  });
+});
+
+describe('computeBetaAlpha', () => {
+  // Portfel idealnie = 2× benchmark → beta 2, alfa wynika tylko z rf.
+  it('portfel = k × benchmark → beta = k', () => {
+    const pairs: Array<[number, number]> = Array.from({ length: 60 }, (_, i) => {
+      const b = ((i % 7) - 3) / 100; // deterministyczna zmienność −3%..+3%
+      return [2 * b, b];
+    });
+    const r = computeBetaAlpha(pairs, 0)!;
+    expect(r.beta).toBeCloseTo(2, 8);
+    expect(r.alphaAnnualPct).toBeCloseTo(0, 6);
+  });
+
+  it('stała dzienna nadwyżka nad benchmarkiem → alfa = nadwyżka × 252', () => {
+    const excessDaily = 0.0002; // 2 pb dziennie
+    const pairs: Array<[number, number]> = Array.from({ length: 60 }, (_, i) => {
+      const b = ((i % 5) - 2) / 100;
+      return [b + excessDaily, b];
+    });
+    const r = computeBetaAlpha(pairs, 0)!;
+    expect(r.beta).toBeCloseTo(1, 8);
+    expect(r.alphaAnnualPct).toBeCloseTo(excessDaily * 252 * 100, 4);
+  });
+
+  it('rf obniża alfę portfela o dodatnim zwrocie przy beta 1 — neutralnie', () => {
+    // Przy beta=1 rf znosi się w formule Jensena: alfa nie zależy od rf.
+    const pairs: Array<[number, number]> = Array.from({ length: 60 }, (_, i) => {
+      const b = ((i % 5) - 2) / 100;
+      return [b + 0.0001, b];
+    });
+    const r0 = computeBetaAlpha(pairs, 0)!;
+    const r5 = computeBetaAlpha(pairs, 5)!;
+    expect(r5.alphaAnnualPct).toBeCloseTo(r0.alphaAnnualPct, 6);
+  });
+
+  it('za mało par albo płaski benchmark → null', () => {
+    expect(computeBetaAlpha([[0.01, 0.01]], 5)).toBeNull();
+    const flat: Array<[number, number]> = Array.from({ length: 60 }, () => [0.01, 0]);
+    expect(computeBetaAlpha(flat, 5)).toBeNull();
   });
 });

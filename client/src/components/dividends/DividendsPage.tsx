@@ -28,8 +28,26 @@ import {
   formatCurrency,
 } from '@/lib/formatters';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { groupDividendsByYearAndCurrency } from '@/lib/dividends-yearly';
-import { Loader2, Coins, Plus, Pencil, Trash2, RefreshCw, Calendar, Clock } from 'lucide-react';
+import { computeYieldOnCost } from '@/lib/yield-on-cost';
+import {
+  Loader2,
+  Coins,
+  Info,
+  Percent,
+  Plus,
+  Pencil,
+  Trash2,
+  RefreshCw,
+  Calendar,
+  Clock,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { ExpandableCard, ExpandableCardSubRow } from '@/components/ui/expandable-card';
 import { useToggleSet } from '@/hooks/useToggleSet';
@@ -297,12 +315,25 @@ export function DividendsPage() {
     toggle: toggleHistSort,
   } = useSortableData(dividends);
 
-  // Roczne sumy per waluta (stacked bars) — backend nie zwraca przeliczenia PLN
-  // per rekord, więc nie wolno sumować różnych walut do jednego słupka "PLN".
+  // Roczne sumy per waluta (stacked bars) — słupki celowo w walutach oryginalnych
+  // (mieszanie walut w jednym słupku PLN zaciemniałoby strukturę wypłat).
   const { rows: yearlyData, currencies: yearlyCurrencies } = useMemo(
     () => groupDividendsByYearAndCurrency(dividends),
     [dividends],
   );
+
+  // Yield on cost: dywidendy 12M (amountPln + isin anotowane przez backend)
+  // vs koszt nabycia otwartych pozycji.
+  const { data: positionsData } = useQuery({
+    queryKey: QUERY_KEYS.positions,
+    queryFn: api.getPositions,
+    staleTime: 5 * 60 * 1000,
+  });
+  const yoc = useMemo(() => {
+    if (!dividends.length || !positionsData?.positions?.length) return null;
+    const today = new Date().toISOString().slice(0, 10);
+    return computeYieldOnCost(dividends, positionsData.positions, today);
+  }, [dividends, positionsData]);
 
   return (
     <div className="space-y-4">
@@ -408,6 +439,57 @@ export function DividendsPage() {
               )}
             </CardContent>
           </Card>
+
+          {yoc && (
+            <Card>
+              <CardHeader className="pb-2">
+                <TooltipProvider>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Percent className="h-4 w-4" />
+                    Yield on cost (12 mies.)
+                    <UITooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground/60 hover:text-muted-foreground transition-colors" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[320px] text-xs">
+                        Faktycznie wypłacone dywidendy netto z ostatnich 12 miesięcy (PLN po kursie
+                        z dnia wypłaty) podzielone przez koszt nabycia OTWARTYCH pozycji. Pokazuje,
+                        jak procentuje zainwestowany kapitał — niezależnie od bieżącej ceny.
+                        Dywidendy ze sprzedanych już pozycji nie wchodzą do rachunku.
+                      </TooltipContent>
+                    </UITooltip>
+                  </CardTitle>
+                </TooltipProvider>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-gain tabular-nums">
+                  {yoc.approx ? '≈ ' : ''}
+                  {formatNumber(yoc.totalYocPct)}%
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {formatPLN(yoc.totalDividends12mPln)} dywidend / {formatPLN(yoc.totalCostPln)}{' '}
+                  kosztu pozycji
+                </p>
+                {yoc.positions.length > 0 && (
+                  <div className="mt-3 space-y-1 border-t pt-3 max-h-40 overflow-y-auto pr-1">
+                    {yoc.positions.map((p) => (
+                      <div key={p.isin} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="font-medium truncate max-w-[40%]" title={p.paperName}>
+                          {p.ticker}
+                        </span>
+                        <span className="text-muted-foreground tabular-nums text-xs">
+                          {formatPLN(p.dividends12mPln)}
+                        </span>
+                        <span className="tabular-nums font-medium text-gain">
+                          {formatNumber(p.yocPct)}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 

@@ -21,6 +21,7 @@ import { getSpinOffs } from '../db/spin-offs-repo.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { invalidateCachedPrices } from './history-cache.js';
 import { fetchFxRate } from './yahoo-finance.js';
+import { riskFreeRate } from './risk-free-rate.js';
 import { resolveSector } from './sector-resolver.js';
 import {
   computeOpenPositions,
@@ -214,7 +215,12 @@ export async function buildHistoryView(
     persistNewSplits(pid, result.detectedSplits, savedSplits);
   }
 
-  return { history: result.history, metrics: result.metrics, baseCurrency };
+  // Roczna stopa wolna od ryzyka dla statystyk klienta (Sharpe/Sortino/alfa) —
+  // UST ~1Y z tej samej krzywej co wycena opcji (Yahoo cache'owane w pamięci,
+  // wewnętrzny fallback na stałą gdy sieć padnie); przybliżenie dla PLN.
+  const riskFreeRatePct = (await riskFreeRate(1)) * 100;
+
+  return { history: result.history, metrics: result.metrics, baseCurrency, riskFreeRatePct };
 }
 
 /** Otwarte pozycje + cash — ciało dawnego GET /api/portfolio/positions. */

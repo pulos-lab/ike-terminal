@@ -330,6 +330,14 @@ export interface DividendRecord {
   source: RecordSource;
   /** 'coupon' gdy rekord to kupon obligacji (operationType='dividend' + subkind='coupon'). */
   subkind?: 'coupon';
+  /** Równowartość PLN po kursie z dnia wypłaty; null gdy brak kursu FX. */
+  amountPln?: number | null;
+  /**
+   * ISIN instrumentu rozwiązany z tickera rekordu (dokładny ticker pozycji,
+   * skrót GPW z transakcji Bossa albo nazwa z ticker_map) — do łączenia
+   * dywidend z pozycjami (yield on cost). Null gdy nie udało się dopasować.
+   */
+  isin?: string | null;
 }
 
 export interface UpcomingDividend {
@@ -988,6 +996,36 @@ export interface PortfolioHistoryResponse {
   metrics: PortfolioMetrics;
   /** Waluta bazowa portfela — history/metrics są liczone w tej walucie. */
   baseCurrency: string;
+  /**
+   * Roczna stopa wolna od ryzyka w PROCENTACH (rentowność UST ~1Y z risk-free-rate;
+   * przybliżenie dla portfeli PLN) — do Sharpe/Sortino/alfa po stronie klienta.
+   */
+  riskFreeRatePct: number;
+}
+
+/**
+ * Metryki ryzyko–zwrot jednego instrumentu z ~rocznej historii cen
+ * (cache price_history.db, bez sieci). Zwrot w walucie NOTOWANIA instrumentu
+ * (czysty risk instrumentu, bez wpływu FX). Klient łączy z pozycjami
+ * (waga/nazwa) z GET /positions — endpoint nie przelicza silnika pozycji.
+ */
+export interface RiskReturnMetric {
+  ticker: string;
+  /** Zwrot ceny za dostępny okres (%, do ~1Y). */
+  returnPct: number;
+  /** Annualizowana zmienność dziennych zwrotów (%, √252). */
+  volatilityPct: number;
+  /** Liczba punktów historii użytych do obliczeń. */
+  dataPoints: number;
+}
+
+/** POST /portfolio/risk-return — body: { tickers: string[] }. */
+export interface RiskReturnResponse {
+  metrics: RiskReturnMetric[];
+  /** Tickery pominięte z powodu zbyt krótkiej historii w cache (dla przejrzystości UI). */
+  skipped: string[];
+  /** Początek okna analizy (ISO) — ~12 miesięcy wstecz. */
+  since: string;
 }
 
 /**
@@ -1404,6 +1442,8 @@ export interface PublicHistoryResponse {
   history: PortfolioHistoryPoint[];
   metrics: PublicShareMetrics;
   baseCurrency: string;
+  /** Rynkowa stopa wolna od ryzyka (%) — nie jest daną prywatną, patrz PortfolioHistoryResponse. */
+  riskFreeRatePct: number;
 }
 
 /** Pozycja w widoku publicznym — pola kwotowe obecne tylko gdy showAmounts=true. */
