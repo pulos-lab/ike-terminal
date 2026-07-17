@@ -59,6 +59,22 @@ function positionRegion(p: Position): string {
   return regionLabel(p.country, p.exchange);
 }
 
+/** Etykiety klas aktywów dla donuta. Brak kategorii = zwykła akcja (ta sama
+ *  konwencja co CategoryBadge, który dla akcji nie renderuje nic). Opcje są
+ *  odfiltrowane wyżej (PortfolioPage przekazuje regularPositions) — wpis
+ *  zostaje dla bezpieczeństwa, gdyby filtr się kiedyś zmienił. */
+const CATEGORY_LABELS: Record<string, string> = {
+  stock: 'Akcje',
+  etf: 'ETF',
+  bond: 'Obligacje',
+  cfd: 'CFD',
+  option: 'Opcje',
+};
+
+function positionAssetClass(p: Position): string {
+  return CATEGORY_LABELS[p.category ?? 'stock'] ?? 'Inne';
+}
+
 function groupBy(
   positions: Position[],
   keyFn: (p: Position) => string,
@@ -498,6 +514,11 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
     [positions, totalValuePln, isDark],
   );
 
+  const assetClassData = useMemo(
+    () => groupBy(positions, positionAssetClass, getEmberPalette(isDark), totalValuePln),
+    [positions, totalValuePln, isDark],
+  );
+
   const topPositionsData = useMemo(() => {
     const palette = getEmberPalette(isDark);
     const sorted = [...positions].sort((a, b) => b.currentValuePln - a.currentValuePln);
@@ -550,8 +571,9 @@ export function PortfolioDiversification({ positions, totalValuePln }: Props) {
         </CardContent>
       </Card>
 
-      {/* Pie charts 2x2 grid */}
+      {/* Pie charts grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <DiversificationChart title="Klasy aktywów" data={assetClassData} />
         <DiversificationChart title="Regiony" data={regionData} />
         <DiversificationChart title="Waluty" data={currencyData} />
         <SectorsChart positions={positions} totalValuePln={totalValuePln} />

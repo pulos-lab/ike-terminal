@@ -20,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { PortfolioChart } from './PortfolioChart';
 import { PerformanceStats } from './PerformanceStats';
 import { HeroKPI } from './HeroKPI';
+import { DrawdownChart } from './DrawdownChart';
 import { MonthlyReturnsChart } from './MonthlyReturnsChart';
 import { ShareDialog } from './ShareDialog';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
@@ -412,6 +413,14 @@ export function DashboardPage() {
 
       {!isLoading && filteredHistory.length > 1 && (
         <PerformanceStats
+          data={filteredHistory}
+          benchmarkLabel={benchmarkLabel}
+          showBenchmark={showBenchmark}
+        />
+      )}
+
+      {!isLoading && filteredHistory.length > 1 && (
+        <DrawdownChart
           data={filteredHistory}
           benchmarkLabel={benchmarkLabel}
           showBenchmark={showBenchmark}
