@@ -84,6 +84,20 @@ function refColor(key: string): string {
 }
 
 /**
+ * Osie nieliniowe: pojedynczy outlier (np. spółka z +160% przy 290% zmienności)
+ * na skali liniowej zgniata resztę punktów w rogu. X = skala √ (zmienność ≥ 0),
+ * Y = symlog (liniowa przy zerze, logarytmiczna na ogonach — działa z ujemnymi
+ * zwrotami). Wartości pozostają prawdziwe, zmienia się tylko geometria osi,
+ * więc gęsty środek dostaje większość powierzchni.
+ */
+const X_TICK_CANDIDATES = [0, 10, 20, 40, 80, 160, 320];
+const Y_TICK_CANDIDATES = [-320, -160, -80, -40, -20, 0, 20, 40, 80, 160, 320];
+
+function pickTicks(candidates: number[], maxAbs: number): number[] {
+  return candidates.filter((t) => Math.abs(t) <= maxAbs * 1.35);
+}
+
+/**
  * Karta „Ryzyko vs zwrot" — każda pozycja jako kropka: X = annualizowana
  * zmienność, Y = zwrot ceny za ~12M (w walucie notowania — czysty risk
  * instrumentu, bez FX), wielkość = udział w portfelu. Metryki liczy backend
@@ -142,6 +156,10 @@ export function RiskReturnScatter({ positions }: Props) {
     [data],
   );
 
+  const allPoints = [...points, ...refPoints];
+  const xTicks = pickTicks(X_TICK_CANDIDATES, Math.max(30, ...allPoints.map((p) => p.x)));
+  const yTicks = pickTicks(Y_TICK_CANDIDATES, Math.max(20, ...allPoints.map((p) => Math.abs(p.y))));
+
   if (!data || points.length < 2) return null;
 
   return (
@@ -158,8 +176,9 @@ export function RiskReturnScatter({ positions }: Props) {
                 Każda kropka to pozycja: oś X — annualizowana zmienność dziennych zwrotów, oś Y —
                 zwrot ceny za ostatnie ~12 miesięcy (w walucie notowania, bez wpływu FX), wielkość
                 kropki — udział w portfelu. Romby to punkty odniesienia: Portfel (TWR), WIG i S&P
-                500 — pozycje nad rombem indeksu biją go przy danym ryzyku. Uwaga: WIG jest indeksem
-                dochodowym (z dywidendami) w PLN, S&P 500 cenowym w USD.
+                500 — pozycje nad rombem indeksu biją go przy danym ryzyku. Osie są nieliniowe (√ /
+                symlog), żeby pojedynczy outlier nie zgniatał reszty punktów. Uwaga: WIG jest
+                indeksem dochodowym (z dywidendami) w PLN, S&P 500 cenowym w USD.
               </TooltipContent>
             </UITooltip>
           </CardTitle>
@@ -177,12 +196,15 @@ export function RiskReturnScatter({ positions }: Props) {
               type="number"
               dataKey="x"
               name="Zmienność"
+              scale="sqrt"
+              domain={[0, 'dataMax']}
+              ticks={xTicks}
               tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
               tickFormatter={(v: number) => `${v.toFixed(0)}%`}
               axisLine={{ stroke: 'var(--border)' }}
               tickLine={false}
               label={{
-                value: 'Zmienność (ann.)',
+                value: 'Zmienność (ann., skala √)',
                 position: 'insideBottomRight',
                 offset: -2,
                 fontSize: 10,
@@ -193,6 +215,9 @@ export function RiskReturnScatter({ positions }: Props) {
               type="number"
               dataKey="y"
               name="Zwrot 12M"
+              scale="symlog"
+              domain={['dataMin', 'dataMax']}
+              ticks={yTicks}
               tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
               tickFormatter={(v: number) => `${v.toFixed(0)}%`}
               axisLine={false}
