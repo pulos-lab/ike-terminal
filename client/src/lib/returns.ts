@@ -12,6 +12,22 @@ export function chainLinkPct(endPct: number, startPct: number): number {
   return ((1 + endPct / 100) / startIndex - 1) * 100;
 }
 
+/**
+ * Krzywa obsunięcia (drawdown/underwater) z serii SKUMULOWANEGO zwrotu %.
+ * Indeks = 1 + pct/100; dd = (indeks / dotychczasowy szczyt − 1) × 100 — zawsze ≤ 0,
+ * zero na każdym nowym szczycie. Ta sama matematyka co Max Drawdown w PerformanceStats:
+ * seria musi być TWR, nie wartością portfela — wpłata tuż przed korektą sztucznie
+ * podnosiłaby szczyt i zawyżała obsunięcie.
+ */
+export function computeDrawdownSeries(cumulativePcts: number[]): number[] {
+  let peak = -Infinity;
+  return cumulativePcts.map((pct) => {
+    const index = 1 + pct / 100;
+    if (index > peak) peak = index;
+    return peak > 0 ? (index / peak - 1) * 100 : 0; // degeneracja (TWR ≤ −100%) — jak w PerformanceStats
+  });
+}
+
 /** Data początku zakresu dla presetów 1M/3M/6M/YTD/1Y/3Y; ALL → undefined. */
 export function getPresetStartDate(range: string): string | undefined {
   const now = new Date();

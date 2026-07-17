@@ -348,7 +348,9 @@ router.get(
           currency: pos.currency,
           shares: pos.shares,
           dividendPerShare: perShare,
-          dividendYield: cal.dividendYield,
+          // Yahoo zwraca yield jako ułamek (0.042); kalendarz GPW jako procent (4.2).
+          // Normalizujemy do procentów — jednostka zadeklarowana w typie UpcomingDividend.
+          dividendYield: cal.dividendYield !== null ? cal.dividendYield * 100 : null,
           source: 'yahoo',
         });
       } catch (err) {

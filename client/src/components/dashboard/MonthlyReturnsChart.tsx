@@ -140,6 +140,121 @@ function compoundYtd(rows: MonthlyRow[], key: 'portfolio' | 'benchmark'): number
   return count ? (cum - 1) * 100 : null;
 }
 
+interface HeatmapYearRow {
+  year: number;
+  months: MonthlyRow[];
+  annual: number | null;
+  annualBenchmark: number | null;
+}
+
+/** Tło komórki heatmapy: gain/loss z kryciem skalowanym wielkością zwrotu.
+ *  Clamp na ±8% — powyżej kolor jest już pełny, żeby pojedynczy ekstremalny
+ *  miesiąc nie spłaszczał wizualnie całej reszty siatki. */
+function heatCellBackground(value: number | null): string | undefined {
+  if (value === null) return undefined;
+  const intensity = Math.min(Math.abs(value) / 8, 1);
+  const mixPct = Math.round(10 + intensity * 55);
+  const colorVar = value >= 0 ? 'var(--gain)' : 'var(--loss)';
+  return `color-mix(in srgb, ${colorVar} ${mixPct}%, transparent)`;
+}
+
+function HeatCell({
+  value,
+  benchmark,
+  benchmarkLabel,
+  monthLabel,
+  year,
+  emphasis,
+  className,
+}: {
+  value: number | null;
+  benchmark: number | null;
+  benchmarkLabel: string;
+  monthLabel: string;
+  year: number;
+  emphasis?: boolean;
+  className?: string;
+}) {
+  const fmt = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+  // Natywny title zamiast Radix Tooltip — siatka ma ~100+ komórek,
+  // montowanie tylu triggerów jest zbędnym kosztem.
+  const title =
+    value === null
+      ? `${monthLabel} ${year}: brak danych`
+      : `${monthLabel} ${year} · Portfel: ${fmt(value)}${
+          benchmarkLabel && benchmark !== null ? ` · ${benchmarkLabel}: ${fmt(benchmark)}` : ''
+        }`;
+  return (
+    <td
+      title={title}
+      className={cn(
+        'px-1 py-1.5 text-center tabular-nums rounded-sm',
+        value === null && 'text-muted-foreground/50',
+        emphasis && 'font-semibold',
+        className,
+      )}
+      style={{ backgroundColor: heatCellBackground(value) }}
+    >
+      {value === null ? '·' : fmt(value)}
+    </td>
+  );
+}
+
+/** Widok „Mapa" — siatka lata × miesiące (heatmapa) + kolumna zwrotu rocznego. */
+function MonthlyHeatmap({
+  rows,
+  benchmarkLabel,
+}: {
+  rows: HeatmapYearRow[];
+  benchmarkLabel: string;
+}) {
+  return (
+    <div className="overflow-x-auto -mx-6 px-6">
+      <table className="w-full min-w-[640px] border-separate border-spacing-0.5 text-[11px]">
+        <thead>
+          <tr className="text-muted-foreground">
+            <th className="px-1 py-1 text-left font-semibold">Rok</th>
+            {MONTH_LABELS_PL.map((m) => (
+              <th key={m} className="px-1 py-1 text-center font-semibold">
+                {m}
+              </th>
+            ))}
+            <th className="px-1 py-1 text-center font-semibold border-l border-border">Rok</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ year, months, annual, annualBenchmark }) => (
+            <tr key={year}>
+              <td className="px-1 py-1.5 font-semibold tabular-nums text-muted-foreground">
+                {year}
+              </td>
+              {months.map((m) => (
+                <HeatCell
+                  key={m.label}
+                  value={m.portfolio}
+                  benchmark={m.benchmark}
+                  benchmarkLabel={benchmarkLabel}
+                  monthLabel={m.label}
+                  year={year}
+                />
+              ))}
+              <HeatCell
+                value={annual}
+                benchmark={annualBenchmark}
+                benchmarkLabel={benchmarkLabel}
+                monthLabel="Cały rok"
+                year={year}
+                emphasis
+                className="border-l border-border"
+              />
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 interface TooltipPayloadItem {
   dataKey: string;
   value: number | null;
@@ -199,6 +314,7 @@ function ChartTooltip({
 export function MonthlyReturnsChart({ history, benchmarkLabel, showBenchmark = false }: Props) {
   const years = useMemo(() => getAvailableYears(history), [history]);
   const [year, setYear] = useState<number>(() => years[0] ?? new Date().getFullYear());
+  const [view, setView] = useState<'bars' | 'heatmap'>('bars');
 
   // Re-anchor selected year if portfolio/history changes such that it's no longer in range.
   useEffect(() => {
@@ -211,6 +327,21 @@ export function MonthlyReturnsChart({ history, benchmarkLabel, showBenchmark = f
 
   const ytdPortfolio = useMemo(() => compoundYtd(monthly, 'portfolio'), [monthly]);
   const ytdBenchmark = useMemo(() => compoundYtd(monthly, 'benchmark'), [monthly]);
+
+  // Widok „Mapa": wszystkie lata naraz + zwrot roczny (chain-link miesięcy).
+  const heatmapRows = useMemo<HeatmapYearRow[]>(
+    () =>
+      years.map((y) => {
+        const months = computeMonthlyReturns(history, y);
+        return {
+          year: y,
+          months,
+          annual: compoundYtd(months, 'portfolio'),
+          annualBenchmark: compoundYtd(months, 'benchmark'),
+        };
+      }),
+    [history, years],
+  );
 
   if (!history.length || !years.length) return null;
 
@@ -237,7 +368,7 @@ export function MonthlyReturnsChart({ history, benchmarkLabel, showBenchmark = f
             </div>
 
             <div className="flex items-center gap-3 flex-wrap">
-              {hasAnyData && (
+              {view === 'bars' && hasAnyData && (
                 <div className="flex items-center gap-3 text-xs tabular-nums">
                   <span className="text-muted-foreground">
                     YTD:{' '}
@@ -275,25 +406,51 @@ export function MonthlyReturnsChart({ history, benchmarkLabel, showBenchmark = f
                 </div>
               )}
 
-              <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
-                <SelectTrigger size="sm" className="h-8 text-xs w-24">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {years.map((y) => (
-                    <SelectItem key={y} value={String(y)}>
-                      {y}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {view === 'bars' && (
+                <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
+                  <SelectTrigger size="sm" className="h-8 text-xs w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {years.map((y) => (
+                      <SelectItem key={y} value={String(y)}>
+                        {y}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              {/* Przełącznik widoku — segment jak MWR/TWR na wykresie głównym */}
+              <div className="flex items-center rounded-md bg-muted p-0.5">
+                <button
+                  className={cn(
+                    'px-2 py-0.5 rounded text-xs font-medium transition-colors',
+                    view === 'bars' ? 'bg-background text-foreground' : 'text-muted-foreground',
+                  )}
+                  onClick={() => setView('bars')}
+                >
+                  Słupki
+                </button>
+                <button
+                  className={cn(
+                    'px-2 py-0.5 rounded text-xs font-medium transition-colors',
+                    view === 'heatmap' ? 'bg-background text-foreground' : 'text-muted-foreground',
+                  )}
+                  onClick={() => setView('heatmap')}
+                >
+                  Mapa
+                </button>
+              </div>
             </div>
           </div>
         </TooltipProvider>
       </CardHeader>
 
       <CardContent>
-        {hasAnyData ? (
+        {view === 'heatmap' ? (
+          <MonthlyHeatmap rows={heatmapRows} benchmarkLabel={showBenchmark ? benchmarkLabel : ''} />
+        ) : hasAnyData ? (
           <ResponsiveContainer width="100%" height={260}>
             <BarChart
               data={monthly}

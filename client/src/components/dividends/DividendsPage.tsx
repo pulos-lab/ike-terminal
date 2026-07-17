@@ -22,6 +22,7 @@ import { AddDividendDialog } from './AddDividendDialog';
 import {
   formatNumber,
   formatDate,
+  formatPercent,
   formatPLN,
   formatQuantity,
   formatCurrency,
@@ -123,6 +124,12 @@ function UpcomingDividendCardMobile({ d }: { d: UpcomingDividend }) {
           {d.paymentDate ? formatDate(d.paymentDate) : '—'}
         </span>
       </div>
+      <div className="flex justify-between gap-3 items-baseline">
+        <span className="text-muted-foreground">Stopa dywidendy</span>
+        <span className="tabular-nums text-right">
+          {d.dividendYield !== null ? formatPercent(d.dividendYield).replace('+', '') : '—'}
+        </span>
+      </div>
     </ExpandableCard>
   );
 }
@@ -186,6 +193,13 @@ function UpcomingDividendsPanel() {
                   dir={upcomingDir}
                   onToggle={() => toggleUpcomingSort('estimatedAmount')}
                 />
+                <SortableTableHead
+                  label="Stopa"
+                  align="right"
+                  active={upcomingSortKey === 'dividendYield'}
+                  dir={upcomingDir}
+                  onToggle={() => toggleUpcomingSort('dividendYield')}
+                />
                 <TableHead>Waluta</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
@@ -200,6 +214,11 @@ function UpcomingDividendsPanel() {
                   <TableCell>{formatQuantity(d.shares)}</TableCell>
                   <TableCell className="text-right font-medium text-gain tabular-nums">
                     {d.estimatedAmount > 0 ? formatNumber(d.estimatedAmount) : '—'}
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground tabular-nums">
+                    {d.dividendYield !== null
+                      ? formatPercent(d.dividendYield).replace('+', '')
+                      : '—'}
                   </TableCell>
                   <TableCell>
                     <CcyChip ccy={d.currency} />

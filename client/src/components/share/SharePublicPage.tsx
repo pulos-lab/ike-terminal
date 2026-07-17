@@ -12,6 +12,7 @@ import { Logo } from '@/components/ui/Logo';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { PortfolioChart } from '@/components/dashboard/PortfolioChart';
 import { PerformanceStats } from '@/components/dashboard/PerformanceStats';
+import { DrawdownChart } from '@/components/dashboard/DrawdownChart';
 import { MonthlyReturnsChart } from '@/components/dashboard/MonthlyReturnsChart';
 import { PublicPositionsTable } from './PublicPositionsTable';
 
@@ -232,6 +233,14 @@ export function SharePublicPage() {
         {fullHistory.length > 1 && (
           <MonthlyReturnsChart
             history={fullHistory}
+            benchmarkLabel={benchmarkLabel}
+            showBenchmark={showBenchmark}
+          />
+        )}
+
+        {filteredHistory.length > 1 && (
+          <DrawdownChart
+            data={filteredHistory}
             benchmarkLabel={benchmarkLabel}
             showBenchmark={showBenchmark}
           />

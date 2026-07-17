@@ -341,6 +341,7 @@ export interface UpcomingDividend {
   currency: string;
   shares: number;
   dividendPerShare: number | null;
+  /** Stopa dywidendy instrumentu w PROCENTACH (np. 4.2 = 4,2%) — oba źródła znormalizowane. */
   dividendYield: number | null;
   /** Status z kalendarza GPW (stockwatch/biznesradar); brak dla źródła Yahoo. */
   status?: 'proponowana' | 'uchwalona' | 'wypłacona';
