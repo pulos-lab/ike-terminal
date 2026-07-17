@@ -230,17 +230,17 @@ export function SharePublicPage() {
           />
         )}
 
-        {filteredHistory.length > 1 && (
-          <DrawdownChart
-            data={filteredHistory}
+        {fullHistory.length > 1 && (
+          <MonthlyReturnsChart
+            history={fullHistory}
             benchmarkLabel={benchmarkLabel}
             showBenchmark={showBenchmark}
           />
         )}
 
-        {fullHistory.length > 1 && (
-          <MonthlyReturnsChart
-            history={fullHistory}
+        {filteredHistory.length > 1 && (
+          <DrawdownChart
+            data={filteredHistory}
             benchmarkLabel={benchmarkLabel}
             showBenchmark={showBenchmark}
           />

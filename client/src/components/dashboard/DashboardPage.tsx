@@ -419,17 +419,17 @@ export function DashboardPage() {
         />
       )}
 
-      {!isLoading && filteredHistory.length > 1 && (
-        <DrawdownChart
-          data={filteredHistory}
+      {!isLoading && data?.history && data.history.length > 1 && (
+        <MonthlyReturnsChart
+          history={data.history}
           benchmarkLabel={benchmarkLabel}
           showBenchmark={showBenchmark}
         />
       )}
 
-      {!isLoading && data?.history && data.history.length > 1 && (
-        <MonthlyReturnsChart
-          history={data.history}
+      {!isLoading && filteredHistory.length > 1 && (
+        <DrawdownChart
+          data={filteredHistory}
           benchmarkLabel={benchmarkLabel}
           showBenchmark={showBenchmark}
         />
