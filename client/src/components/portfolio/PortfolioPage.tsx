@@ -34,6 +34,7 @@ import {
 import { Eye, EyeOff, AlertTriangle, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioDiversification } from './PortfolioDiversification';
+import { RiskReturnScatter } from './RiskReturnScatter';
 import { PortfolioOptionsCard } from './PortfolioOptionsCard';
 import { PortfolioPositionCardMobile } from './PortfolioPositionCardMobile';
 import { useToggleSet } from '@/hooks/useToggleSet';
@@ -543,6 +544,8 @@ export function PortfolioPage() {
           totalValuePln={data?.totalValuePln ?? 0}
         />
       )}
+
+      {regularPositions.length > 1 && <RiskReturnScatter positions={regularPositions} />}
     </div>
   );
 }

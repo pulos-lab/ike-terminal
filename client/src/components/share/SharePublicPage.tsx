@@ -227,6 +227,7 @@ export function SharePublicPage() {
             data={filteredHistory}
             benchmarkLabel={benchmarkLabel}
             showBenchmark={showBenchmark}
+            riskFreeRatePct={historyQuery.data?.riskFreeRatePct}
           />
         )}
 

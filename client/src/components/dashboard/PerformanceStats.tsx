@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPercent, formatNumber } from '@/lib/formatters';
-import { chainLinkPct } from '@/lib/returns';
+import { chainLinkPct, computeBetaAlpha } from '@/lib/returns';
 import { cn } from '@/lib/utils';
 
 interface ChartDataPoint {
@@ -22,6 +22,8 @@ interface Props {
   data: ChartDataPoint[];
   benchmarkLabel: string;
   showBenchmark?: boolean;
+  /** Roczna stopa wolna od ryzyka w % (z /history); fallback do 5% gdy brak. */
+  riskFreeRatePct?: number;
 }
 
 interface PerformanceMetrics {
@@ -37,11 +39,16 @@ interface PerformanceMetrics {
   winRate: number;
   calmarRatio: number;
   sortinoRatio: number;
+  beta: number | null;
+  alphaAnnualPct: number | null;
 }
 
-const RISK_FREE_RATE = 0.05; // 5% annualized
+const FALLBACK_RISK_FREE_PCT = 5; // gdy serwer nie dostarczył stopy (stare odpowiedzi z cache)
 
-function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
+function computeMetrics(
+  data: ChartDataPoint[],
+  riskFreeAnnualPct: number,
+): PerformanceMetrics | null {
   if (data.length < 2) return null;
 
   const first = data[0];
@@ -61,11 +68,24 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   // (sub-okresy przy equity <5% szczytu są zamrażane), więc iloraz indeksu daje
   // sensowny dzienny zwrot także tam, gdzie surowa wartość eksploduje.
   const dailyReturns: number[] = [];
+  // Parowane zwroty (portfel, benchmark) do bety/alfy — para tylko gdy oba
+  // indeksy poprzedniego dnia są dodatnie; benchmark bez danych (same zera
+  // po nieudanym fetchu) wykluczamy w całości.
+  const hasBenchmarkSeries = data.some((d) => d.benchmarkTwrPct !== 0);
+  const pairedReturns: Array<[number, number]> = [];
   for (let i = 1; i < data.length; i++) {
     const prevIndex = 1 + data[i - 1].twrPct / 100;
     const curIndex = 1 + data[i].twrPct / 100;
     if (prevIndex > 0) {
-      dailyReturns.push(curIndex / prevIndex - 1);
+      const portfolioDaily = curIndex / prevIndex - 1;
+      dailyReturns.push(portfolioDaily);
+      if (hasBenchmarkSeries) {
+        const prevBench = 1 + data[i - 1].benchmarkTwrPct / 100;
+        const curBench = 1 + data[i].benchmarkTwrPct / 100;
+        if (prevBench > 0) {
+          pairedReturns.push([portfolioDaily, curBench / prevBench - 1]);
+        }
+      }
     }
   }
 
@@ -99,7 +119,7 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   const volatility = dailyVol * Math.sqrt(tradingDaysPerYear) * 100;
 
   // Sharpe Ratio
-  const dailyRiskFree = RISK_FREE_RATE / tradingDaysPerYear;
+  const dailyRiskFree = riskFreeAnnualPct / 100 / tradingDaysPerYear;
   const excessReturns = dailyReturns.map((r) => r - dailyRiskFree);
   const meanExcess = excessReturns.reduce((s, r) => s + r, 0) / excessReturns.length;
   const sharpeRatio = dailyVol > 0 ? (meanExcess / dailyVol) * Math.sqrt(tradingDaysPerYear) : 0;
@@ -153,7 +173,12 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   const winDays = dailyReturns.filter((r) => r > 0).length;
   const winRate = (winDays / dailyReturns.length) * 100;
 
+  // Beta / alfa Jensena vs benchmark (null gdy benchmark bez danych / za krótki zakres)
+  const betaAlpha = computeBetaAlpha(pairedReturns, riskFreeAnnualPct);
+
   return {
+    beta: betaAlpha?.beta ?? null,
+    alphaAnnualPct: betaAlpha?.alphaAnnualPct ?? null,
     totalReturn,
     benchmarkReturn,
     cagr,
@@ -169,8 +194,14 @@ function computeMetrics(data: ChartDataPoint[]): PerformanceMetrics | null {
   };
 }
 
-export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }: Props) {
-  const metrics = useMemo(() => computeMetrics(data), [data]);
+export function PerformanceStats({
+  data,
+  benchmarkLabel,
+  showBenchmark = true,
+  riskFreeRatePct,
+}: Props) {
+  const rfPct = riskFreeRatePct ?? FALLBACK_RISK_FREE_PCT;
+  const metrics = useMemo(() => computeMetrics(data, rfPct), [data, rfPct]);
 
   if (!metrics) {
     return null;
@@ -179,6 +210,8 @@ export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }:
   const returnColor = (v: number) =>
     v > 0 ? ('green' as const) : v < 0 ? ('red' as const) : ('default' as const);
   const hasBenchmark = showBenchmark && metrics.benchmarkReturn !== 0;
+  const hasBetaAlpha = showBenchmark && metrics.beta !== null;
+  const rfLabel = `rf = ${rfPct.toFixed(1)}%`;
 
   return (
     <TooltipProvider>
@@ -208,8 +241,8 @@ export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }:
         <StatTile
           label="Sharpe Ratio"
           value={formatNumber(metrics.sharpeRatio)}
-          subtext="rf = 5%"
-          tooltip="Zwrot ponad stopę wolną od ryzyka (rf = 5%) na jednostkę zmienności. Wartość >1 dobra, >2 bardzo dobra. Uwzględnia wszystkie wahania — zarówno wzrosty, jak i spadki."
+          subtext={rfLabel}
+          tooltip="Zwrot ponad stopę wolną od ryzyka na jednostkę zmienności. Wartość >1 dobra, >2 bardzo dobra. Uwzględnia wszystkie wahania — zarówno wzrosty, jak i spadki. Stopa wolna od ryzyka z rentowności rocznych obligacji skarbowych USA (przybliżenie dla PLN)."
         />
         <StatTile
           label="Sortino Ratio"
@@ -226,6 +259,20 @@ export function PerformanceStats({ data, benchmarkLabel, showBenchmark = true }:
         <StatTile label="Najlepszy dzień" value={formatPercent(metrics.bestDay)} color="green" />
         <StatTile label="Najgorszy dzień" value={formatPercent(metrics.worstDay)} color="red" />
         <StatTile label="Win Rate" value={`${formatNumber(metrics.winRate, 1)}%`} />
+        <StatTile
+          label={`Beta vs ${benchmarkLabel || 'benchmark'}`}
+          value={hasBetaAlpha ? formatNumber(metrics.beta!) : '—'}
+          disabled={!hasBetaAlpha}
+          tooltip="Wrażliwość portfela na ruchy benchmarku (regresja dziennych zwrotów TWR). Beta 1 = portfel faluje jak indeks; 1.3 = ruchy o ~30% mocniejsze w obie strony; <1 = spokojniej niż rynek."
+        />
+        <StatTile
+          label="Alfa (rocznie)"
+          value={hasBetaAlpha ? formatPercent(metrics.alphaAnnualPct!) : '—'}
+          color={hasBetaAlpha ? returnColor(metrics.alphaAnnualPct!) : 'default'}
+          disabled={!hasBetaAlpha}
+          subtext={hasBetaAlpha ? rfLabel : undefined}
+          tooltip="Alfa Jensena — roczna nadwyżka zwrotu ponad to, co wynikałoby z samej ekspozycji na benchmark (bety). Dodatnia = dobór pozycji dodaje wartość względem pasywnego trzymania indeksu."
+        />
       </div>
     </TooltipProvider>
   );

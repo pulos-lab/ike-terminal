@@ -416,6 +416,7 @@ export function DashboardPage() {
           data={filteredHistory}
           benchmarkLabel={benchmarkLabel}
           showBenchmark={showBenchmark}
+          riskFreeRatePct={data?.riskFreeRatePct}
         />
       )}
 

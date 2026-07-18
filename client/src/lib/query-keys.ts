@@ -5,6 +5,7 @@ export const QUERY_KEYS = {
   portfolios: ['portfolios'] as const,
   positions: ['portfolio', 'positions'] as const,
   positionsGreeks: ['portfolio', 'positions', 'greeks'] as const,
+  riskReturn: ['portfolio', 'risk-return'] as const,
   transactions: ['portfolio', 'transactions'] as const,
   closedTrades: ['portfolio', 'closed-trades'] as const,
   metrics: ['portfolio', 'metrics'] as const,

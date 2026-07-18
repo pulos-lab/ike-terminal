@@ -77,7 +77,18 @@ import {
   optionDisplayName,
 } from 'shared';
 import { computePortfolioHistoryMemoized } from '../services/history-memo.js';
-import { annotateClosedTradesPln, summarizeDividendsInPln } from '../services/fx-history.js';
+import {
+  annotateClosedTradesPln,
+  buildDividendFxLookup,
+  summarizeDividendsByCurrency,
+} from '../services/fx-history.js';
+import {
+  annotateDividendRecords,
+  buildDividendIsinResolver,
+} from '../services/dividend-position-link.js';
+import { computeRiskReturnFromPrices } from '../services/risk-return.js';
+import { loadHistoricalPrices } from '../services/history-cache.js';
+import { fetchStooqHistory } from '../services/stooq.js';
 import {
   buildHistoryView,
   buildPositionsView,
@@ -148,10 +159,15 @@ router.get(
 router.get(
   '/dividends',
   asyncHandler(async (req, res) => {
-    const operations = getAllOperations(req.portfolioId);
+    const pid = req.portfolioId;
+    const operations = getAllOperations(pid);
     const dividends = extractDividends(operations);
-    const { totalPln, totalPlnApprox, byCurrency } = await summarizeDividendsInPln(dividends);
-    res.json({ dividends, totalPln, totalPlnApprox, byCurrency });
+    // Jeden lookup FX obsługuje i sumę, i anotację per-rekord (kurs z dnia wypłaty).
+    const fx = await buildDividendFxLookup(dividends);
+    const { totalPln, totalPlnApprox, byCurrency } = summarizeDividendsByCurrency(dividends, fx);
+    const resolveIsin = buildDividendIsinResolver(getAllTransactions(pid), getTickerMap(pid));
+    const annotated = annotateDividendRecords(dividends, fx, resolveIsin);
+    res.json({ dividends: annotated, totalPln, totalPlnApprox, byCurrency });
   }),
 );
 
@@ -923,6 +939,78 @@ router.post(
       return res.status(400).json({ error: 'Invalid benchmark' });
     }
     res.json(await buildHistoryView(req.portfolioId, benchmark as BenchmarkKey));
+  }),
+);
+
+// POST /api/portfolio/risk-return — metryki zwrot/zmienność per ticker z ~rocznej
+// historii cen. Czyta WYŁĄCZNIE cache price_history.db (zapełniany przy liczeniu
+// historii portfela) — zero sieci; ticker bez wystarczającej historii → skipped.
+// Tickery przysyła klient z własnych pozycji (unika drugiego przeliczenia silnika).
+router.post(
+  '/risk-return',
+  asyncHandler(async (req, res) => {
+    const { tickers } = req.body as { tickers?: unknown };
+    if (!Array.isArray(tickers) || tickers.some((t) => typeof t !== 'string')) {
+      return res.status(400).json({ error: 'Pole tickers musi być tablicą stringów' });
+    }
+    const unique = Array.from(new Set(tickers.map((t) => t.trim()).filter(Boolean))).slice(0, 200);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const since = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+    const metrics = [];
+    const skipped: string[] = [];
+    for (const ticker of unique) {
+      const computed = computeRiskReturnFromPrices(loadHistoricalPrices(ticker, since));
+      if (computed) {
+        metrics.push({ ticker, ...computed });
+      } else {
+        skipped.push(ticker);
+      }
+    }
+
+    // Punkty odniesienia — każdy niezależnie best-effort (brak danych ≠ 500).
+    const references = [];
+
+    // Portfel: indeks TWR (1 + twr/100) jako seria "cen" — zwrot okna = chain-link
+    // 12M, zmienność = dzienne zwroty TWR. buildHistoryView jest memoizowane
+    // (ten sam klucz co dashboard z domyślnym benchmarkiem sp500).
+    try {
+      const view = await buildHistoryView(req.portfolioId, 'sp500');
+      const twrSeries = view.history
+        .filter((p) => p.date >= since)
+        .map((p) => ({ date: p.date, close: 1 + p.twrPct / 100 }));
+      const m = computeRiskReturnFromPrices(twrSeries);
+      if (m) references.push({ key: 'portfolio', label: 'Portfel', currency: 'PLN', ...m });
+    } catch {
+      // portfel bez historii — punkt po prostu nie wystąpi
+    }
+
+    // Benchmarki: te same źródła co wykres główny (WIG = cache benchmarków
+    // przez fetchStooqHistory, S&P 500 = Yahoo ^GSPC z cache price_history).
+    const benchmarkDefs = [
+      {
+        key: 'wig' as const,
+        label: 'WIG',
+        currency: 'PLN',
+        fetch: () => fetchStooqHistory('wig', since),
+      },
+      {
+        key: 'sp500' as const,
+        label: 'S&P 500',
+        currency: 'USD',
+        fetch: () => fetchYahooHistory('^GSPC', since, today),
+      },
+    ];
+    for (const def of benchmarkDefs) {
+      try {
+        const m = computeRiskReturnFromPrices(await def.fetch());
+        if (m) references.push({ key: def.key, label: def.label, currency: def.currency, ...m });
+      } catch {
+        // źródło niedostępne — pomiń punkt
+      }
+    }
+
+    res.json({ metrics, skipped, since, references });
   }),
 );
 
