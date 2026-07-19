@@ -7,7 +7,7 @@ import {
   findBondByIsin,
   findBondByTicker,
 } from 'shared';
-import { getTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
+import { getTickerMap, upsertTickerMapEntry, isProvisionalStub } from '../db/ticker-map-repo.js';
 import { searchYahoo } from './ticker-search.js';
 import { getBrCatalogService } from './biznesradar-catalog.js';
 import { fetchYahooPrice } from './yahoo-finance.js';
@@ -646,10 +646,15 @@ export async function resolveUnknownIsins(
 ): Promise<ResolveResult> {
   const existingMap = getTickerMap(portfolioId);
 
-  // Collect unique ISINs with their paper names and currencies
+  // Collect unique ISINs with their paper names and currencies.
+  // Re-attempt not only ISINs absent from the map, but also those anchored to a
+  // provisional stub (an unresolved-debut placeholder) — so a fresh listing
+  // self-heals on the next import once a price source finally lists it. A
+  // successful resolution overwrites the stub (the anchor no longer protects it).
   const unknowns = new Map<string, { paperName: string; currency: string; category?: string }>();
   for (const tx of transactions) {
-    if (!existingMap.has(tx.isin) && !unknowns.has(tx.isin)) {
+    const existing = existingMap.get(tx.isin);
+    if ((!existing || isProvisionalStub(existing)) && !unknowns.has(tx.isin)) {
       unknowns.set(tx.isin, {
         paperName: tx.paperName,
         currency: tx.currency,
