@@ -23,6 +23,9 @@ import type {
   TransactionsResponse,
 } from 'shared';
 
+import { toast } from 'sonner';
+import { DEMO_PORTFOLIO_ID } from 'shared';
+
 const API_BASE = '/api';
 
 /**
@@ -69,19 +72,52 @@ function portfolioHeaders(): Record<string, string> {
   };
 }
 
+/**
+ * Tryb demo: jeden chokepoint blokuje WSZYSTKIE mutacje (każdy dialog przechodzi
+ * przez request()/uploadFile()), bez dotykania poszczególnych komponentów.
+ * Serwer i tak odrzuciłby mutację (403 demo_read_only) — tu oszczędzamy request
+ * i pokazujemy konwersyjny toast z CTA. errorToast wycisza ten marker, żeby
+ * dialogi nie dokładały drugiego, generycznego toastu błędu.
+ */
+export const DEMO_READ_ONLY = 'demo_read_only';
+
+function isDemoActive(): boolean {
+  return activePortfolioId === DEMO_PORTFOLIO_ID;
+}
+
+function demoBlockMutation(method?: string, url?: string): void {
+  const m = (method ?? 'GET').toUpperCase();
+  if (!isDemoActive() || m === 'GET' || m === 'HEAD') return;
+  // Read-only POST-y (parametry w body) — lustro READ_POST_WHITELIST na serwerze
+  if (m === 'POST' && (url === '/portfolio/history' || url === '/portfolio/risk-return')) return;
+  toast('Przeglądasz wersję demo', {
+    description: 'Załóż darmowe konto, aby dodawać własne dane i importować transakcje.',
+    action: {
+      label: 'Załóż konto',
+      onClick: () => {
+        window.location.href = '/login?register=1';
+      },
+    },
+  });
+  throw new ApiError(DEMO_READ_ONLY, 403);
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   // Merge headers zamiast spread całych options PO headers — caller podający własne
   // options.headers nadpisałby cały obiekt i zgubił Content-Type + X-Portfolio-Id.
   // Teraz defaults przeżywają, a pojedyncze nagłówki można świadomie nadpisać.
   const { headers: optionHeaders, ...restOptions } = options ?? {};
+  demoBlockMutation(restOptions.method, url);
   const response = await fetch(`${API_BASE}${url}`, {
     credentials: 'include', // send auth cookies
     ...restOptions,
     headers: { ...portfolioHeaders(), ...(optionHeaders ?? {}) },
   });
 
-  // Redirect to login on 401 (session expired or not authenticated)
-  if (response.status === 401) {
+  // Redirect to login on 401 (session expired or not authenticated).
+  // W trybie demo gość nie ma sesji z założenia — redirect robiłby pętlę
+  // (np. wejście na /app/admin/*); 401 spada wtedy do zwykłego ApiError.
+  if (response.status === 401 && !isDemoActive()) {
     window.location.href = '/login';
     throw new ApiError('Session expired', 401);
   }
@@ -101,13 +137,14 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
  * jak w `request()` (wygasła sesja → redirect na /login).
  */
 async function uploadFile<T>(endpoint: string, formData: FormData): Promise<T> {
+  demoBlockMutation('POST');
   const response = await fetch(`${API_BASE}${endpoint}`, {
     method: 'POST',
     headers: { 'X-Portfolio-Id': activePortfolioId },
     credentials: 'include',
     body: formData,
   });
-  if (response.status === 401) {
+  if (response.status === 401 && !isDemoActive()) {
     window.location.href = '/login';
     throw new ApiError('Session expired', 401);
   }

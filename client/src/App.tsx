@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { enterDemo } from '@/lib/demo';
 import { Toaster } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -34,6 +36,17 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * Wejście do trybu demo: ustawia aktywny portfel na 'demo' i czyści cache
+ * react-query ZANIM wyrenderuje się /app (lazy initializer useState działa
+ * raz, przed pierwszym returnem — Navigate nie wyścignie się z enterDemo).
+ */
+function DemoEntry() {
+  const queryClient = useQueryClient();
+  useState(() => enterDemo(queryClient));
+  return <Navigate to="/app" replace />;
+}
+
 function App() {
   // Toaster podąża za centralnym motywem aplikacji — theme="system" ignorował
   // toggle w AppShell (sonner czyta wtedy tylko prefers-color-scheme).
@@ -52,6 +65,8 @@ function App() {
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               {/* Publiczny widok udostępnionego portfela — bez AuthGuard */}
               <Route path="/share/:token" element={<SharePublicPage />} />
+              {/* Wejście do trybu demo (landing → "Wypróbuj demo") */}
+              <Route path="/demo" element={<DemoEntry />} />
 
               {/* Protected routes */}
               <Route

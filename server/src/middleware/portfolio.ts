@@ -1,9 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { getPortfolio, isPortfolioOwnedBy } from '../db/portfolio-registry.js';
 
-// Portfolio ID must be 'default' or a valid UUID v4
+// Portfolio ID must be 'default', the reserved demo portfolio, or a valid UUID v4
 const VALID_PORTFOLIO_ID =
-  /^(default|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
+  /^(default|demo|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 
 declare global {
   namespace Express {

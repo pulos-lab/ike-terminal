@@ -10,8 +10,18 @@ import { getDb, closeDb } from '../db/connection.js';
 import { seedTickerMap } from '../db/ticker-map-repo.js';
 import { purgeAllData } from '../db/transactions-repo.js';
 import { deleteShareForPortfolio } from '../db/share-repo.js';
+import { DEMO_PORTFOLIO_ID } from 'shared';
 
 const router = Router();
+
+// Portfel demo jest współdzielony i read-only — mutacje blokujemy jawnie,
+// zanim ownership check w ogóle zdąży odpowiedzieć (defense in depth).
+router.use('/:id', (req, res, next) => {
+  if (req.params.id === DEMO_PORTFOLIO_ID && req.method !== 'GET') {
+    return res.status(403).json({ error: 'demo_read_only' });
+  }
+  next();
+});
 
 // GET /api/portfolios — returns portfolios owned by the authenticated user
 // Auto-creates a default portfolio if user has none

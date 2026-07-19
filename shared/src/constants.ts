@@ -116,3 +116,15 @@ export const DEFAULT_FX_PLN: Record<string, number> = {
   CZK: 0.17,
   MXN: 0.22,
 };
+
+// ============ Tryb demo (publiczny portfel przykładowy) ============
+
+/**
+ * Zarezerwowane id współdzielonego portfela demo. Bezpieczne jako klucz bypassa:
+ * realne portfele mają id 'default' albo UUID v4 (createPortfolio), a dotychczasowy
+ * regex walidacji nagłówka X-Portfolio-Id nie dopuszczał literału 'demo'.
+ */
+export const DEMO_PORTFOLIO_ID = 'demo';
+
+/** Syntetyczny właściciel portfela demo — better-auth generuje własne id, więc żaden realny użytkownik nie może go dostać. */
+export const DEMO_USER_ID = '__demo__';
