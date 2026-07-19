@@ -14,6 +14,7 @@ import {
   getAllTickers,
   updateTickerSectors,
   updateTickerCountry,
+  isProvisionalStub,
 } from '../db/ticker-map-repo.js';
 import { getSplits, upsertSplits } from '../db/splits-repo.js';
 import { getOptionContractsMap } from '../db/option-contracts-repo.js';
@@ -30,6 +31,7 @@ import {
 } from './portfolio-engine.js';
 import { computePortfolioHistoryMemoized } from './history-memo.js';
 import { applyPendingSpinOffs, getPendingRatioSpinOffs } from './spin-offs-applier.js';
+import { resolveUnknownIsins } from './isin-resolver.js';
 
 /**
  * Widoki portfela (historia zwrotów, otwarte pozycje) wyciągnięte z handlerów
@@ -138,6 +140,69 @@ async function lazyBackfillSectors(pid: string): Promise<void> {
   }
 }
 
+/** Lazy re-resolucja debiutowych stubów w tle.
+ *
+ * Gdy import nie mógł jeszcze rozpoznać ISIN-u świeżo zadebiutowanej spółki
+ * (brak w Yahoo/BiznesRadar/Stooq), zapisuje prowizoryczny stub (patrz
+ * `isProvisionalStub`). Ten pass ponawia rozpoznanie w tle przy ładowaniu
+ * pozycji — bez ręcznego re-importu — więc debiut sam się goi, gdy źródło
+ * zacznie go listować. `resolveUnknownIsins` traktuje stuby jak nierozwiązane i
+ * nadpisuje je prawdziwym tickerem przy sukcesie (kotwica ich nie chroni).
+ *
+ * Rate-limit: max raz na `STUB_RESOLVE_RETRY_MS` per portfel, z guardem in-flight
+ * przeciw równoległym przebiegom. W przeciwieństwie do backfillu sektorów jest
+ * CZASOWY, nie „raz per proces" — debiut nierozpoznany przy pierwszej próbie
+ * dostaje kolejne szanse w tym samym procesie serwera. */
+const stubResolveAttemptAt = new Map<string, number>();
+const stubResolveInFlight = new Set<string>();
+export const STUB_RESOLVE_RETRY_MS = 6 * 60 * 60 * 1000; // 6h
+
+/** Czysta decyzja throttlingu — wydzielona, żeby dała się deterministycznie
+ *  przetestować bez sieci. */
+export function shouldResolveStubs(
+  hasStubs: boolean,
+  lastAttemptMs: number | undefined,
+  inFlight: boolean,
+  nowMs: number,
+): boolean {
+  if (!hasStubs || inFlight) return false;
+  if (lastAttemptMs !== undefined && nowMs - lastAttemptMs < STUB_RESOLVE_RETRY_MS) return false;
+  return true;
+}
+
+async function lazyResolveProvisionalStubs(pid: string): Promise<void> {
+  const stubs = getAllTickers(pid).filter((e) => isProvisionalStub(e));
+  if (
+    !shouldResolveStubs(
+      stubs.length > 0,
+      stubResolveAttemptAt.get(pid),
+      stubResolveInFlight.has(pid),
+      Date.now(),
+    )
+  ) {
+    return;
+  }
+  stubResolveAttemptAt.set(pid, Date.now());
+  stubResolveInFlight.add(pid);
+  try {
+    const stubIsins = new Set(stubs.map((s) => s.isin));
+    // Rozpoznajemy na podstawie PRAWDZIWYCH transakcji (poprawny paperName /
+    // waluta / kategoria), nie pól stuba (te mają zaszyte GPW/PLN).
+    const stubTxs = getAllTransactions(pid).filter((t) => stubIsins.has(t.isin));
+    if (stubTxs.length > 0) {
+      const { resolved } = await resolveUnknownIsins(stubTxs, pid);
+      if (resolved.length > 0) {
+        console.log(`Lazy stub resolve: zagojono ${resolved.length} debiutowych tickerów (${pid})`);
+      }
+    }
+  } catch {
+    // best effort — po błędzie pozwól na wcześniejszy retry niż pełny interwał
+    stubResolveAttemptAt.delete(pid);
+  } finally {
+    stubResolveInFlight.delete(pid);
+  }
+}
+
 /** Persist newly detected splits + invalidate caches. Wspólne dla obu widoków.
  *  Wołający decyduje KIEDY (guardy różnią się między widokami — zachowane 1:1
  *  z oryginalnych handlerów); tu tylko wspólne ciało. */
@@ -234,6 +299,11 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
   // per portfel). Nie blokuje response — user zobaczy nowe sektory po kolejnym
   // odświeżeniu widoku.
   void lazyBackfillSectors(pid);
+
+  // Fire-and-forget: ponów rozpoznanie debiutowych stubów (max raz/6h per portfel).
+  // Świeży debiut, którego źródło jeszcze nie listowało w chwili importu, goi się
+  // sam po kolejnym odświeżeniu — bez ręcznego re-importu pliku.
+  void lazyResolveProvisionalStubs(pid);
 
   // Auto-aplikacja zaległych spin-offów PRZED liczeniem pozycji — response
   // z tego samego requestu pokazuje już pozycję dziecka. Awaitowane celowo.
