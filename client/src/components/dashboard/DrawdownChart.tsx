@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPercent } from '@/lib/formatters';
 import { computeDrawdownSeries } from '@/lib/returns';
+import type { CompareSeries } from '@/lib/compare-series';
 import { useTheme } from '@/lib/use-theme';
 
 interface ChartDataPoint {
@@ -17,6 +18,10 @@ interface Props {
   data: ChartDataPoint[];
   benchmarkLabel: string;
   showBenchmark?: boolean;
+  /** Tryb porównania (dashboard): length ≥ 2 → jedna linia DD per portfel
+   *  zamiast wypełnienia underwater (2-5 nakładających się fillów jest
+   *  nieczytelne). Aktywny portfel pierwszy. */
+  compareSeries?: CompareSeries[];
 }
 
 /**
@@ -26,17 +31,30 @@ interface Props {
  * w PerformanceStats liczy się z TWR: wpłata tuż przed korektą nie może
  * zawyżać obsunięcia.
  */
-export function DrawdownChart({ data, benchmarkLabel, showBenchmark = true }: Props) {
+export function DrawdownChart({
+  data,
+  benchmarkLabel,
+  showBenchmark = true,
+  compareSeries,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const { isDark } = useTheme();
+
+  const multi = !!compareSeries && compareSeries.length >= 2;
+  // Serie z <2 punktami nie mają czego rysować (młody portfel w krótkim zakresie).
+  const drawable = useMemo(
+    () => (multi ? compareSeries!.filter((s) => s.points.length >= 2) : []),
+    [multi, compareSeries],
+  );
 
   const drawdowns = useMemo(() => computeDrawdownSeries(data.map((d) => d.twrPct)), [data]);
   const currentDd = drawdowns.length ? drawdowns[drawdowns.length - 1] : 0;
   const maxDd = drawdowns.length ? Math.min(...drawdowns) : 0;
 
   useEffect(() => {
-    if (!containerRef.current || !data.length) return;
+    if (!containerRef.current) return;
+    if (multi ? drawable.length === 0 : !data.length) return;
 
     if (chartRef.current) {
       chartRef.current.remove();
@@ -68,46 +86,97 @@ export function DrawdownChart({ data, benchmarkLabel, showBenchmark = true }: Pr
 
     chartRef.current = chart;
 
-    // Wartości ≤ 0 z baseline na zerze → cała seria renderuje się „pod wodą"
-    // kolorami bottom* (wypełnienie między 0 a linią) — kolory top* nie wystąpią.
-    const lossColor = isDark ? '#d96c5f' : '#c0392b'; // --loss (canvas nie czyta CSS vars)
-    const portfolioSeries = chart.addSeries(BaselineSeries, {
-      baseValue: { type: 'price', price: 0 },
-      bottomLineColor: lossColor,
-      bottomFillColor1: `${lossColor}12`,
-      bottomFillColor2: `${lossColor}59`,
-      topLineColor: lossColor,
-      topFillColor1: 'transparent',
-      topFillColor2: 'transparent',
-      lineWidth: 2,
-      title: 'Portfel DD',
-      priceFormat: { type: 'custom', formatter: (v: number) => `${v.toFixed(2)}%` },
-    });
-    portfolioSeries.setData(
-      data.map((d, i) => ({ time: d.date as string, value: drawdowns[i] })) as any,
-    );
+    const pctFormat = {
+      type: 'custom' as const,
+      formatter: (v: number) => `${v.toFixed(2)}%`,
+    };
 
-    // Benchmark tylko gdy włączony i ma dane (same zera = nieudany fetch) — jak w PortfolioChart
-    const hasBenchmarkData = showBenchmark && data.some((d) => d.benchmarkTwrPct !== 0);
-    if (hasBenchmarkData) {
-      const benchmarkDrawdowns = computeDrawdownSeries(data.map((d) => d.benchmarkTwrPct));
-      const benchmarkSeries = chart.addSeries(LineSeries, {
-        color: isDark ? '#71717a' : '#787068',
-        lineWidth: 1,
-        lineStyle: 2,
-        title: `${benchmarkLabel} DD`,
-        priceFormat: { type: 'custom', formatter: (v: number) => `${v.toFixed(2)}%` },
+    if (multi) {
+      // Tryb porównania: zwykłe linie w kolorach serii wykresu głównego —
+      // bez wypełnień (nakładające się fille zamazują się nawzajem).
+      for (const s of drawable) {
+        const dd = computeDrawdownSeries(s.points.map((p) => p.twrPct));
+        const handle = chart.addSeries(LineSeries, {
+          color: s.color,
+          lineWidth: 2,
+          title: '',
+          lastValueVisible: false,
+          priceLineVisible: false,
+          priceFormat: pctFormat,
+        });
+        handle.setData(
+          s.points.map((p, i) => ({ time: p.date as string, value: dd[i] })) as never[],
+        );
+      }
+
+      // Benchmark z serii AKTYWNEGO portfela (pierwsza) — jak na wykresie głównym.
+      const active = drawable[0] === compareSeries![0] ? drawable[0] : null;
+      const activePoints = active?.points ?? [];
+      const hasBenchmarkData = showBenchmark && activePoints.some((p) => p.benchmarkTwrPct !== 0);
+      if (hasBenchmarkData) {
+        const benchmarkDrawdowns = computeDrawdownSeries(
+          activePoints.map((p) => p.benchmarkTwrPct),
+        );
+        const benchmarkSeries = chart.addSeries(LineSeries, {
+          color: isDark ? '#71717a' : '#787068',
+          lineWidth: 1,
+          lineStyle: 2,
+          title: '',
+          lastValueVisible: false,
+          priceLineVisible: false,
+          priceFormat: pctFormat,
+        });
+        benchmarkSeries.setData(
+          activePoints.map((p, i) => ({
+            time: p.date as string,
+            value: benchmarkDrawdowns[i],
+          })) as never[],
+        );
+      }
+    } else {
+      // Wartości ≤ 0 z baseline na zerze → cała seria renderuje się „pod wodą"
+      // kolorami bottom* (wypełnienie między 0 a linią) — kolory top* nie wystąpią.
+      const lossColor = isDark ? '#d96c5f' : '#c0392b'; // --loss (canvas nie czyta CSS vars)
+      const portfolioSeries = chart.addSeries(BaselineSeries, {
+        baseValue: { type: 'price', price: 0 },
+        bottomLineColor: lossColor,
+        bottomFillColor1: `${lossColor}12`,
+        bottomFillColor2: `${lossColor}59`,
+        topLineColor: lossColor,
+        topFillColor1: 'transparent',
+        topFillColor2: 'transparent',
+        lineWidth: 2,
+        title: 'Portfel DD',
+        priceFormat: pctFormat,
       });
-      benchmarkSeries.setData(
-        data.map((d, i) => ({ time: d.date as string, value: benchmarkDrawdowns[i] })) as any,
+      portfolioSeries.setData(
+        data.map((d, i) => ({ time: d.date as string, value: drawdowns[i] })) as never[],
       );
+
+      // Benchmark tylko gdy włączony i ma dane (same zera = nieudany fetch) — jak w PortfolioChart
+      const hasBenchmarkData = showBenchmark && data.some((d) => d.benchmarkTwrPct !== 0);
+      if (hasBenchmarkData) {
+        const benchmarkDrawdowns = computeDrawdownSeries(data.map((d) => d.benchmarkTwrPct));
+        const benchmarkSeries = chart.addSeries(LineSeries, {
+          color: isDark ? '#71717a' : '#787068',
+          lineWidth: 1,
+          lineStyle: 2,
+          title: `${benchmarkLabel} DD`,
+          priceFormat: pctFormat,
+        });
+        benchmarkSeries.setData(
+          data.map((d, i) => ({ time: d.date as string, value: benchmarkDrawdowns[i] })) as never[],
+        );
+      }
     }
 
     chart.timeScale().fitContent();
 
-    // Ograniczenie zakresu — nie wyjeżdżamy poza dane (z małym buforem)
-    const maxIdx = data.length - 1;
-    const buffer = Math.ceil(data.length * 0.03);
+    // Ograniczenie zakresu — nie wyjeżdżamy poza dane (z małym buforem);
+    // w trybie porównania oś czasu wyznacza najdłuższa seria.
+    const maxLen = multi ? Math.max(...drawable.map((s) => s.points.length)) : data.length;
+    const maxIdx = maxLen - 1;
+    const buffer = Math.ceil(maxLen * 0.03);
     let clamping = false;
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       if (!range || clamping) return;
@@ -132,9 +201,9 @@ export function DrawdownChart({ data, benchmarkLabel, showBenchmark = true }: Pr
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, drawdowns, benchmarkLabel, showBenchmark, isDark]);
+  }, [data, drawdowns, benchmarkLabel, showBenchmark, isDark, multi, drawable, compareSeries]);
 
-  if (data.length < 2) return null;
+  if (multi ? drawable.length === 0 : data.length < 2) return null;
 
   return (
     <Card className="gap-3">
@@ -151,23 +220,28 @@ export function DrawdownChart({ data, benchmarkLabel, showBenchmark = true }: Pr
                   Drawdown — o ile % portfel jest poniżej swojego dotychczasowego szczytu w wybranym
                   zakresie. Liczony z TWR (bez wpływu wpłat/wypłat). Zero = nowy szczyt; najgłębsza
                   dolina = Max Drawdown.
+                  {multi && ' W trybie porównania po jednej linii na portfel.'}
                 </TooltipContent>
               </Tooltip>
             </div>
-            <div className="flex items-center gap-3 text-xs tabular-nums">
-              <span className="text-muted-foreground">
-                Obecnie:{' '}
-                <span className={currentDd < 0 ? 'font-semibold text-loss' : 'font-semibold'}>
-                  {formatPercent(currentDd)}
+            {/* Obecnie/Max ukryte w porównaniu — Max DD per portfel jest w kaflach
+                statystyk z wyróżnieniem najlepszej wartości (bez duplikacji). */}
+            {!multi && (
+              <div className="flex items-center gap-3 text-xs tabular-nums">
+                <span className="text-muted-foreground">
+                  Obecnie:{' '}
+                  <span className={currentDd < 0 ? 'font-semibold text-loss' : 'font-semibold'}>
+                    {formatPercent(currentDd)}
+                  </span>
                 </span>
-              </span>
-              <span className="text-muted-foreground">
-                Max:{' '}
-                <span className={maxDd < 0 ? 'font-semibold text-loss' : 'font-semibold'}>
-                  {formatPercent(maxDd)}
+                <span className="text-muted-foreground">
+                  Max:{' '}
+                  <span className={maxDd < 0 ? 'font-semibold text-loss' : 'font-semibold'}>
+                    {formatPercent(maxDd)}
+                  </span>
                 </span>
-              </span>
-            </div>
+              </div>
+            )}
           </div>
         </TooltipProvider>
       </CardHeader>
@@ -177,7 +251,11 @@ export function DrawdownChart({ data, benchmarkLabel, showBenchmark = true }: Pr
           ref={containerRef}
           className="w-full"
           role="img"
-          aria-label={`Wykres obsunięcia kapitału portfela${showBenchmark ? ` vs ${benchmarkLabel}` : ''}`}
+          aria-label={
+            multi
+              ? `Wykres obsunięcia kapitału portfeli: ${drawable.map((s) => s.name).join(', ')}${showBenchmark ? ` vs ${benchmarkLabel}` : ''}`
+              : `Wykres obsunięcia kapitału portfela${showBenchmark ? ` vs ${benchmarkLabel}` : ''}`
+          }
         />
       </CardContent>
     </Card>

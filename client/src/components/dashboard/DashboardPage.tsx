@@ -1,9 +1,15 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Calendar, Info, Settings } from 'lucide-react';
+import { useQuery, useQueries } from '@tanstack/react-query';
+import { AlertTriangle, Calendar, Info, RefreshCw, Settings, X } from 'lucide-react';
 import { api } from '@/lib/api-client';
+import { QUERY_KEYS } from '@/lib/query-keys';
+import { BENCHMARKS } from '@/lib/benchmarks';
 import { filterAndRebaseHistory, getPresetStartDate } from '@/lib/returns';
 import { usePortfolio } from '@/lib/portfolio-context';
+import { useTheme } from '@/lib/use-theme';
+import { compareSeriesColor, ACTIVE_SERIES_COLOR } from '@/lib/chart-palette';
+import type { CompareSeries } from '@/lib/compare-series';
+import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldError } from '@/components/ui/field-error';
 import { Input } from '@/components/ui/input';
@@ -18,22 +24,14 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { PortfolioChart } from './PortfolioChart';
+import { ComparisonChart, type BenchmarkLine } from './ComparisonChart';
+import { ComparePortfolioPicker } from './ComparePortfolioPicker';
 import { PerformanceStats } from './PerformanceStats';
 import { HeroKPI } from './HeroKPI';
 import { DrawdownChart } from './DrawdownChart';
 import { MonthlyReturnsChart } from './MonthlyReturnsChart';
 import { ShareDialog } from './ShareDialog';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
-
-const BENCHMARKS = [
-  { value: 'none', label: 'Brak' },
-  { value: 'sp500', label: 'S&P 500' },
-  { value: 'nasdaq', label: 'NASDAQ' },
-  { value: 'wig', label: 'WIG' },
-  { value: 'wig20', label: 'WIG20' },
-  { value: 'mwig40', label: 'mWIG40' },
-  { value: 'swig80', label: 'sWIG80' },
-];
 
 const PRESET_RANGES = ['1M', '3M', '6M', 'YTD', '1Y', '3Y', 'ALL'] as const;
 
@@ -73,12 +71,30 @@ function ChartLegend({
 }
 
 export function DashboardPage() {
-  const { activeName } = usePortfolio();
+  const { activeName, activeId, portfolios } = usePortfolio();
+  const { isDark } = useTheme();
   const [benchmark, setBenchmark] = useState('sp500');
   const [timeRange, setTimeRange] = useState<string>('ALL');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [chartMode, setChartMode] = useState<'mwr' | 'twr'>('mwr');
+
+  // Tryb porównania: id INNYCH portfeli dokładanych na wykres (aktywny zawsze w grze).
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  // Nowy aktywny mógł być wśród zaznaczonych „innych" — po przełączeniu czyścimy
+  // wybór. Wzorzec „adjust state during render" zamiast setState w efekcie
+  // (bez dodatkowego renderu z nieaktualnym zaznaczeniem).
+  const [lastActiveId, setLastActiveId] = useState(activeId);
+  if (lastActiveId !== activeId) {
+    setLastActiveId(activeId);
+    setCompareIds([]);
+  }
+  // Ghost-id guard: portfel usunięty w międzyczasie znika z zaznaczenia.
+  const validCompareIds = useMemo(
+    () => compareIds.filter((id) => id !== activeId && portfolios.some((p) => p.id === id)),
+    [compareIds, activeId, portfolios],
+  );
+  const compareMode = validCompareIds.length > 0;
 
   const isCustom = timeRange === 'CUSTOM';
 
@@ -109,6 +125,74 @@ export function DashboardPage() {
     [data, startDate, endDate],
   );
 
+  // N równoległych zapytań o historię INNYCH portfeli (aktywny zostaje na
+  // zapytaniu wyżej — bez duplikacji). Klucz 'portfolios/compare-history'
+  // celowo przeżywa resetPortfolioScopedQueries przy przełączeniu portfela.
+  const compareResults = useQueries({
+    queries: validCompareIds.map((id) => ({
+      queryKey: QUERY_KEYS.compareHistory(id, benchmark),
+      queryFn: () => api.postHistory({ benchmark }, id),
+      staleTime: 15 * 60 * 1000,
+    })),
+  });
+
+  // Stabilna tożsamość serii: useQueries zwraca nową tablicę co render, a
+  // tożsamość `compareSeries` steruje pełną przebudową wykresu w ComparisonChart —
+  // memo po dataUpdatedAt zapobiega przebudowie przy każdym re-renderze strony.
+  const compareDataKey = compareResults.map((r) => r.dataUpdatedAt).join('|');
+  const compareSelectionKey = validCompareIds.join('|');
+  const compareSeries: CompareSeries[] = useMemo(
+    () =>
+      compareMode
+        ? [
+            {
+              portfolioId: activeId,
+              name: activeName,
+              color: isDark ? ACTIVE_SERIES_COLOR.dark : ACTIVE_SERIES_COLOR.light,
+              points: filteredHistory,
+            },
+            ...validCompareIds.map((id, i) => ({
+              portfolioId: id,
+              name: portfolios.find((p) => p.id === id)?.name ?? id,
+              color: compareSeriesColor(i, isDark),
+              points: filterAndRebaseHistory(
+                compareResults[i]?.data?.history ?? [],
+                startDate,
+                endDate,
+              ),
+            })),
+          ]
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      compareMode,
+      compareSelectionKey,
+      compareDataKey,
+      filteredHistory,
+      portfolios,
+      activeId,
+      activeName,
+      isDark,
+      startDate,
+      endDate,
+    ],
+  );
+  // Serie z <2 punktami po filtrze nie mają czego rysować (kafle pokażą "—").
+  const chartSeries = useMemo(
+    () => compareSeries.filter((s) => s.points.length >= 2),
+    [compareSeries],
+  );
+
+  // Portfele startujące w różnych momentach zakresu: każda linia zaczyna od 0%
+  // od własnego pierwszego punktu — przy >7 dniach różnicy pokazujemy notkę.
+  const startDatesDiffer = useMemo(() => {
+    const starts = chartSeries.map((s) => s.points[0]?.date).filter(Boolean);
+    if (starts.length < 2) return false;
+    const min = starts.reduce((a, b) => (a < b ? a : b));
+    const max = starts.reduce((a, b) => (a > b ? a : b));
+    return (new Date(max).getTime() - new Date(min).getTime()) / 86400000 > 7;
+  }, [chartSeries]);
+
   function selectPreset(range: string) {
     setTimeRange(range);
   }
@@ -125,6 +209,20 @@ export function DashboardPage() {
 
   const benchmarkLabel = BENCHMARKS.find((b) => b.value === benchmark)?.label || '';
   const showBenchmark = benchmark !== 'none';
+
+  // Linia benchmarku w trybie porównania — semantyka dashboardu bez zmian:
+  // serie benchmarku AKTYWNEGO portfela (TWR = czysty zwrot cenowy indeksu,
+  // MWR = symulacja DCA wpłat aktywnego). Guard na same zera = nieudany fetch.
+  const compareBenchmark: BenchmarkLine | null = useMemo(() => {
+    if (!compareMode || !showBenchmark) return null;
+    const field =
+      chartMode === 'twr' ? ('benchmarkTwrPct' as const) : ('benchmarkReturnPct' as const);
+    if (!filteredHistory.some((p) => p[field] !== 0)) return null;
+    return {
+      label: benchmarkLabel,
+      points: filteredHistory.map((p) => ({ date: p.date, value: p[field] })),
+    };
+  }, [compareMode, showBenchmark, chartMode, filteredHistory, benchmarkLabel]);
 
   return (
     <div className="space-y-4">
@@ -162,8 +260,9 @@ export function DashboardPage() {
                     <Info className="hidden h-3.5 w-3.5 cursor-help text-muted-foreground/60 transition-colors hover:text-muted-foreground md:block" />
                   </TooltipTrigger>
                   <TooltipContent className="max-w-[280px] text-xs">
-                    Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy przy
-                    tych samych wpłatach/wypłatach (strategia DCA)
+                    {compareMode && chartMode === 'mwr'
+                      ? `Benchmark DCA symuluje wpłaty/wypłaty aktywnego portfela (${activeName}) — dla pozostałych portfeli służy tylko jako punkt odniesienia.`
+                      : 'Porównanie z indeksem — pokazuje jak poradziłby sobie portfel indeksowy przy tych samych wpłatach/wypłatach (strategia DCA)'}
                   </TooltipContent>
                 </Tooltip>
               </div>
@@ -192,8 +291,18 @@ export function DashboardPage() {
                 </div>
               )}
 
-              {/* Akcje: share + mobilne ustawienia (desktop: koniec paska) */}
+              {/* Akcje: porównanie + share + mobilne ustawienia (desktop: koniec paska) */}
               <div className="ml-auto flex shrink-0 items-center gap-1 md:order-6 md:ml-0">
+                {/* Porównanie portfeli — sens tylko przy ≥2 portfelach */}
+                {portfolios.length > 1 && (
+                  <ComparePortfolioPicker
+                    portfolios={portfolios}
+                    activeId={activeId}
+                    selectedOtherIds={compareIds}
+                    onChange={setCompareIds}
+                  />
+                )}
+
                 {/* Udostępnij portfel — oba breakpointy */}
                 <ShareDialog currentBenchmark={benchmark} />
 
@@ -373,9 +482,45 @@ export function DashboardPage() {
             )}
           </TooltipProvider>
         </CardHeader>
-        <CardContent>
+        <CardContent className={compareMode ? 'space-y-3' : undefined}>
+          {/* Chipy-legenda trybu porównania: kolor serii + nazwa + % zakresu */}
+          {compareMode && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {compareSeries.map((s, i) => {
+                const q = i === 0 ? null : compareResults[i - 1];
+                const lastPct = s.points.length
+                  ? s.points[s.points.length - 1][chartMode === 'twr' ? 'twrPct' : 'returnPct']
+                  : null;
+                return (
+                  <SeriesChip
+                    key={s.portfolioId}
+                    name={s.name}
+                    color={s.color}
+                    pct={lastPct}
+                    loading={i === 0 ? isLoading : (q?.isLoading ?? false)}
+                    error={i === 0 ? false : (q?.isError ?? false)}
+                    onRetry={() => q?.refetch()}
+                    onRemove={
+                      i === 0
+                        ? undefined
+                        : () => setCompareIds((ids) => ids.filter((id) => id !== s.portfolioId))
+                    }
+                  />
+                );
+              })}
+            </div>
+          )}
+
           {isLoading ? (
             <LoadingSpinner />
+          ) : compareMode ? (
+            chartSeries.length ? (
+              <ComparisonChart series={chartSeries} mode={chartMode} benchmark={compareBenchmark} />
+            ) : (
+              <div className="flex items-center justify-center h-80 text-muted-foreground">
+                Brak danych w wybranym zakresie dat.
+              </div>
+            )
           ) : filteredHistory.length ? (
             <div className="relative">
               {/* Legenda na płótnie wykresu (jak w TradingView) — nie blokuje crosshaira */}
@@ -408,19 +553,34 @@ export function DashboardPage() {
               Brak danych. Zaimportuj historię transakcji lub dodaj ręcznie transakcje.
             </div>
           )}
+
+          {compareMode && startDatesDiffer && (
+            <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+              <Info className="mt-0.5 h-3 w-3 shrink-0" />
+              Portfele mają różne daty startu w tym zakresie — każda linia startuje od 0% od
+              własnego pierwszego punktu.
+            </p>
+          )}
         </CardContent>
       </Card>
 
-      {!isLoading && filteredHistory.length > 1 && (
-        <PerformanceStats
-          data={filteredHistory}
-          benchmarkLabel={benchmarkLabel}
-          showBenchmark={showBenchmark}
-          riskFreeRatePct={data?.riskFreeRatePct}
-        />
-      )}
+      {/* W trybie porównania warunek rozluźniony: statystyki/drawdown renderują się,
+          gdy KTÓRAKOLWIEK seria ma dane (nawet jeśli aktywny jest „krótki" w zakresie). */}
+      {!isLoading &&
+        (compareMode
+          ? compareSeries.some((s) => s.points.length > 1)
+          : filteredHistory.length > 1) && (
+          <PerformanceStats
+            data={filteredHistory}
+            benchmarkLabel={benchmarkLabel}
+            showBenchmark={showBenchmark}
+            riskFreeRatePct={data?.riskFreeRatePct}
+            compareSeries={compareMode ? compareSeries : undefined}
+          />
+        )}
 
-      {!isLoading && data?.history && data.history.length > 1 && (
+      {/* Heatmapa dotyczy jednego portfela — w trybie porównania schodzi ze sceny. */}
+      {!isLoading && !compareMode && data?.history && data.history.length > 1 && (
         <MonthlyReturnsChart
           history={data.history}
           benchmarkLabel={benchmarkLabel}
@@ -428,13 +588,82 @@ export function DashboardPage() {
         />
       )}
 
-      {!isLoading && filteredHistory.length > 1 && (
-        <DrawdownChart
-          data={filteredHistory}
-          benchmarkLabel={benchmarkLabel}
-          showBenchmark={showBenchmark}
-        />
-      )}
+      {!isLoading &&
+        (compareMode
+          ? compareSeries.some((s) => s.points.length > 1)
+          : filteredHistory.length > 1) && (
+          <DrawdownChart
+            data={filteredHistory}
+            benchmarkLabel={benchmarkLabel}
+            showBenchmark={showBenchmark}
+            compareSeries={compareMode ? compareSeries : undefined}
+          />
+        )}
     </div>
+  );
+}
+
+function SeriesChip({
+  name,
+  color,
+  pct,
+  loading,
+  error,
+  onRetry,
+  onRemove,
+}: {
+  name: string;
+  color: string;
+  pct: number | null;
+  loading: boolean;
+  error: boolean;
+  onRetry: () => void;
+  /** Brak = chip aktywnego portfela (nie da się go usunąć z porównania). */
+  onRemove?: () => void;
+}) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full border bg-card px-2 py-0.5 text-xs',
+        error && 'border-loss/50',
+      )}
+    >
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
+      <span className="max-w-[140px] truncate font-medium">{name}</span>
+      {error ? (
+        <button
+          onClick={onRetry}
+          className="inline-flex items-center gap-1 text-loss hover:underline"
+          aria-label={`Błąd pobierania danych portfela ${name} — spróbuj ponownie`}
+        >
+          <AlertTriangle className="h-3 w-3" />
+          błąd
+          <RefreshCw className="h-3 w-3" />
+        </button>
+      ) : loading ? (
+        <span className="h-3 w-10 animate-pulse rounded bg-muted" />
+      ) : pct !== null ? (
+        <span
+          className={cn(
+            'tabular-nums',
+            pct > 0 ? 'text-gain' : pct < 0 ? 'text-loss' : 'text-muted-foreground',
+          )}
+        >
+          {pct >= 0 ? '+' : ''}
+          {pct.toFixed(1)}%
+        </span>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      )}
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          className="ml-0.5 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          aria-label={`Usuń ${name} z porównania`}
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </span>
   );
 }
