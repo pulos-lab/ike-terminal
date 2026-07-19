@@ -26,6 +26,12 @@ export const QUERY_KEYS = {
   importStatus: ['import', 'status'] as const,
   /** Sprzedaże bez kupna (hub Importu) — detekcja liczona na żywo z transakcji. */
   orphanedSells: ['import', 'orphaned-sells'] as const,
+  /** Historia portfela w widoku Porównanie — kluczowana JAWNIE per portfolioId,
+   *  więc celowo z prefiksem 'portfolios' (nie 'portfolio'): dane nie zależą od
+   *  aktywnego portfela i mają przeżyć resetPortfolioScopedQueries przy jego
+   *  przełączeniu (reset = 5 ciężkich przeliczeń historii na serwerze na darmo). */
+  compareHistory: (portfolioId: string, benchmark: string) =>
+    ['portfolios', 'compare-history', portfolioId, benchmark] as const,
   /** Prefix wszystkich analiz FIFO — do invalidacji po mutacjach transakcji. */
   fifoMatchingAll: ['portfolio', 'fifo-matching'] as const,
   /** Analiza dopasowań FIFO per ISIN (DeleteTransactionDialog). */

@@ -1,0 +1,180 @@
+import type { PortfolioHistoryPoint } from 'shared';
+import { chainLinkPct, computeBetaAlpha } from '@/lib/returns';
+
+export interface PerformanceMetrics {
+  totalReturn: number;
+  benchmarkReturn: number;
+  cagr: number;
+  volatility: number;
+  sharpeRatio: number;
+  maxDrawdown: number;
+  maxDrawdownDuration: number;
+  bestDay: number;
+  worstDay: number;
+  winRate: number;
+  calmarRatio: number;
+  sortinoRatio: number;
+  beta: number | null;
+  alphaAnnualPct: number | null;
+}
+
+export const FALLBACK_RISK_FREE_PCT = 5; // gdy serwer nie dostarczył stopy (stare odpowiedzi z cache)
+
+export function computeMetrics(
+  data: PortfolioHistoryPoint[],
+  riskFreeAnnualPct: number,
+): PerformanceMetrics | null {
+  if (data.length < 2) return null;
+
+  const first = data[0];
+  const last = data[data.length - 1];
+
+  // Total return za widoczny okres — chain-linking (dzielenie indeksów),
+  // bo skumulowane procenty nie odejmują się wprost. Dla danych już
+  // zrebase'owanych (first = 0%) wynik jest identyczny jak last.returnPct.
+  const totalReturn = chainLinkPct(last.returnPct, first.returnPct);
+  const benchmarkReturn = chainLinkPct(last.benchmarkReturnPct, first.benchmarkReturnPct);
+
+  // Dzienne zwroty z indeksu TWR — ten sam powód co przy Max Drawdown niżej.
+  // Poprzednia formuła (V_t − V_{t−1} − CF)/V_{t−1} dzieliła przez wartość NETTO
+  // portfela: dla rachunków opcyjno-marginowych (IBKR) equity bywa bliskie zera
+  // lub ujemne i "najlepszy dzień" wychodził +4000%, a volatility/Sharpe/Sortino/
+  // win rate dziedziczyły ten sam śmieciowy mianownik. Silnik liczy TWR odpornie
+  // (sub-okresy przy equity <5% szczytu są zamrażane), więc iloraz indeksu daje
+  // sensowny dzienny zwrot także tam, gdzie surowa wartość eksploduje.
+  const dailyReturns: number[] = [];
+  // Parowane zwroty (portfel, benchmark) do bety/alfy — para tylko gdy oba
+  // indeksy poprzedniego dnia są dodatnie; benchmark bez danych (same zera
+  // po nieudanym fetchu) wykluczamy w całości.
+  const hasBenchmarkSeries = data.some((d) => d.benchmarkTwrPct !== 0);
+  const pairedReturns: Array<[number, number]> = [];
+  for (let i = 1; i < data.length; i++) {
+    const prevIndex = 1 + data[i - 1].twrPct / 100;
+    const curIndex = 1 + data[i].twrPct / 100;
+    if (prevIndex > 0) {
+      const portfolioDaily = curIndex / prevIndex - 1;
+      dailyReturns.push(portfolioDaily);
+      if (hasBenchmarkSeries) {
+        const prevBench = 1 + data[i - 1].benchmarkTwrPct / 100;
+        const curBench = 1 + data[i].benchmarkTwrPct / 100;
+        if (prevBench > 0) {
+          pairedReturns.push([portfolioDaily, curBench / prevBench - 1]);
+        }
+      }
+    }
+  }
+
+  if (dailyReturns.length === 0) return null;
+
+  // Period in years (calendar days)
+  const msPerDay = 86400000;
+  const startDate = new Date(first.date);
+  const endDate = new Date(last.date);
+  const totalDays = Math.max((endDate.getTime() - startDate.getTime()) / msPerDay, 1);
+  const years = totalDays / 365.25;
+
+  // CAGR — time-weighted (roczny ekwiwalent TWR).
+  // Użycie last.portfolioValue / first.portfolioValue byłoby błędne, bo
+  // portfolioValue rośnie także z wpłat — każdy deposit "napompowuje" wynik.
+  // TWR z definicji izoluje rynkowy zwrot od cash flows, więc jego annualizacja
+  // daje prawdziwy CAGR dla portfeli z aktywnym cash flow (dotyczy wszystkich
+  // portfeli — działa tak samo dla PLN i walutowych, bo twrPct jest już
+  // PLN-znormalizowany w engine). Dla rzeczywistej stopy zwrotu inwestora
+  // (money-weighted) porównaj z XIRR pokazywanym osobno.
+  const twrTotalGrowth = 1 + chainLinkPct(last.twrPct, first.twrPct) / 100;
+  const cagr =
+    years > 0 && twrTotalGrowth > 0 ? (Math.pow(twrTotalGrowth, 1 / years) - 1) * 100 : 0;
+
+  // Volatility (annualized std dev of daily returns)
+  const tradingDaysPerYear = 252;
+  const meanReturn = dailyReturns.reduce((s, r) => s + r, 0) / dailyReturns.length;
+  const variance =
+    dailyReturns.reduce((s, r) => s + (r - meanReturn) ** 2, 0) / dailyReturns.length;
+  const dailyVol = Math.sqrt(variance);
+  const volatility = dailyVol * Math.sqrt(tradingDaysPerYear) * 100;
+
+  // Sharpe Ratio
+  const dailyRiskFree = riskFreeAnnualPct / 100 / tradingDaysPerYear;
+  const excessReturns = dailyReturns.map((r) => r - dailyRiskFree);
+  const meanExcess = excessReturns.reduce((s, r) => s + r, 0) / excessReturns.length;
+  const sharpeRatio = dailyVol > 0 ? (meanExcess / dailyVol) * Math.sqrt(tradingDaysPerYear) : 0;
+
+  // Sortino Ratio (uses only downside deviation)
+  const downsideReturns = excessReturns.filter((r) => r < 0);
+  const downsideVariance =
+    downsideReturns.length > 0
+      ? downsideReturns.reduce((s, r) => s + r ** 2, 0) / dailyReturns.length
+      : 0;
+  const downsideDev = Math.sqrt(downsideVariance);
+  const sortinoRatio =
+    downsideDev > 0 ? (meanExcess / downsideDev) * Math.sqrt(tradingDaysPerYear) : 0;
+
+  // Max Drawdown & Max Drawdown Duration — oparte o indeks TWR, nie o
+  // portfolioValue. Czysty portfolioValue rośnie z wpłat i sztucznie
+  // podnosi peak (np. wpłata 1000 PLN tuż przed korektą fałszywie
+  // zwiększa drawdown). TWR izoluje rynkowy wpływ od cash flows,
+  // więc drawdown z TWR-index odpowiada rzeczywistej obsunięciu portfela.
+  let peak = 1 + data[0].twrPct / 100;
+  let maxDrawdown = 0;
+  let maxDrawdownDuration = 0;
+  let currentDrawdownStart = 0;
+
+  for (let i = 0; i < data.length; i++) {
+    const twrIndex = 1 + data[i].twrPct / 100;
+    if (twrIndex > peak) {
+      peak = twrIndex;
+      currentDrawdownStart = i;
+    }
+    const drawdown = peak > 0 ? (peak - twrIndex) / peak : 0;
+    if (drawdown > maxDrawdown) {
+      maxDrawdown = drawdown;
+    }
+    if (drawdown > 0) {
+      const duration = i - currentDrawdownStart;
+      if (duration > maxDrawdownDuration) {
+        maxDrawdownDuration = duration;
+      }
+    }
+  }
+
+  // Calmar Ratio (CAGR / Max Drawdown)
+  const calmarRatio = maxDrawdown > 0 ? cagr / 100 / maxDrawdown : 0;
+
+  // Best / Worst Day
+  const bestDay = Math.max(...dailyReturns) * 100;
+  const worstDay = Math.min(...dailyReturns) * 100;
+
+  // Win Rate
+  const winDays = dailyReturns.filter((r) => r > 0).length;
+  const winRate = (winDays / dailyReturns.length) * 100;
+
+  // Beta / alfa Jensena vs benchmark (null gdy benchmark bez danych / za krótki zakres)
+  const betaAlpha = computeBetaAlpha(pairedReturns, riskFreeAnnualPct);
+
+  return {
+    beta: betaAlpha?.beta ?? null,
+    alphaAnnualPct: betaAlpha?.alphaAnnualPct ?? null,
+    totalReturn,
+    benchmarkReturn,
+    cagr,
+    volatility,
+    sharpeRatio,
+    maxDrawdown: maxDrawdown * 100,
+    maxDrawdownDuration,
+    bestDay,
+    worstDay,
+    winRate,
+    calmarRatio,
+    sortinoRatio,
+  };
+}
+
+export type BetterDirection = 'high' | 'low';
+
+/** Najlepsza wartość w wierszu porównania. Null, gdy nie ma czego porównywać
+ *  (mniej niż 2 nie-nullowe wartości) — wtedy nic nie wyróżniamy. */
+export function pickBest(values: (number | null)[], better: BetterDirection): number | null {
+  const present = values.filter((v): v is number => v !== null);
+  if (present.length < 2) return null;
+  return better === 'high' ? Math.max(...present) : Math.min(...present);
+}
