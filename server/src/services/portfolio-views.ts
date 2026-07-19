@@ -38,7 +38,8 @@ import { resolveUnknownIsins } from './isin-resolver.js';
  * routes/portfolio.ts, żeby publiczne endpointy share mogły reużyć identyczną
  * logikę (łącznie z memoizacją i persystencją splitów) bez duplikacji.
  * Side-effecty są idempotentne i wewnętrznie rate-limitowane (backfill sektorów
- * raz per proces, skan splitów raz na dobę) — bezpieczne też przy ruchu anonimowym.
+ * i re-resolucja debiutowych stubów max raz/6h per portfel, skan splitów raz na
+ * dobę) — bezpieczne też przy ruchu anonimowym.
  */
 
 /** Load saved splits from DB and convert to DetectedSplit format for the engine. */
@@ -101,25 +102,56 @@ export function selectRecentSpinOffs(
     }));
 }
 
-/** In-memory flag: per-portfolio dedupe dla lazy-sector-backfill.
- *  Uruchamiamy backfill tylko raz per proces na portfel — wystarczy żeby
- *  nadrobić brakujące sektory po upgradzie kodu. Yahoo assetProfile i tak
- *  cache'uje wyniki 7 dni, więc powtórne uruchomienia są tanie, ale dedupe
- *  oszczędza I/O i chroni przed rate-limitem. */
-const sectorsBackfilledForPortfolio = new Set<string>();
+/** Czysta decyzja throttlingu dla lazy passów w tle (backfill sektorów,
+ *  re-resolucja stubów) — wydzielona, żeby dała się deterministycznie
+ *  przetestować bez sieci. Odpalamy pass tylko gdy JEST co robić (`hasWork`),
+ *  nic nie leci w tle (`inFlight`) i minął interwał od ostatniej próby. */
+export function shouldRunLazyPass(
+  hasWork: boolean,
+  lastAttemptMs: number | undefined,
+  inFlight: boolean,
+  nowMs: number,
+  retryMs: number,
+): boolean {
+  if (!hasWork || inFlight) return false;
+  if (lastAttemptMs !== undefined && nowMs - lastAttemptMs < retryMs) return false;
+  return true;
+}
+
+/** Throttle backfillu sektorów/kraju: max raz na `SECTOR_BACKFILL_RETRY_MS` per
+ *  portfel, z guardem in-flight. CZASOWY (nie „raz per proces") — świeży debiut,
+ *  którego Yahoo nie miał jeszcze w profilu przy pierwszej próbie, dostaje kolejne
+ *  szanse w tym samym procesie, zamiast tkwić w koszyku „Inne" do restartu. Yahoo
+ *  assetProfile cache'uje wyniki 7 dni, więc powtórki są tanie; throttle chroni
+ *  przed rate-limitem i zbędnym I/O. Nic do zrobienia (wszystko sklasyfikowane) →
+ *  `toUpdate` puste → brak próby, throttle nietknięty. */
+const sectorBackfillAttemptAt = new Map<string, number>();
+const sectorBackfillInFlight = new Set<string>();
+export const SECTOR_BACKFILL_RETRY_MS = 6 * 60 * 60 * 1000; // 6h
 
 async function lazyBackfillSectors(pid: string): Promise<void> {
-  if (sectorsBackfilledForPortfolio.has(pid)) return;
-  sectorsBackfilledForPortfolio.add(pid);
+  const entries = getAllTickers(pid);
+  // Backfill gdy brak supersektora — po zmianie taksonomii (stockwatch) stary
+  // `sector` z Yahoo GICS (po angielsku) nie jest już autorytatywny — lub gdy
+  // brak kraju siedziby (pole `country` dodane później niż sektory).
+  // Opcje (pseudo-ISIN OPT:...) nie mają sektora — pomijamy zbędne strzały do Yahoo.
+  const toUpdate = entries.filter(
+    (e) => (!e.supersector || !e.country) && !e.isin.startsWith('OPT:'),
+  );
+  if (
+    !shouldRunLazyPass(
+      toUpdate.length > 0,
+      sectorBackfillAttemptAt.get(pid),
+      sectorBackfillInFlight.has(pid),
+      Date.now(),
+      SECTOR_BACKFILL_RETRY_MS,
+    )
+  ) {
+    return;
+  }
+  sectorBackfillAttemptAt.set(pid, Date.now());
+  sectorBackfillInFlight.add(pid);
   try {
-    const entries = getAllTickers(pid);
-    // Backfill gdy brak supersektora — po zmianie taksonomii (stockwatch) stary
-    // `sector` z Yahoo GICS (po angielsku) nie jest już autorytatywny — lub gdy
-    // brak kraju siedziby (pole `country` dodane później niż sektory).
-    // Opcje (pseudo-ISIN OPT:...) nie mają sektora — pomijamy zbędne strzały do Yahoo.
-    const toUpdate = entries.filter(
-      (e) => (!e.supersector || !e.country) && !e.isin.startsWith('OPT:'),
-    );
     for (const entry of toUpdate) {
       try {
         const { supersector, subsector, country } = await resolveSector(entry);
@@ -136,7 +168,9 @@ async function lazyBackfillSectors(pid: string): Promise<void> {
     }
   } catch {
     // Najlepszy effort, nie blokujemy ruchu user'a
-    sectorsBackfilledForPortfolio.delete(pid); // pozwól na retry przy następnym requeście
+    sectorBackfillAttemptAt.delete(pid); // pozwól na wcześniejszy retry po błędzie
+  } finally {
+    sectorBackfillInFlight.delete(pid);
   }
 }
 
@@ -157,17 +191,15 @@ const stubResolveAttemptAt = new Map<string, number>();
 const stubResolveInFlight = new Set<string>();
 export const STUB_RESOLVE_RETRY_MS = 6 * 60 * 60 * 1000; // 6h
 
-/** Czysta decyzja throttlingu — wydzielona, żeby dała się deterministycznie
- *  przetestować bez sieci. */
+/** Decyzja throttlingu dla re-resolucji stubów — cienki wrapper na
+ *  `shouldRunLazyPass` z interwałem stubów. */
 export function shouldResolveStubs(
   hasStubs: boolean,
   lastAttemptMs: number | undefined,
   inFlight: boolean,
   nowMs: number,
 ): boolean {
-  if (!hasStubs || inFlight) return false;
-  if (lastAttemptMs !== undefined && nowMs - lastAttemptMs < STUB_RESOLVE_RETRY_MS) return false;
-  return true;
+  return shouldRunLazyPass(hasStubs, lastAttemptMs, inFlight, nowMs, STUB_RESOLVE_RETRY_MS);
 }
 
 async function lazyResolveProvisionalStubs(pid: string): Promise<void> {
