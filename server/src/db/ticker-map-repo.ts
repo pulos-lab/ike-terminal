@@ -160,13 +160,34 @@ export function migrateGpwToYahoo(portfolioId: string): number {
   return result.changes;
 }
 
+/** Provisional-stub detection.
+ *
+ * When an import can't resolve an ISIN yet (e.g. a freshly-listed debut absent
+ * from every price source), the fallback paths write a placeholder ticker_map
+ * row that reuses the broker paper name for BOTH `ticker` and `name` and carries
+ * no exchange suffix. Real entries never look like this: Polish tickers carry a
+ * `.WA`-style dot, and foreign tickers have a descriptive `name` distinct from
+ * the symbol (e.g. ticker "AAPL" / name "Apple Inc.").
+ *
+ * Such stubs must stay re-resolvable: the anchor must NOT freeze them, and the
+ * resolver re-attempts them on the next import so a debut self-heals once a
+ * source finally lists it. (Same shape heuristic already used by the reconcile
+ * self-heal in import-service.)
+ */
+export function isProvisionalStub(
+  entry: Pick<TickerMapEntry, 'ticker' | 'name'> | null | undefined,
+): boolean {
+  return !!entry && !!entry.name && entry.ticker === entry.name && !entry.ticker.includes('.');
+}
+
 /** Insert or update a ticker_map entry.
  *
- * Anchor behavior (default `force = false`): if an entry already exists for
+ * Anchor behavior (default `force = false`): if a REAL entry already exists for
  * this ISIN, it is NOT overwritten. This protects against auto-resolve paths
  * silently flipping a ticker to a different Yahoo/Stooq symbol between runs
  * (which can cause historical price discontinuities and fake step-ups on the
- * portfolio chart).
+ * portfolio chart). A provisional stub (see `isProvisionalStub`) is deliberately
+ * NOT anchored — it stays overwritable so a later resolution can heal a debut.
  *
  * Pass `force: true` from explicitly user-initiated flows (UI ticker edit,
  * admin endpoint) that should intentionally overwrite the anchored entry.
@@ -179,7 +200,8 @@ export function upsertTickerMapEntry(
   const db = getDb(portfolioId);
   if (!force) {
     const existing = getTickerByIsin(entry.isin, portfolioId);
-    if (existing) return; // anchor — already resolved, do not overwrite
+    // Anchor only real entries; a provisional stub must stay overwritable.
+    if (existing && !isProvisionalStub(existing)) return;
   }
   db.prepare(
     `
