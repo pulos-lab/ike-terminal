@@ -115,6 +115,7 @@ export function parseBossaTransactions(
     const { isin: canonicalIsin, paperName: canonicalPaperName } = applyIsinAlias(
       isin,
       paperName || '',
+      isoDate,
     );
 
     // Obligacje Catalyst: kurs w % wartości nominalnej (np. 98,50 = 985 zł przy nominale

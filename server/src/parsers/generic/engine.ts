@@ -658,7 +658,7 @@ function buildTransaction(
   // Aliasy ISIN (zdarzenia korporacyjne, np. redomiciliacja) — broker-niezależne.
   // Dla pseudo-ISIN-ów (= paperName) mapa kluczowana prawdziwymi ISIN-ami nie trafi → no-op.
   const pseudoIsin = isinRaw ?? paperNameRaw;
-  const { isin, paperName } = applyIsinAlias(pseudoIsin, paperNameRaw);
+  const { isin, paperName } = applyIsinAlias(pseudoIsin, paperNameRaw, dateIso);
 
   const check = validateTradeFields({ date: dateRaw, paperName, side, quantity, price });
   if (!check.ok) return skip(check.reason);

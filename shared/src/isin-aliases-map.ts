@@ -31,6 +31,14 @@ export interface IsinAliasEntry {
   reason: string;
   /** Link do komunikatu korporacyjnego dla weryfikacji. */
   source?: string;
+  /**
+   * Górna granica daty transakcji (ISO YYYY-MM-DD, włącznie), do której alias
+   * obowiązuje. Chroni przed kolizją w przyszłości, gdy zwolniony identyfikator
+   * (np. ticker PDA po asymilacji) zostanie kiedyś przydzielony innej spółce —
+   * bez granicy alias po cichu przepisywałby jej transakcje. Wiersz bez znanej
+   * daty jest aliasowany (fail-open w stronę znanego przypadku).
+   */
+  appliesUntil?: string;
 }
 
 export const ISIN_ALIASES_MAP: IsinAliasEntry[] = [
@@ -43,17 +51,53 @@ export const ISIN_ALIASES_MAP: IsinAliasEntry[] = [
       'Reorganizacja — Huuuge Games S.A. (PL) przeniosła domicile do Huuuge Inc. (USA); akcjonariusze otrzymali akcje nowej jednostki 1:1.',
     source: 'https://huuugegames.com/investors',
   },
+  // Rex Concepts: PDA (prawa do akcji) z IPO notowane na GPW jako REXA od 06.2026,
+  // asymilacja PDA→akcje (REX) ~03.07.2026. XTB nie księguje żadnego wiersza konwersji
+  // (operacja bezgotówkowa), więc zakupy PDA wisiały jako osobna, martwa wycenowo
+  // pozycja REXA obok REX. Konwersja PDA→akcje jest zawsze 1:1, ciągłość kosztu
+  // zachowana. Dwa wpisy, bo przestrzeń kluczy jest de facto zależna od parsera:
+  // wbudowany parser XTB aplikuje alias PO normalizacji sufiksu (.PL→.WA), silnik
+  // generic — na surowym symbolu z pliku. Formy Bossa/mBank (prawdziwe ISIN-y PDA)
+  // dopisać, gdy pojawią się w realnym zgłoszeniu.
+  {
+    legacyIsin: 'REXA.WA',
+    legacyTicker: 'REXA.WA',
+    canonicalIsin: 'REX.WA',
+    canonicalTicker: 'REX.WA',
+    reason:
+      'Konwersja PDA→akcje po IPO Rex Concepts S.A. (GPW); ticker PDA REXA wygasł wraz z asymilacją ~2026-07-03.',
+    source: 'https://www.biznesradar.pl/notowania/REX',
+    appliesUntil: '2026-12-31',
+  },
+  {
+    legacyIsin: 'REXA.PL',
+    legacyTicker: 'REXA.PL',
+    canonicalIsin: 'REX.PL',
+    canonicalTicker: 'REX.PL',
+    reason:
+      'Jak wyżej — forma surowego symbolu XTB (przed normalizacją .PL→.WA) dla plików idących przez silnik generic.',
+    source: 'https://www.biznesradar.pl/notowania/REX',
+    appliesUntil: '2026-12-31',
+  },
 ];
 
 /**
  * Zastosuj alias jeśli ISIN jest w mapie. Zwraca nowe wartości (isin, ticker)
  * jeśli wpis znaleziono, inaczej zwraca oryginalne.
+ *
+ * `txDate` (opcjonalna, ISO — sam dzień lub pełny timestamp) jest porównywana
+ * z `appliesUntil` wpisu: transakcja datowana PO granicy nie jest aliasowana.
+ * Data w innym formacie lub brak daty → granica nie blokuje (fail-open).
  */
 export function applyIsinAlias(
   isin: string,
   paperName: string,
+  txDate?: string,
 ): { isin: string; paperName: string; aliasApplied: boolean } {
   const entry = ISIN_ALIASES_MAP.find((e) => e.legacyIsin === isin && e.legacyTicker === paperName);
   if (!entry) return { isin, paperName, aliasApplied: false };
+  if (entry.appliesUntil && txDate && /^\d{4}-\d{2}-\d{2}/.test(txDate)) {
+    if (txDate.slice(0, 10) > entry.appliesUntil) return { isin, paperName, aliasApplied: false };
+  }
   return { isin: entry.canonicalIsin, paperName: entry.canonicalTicker, aliasApplied: true };
 }
