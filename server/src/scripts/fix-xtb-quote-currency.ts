@@ -154,6 +154,17 @@ function accountCurrency(portfolioId: string): string | null {
 /** Cache serii FX per para, żeby nie odpytywać Yahoo raz na transakcję. */
 const fxCache = new Map<string, Map<string, number>>();
 
+/**
+ * Seria kursów dla pary, pobierana od `since` i cache'owana per para.
+ *
+ * UWAGA: `since` MUSI być globalnie najstarszą datą transakcji w całej produkcji,
+ * a nie datą z bieżącego portfela. Cache jest kluczowany samą parą walut, więc
+ * pierwsze wywołanie ustala zakres serii dla wszystkich kolejnych portfeli —
+ * gdyby przyszło z portfela o krótszej historii, każdy późniejszy portfel ze
+ * starszymi transakcjami zgłaszałby „brak kursu" i zostałby po cichu pominięty.
+ * Realny przypadek: pierwszy portfel startował od 2025-01-03, a najstarsza
+ * transakcja XTB na produkcji jest z 2020-10-07 → 242 wiersze wypadały z backfillu.
+ */
 async function fxSeries(from: string, to: string, since: string): Promise<Map<string, number>> {
   const key = `${from}${to}`;
   const hit = fxCache.get(key);
@@ -167,6 +178,23 @@ async function fxSeries(from: string, to: string, since: string): Promise<Map<st
   }
   fxCache.set(key, out);
   return out;
+}
+
+/** Najstarsza transakcja XTB w całej produkcji — wspólny start serii FX. */
+function globalEarliestXtbDate(portfolios: string[]): string | null {
+  let earliest: string | null = null;
+  for (const pid of portfolios) {
+    try {
+      const row = getDb(pid)
+        .prepare(`SELECT MIN(substr(date,1,10)) AS d FROM transactions WHERE source = 'xtb'`)
+        .get() as { d: string | null } | undefined;
+      const d = row?.d;
+      if (d && (earliest === null || d < earliest)) earliest = d;
+    } catch {
+      // portfel bez tabeli transakcji — pomijamy
+    }
+  }
+  return earliest;
 }
 
 /** Kurs na dany dzień; przy braku (weekend/święto) cofa się do 7 dni wstecz. */
@@ -183,6 +211,7 @@ function rateOn(series: Map<string, number>, date: string): number | null {
 
 async function processPortfolio(
   portfolioId: string,
+  fxSince: string,
   changes: Change[],
   skips: Map<string, number>,
 ): Promise<void> {
@@ -209,7 +238,6 @@ async function processPortfolio(
   }
 
   const tickerMap = getTickerMap(portfolioId);
-  const earliest = rows.reduce((m, r) => (r.date < m ? r.date : m), rows[0].date);
 
   for (const row of rows) {
     if (row.category && SKIP_CATEGORIES.has(row.category)) {
@@ -242,7 +270,7 @@ async function processPortfolio(
 
     let fxRate: number | null = null;
     if (quote !== acct) {
-      const series = await fxSeries(quote, acct, earliest);
+      const series = await fxSeries(quote, acct, fxSince);
       const mkt = rateOn(series, row.date);
       if (mkt === null) {
         bump(`brak kursu ${quote}/${acct} na dzień transakcji`);
@@ -292,12 +320,23 @@ async function main() {
   const onlyArg = process.argv.find((a) => a.startsWith('--only='));
   const only = onlyArg ? onlyArg.slice('--only='.length) : null;
 
-  const portfolios = only ? [only] : listPortfolios();
-  console.log(`Analizuję ${portfolios.length} portfel(i)...\n`);
+  const allPortfolios = listPortfolios();
+  const portfolios = only ? [only] : allPortfolios;
+  console.log(`Analizuję ${portfolios.length} portfel(i)...`);
+
+  // Zakres serii FX liczymy ZAWSZE po wszystkich portfelach, także przy --only:
+  // cache jest wspólny dla całego przebiegu, więc musi startować od globalnie
+  // najstarszej transakcji, inaczej starsze wiersze cicho wypadną z backfillu.
+  const fxSince = globalEarliestXtbDate(allPortfolios);
+  if (!fxSince) {
+    console.log('Brak transakcji XTB — nic do zrobienia.');
+    return;
+  }
+  console.log(`Serie kursów FX od ${fxSince} (najstarsza transakcja XTB).\n`);
 
   const changes: Change[] = [];
   const skips = new Map<string, number>();
-  for (const pid of portfolios) await processPortfolio(pid, changes, skips);
+  for (const pid of portfolios) await processPortfolio(pid, fxSince, changes, skips);
 
   // ── Raport zbiorczy ──
   const byTransition = new Map<string, number>();
