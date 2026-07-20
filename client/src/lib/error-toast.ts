@@ -47,6 +47,6 @@ export function describeError(err: unknown): string {
 export function errorToast(prefix: string, err: unknown): void {
   // Zablokowana mutacja w trybie demo pokazała już konwersyjny toast z CTA
   // (api-client) — drugi, generyczny toast błędu byłby tylko szumem.
-  if (err instanceof ApiError && err.message === DEMO_READ_ONLY) return;
+  if (err instanceof ApiError && err.code === DEMO_READ_ONLY) return;
   toast.error(`${prefix}: ${describeError(err)}`);
 }

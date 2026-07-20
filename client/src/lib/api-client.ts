@@ -36,11 +36,14 @@ const API_BASE = '/api';
  */
 export class ApiError extends Error {
   readonly status: number;
+  /** Maszynowy kod błędu (np. 'demo_read_only') — message zostaje ludzki, bo dialogi renderują go wprost. */
+  readonly code?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -99,7 +102,8 @@ function demoBlockMutation(method?: string, url?: string): void {
       },
     },
   });
-  throw new ApiError(DEMO_READ_ONLY, 403);
+  // Ludzki message — część dialogów (np. ImportDialog) renderuje err.message wprost.
+  throw new ApiError('Wersja demo jest tylko do odczytu', 403, DEMO_READ_ONLY);
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
