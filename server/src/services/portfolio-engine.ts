@@ -274,17 +274,33 @@ export async function fetchSplitsForHeldTickers(
       if (entry.exchange === 'NC' || entry.exchange === 'CATALYST') return;
       if (opts.skipTickers?.has(entry.ticker)) return;
 
-      // Warunek błędu: pierwsza transakcja LEŻY PRZED najwcześniejszą ceną providera.
-      // Gdy provider ma cenę na/po dacie zakupu — detekcja cenowa i tak zadziała, nie
-      // dublujemy zapytań. Brak historii providera w ogóle = brak zawyżonej ceny (pozycja
-      // forward-fill po cenie tx), więc też pomijamy.
+      // Brak historii providera w ogóle = brak zawyżonej ceny (pozycja forward-fill
+      // po cenie tx) → pomijamy.
       const priceMap = historicalPrices.get(entry.ticker);
       if (!priceMap || priceMap.size === 0) return;
       let firstProviderDate: string | undefined;
       for (const d of priceMap.keys()) {
         if (firstProviderDate === undefined || d < firstProviderDate) firstProviderDate = d;
       }
-      if (firstProviderDate === undefined || first.date >= firstProviderDate) return;
+      if (firstProviderDate === undefined) return;
+
+      // UWAGA: nie ograniczamy się już do pozycji sprzed okna historii providera.
+      // Pierwotnie stał tu warunek `first.date >= firstProviderDate → return`, oparty
+      // na założeniu „skoro provider ma cenę na dacie zakupu, detekcja cenowa i tak
+      // zadziała". To założenie jest FAŁSZYWE dla papierów zmiennych: detekcja
+      // porównuje cenę transakcji z kursem ZAMKNIĘCIA, a przy tolerancji 5% wystarczy
+      // kupno śróddzienne odbiegające od zamknięcia, żeby nic nie wykryła.
+      //
+      // Konkret (zgłoszenie 2026-07-20, EZRA): kupno 0,2719 przy zamknięciu 0,252
+      // (skorygowane 10,08) daje rawRatio 0,02697 — 7,9% od 1/40, czyli poza
+      // tolerancją. Heurystyka milczała, więc `resolveSplitEventDates` w ogóle nie
+      // pytało Yahoo i realny reverse split 1:40 nigdy nie był stosowany.
+      //
+      // Yahoo jest autorytatywne dla splitów, a `fetchYahooSplitEvents` cache'uje
+      // wynik na 12h, więc pytamy o każdy trzymany papier. Podwójne naliczenie jest
+      // wykluczone: `skipTickers` wycina papiery złapane już heurystyką, `skipIsins`
+      // te z zapisanymi splitami, a `adjustTransactionsForSplits` koryguje wyłącznie
+      // transakcje sprzed daty splitu.
 
       const events = await fetchEvents(entry.ticker, first.date);
       for (const e of events) {

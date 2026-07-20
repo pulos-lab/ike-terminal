@@ -41,7 +41,14 @@ const KNOWN_SPLIT_RATIOS = [
   1 / 15,
   1 / 20,
   1 / 25,
+  1 / 30,
+  // 1/40 — reverse split EZRA (Reliance Global Group) z 2026-05-18. Bez tego
+  // wpisu split był NIEWYKRYWALNY: przy RATIO_TOLERANCE = 0.05 najbliższe znane
+  // 1/50 leży 20% obok, więc heurystyka nie odpalała, a skoro nie odpalała, to
+  // `resolveSplitEventDates` w ogóle nie pytało Yahoo o eventy.
+  1 / 40,
   1 / 50,
+  1 / 100,
 ];
 
 /**
