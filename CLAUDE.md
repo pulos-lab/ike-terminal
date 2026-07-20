@@ -59,6 +59,7 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
    - **Pułapka nagłówków**: kolumny zmieniają się między blokami JEDNEJ tabeli (Forex: „Comm in PLN" vs „Comm/Fee") i między latami (ContractInfo `Underlying` od 2024; Symbol bywa listą aliasów „META, FB") — ekstraktor dzieli tabelę na segmenty per `<th>`, mapowanie zawsze po nazwach
    - Golden test na realnych plikach (skip bez katalogu): `import/ibkr/` — uzgadnia saldo per waluta z Cash Report ±0.25
 - Auto-detekcja formatu po nagłówkach CSV/XLSX — użytkownik nie musi wskazywać brokera
+- **Jak każdy parser identyfikuje papier** (co trafia do `isin`/`paperName`, pseudo-ISIN-y, waluty, którą gałęzią idzie resolver): `docs/parsery-identyfikacja-papieru.md`
 
 ### Import uniwersalny (inni brokerzy, CSV i XLSX)
 - Silnik profili: `server/src/parsers/generic/` (deklaratywny `ImportProfile` w `shared/src/import-profile.ts`, zod) + biblioteka profili w globalnej bazie `data/import_profiles.db` keyed by fingerprint nagłówków; API `/api/import/generic/{analyze,generate-profile,preview,commit,batches,reimport}`; kreator UI w `client/src/components/import/generic/` (w tym `GenericBatchesSection` — lista poprzednich importów uniwersalnych z przyciskiem „Wgraj plik ponownie" dla batchy oflagowanych przez admina; plików nie przechowujemy, więc korekta mapowania = ponowne wgranie pliku przez użytkownika, kropka/licznik przy „Import" w `AppShell`)
