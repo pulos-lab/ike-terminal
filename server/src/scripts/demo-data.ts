@@ -71,6 +71,17 @@ export const DEMO_TICKERS: TickerMapEntry[] = [
     country: 'Poland',
   },
   {
+    isin: 'PLGSPR000014',
+    ticker: 'GTN.WA',
+    name: 'Getin Holding',
+    exchange: 'GPW',
+    currency: 'PLN',
+    priceSource: 'yahoo',
+    supersector: 'Finanse',
+    sector: 'Banki',
+    country: 'Poland',
+  },
+  {
     isin: 'IE00BK5BQT80',
     ticker: 'VWCE.DE',
     name: 'Vanguard FTSE All-World UCITS ETF',
@@ -156,6 +167,11 @@ export const DEMO_TRANSACTIONS: Transaction[] = [
     fxRate: 4.68,
     category: 'etf',
   }),
+  // Getin Holding — zagranie pod uchwalony zwrot z obniżenia kapitału (1 zł/akcję):
+  // kupno po ~1,17 zł, realny zwrot 30.12.2022, realna dywidenda 0,58 zł (05.2023),
+  // sprzedaż po ~0,60 zł. Na nogach akcyjnych strata, ale wypłaty z nawiązką ją
+  // pokrywają — dokładnie tak wyglądała prawdziwa teza inwestycyjna na GTN.
+  tx('2022-06-08', 'PLGSPR000014', 'Getin Holding', 'K', 2000, 1.17, 'PLN', 9.13),
   tx('2022-06-15', 'PLOPTTC00011', 'CD Projekt', 'K', 30, 92.3, 'PLN', 10.8),
   tx('2022-10-12', 'PLPKO0000016', 'PKO BP', 'K', 150, 22.4, 'PLN', 13.1),
   tx('2022-11-18', 'PLALLGR00005', 'Allegro.eu', 'S', 60, 24.1, 'PLN', 5.64),
@@ -177,6 +193,7 @@ export const DEMO_TRANSACTIONS: Transaction[] = [
       category: 'etf',
     },
   ),
+  tx('2023-09-14', 'PLGSPR000014', 'Getin Holding', 'S', 2000, 0.6, 'PLN', 5.0),
   tx('2023-11-21', 'PLOPTTC00011', 'CD Projekt', 'K', 20, 104.9, 'PLN', 8.18),
   // ── 2024 ──
   tx('2024-01-22', 'PLOPTTC00011', 'CD Projekt', 'K', 15, 117.5, 'PLN', 6.87),
@@ -322,6 +339,8 @@ export const DEMO_OPERATIONS: CashOperation[] = [
   },
   // ── Dywidendy GPW (w IKE bez podatku Belki) ──
   dividend('2022-10-06', 'PZU.WA', 232.8, 'PLN', '1.94 PLN/szt · podatek 0% (IKE)'),
+  // Realna dywidenda GTN: 0,58 zł/akcję, dzień dywidendy 05.05.2023, wypłata 10.05.2023
+  dividend('2023-05-10', 'GTN.WA', 1160.0, 'PLN', '0.58 PLN/szt · podatek 0% (IKE)'),
   dividend('2023-08-10', 'PKO.WA', 320.0, 'PLN', '1.28 PLN/szt · podatek 0% (IKE)'),
   dividend('2023-09-21', 'PZU.WA', 528.0, 'PLN', '2.40 PLN/szt · podatek 0% (IKE)'),
   dividend('2024-08-14', 'PKO.WA', 647.5, 'PLN', '2.59 PLN/szt · podatek 0% (IKE)'),
@@ -376,18 +395,20 @@ export const DEMO_OPERATIONS: CashOperation[] = [
     source: 'manual',
     importBatch: 'seed-demo',
   },
-  // ── Zdarzenie korporacyjne: zwrot kapitału przez obniżenie nominału ──
-  // (fikcyjne, ale mechanicznie poprawne: cash wpływa, pozycja bez zmian —
-  // silnik liczy capital_return do zrealizowanego zwrotu, sekcja "Zdarzenia
-  // korporacyjne" pokazuje badge "Zwrot kapitału")
+  // ── Zdarzenie korporacyjne: REALNY zwrot kapitału Getin Holding ──
+  // Obniżenie wartości nominalnej akcji z 4,00 zł do 0,10 zł; wypłata 1,00 zł
+  // na akcję, dzień ustalenia praw 09.12.2022, wypłata przez KDPW 30.12.2022.
+  // Cash wpływa, pozycja bez zmian — silnik liczy capital_return do
+  // zrealizowanego zwrotu, sekcja "Zdarzenia korporacyjne" pokazuje badge.
   {
-    date: '2023-11-16',
+    date: '2022-12-30',
     operationType: 'capital_return',
     subkind: 'nominal_reduction',
-    description: 'Obniżenie wartości nominalnej akcji (0,30 zł/szt. × 220 szt.)',
-    amount: 66.0,
+    description:
+      'Obniżenie wartości nominalnej akcji z 4,00 zł do 0,10 zł (1,00 zł/szt. × 2000 szt.)',
+    amount: 2000.0,
     currency: 'PLN',
-    ticker: 'PZU.WA',
+    ticker: 'GTN.WA',
     source: 'manual',
     importBatch: 'seed-demo',
   },
