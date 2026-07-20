@@ -59,6 +59,13 @@ import { isPlausibleMatch } from '../services/ticker-match.js';
 
 const EXCLUDED = new Set(['auth.db', 'price_history.db', 'bug-reports.db', 'import_profiles.db']);
 
+/**
+ * Waluta podpowiadana przy ponownej próbie rozwiązania, gdy pierwsza (z walutą
+ * zapisaną w transakcji) zwróciła `null`. Dowolna nie-PLN — jedyne, co robi, to
+ * zdejmuje z resolvera założenie „to papier z GPW". Patrz `reResolve`.
+ */
+const NEUTRAL_CURRENCY = 'USD';
+
 /** ISIN w rozumieniu formatu (2 litery + 10 alfanumerycznych) — tak jak w resolverze. */
 function isRealIsin(value: string): boolean {
   return /^[A-Z]{2}[A-Z0-9]{10}$/.test(value);
@@ -169,6 +176,23 @@ async function reResolve(c: Candidate, apply: boolean): Promise<Outcome> {
   let entry: TickerMapEntry | null = null;
   try {
     entry = await resolveIsin(c.row.isin, c.paperName, c.txCurrency);
+
+    // ── Przerwanie zakleszczenia waluta ↔ ticker ──
+    // Kandydatem jest wpis, który NIE przechodzi walidacji, czyli wskazuje cudzą
+    // spółkę. Wtedy zapisana przy nim waluta transakcji jest równie niewiarygodna
+    // co sam ticker — a `PLN` wpycha resolver w gałąź polską, gdzie zagranicznego
+    // papieru z definicji nie ma. Powstaje pętla: backfill walut pomija ten wiersz,
+    // bo ticker_map nie przechodzi walidacji, a naprawa tickera zwraca `null`,
+    // bo waluta mówi „to polskie".
+    //
+    // Ponawiamy więc z walutą neutralną. To NIE narzuca wyniku — jest wyłącznie
+    // sygnałem „nie zakładaj, że to GPW"; resolver i tak zwraca własną walutę
+    // (zweryfikowane: ABEA.DE → EUR, ASML.AS → EUR, mimo podpowiedzi USD).
+    // Bezpieczeństwo zapewnia walidacja `isPlausibleMatch` niżej: gdyby neutralna
+    // waluta wyprodukowała fałszywe trafienie zagraniczne, zostanie odrzucone.
+    if (!entry && c.txCurrency === 'PLN') {
+      entry = await resolveIsin(c.row.isin, c.paperName, NEUTRAL_CURRENCY);
+    }
   } catch (err: any) {
     return { ...base, newDesc: '—', status: 'skipped', reason: `resolveIsin: ${err.message}` };
   }
