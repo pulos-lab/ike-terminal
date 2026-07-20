@@ -5,9 +5,9 @@
  * za wysoko od momentu pojawienia się notowań i skok na wykresie na granicy okna
  * (realny przypadek: import DEGIRO — Churchill/Lucid 1:10, Virgin Galactic 1:20).
  *
- * fetchSplitsForHeldTickers dociąga zdarzenia split z Yahoo WPROST dla dokładnie tych
- * pozycji (pierwsza transakcja < pierwsza cena providera), nie dublując zapytań dla
- * portfeli „w oknie".
+ * fetchSplitsForHeldTickers dociąga zdarzenia split z Yahoo WPROST dla trzymanych pozycji,
+ * niezależnie od tego, czy detekcja cenowa cokolwiek zauważyła. Podwójne naliczenie wyklucza
+ * `skipTickers` (papiery złapane heurystyką) i `skipIsins` (zapisane splity).
  */
 import { describe, it, expect, vi } from 'vitest';
 import type { Transaction, TickerMapEntry } from 'shared';
@@ -100,7 +100,13 @@ describe('fetchSplitsForHeldTickers', () => {
     ]);
   });
 
-  it('NIE odpytuje gdy pierwsza transakcja jest w oknie providera', async () => {
+  // ZMIANA ZACHOWANIA (2026-07-20): wcześniej ten test wymagał, żeby dla transakcji
+  // W OKNIE providera NIE pytać Yahoo — przy założeniu „detekcja cenowa i tak zadziała".
+  // Założenie okazało się fałszywe: detekcja porównuje cenę transakcji z kursem
+  // ZAMKNIĘCIA przy tolerancji 5%, więc kupno śróddzienne odbiegające od zamknięcia
+  // nie wykrywa niczego (realny przypadek EZRA — patrz test niżej). Yahoo jest
+  // autorytatywne i cache'owane 12h, więc pytamy też dla pozycji w oknie.
+  it('odpytuje TAKŻE gdy pierwsza transakcja jest w oknie providera', async () => {
     const fetchEvents = vi.fn().mockResolvedValue(REV_SPLIT);
     const out = await fetchSplitsForHeldTickers(
       [buy('US1714391026', '2021-08-01')],
@@ -108,8 +114,29 @@ describe('fetchSplitsForHeldTickers', () => {
       new Map([['LCID', providerFrom('2021-07-16')]]),
       { fetchEvents },
     );
-    expect(fetchEvents).not.toHaveBeenCalled();
-    expect(out).toEqual([]);
+    expect(fetchEvents).toHaveBeenCalledWith('LCID', '2021-08-01');
+    expect(out).toEqual([
+      expect.objectContaining({ ticker: 'LCID', date: '2025-09-02', ratio: 0.1 }),
+    ]);
+  });
+
+  // Regresja zgłoszenia 2026-07-20 (Reliance Global Group → EZRA, reverse split 1:40).
+  // Kupno 0,2719 przy zamknięciu 0,252 (Yahoo oddaje 10,08 = skorygowane o split)
+  // daje rawRatio 0,02697 — 7,9% od 1/40, czyli POZA tolerancją 5%. Heurystyka
+  // milczy, więc jedyną drogą do zastosowania splitu jest ten proaktywny pass.
+  it('łapie split, którego detekcja cenowa nie widzi (cena śróddzienna poza tolerancją)', async () => {
+    const fetchEvents = vi.fn().mockResolvedValue([{ date: '2026-05-18', ratio: 1 / 40 }]);
+    const EZRA = entry({ isin: 'RELI', ticker: 'EZRA', exchange: 'NASDAQ' });
+    const out = await fetchSplitsForHeldTickers(
+      [buy('RELI', '2026-02-09', 5.1, 0.2719)],
+      new Map([['RELI', EZRA]]),
+      new Map([['EZRA', new Map([['2026-02-09', 10.08]])]]),
+      { fetchEvents },
+    );
+    expect(fetchEvents).toHaveBeenCalledWith('EZRA', '2026-02-09');
+    expect(out).toEqual([
+      expect.objectContaining({ ticker: 'EZRA', isin: 'RELI', date: '2026-05-18', ratio: 1 / 40 }),
+    ]);
   });
 
   it('pomija ISIN z zapisanym splitem (skipIsins) i ticker już wykryty (skipTickers)', async () => {
