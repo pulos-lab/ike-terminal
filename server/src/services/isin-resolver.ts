@@ -729,7 +729,10 @@ export async function resolveUnknownIsins(
 
       // CFD instruments: resolve via static map (Yahoo/Stooq search won't find them)
       if (category === 'cfd') {
-        const cfdEntry = findCfdTicker(isin);
+        // Krypto/CFD zwykle mają w kolumnie symbolu ticker (np. Trade Republic: „BTC"),
+        // nie ISIN — gdy ISIN nie trafia w mapę, próbujemy nazwy papieru
+        // (np. „Bitcoin" → klucz BITCOIN → BTC-USD). Lustro ścieżki CFD-first wyżej.
+        const cfdEntry = findCfdTicker(isin) || findCfdTicker(paperName);
         if (cfdEntry) {
           const entry: TickerMapEntry = {
             isin,
