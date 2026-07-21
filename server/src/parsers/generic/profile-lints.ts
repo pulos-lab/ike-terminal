@@ -1,4 +1,11 @@
-import type { CashMapping, ColRef, ImportProfile, ProfileLint, SkipReason, ValueSource } from 'shared';
+import type {
+  CashMapping,
+  ColRef,
+  ImportProfile,
+  ProfileLint,
+  SkipReason,
+  ValueSource,
+} from 'shared';
 import { parseNumber } from '../utils.js';
 import type { GenericParseOutput } from './engine.js';
 import { normalizeHeaderName } from './value-parsers.js';
@@ -423,10 +430,9 @@ export function lintProfile(
   }
 
   // 4) Znacząca część kwot z pliku trafiła na wiersze ODRZUCONE (nie weszła do portfela).
-  const hasProblematicSkip = [
-    ...output.transactions.skipped,
-    ...output.operations.skipped,
-  ].some((s) => !GENTLE_SKIP_REASONS.has(s.reason));
+  const hasProblematicSkip = [...output.transactions.skipped, ...output.operations.skipped].some(
+    (s) => !GENTLE_SKIP_REASONS.has(s.reason),
+  );
   if (hasProblematicSkip && sample.length > 0) {
     const amountCol = detectAmountColumn(profile, headers, sample);
     if (amountCol !== null) {

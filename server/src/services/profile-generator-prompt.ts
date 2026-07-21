@@ -18,7 +18,8 @@ const FEW_SHOT_HEADERS =
 // Drugi few-shot: plik OPERACJI wielotypowy (wpłaty/wypłaty/dywidendy/FX/opłaty) —
 // pokazuje klasyfikację kolumny „Opis" na osobne klasy gotówkowe, mapowanie ISIN
 // i parowanie. Kontrapunkt dla mBanku (który jest jednotypowy, bez ISIN).
-const FEW_SHOT_HEADERS_ACCOUNT = 'Data,Czas,Data,Produkt,ISIN,Opis,Kurs,Zmiana,,Saldo,,Identyfikator zlecenia';
+const FEW_SHOT_HEADERS_ACCOUNT =
+  'Data,Czas,Data,Produkt,ISIN,Opis,Kurs,Zmiana,,Saldo,,Identyfikator zlecenia';
 
 export function buildSystemPrompt(): string {
   const fewShot = JSON.stringify(MBANK_TRANSACTIONS_PROFILE);

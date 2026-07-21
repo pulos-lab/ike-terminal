@@ -41,12 +41,33 @@ function tradeRepublicProfile(): ImportProfile {
   return ImportProfileSchema.parse({
     specVersion: 1,
     brokerLabel: 'Trade Republic',
-    file: { delimiter: ',', quoteChar: '"', headerRow: { strategy: 'first' }, amountSignPolicy: 'signed' },
+    file: {
+      delimiter: ',',
+      quoteChar: '"',
+      headerRow: { strategy: 'first' },
+      amountSignPolicy: 'signed',
+    },
     classify: [
-      { id: 'deposit', when: [{ col: { name: 'type' }, op: 'oneOf', values: ['VIBAN_TRANSFER_INBOUND'] }], emit: 'deposit' },
-      { id: 'withdrawal', when: [{ col: { name: 'type' }, op: 'oneOf', values: ['VIBAN_TRANSFER_OUTBOUND'] }], emit: 'withdrawal' },
-      { id: 'stockperk', when: [{ col: { name: 'type' }, op: 'oneOf', values: ['STOCKPERK'] }], emit: 'other' },
-      { id: 'trade', when: [{ col: { name: 'type' }, op: 'oneOf', values: ['BUY', 'SELL'] }], emit: 'trade' },
+      {
+        id: 'deposit',
+        when: [{ col: { name: 'type' }, op: 'oneOf', values: ['VIBAN_TRANSFER_INBOUND'] }],
+        emit: 'deposit',
+      },
+      {
+        id: 'withdrawal',
+        when: [{ col: { name: 'type' }, op: 'oneOf', values: ['VIBAN_TRANSFER_OUTBOUND'] }],
+        emit: 'withdrawal',
+      },
+      {
+        id: 'stockperk',
+        when: [{ col: { name: 'type' }, op: 'oneOf', values: ['STOCKPERK'] }],
+        emit: 'other',
+      },
+      {
+        id: 'trade',
+        when: [{ col: { name: 'type' }, op: 'oneOf', values: ['BUY', 'SELL'] }],
+        emit: 'trade',
+      },
     ],
     defaultClass: 'skip',
     trade: {
@@ -62,8 +83,20 @@ function tradeRepublicProfile(): ImportProfile {
       side: { strategy: 'column', col: { name: 'type' }, buyValues: ['BUY'], sellValues: ['SELL'] },
       category: {
         rules: [
-          { when: { by: 'matcher', condition: [{ col: { name: 'asset_class' }, op: 'equals', values: ['FUND'] }] }, category: 'etf' },
-          { when: { by: 'matcher', condition: [{ col: { name: 'asset_class' }, op: 'equals', values: ['CRYPTO'] }] }, category: 'cfd' },
+          {
+            when: {
+              by: 'matcher',
+              condition: [{ col: { name: 'asset_class' }, op: 'equals', values: ['FUND'] }],
+            },
+            category: 'etf',
+          },
+          {
+            when: {
+              by: 'matcher',
+              condition: [{ col: { name: 'asset_class' }, op: 'equals', values: ['CRYPTO'] }],
+            },
+            category: 'cfd',
+          },
         ],
         default: 'stock',
       },

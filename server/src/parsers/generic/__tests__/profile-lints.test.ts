@@ -284,9 +284,21 @@ function correctTrProfile(): ImportProfile {
     brokerLabel: 'Trade Republic',
     file: { delimiter: ',', headerRow: { strategy: 'first' }, amountSignPolicy: 'signed' },
     classify: [
-      { id: 'deposit', when: [{ col: { name: 'type' }, op: 'oneOf', values: ['DEPOSIT'] }], emit: 'deposit' },
-      { id: 'perk', when: [{ col: { name: 'type' }, op: 'oneOf', values: ['STOCKPERK'] }], emit: 'other' },
-      { id: 'trade', when: [{ col: { name: 'type' }, op: 'oneOf', values: ['BUY', 'SELL'] }], emit: 'trade' },
+      {
+        id: 'deposit',
+        when: [{ col: { name: 'type' }, op: 'oneOf', values: ['DEPOSIT'] }],
+        emit: 'deposit',
+      },
+      {
+        id: 'perk',
+        when: [{ col: { name: 'type' }, op: 'oneOf', values: ['STOCKPERK'] }],
+        emit: 'other',
+      },
+      {
+        id: 'trade',
+        when: [{ col: { name: 'type' }, op: 'oneOf', values: ['BUY', 'SELL'] }],
+        emit: 'trade',
+      },
     ],
     trade: {
       date: dateSpec,
@@ -345,9 +357,7 @@ describe('lintProfile — kolumny nieużyte (profil „śmietnik")', () => {
 
   it('unaccounted-cashflow sygnalizuje zgubioną wpłatę 100k (odsetek wysoki)', () => {
     const out = parseWithProfile(TR_CSV, brokenTrProfile(), BATCH);
-    const lint = lintProfile(brokenTrProfile(), out).find(
-      (l) => l.code === 'unaccounted-cashflow',
-    );
+    const lint = lintProfile(brokenTrProfile(), out).find((l) => l.code === 'unaccounted-cashflow');
     expect(lint).toBeDefined();
     expect(lint?.count).toBe(2);
   });
