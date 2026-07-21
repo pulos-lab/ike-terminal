@@ -360,8 +360,21 @@ export function lintProfile(
   }
 
   // 2) Kolumna z prowizją/opłatą obecna, ale trade.commission (ani total) niezmapowany.
-  //    Gdy zmapowany jest 'total' (po prowizji, np. Bossa) — koszt już zawarty, nie ostrzegamy.
-  if (profile.trade && !profile.trade.commission && !profile.trade.total && sample.length > 0) {
+  //    DORADCZE (info), nie warning: pominięcie prowizji BYWA celowe — opłaty mogą być
+  //    w osobnym pliku (wzorzec DEGIRO: Transactions.csv ma kolumny opłat, ale nalicza
+  //    je Account.csv) albo w osobnych wierszach. Nie ostrzegamy, gdy: zmapowany 'total'
+  //    (po prowizji, np. Bossa) lub profil klasyfikuje opłaty jako osobne wiersze ('fee').
+  const feesAsRows =
+    profile.classify.some((r) => r.emit === 'fee' || r.emit === 'trade_fee') ||
+    Boolean(profile.fee) ||
+    Boolean(profile.tradeFee);
+  if (
+    profile.trade &&
+    !profile.trade.commission &&
+    !profile.trade.total &&
+    !feesAsRows &&
+    sample.length > 0
+  ) {
     const mapped = tradeMappedCols(profile, headers);
     let feeCol: number | null = null;
     for (let c = 0; c < headers.length; c++) {
@@ -379,11 +392,12 @@ export function lintProfile(
     if (feeCol !== null) {
       push({
         code: 'fee-column-unused',
-        severity: 'warning',
+        severity: 'info',
         message:
           `Plik ma kolumnę „${(headers[feeCol] ?? '').trim()}" (kol. ${feeCol}) wyglądającą na ` +
-          `prowizję/opłatę, ale „trade.commission" nie jest zmapowany — koszty transakcji nie ` +
-          `wejdą do portfela (prowizja = 0).`,
+          `prowizję/opłatę, a „trade.commission" nie jest zmapowany — jeśli to prowizja per ` +
+          `transakcja, zmapuj ją (inaczej koszty nie wejdą do portfela). Zignoruj, gdy opłaty ` +
+          `są w osobnym pliku lub osobnych wierszach.`,
       });
     }
   }
