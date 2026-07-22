@@ -9,9 +9,24 @@ import {
 } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api, ApiError, setActivePortfolioId, getActivePortfolioId } from './api-client';
+import { isDemoMode } from './demo';
 import { QUERY_KEYS } from './query-keys';
 import type { Portfolio, PortfolioSettings } from 'shared';
-import { DEFAULT_PORTFOLIO_SETTINGS } from 'shared';
+import { DEFAULT_PORTFOLIO_SETTINGS, DEMO_PORTFOLIO_ID } from 'shared';
+
+/**
+ * Tryb demo: /api/portfolios zostaje w pełni za auth (bypass demo obejmuje tylko
+ * dane portfela), więc listę portfeli podstawiamy statycznie. Nazwa/ustawienia
+ * lustrzane z seed-demo (isIKE — limit wpłat w UI liczy się jak dla IKE).
+ */
+const DEMO_PORTFOLIOS: Portfolio[] = [
+  {
+    id: DEMO_PORTFOLIO_ID,
+    name: 'Portfel demo',
+    createdAt: '2021-01-01T00:00:00.000Z',
+    settings: { ...DEFAULT_PORTFOLIO_SETTINGS, isIKE: true },
+  },
+];
 
 interface PortfolioContextValue {
   portfolios: Portfolio[];
@@ -49,7 +64,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   // a cache współdzieli wynik z refreshPortfolios (fetchQuery poniżej).
   const { data: portfoliosData } = useQuery({
     queryKey: QUERY_KEYS.portfolios,
-    queryFn: api.getPortfolios,
+    queryFn: () => (isDemoMode() ? Promise.resolve(DEMO_PORTFOLIOS) : api.getPortfolios()),
   });
   const portfolios = useMemo(() => portfoliosData ?? [], [portfoliosData]);
 

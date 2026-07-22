@@ -4,7 +4,6 @@ import { Info } from 'lucide-react';
 import {
   CartesianGrid,
   Cell,
-  LabelList,
   ReferenceLine,
   ResponsiveContainer,
   Scatter,
@@ -13,6 +12,9 @@ import {
   XAxis,
   YAxis,
   ZAxis,
+  usePlotArea,
+  useXAxisScale,
+  useYAxisScale,
 } from 'recharts';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
@@ -85,6 +87,162 @@ function PointTooltip({
  */
 function refColor(key: string): string {
   return key === 'portfolio' ? 'var(--primary)' : 'var(--info)';
+}
+
+// ─── Etykiety z rozstrzyganiem kolizji ───────────────────────────────────────
+// Domyślny LabelList position="top" nie wie o innych etykietach: w klastrze
+// (np. Portfel/S&P 500/VWCE przy podobnej zmienności) napisy nachodziły na
+// siebie, a przy krawędziach wykresu były ucinane. Zamiast per-punktowych
+// LabelList jedna warstwa liczy WSZYSTKIE podpisy naraz (hooki skal recharts 3)
+// — deterministycznie, w kolejności: odniesienia, potem pozycje wg udziału.
+
+interface PlacedBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+function overlaps(a: PlacedBox, b: PlacedBox): boolean {
+  return a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+}
+
+interface LabelSpec {
+  text: string;
+  cx: number;
+  cy: number;
+  r: number;
+  fontSize: number;
+  className: string;
+  fontWeight?: number;
+}
+
+interface PlacedLabel extends LabelSpec {
+  tx: number;
+  ty: number;
+  anchor: 'middle' | 'start' | 'end';
+}
+
+/** Greedy: nad → pod → z prawej → z lewej; kolizja ze wszystkimi już ułożonymi + krawędziami pola wykresu. */
+function layoutLabels(
+  specs: LabelSpec[],
+  plot: { x: number; y: number; width: number; height: number },
+): PlacedLabel[] {
+  const placed: PlacedBox[] = [];
+  const out: PlacedLabel[] = [];
+  const gap = 3;
+
+  for (const s of specs) {
+    const w = s.text.length * s.fontSize * 0.62;
+    const h = s.fontSize + 2;
+    const candidates: Array<{ bx: number; by: number; anchor: PlacedLabel['anchor'] }> = [
+      { bx: s.cx - w / 2, by: s.cy - s.r - gap - h, anchor: 'middle' },
+      { bx: s.cx - w / 2, by: s.cy + s.r + gap, anchor: 'middle' },
+      { bx: s.cx + s.r + gap, by: s.cy - h / 2, anchor: 'start' },
+      { bx: s.cx - s.r - gap - w, by: s.cy - h / 2, anchor: 'end' },
+      // Awaryjnie: schodkowanie w dół pod punktem (gęsty klaster)
+      { bx: s.cx - w / 2, by: s.cy + s.r + gap + h + 2, anchor: 'middle' },
+      { bx: s.cx - w / 2, by: s.cy + s.r + gap + 2 * (h + 2), anchor: 'middle' },
+    ];
+
+    let pick = candidates[0];
+    let pickBox: PlacedBox | null = null;
+    for (const c of candidates) {
+      // Dociągnięcie do pola wykresu w poziomie (etykiety skrajnych punktów
+      // były ucinane); pion tylko walidujemy — lepiej spaść na kolejnego
+      // kandydata niż zasłonić punkt.
+      const bx = Math.min(Math.max(c.bx, plot.x), plot.x + plot.width - w);
+      const box: PlacedBox = { x1: bx - 2, y1: c.by - 1, x2: bx + w + 2, y2: c.by + h + 1 };
+      if (box.y1 < plot.y - 14 || box.y2 > plot.y + plot.height + 14) continue;
+      pick = { ...c, bx };
+      pickBox = box;
+      if (!placed.some((b) => overlaps(b, box))) break;
+    }
+    const finalBox = pickBox ?? {
+      x1: pick.bx - 2,
+      y1: pick.by - 1,
+      x2: pick.bx + w + 2,
+      y2: pick.by + h + 1,
+    };
+    placed.push(finalBox);
+    out.push({
+      ...s,
+      anchor: pick.anchor,
+      tx:
+        pick.anchor === 'middle'
+          ? pick.bx + w / 2
+          : pick.anchor === 'start'
+            ? pick.bx
+            : pick.bx + w,
+      ty: pick.by + s.fontSize - 1,
+    });
+  }
+  return out;
+}
+
+/**
+ * Warstwa podpisów renderowana bezpośrednio w ScatterChart (recharts 3 pozwala
+ * na dowolne dzieci): skale osi z hooków → piksele, jeden przebieg layoutu dla
+ * odniesień i pozycji razem. Rozmiar kropki odtwarzamy z rangu ZAxis (pole px²).
+ */
+function RiskReturnLabels({
+  points,
+  refPoints,
+}: {
+  points: ScatterPoint[];
+  refPoints: ScatterPoint[];
+}) {
+  const xScale = useXAxisScale();
+  const yScale = useYAxisScale();
+  const plot = usePlotArea();
+  if (!xScale || !yScale || !plot) return null;
+
+  const zs = points.map((p) => p.z);
+  const zMin = Math.min(...zs);
+  const zMax = Math.max(...zs);
+  const areaOf = (z: number) => 60 + (340 * (z - zMin)) / (zMax - zMin || 1);
+
+  // Odniesienia najpierw (kotwice wykresu — mają pierwszeństwo wyboru miejsca),
+  // potem pozycje od największego udziału.
+  const specs: LabelSpec[] = [
+    ...refPoints.map((p) => ({
+      text: p.ticker,
+      cx: xScale(p.x) ?? 0,
+      cy: yScale(p.y) ?? 0,
+      r: Math.sqrt(360 / Math.PI),
+      fontSize: 10,
+      className: 'fill-foreground',
+      fontWeight: 600,
+    })),
+    ...[...points]
+      .sort((a, b) => b.z - a.z)
+      .map((p) => ({
+        text: p.ticker,
+        cx: xScale(p.x) ?? 0,
+        cy: yScale(p.y) ?? 0,
+        r: Math.sqrt(areaOf(p.z) / Math.PI),
+        fontSize: 9,
+        className: 'fill-muted-foreground',
+      })),
+  ];
+
+  return (
+    <g pointerEvents="none">
+      {layoutLabels(specs, plot).map((l) => (
+        <text
+          key={l.text}
+          x={l.tx}
+          y={l.ty}
+          textAnchor={l.anchor}
+          fontSize={l.fontSize}
+          fontWeight={l.fontWeight}
+          className={l.className}
+        >
+          {l.text}
+        </text>
+      ))}
+    </g>
+  );
 }
 
 /**
@@ -243,12 +401,6 @@ export function RiskReturnScatter({ positions }: Props) {
                   fillOpacity={0.75}
                 />
               ))}
-              <LabelList
-                dataKey="ticker"
-                position="top"
-                className="fill-muted-foreground"
-                fontSize={9}
-              />
             </Scatter>
             {refPoints.length > 0 && (
               <Scatter data={refPoints} zAxisId="ref" shape="circle" isAnimationActive={false}>
@@ -261,17 +413,10 @@ export function RiskReturnScatter({ positions }: Props) {
                     strokeWidth={2}
                   />
                 ))}
-                {/* Podpisy nad ikoną — dokładnie jak przy pozycjach; wyróżnia je
-                    tylko pogrubienie i pełny kontrast. */}
-                <LabelList
-                  dataKey="ticker"
-                  position="top"
-                  className="fill-foreground"
-                  fontSize={10}
-                  fontWeight={600}
-                />
               </Scatter>
             )}
+            {/* Podpisy punktów — wspólna warstwa z layoutem kolizyjnym, nad kropkami */}
+            <RiskReturnLabels points={points} refPoints={refPoints} />
           </ScatterChart>
         </ResponsiveContainer>
         {data.skipped.length > 0 && (

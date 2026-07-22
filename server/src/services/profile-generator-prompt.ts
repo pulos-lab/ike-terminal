@@ -1,4 +1,5 @@
 import { MBANK_TRANSACTIONS_PROFILE } from '../parsers/generic/profiles/mbank-transactions.profile.js';
+import { DEGIRO_ACCOUNT_PROFILE } from '../parsers/generic/profiles/degiro-account.profile.js';
 
 /**
  * Prompt generatora profili importu (LLM → ImportProfile JSON).
@@ -14,8 +15,15 @@ import { MBANK_TRANSACTIONS_PROFILE } from '../parsers/generic/profiles/mbank-tr
 const FEW_SHOT_HEADERS =
   'Czas transakcji;Papier;Giełda;K/S;Liczba;Kurs;Waluta;Prowizja;Waluta;Wartość;Waluta';
 
+// Drugi few-shot: plik OPERACJI wielotypowy (wpłaty/wypłaty/dywidendy/FX/opłaty) —
+// pokazuje klasyfikację kolumny „Opis" na osobne klasy gotówkowe, mapowanie ISIN
+// i parowanie. Kontrapunkt dla mBanku (który jest jednotypowy, bez ISIN).
+const FEW_SHOT_HEADERS_ACCOUNT =
+  'Data,Czas,Data,Produkt,ISIN,Opis,Kurs,Zmiana,,Saldo,,Identyfikator zlecenia';
+
 export function buildSystemPrompt(): string {
   const fewShot = JSON.stringify(MBANK_TRANSACTIONS_PROFILE);
+  const fewShotAccount = JSON.stringify(DEGIRO_ACCOUNT_PROFILE);
   return `You are a precise data engineer. Given the header row and a redacted sample of a broker's CSV export, output an ImportProfile JSON object that maps the file onto a canonical portfolio schema. Output ONLY the JSON object — no markdown, no commentary.
 
 # ImportProfile rules (specVersion 1)
@@ -30,20 +38,31 @@ export function buildSystemPrompt(): string {
 - "trade" mapping: { "date": {"source":<vs>,"formats":["YYYY-MM-DD"|"DD.MM.YYYY"|"DD-MM-YYYY"|"DD/MM/YYYY"|"MM/DD/YYYY"|"YYYY.MM.DD"|"YYYY/MM/DD"|"DD.MM.YY"|"DD/MM/YY"|"DD-MMM-YYYY"|"DD MMM YYYY"|"MMM DD, YYYY"],"timeSource"?:<vs>}, "paperName":<vs>, "isin"?:<vs>, "quantity":<vs>, "wholeShares"?:bool (true only for whole-share markets), "price":<vs>, "value"?:<vs> (omit to compute qty×price), "commission"?:<vs> (omit when fees are separate rows), "total"?:<vs>, "currency":<vs>, "paymentCurrency"?:<vs>, "fxRate"?:<vs>, "side": {"strategy":"column","col":<ref>,"buyValues":[…],"sellValues":[…]} | {"strategy":"signedQuantity","col":<ref>} | {"strategy":"signedAmount","col":<ref>} }. When the file has a SEPARATE time-of-day column, always set "timeSource" to it. "currency" = the currency the instrument is quoted/traded in; "paymentCurrency" = the currency the account was actually debited in — set it only when the file shows a distinct settlement/account currency (e.g. a total-in-account-currency column); omit when unknown.
 - Cash mapping: { "date":{...}, "amount":<vs> (signed), "currency":<vs>, "description"?:<vs>, "ticker"?:<vs>, "isin"?:<vs>, "fxRate"?:<vs>, "fxPair"?:<vs> }. When extracting "ticker" from a free-text title with regexExtract, the capture group must match the instrument SYMBOL itself — an UPPERCASE token of 2-8 letters/digits that VARIES between rows (e.g. ELV, AVGO, PLAYWAY) — never a fixed adjacent word like "netto"/"brutto"/"DM". Anchor the pattern on the constant words around the symbol, e.g. "Dywidenda netto ELV 85% USD" → pattern "(?:netto|brutto)\\\\s+([A-Z0-9]{2,8})\\\\b" group 1. Omit "ticker" entirely when no reliable symbol token exists.
 - "pairing": {"dividendWht":{"matchBy":["isin"|"ticker"|"date"|"time"],"windowDays":0-7,"handling":"subtract"|"fee_row"}} when the file has separate dividend + withholding-tax rows; {"fxLegs":{"pairKey":{"by":"column","col":<ref>}|{"by":"datetime"},"rateSource"?:<vs>}} when FX exchanges come as debit+credit leg rows. Single-row FX: classify as fx_leg WITHOUT pairing.fxLegs and put fxRate/fxPair in the fxLeg mapping (often regexExtract from the title).
-- If the file has NO ISIN column: omit "isin" in trade and set "needsNameResolution": true.
+- ISIN is the most reliable instrument identifier. If ANY column contains ISIN-like codes (2 letters + 10 alphanumerics, check digit last — e.g. US5949181045, IE00B4L5Y983, PLKGHM000017), you MUST map it: "isin": {"kind":"column","col":{"name":"<that header>"}}. Do this even if a paperName column also exists. ONLY when the file has NO ISIN column: omit "isin" and set "needsNameResolution": true. (Note: some brokers put a plain ticker like "BTC" instead of an ISIN in the same symbol column for crypto — that is fine, still map the column to "isin"; the resolver handles non-ISIN symbols by name.)
+- If a trade has a per-transaction fee/commission column (header like fee/fees/prowizja/commission/charge, a small value alongside each trade), map it to "trade.commission" — otherwise the cost is silently lost. Omit "commission" ONLY when fees arrive as SEPARATE ROWS (then classify those rows as "fee").
+- Classify cash rows, do NOT route them into "trade". A broker's type/category column typically mixes trades with NON-trade operations — deposits, withdrawals, transfers, interest, dividends, and promotional credits (bonus/reward/cashback/"stock perk"/free-share). Give EACH non-trade type its own classify rule emitting the right class (deposit/withdrawal/interest/dividend, and other for bonuses/rewards). Rows routed to "trade" but lacking a valid buy/sell side or a positive quantity are DROPPED silently — a deposit landing in "trade" disappears from the portfolio.
+- Do NOT use a single catch-all rule (e.g. matching an always-present column like a date) as your ONLY classify rule when a type/category column has more than one distinct value. Key your rules on that type column (the value digests below list its distinct values). A catch-all on trades is acceptable ONLY when the file is single-type (every row is a trade).
 - Numbers: parsed automatically (European and US separators) by default. When the sample makes the decimal mark unambiguous, set "file.decimalSeparator" to "." or "," so values like "1.234" are not mis-read — the other mark (and spaces) is then the thousands separator. Dates: pick formats from the closed enum above based on the sample; two-digit years ("DD.MM.YY", "DD/MM/YY") and month names ("DD-MMM-YYYY", "DD MMM YYYY", "MMM DD, YYYY"; English or Polish) are supported. Formats are DATE-ONLY — NEVER append a time part (use "DD.MM.YYYY", not "DD.MM.YYYY HH:mm:ss"); a trailing time in the cell is tolerated automatically, and "timeSource" exists when the time lives in a separate column.
 - "file.amountSignPolicy": set "signed" when the amount column carries a real sign (e.g. withdrawals negative) so the sign drives deposit/withdrawal direction; set "magnitude" when amounts are always positive magnitudes and direction comes only from the row type/label (e.g. Trading 212); omit (or "auto") to let the engine infer from whether any amount in the file is negative.
 - Side values: if the sample shows only one side (e.g. only buys), still provide the standard counterpart pair for that broker's language (K/S, BUY/SELL, Buy/Sell, Kupno/Sprzedaż).
 - Prefer column references by NAME. Be conservative: when a row type is not clearly identifiable, let it fall to defaultClass instead of guessing.
 - Corporate actions that move share count but do NOT fit the standard trade columns (stock splits, share transfers in/out, reorganizations, in-kind/stock distributions) often use a DIFFERENT column layout than ordinary trades (e.g. quantity in another column, an id where the price should be). Do NOT force them into "trade"/"other" — that produces garbage. Classify them as skip WITH a reason: {"id":…,"when":[…],"emit":"skip","skipReason":"corporate_action"}. They are reported to the user (not silently dropped) and do not lower confidence.
 
-# Example
+# Example 1 — trades, no ISIN column (name resolution), header after metadata lines
 
 Input headers (delimiter ";", header found after ~30 metadata lines):
 ${FEW_SHOT_HEADERS}
 
 Correct output:
-${fewShot}`;
+${fewShot}
+
+# Example 2 — multi-type operations file: classify a description column into cash classes, map ISIN, pair dividend↔tax
+
+Input headers (delimiter ","), the "Opis" column carries the operation type (Depozyt/Wypłata/Dywidenda/FX Credit/…):
+${FEW_SHOT_HEADERS_ACCOUNT}
+
+Correct output:
+${fewShotAccount}`;
 }
 
 export interface UserPromptInput {

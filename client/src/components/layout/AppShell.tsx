@@ -41,7 +41,9 @@ import { BugReportDialog } from '@/components/shared/BugReportDialog';
 import { ChangePasswordDialog } from '@/components/auth/ChangePasswordDialog';
 import { PortfolioSelector } from './PortfolioSelector';
 import { BottomTabBar } from './BottomTabBar';
+import { DemoBanner } from './DemoBanner';
 import { Logo } from '@/components/ui/Logo';
+import { isDemoMode } from '@/lib/demo';
 
 const baseNavItems = [
   { to: '/app', label: 'Dashboard', icon: LayoutDashboard },
@@ -331,28 +333,41 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 {dark ? 'Tryb jasny' : 'Tryb ciemny'}
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => setChangePasswordOpen(true)}>
-                <KeyRound className="h-4 w-4" />
-                Zmień hasło
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setBugReportOpen(true)}>
-                <Bug className="h-4 w-4" />
-                Zgłoś błąd
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              {session?.user && (
-                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal truncate">
-                  {session.user.email}
-                </DropdownMenuLabel>
+              {/* Pozycje sesyjne tylko z sesją — gość w trybie demo widzi zamiast nich CTA. */}
+              {session?.user ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setChangePasswordOpen(true)}>
+                    <KeyRound className="h-4 w-4" />
+                    Zmień hasło
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setBugReportOpen(true)}>
+                    <Bug className="h-4 w-4" />
+                    Zgłoś błąd
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-xs text-muted-foreground font-normal truncate">
+                    {session.user.email}
+                  </DropdownMenuLabel>
+                  <DropdownMenuItem onSelect={handleLogout} variant="destructive">
+                    <LogOut className="h-4 w-4" />
+                    Wyloguj
+                  </DropdownMenuItem>
+                </>
+              ) : (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => navigate('/login?register=1')}>
+                    <KeyRound className="h-4 w-4" />
+                    Załóż konto
+                  </DropdownMenuItem>
+                </>
               )}
-              <DropdownMenuItem onSelect={handleLogout} variant="destructive">
-                <LogOut className="h-4 w-4" />
-                Wyloguj
-              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </header>
+
+        {isDemoMode() && <DemoBanner />}
 
         <MetricsBar />
 

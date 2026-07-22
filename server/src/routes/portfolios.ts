@@ -12,8 +12,18 @@ import { purgeAllData } from '../db/transactions-repo.js';
 import { deleteShareForPortfolio } from '../db/share-repo.js';
 import { scanInterest } from '../services/interest-scanner.js';
 import { isFiniteNumber } from './validation.js';
+import { DEMO_PORTFOLIO_ID } from 'shared';
 
 const router = Router();
+
+// Portfel demo jest współdzielony i read-only — mutacje blokujemy jawnie,
+// zanim ownership check w ogóle zdąży odpowiedzieć (defense in depth).
+router.use('/:id', (req, res, next) => {
+  if (req.params.id === DEMO_PORTFOLIO_ID && req.method !== 'GET') {
+    return res.status(403).json({ error: 'demo_read_only' });
+  }
+  next();
+});
 
 /**
  * Waliduje `settings.freeCashInterest` (oprocentowanie wolnych środków). Zwraca

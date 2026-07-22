@@ -8,6 +8,7 @@ import { toNodeHandler } from 'better-auth/node';
 import { config, isProduction } from './config.js';
 import { auth, closeAuthDb } from './auth.js';
 import { requireAuth } from './middleware/auth.js';
+import { demoAccess, demoLimiter, requireAuthOrDemo } from './middleware/demo-access.js';
 import { initRegistry, getAllPortfolios } from './db/portfolio-registry.js';
 import { getDb, closeDb } from './db/connection.js';
 import { seedTickerMap, migrateGpwToYahoo } from './db/ticker-map-repo.js';
@@ -184,9 +185,33 @@ console.log('All databases initialized, ticker maps seeded.');
 
 // ── Protected API Routes (auth + portfolio middleware applied only to /api) ──
 app.use('/api/portfolios', requireAuth, portfolioMiddleware, portfoliosRouter);
-app.use('/api/prices', requireAuth, portfolioMiddleware, pricesRouter);
-app.use('/api/portfolio', requireAuth, portfolioMiddleware, portfolioRouter);
-app.use('/api/import', requireAuth, portfolioMiddleware, importRouter);
+// Trzy montaże demo-aware: anonimowe GET-y na portfel demo przechodzą bez sesji
+// (demoAccess ustawia syntetycznego usera), wszystko inne idzie przez requireAuth
+// jak dotąd. Mutacje na demo blokuje demoAccess (403 demo_read_only).
+app.use(
+  '/api/prices',
+  demoLimiter,
+  demoAccess,
+  requireAuthOrDemo,
+  portfolioMiddleware,
+  pricesRouter,
+);
+app.use(
+  '/api/portfolio',
+  demoLimiter,
+  demoAccess,
+  requireAuthOrDemo,
+  portfolioMiddleware,
+  portfolioRouter,
+);
+app.use(
+  '/api/import',
+  demoLimiter,
+  demoAccess,
+  requireAuthOrDemo,
+  portfolioMiddleware,
+  importRouter,
+);
 app.use('/api/bug-reports', requireAuth, bugReportsRouter);
 app.use('/api/admin/import-profiles', requireAuth, requireAdmin, adminImportProfilesRouter);
 app.use('/api/admin/type-aliases', requireAuth, requireAdmin, adminTypeAliasesRouter);

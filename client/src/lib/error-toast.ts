@@ -1,5 +1,5 @@
 import { toast } from 'sonner';
-import { ApiError } from './api-client';
+import { ApiError, DEMO_READ_ONLY } from './api-client';
 
 /**
  * Tłumaczenie statusów HTTP na komunikaty zrozumiałe dla użytkownika.
@@ -45,5 +45,8 @@ export function describeError(err: unknown): string {
 
 /** `errorToast('Nie udało się dodać transakcji', err)` → toast z polskim opisem błędu. */
 export function errorToast(prefix: string, err: unknown): void {
+  // Zablokowana mutacja w trybie demo pokazała już konwersyjny toast z CTA
+  // (api-client) — drugi, generyczny toast błędu byłby tylko szumem.
+  if (err instanceof ApiError && err.code === DEMO_READ_ONLY) return;
   toast.error(`${prefix}: ${describeError(err)}`);
 }

@@ -725,7 +725,15 @@ export interface ProfileLint {
     | 'high-skip-rate'
     | 'corporate-action-skipped'
     | 'needs-name-resolution'
-    | 'non-skip-default';
+    | 'non-skip-default'
+    // Kolumna z ISIN-ami obecna w pliku, ale trade.isin niezmapowany (rozpoznanie po nazwie).
+    | 'isin-column-unused'
+    // Kolumna z prowizją/opłatą obecna, ale trade.commission niezmapowany (koszty pominięte).
+    | 'fee-column-unused'
+    // Wiersze złapane regułą 'trade' odrzucono jako nierozpoznana strona/ilość — prawdopodobnie operacje gotówkowe.
+    | 'cash-rows-routed-to-trade'
+    // Znacząca część kwot z pliku trafiła na wiersze odrzucone (nie weszła do portfela).
+    | 'unaccounted-cashflow';
   severity: 'info' | 'warning';
   /** Treść PL gotowa do wyświetlenia (z wplecionymi licznikami). */
   message: string;
