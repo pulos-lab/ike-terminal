@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import type { Portfolio, PortfolioSettings } from 'shared';
-import { DEFAULT_PORTFOLIO_SETTINGS } from 'shared';
+import { DEFAULT_PORTFOLIO_SETTINGS, DEMO_PORTFOLIO_ID, DEMO_USER_ID } from 'shared';
 import { config } from '../config.js';
 
 function getRegistryPath(): string {
@@ -103,6 +103,33 @@ export function deletePortfolio(id: string): void {
     const f = dbPath + suffix;
     if (fs.existsSync(f)) fs.unlinkSync(f);
   }
+}
+
+/**
+ * Upsert wpisu współdzielonego portfela demo (zarezerwowane id, syntetyczny
+ * właściciel). Wołane przez skrypt seed-demo; load/save są prywatne, stąd
+ * dedykowany helper zamiast createPortfolio (które generuje UUID).
+ * Filtr getAllPortfolios(userId) gwarantuje, że wpis nie trafia na listy
+ * realnych użytkowników.
+ */
+export function ensureDemoPortfolio(name = 'Portfel demo'): Portfolio {
+  const list = loadPortfolios();
+  let portfolio = list.find((p) => p.id === DEMO_PORTFOLIO_ID);
+  if (portfolio) {
+    portfolio.name = name;
+    portfolio.userId = DEMO_USER_ID;
+  } else {
+    portfolio = {
+      id: DEMO_PORTFOLIO_ID,
+      name,
+      createdAt: new Date().toISOString(),
+      settings: { ...DEFAULT_PORTFOLIO_SETTINGS },
+      userId: DEMO_USER_ID,
+    };
+    list.push(portfolio);
+  }
+  savePortfolios(list);
+  return portfolio;
 }
 
 /**

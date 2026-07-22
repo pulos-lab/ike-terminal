@@ -23,7 +23,7 @@ import { adjustTransactionsForSplits } from './split-detector.js';
 import { fetchYahooDividendEvents, fetchDividendCalendar } from './yahoo-finance.js';
 import { assumedPayoutsPerYear } from './dividend-estimate.js';
 import { buildFxToPlnLookup, type FxToPlnLookup } from './fx-history.js';
-import { DIVIDEND_TAX_REGULAR, DIVIDEND_TAX_IKE_IKZE } from 'shared';
+import { DIVIDEND_TAX_REGULAR, DIVIDEND_TAX_IKE_IKZE, DEMO_PORTFOLIO_ID } from 'shared';
 import type { CashOperation, PortfolioSettings, TickerMapEntry, Transaction } from 'shared';
 
 export interface ScanResult {
@@ -454,6 +454,9 @@ export async function scanDividends(portfolioId: string): Promise<ScanResult> {
 export async function scanAllPortfolios(): Promise<void> {
   const portfolios = getAllPortfolios();
   for (const p of portfolios) {
+    // Portfel demo jest kuratorowany seedem (deterministyczne dane) — skaner
+    // dopisywałby do niego auto-dywidendy.
+    if (p.id === DEMO_PORTFOLIO_ID) continue;
     try {
       await scanDividends(p.id);
     } catch (err) {

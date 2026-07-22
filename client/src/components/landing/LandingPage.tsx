@@ -1,6 +1,15 @@
 import { useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Upload, Zap, Coins, Globe, Shield, ArrowRight } from 'lucide-react';
-import { AppDemo } from './AppDemo';
+import {
+  LayoutDashboard,
+  Upload,
+  Zap,
+  Coins,
+  Globe,
+  Shield,
+  ArrowRight,
+  Play,
+  MousePointerClick,
+} from 'lucide-react';
 import { Logo } from '@/components/ui/Logo';
 
 const FEATURES = [
@@ -14,19 +23,19 @@ const FEATURES = [
     icon: Upload,
     title: 'Import z brokerów',
     description:
-      'Automatyczny import transakcji z Bossa, mBank, DEGIRO i XTB. Jeden plik CSV/XLSX — wszystko gotowe.',
+      'Automatyczny import z Bossa, mBank, DEGIRO, XTB i Interactive Brokers. Inny broker? Uniwersalny import CSV/XLSX z pomocą AI.',
   },
   {
     icon: Zap,
     title: 'Ceny na żywo',
     description:
-      'Bieżące wyceny z GPW, NYSE, NASDAQ, XETRA i NewConnect. Cache i fallbacki — zawsze aktualne dane.',
+      'Bieżące wyceny z GPW, NewConnect, Catalyst, NYSE, NASDAQ i XETRA. Cache i fallbacki — zawsze aktualne dane.',
   },
   {
     icon: Coins,
     title: 'Dywidendy i gotówka',
     description:
-      'Śledzenie dywidend z podziałem na waluty. Historia wpłat i wypłat z limitem IKE/IKZE.',
+      'Automatyczne wykrywanie dywidend, podatek u źródła, historia wpłat z limitem IKE/IKZE.',
   },
   {
     icon: Globe,
@@ -46,6 +55,7 @@ const BROKERS = [
   { name: 'mBank', color: '#2563eb' },
   { name: 'DEGIRO', color: '#0891b2' },
   { name: 'XTB', color: '#16a34a' },
+  { name: 'IBKR', color: '#b91c1c' },
 ];
 
 export function LandingPage() {
@@ -94,33 +104,69 @@ export function LandingPage() {
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             <button
-              onClick={() => navigate('/login?register=1')}
+              onClick={() => navigate('/demo')}
               className="w-full sm:w-auto bg-amber-500 hover:bg-amber-600 text-stone-950 font-semibold px-6 py-3 rounded-lg transition-colors flex items-center justify-center gap-2"
             >
-              Rozpocznij za darmo
+              <Play className="w-4 h-4" />
+              Wypróbuj demo bez konta
+            </button>
+            <button
+              onClick={() => navigate('/login?register=1')}
+              className="w-full sm:w-auto border border-stone-700 hover:border-stone-500 text-stone-300 px-6 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+            >
+              Załóż darmowe konto
               <ArrowRight className="w-4 h-4" />
             </button>
-            <a
-              href="#demo"
-              className="w-full sm:w-auto border border-stone-700 hover:border-stone-500 text-stone-300 px-6 py-3 rounded-lg font-medium transition-colors text-center"
-            >
-              Zobacz demo
-            </a>
           </div>
         </div>
       </section>
 
-      {/* ── Interactive Demo ──────────────────────────────────────────── */}
+      {/* ── Live demo teaser ──────────────────────────────────────────── */}
       <section id="demo" className="max-w-6xl mx-auto px-4 sm:px-6 pb-20">
         <div className="text-center mb-8">
           <h2 className="text-xl sm:text-2xl font-bold mb-2 tracking-tight">
-            Zobacz jak to działa
+            Zobacz jak to działa — naprawdę
           </h2>
-          <p className="text-stone-500 text-sm">
-            Kliknij w nawigację, żeby zobaczyć główne widoki aplikacji
+          <p className="text-stone-500 text-sm max-w-xl mx-auto">
+            To nie makieta. Jedno kliknięcie otwiera prawdziwą aplikację na przykładowym portfelu
+            IKE — z wykresem vs WIG, pozycjami wycenianymi na żywo, dywidendami i historią wpłat.
           </p>
         </div>
-        <AppDemo />
+
+        {/* Ramka "przeglądarki" z realnym zrzutem dashboardu demo */}
+        <button
+          onClick={() => navigate('/demo')}
+          aria-label="Otwórz demo aplikacji"
+          className="group block w-full text-left rounded-xl border border-stone-800 hover:border-amber-500/50 bg-[#141210] overflow-hidden shadow-2xl shadow-black/40 transition-colors"
+        >
+          <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-stone-800 bg-[#0d0c0a]">
+            <span className="w-2.5 h-2.5 rounded-full bg-stone-700" />
+            <span className="w-2.5 h-2.5 rounded-full bg-stone-700" />
+            <span className="w-2.5 h-2.5 rounded-full bg-stone-700" />
+            <span className="ml-3 text-[11px] text-stone-600 truncate">
+              tixterminal.app/app — Portfel demo
+            </span>
+          </div>
+          <div className="relative">
+            <img
+              src="/demo-dashboard.png"
+              alt="Dashboard TIX Terminal na przykładowym portfelu demo"
+              loading="lazy"
+              className="w-full h-auto block"
+            />
+            {/* Overlay CTA na hover/focus */}
+            <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/40 transition-colors">
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 bg-amber-500 text-stone-950 font-semibold px-5 py-2.5 rounded-lg text-sm">
+                <MousePointerClick className="w-4 h-4" />
+                Kliknij i przeglądaj demo
+              </span>
+            </div>
+          </div>
+        </button>
+
+        <p className="text-center text-stone-600 text-xs mt-4">
+          Tryb demo jest tylko do odczytu — własne dane dodasz po założeniu darmowego konta.
+        </p>
       </section>
 
       {/* ── Features ──────────────────────────────────────────────────── */}
@@ -172,6 +218,9 @@ export function LandingPage() {
               </div>
             ))}
           </div>
+          <p className="text-stone-600 text-xs mt-6">
+            …i inni — uniwersalny import CSV/XLSX dopasuje się do formatu Twojego brokera.
+          </p>
         </div>
       </section>
 
@@ -184,13 +233,22 @@ export function LandingPage() {
           <p className="text-stone-400 text-sm mb-6 max-w-md mx-auto">
             Załóż darmowe konto, zaimportuj transakcje i analizuj swoje inwestycje.
           </p>
-          <button
-            onClick={() => navigate('/login?register=1')}
-            className="bg-amber-500 hover:bg-amber-600 text-stone-950 font-semibold px-8 py-3 rounded-lg transition-colors inline-flex items-center gap-2"
-          >
-            Utwórz konto
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <button
+              onClick={() => navigate('/login?register=1')}
+              className="bg-amber-500 hover:bg-amber-600 text-stone-950 font-semibold px-8 py-3 rounded-lg transition-colors inline-flex items-center gap-2"
+            >
+              Utwórz konto
+              <ArrowRight className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => navigate('/demo')}
+              className="text-stone-400 hover:text-foreground text-sm font-medium transition-colors inline-flex items-center gap-1.5"
+            >
+              <Play className="w-3.5 h-3.5" />
+              albo najpierw zobacz demo
+            </button>
+          </div>
         </div>
       </section>
 

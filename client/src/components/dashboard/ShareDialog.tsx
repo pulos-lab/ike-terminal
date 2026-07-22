@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { errorToast } from '@/lib/error-toast';
 import type { PortfolioShare, ShareScope, ShareSettingsInput, ShareValidity } from 'shared';
 import { Button } from '@/components/ui/button';
 import {
@@ -135,7 +136,7 @@ export function ShareDialog({ currentBenchmark }: ShareDialogProps) {
       qc.invalidateQueries({ queryKey: QUERY_KEYS.share });
       toast.success('Link utworzony');
     },
-    onError: (err) => toast.error(err.message || 'Nie udało się utworzyć linku'),
+    onError: (err) => errorToast('Nie udało się utworzyć linku', err),
   });
 
   const updateMutation = useMutation({
@@ -144,7 +145,7 @@ export function ShareDialog({ currentBenchmark }: ShareDialogProps) {
       qc.invalidateQueries({ queryKey: QUERY_KEYS.share });
       toast.success('Zapisano zmiany');
     },
-    onError: (err) => toast.error(err.message || 'Nie udało się zapisać zmian'),
+    onError: (err) => errorToast('Nie udało się zapisać zmian', err),
   });
 
   const revokeMutation = useMutation({
@@ -154,7 +155,7 @@ export function ShareDialog({ currentBenchmark }: ShareDialogProps) {
       setConfirmRevoke(false);
       toast.success('Link unieważniony');
     },
-    onError: (err) => toast.error(err.message || 'Nie udało się unieważnić linku'),
+    onError: (err) => errorToast('Nie udało się unieważnić linku', err),
   });
 
   const shareUrl = share ? `${window.location.origin}/share/${share.token}` : '';

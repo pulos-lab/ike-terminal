@@ -6,6 +6,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "seed": "tsx src/seed.ts",
+    "seed:demo": "tsx src/scripts/seed-demo.ts",
     "seed-benchmarks": "tsx src/seed-benchmarks.ts",
     "scrape:gpw-sectors": "tsx scripts/scrape-gpw-sectors.ts",
     "scrape:catalyst-bonds": "tsx scripts/scrape-catalyst-bonds.ts",
