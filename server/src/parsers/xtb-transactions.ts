@@ -9,7 +9,7 @@ import type {
   SkippedRowRaw,
   InstrumentCategory,
 } from 'shared';
-import { findCfdTicker } from 'shared';
+import { applyIsinAlias, findCfdTicker } from 'shared';
 import type { ParserContext } from './registry.js';
 import {
   roundTo2,
@@ -211,10 +211,18 @@ function resolveSymbolIdentifiers(
   tickerLookup?: Map<string, string>,
   unknownSuffixes?: Set<string>,
   unknownNames?: Set<string>,
+  isoDate?: string | null,
 ): { paperName: string; isin: string; currency: string; placeholder: boolean } {
+  // Aliasy ISIN (zdarzenia korporacyjne, np. konwersja PDA→akcje REXA→REX) —
+  // aplikowane na znormalizowanym tickerze Yahoo (.PL→.WA), spójnie dla wszystkich
+  // typów wierszy (transakcje, dywidendy, WHT). Data wiersza ogranicza wpisy
+  // z `appliesUntil` (ochrona przed przyszłą kolizją zwolnionego tickera).
+  const aliased = (yahooTicker: string): string =>
+    applyIsinAlias(yahooTicker, yahooTicker, isoDate ?? undefined).isin;
+
   if (symbol.includes('.') && /\.\w{2}$/.test(symbol)) {
     // Old format: ticker.COUNTRY (e.g., "JSW.PL", "PLTR.US")
-    const yahooTicker = xtbToYahooTicker(symbol);
+    const yahooTicker = aliased(xtbToYahooTicker(symbol));
     const badSuffix = unknownSuffixOf(symbol);
     if (badSuffix && unknownSuffixes) unknownSuffixes.add(badSuffix);
     return {
@@ -227,7 +235,7 @@ function resolveSymbolIdentifiers(
   // New format: full company name — try Closed Positions ticker lookup first
   const cpTicker = tickerLookup?.get(symbol);
   if (cpTicker) {
-    const yahooTicker = xtbToYahooTicker(cpTicker);
+    const yahooTicker = aliased(xtbToYahooTicker(cpTicker));
     const badSuffix = unknownSuffixOf(cpTicker);
     if (badSuffix && unknownSuffixes) unknownSuffixes.add(badSuffix);
     return {
@@ -880,7 +888,13 @@ export async function parseXtbFile(
         continue;
       }
 
-      const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames);
+      const ids = resolveSymbolIdentifiers(
+        raw.symbol,
+        tickerLookup,
+        unknownSuffixes,
+        unknownNames,
+        isoTime,
+      );
       // Waluta z kwoty rozliczenia: |Amount| ≈ qty×price → notowanie w walucie
       // konta (m.in. ISAC.UK na koncie USD); wyraźny rozjazd → cena w walucie
       // obcej, stosunek = implikowany kurs (payment-per-quote).
@@ -989,7 +1003,13 @@ export async function parseXtbFile(
         continue;
       }
 
-      const ids = resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames);
+      const ids = resolveSymbolIdentifiers(
+        raw.symbol,
+        tickerLookup,
+        unknownSuffixes,
+        unknownNames,
+        isoTime,
+      );
       let decision: TradeCurrencyDecision;
       if (priceInAccountCurrency) {
         // Cena wyprowadzona z kwot konta — wartości spójne z gotówką w walucie
@@ -1168,8 +1188,13 @@ export async function parseXtbFile(
         amount: netAmount,
         currency: accountCurrency,
         ticker: raw.symbol
-          ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames)
-              .paperName
+          ? resolveSymbolIdentifiers(
+              raw.symbol,
+              tickerLookup,
+              unknownSuffixes,
+              unknownNames,
+              isoTime,
+            ).paperName
           : undefined,
         source: 'xtb',
         importBatch,
@@ -1244,8 +1269,13 @@ export async function parseXtbFile(
         amount: raw.amount, // negative
         currency: accountCurrency,
         ticker: raw.symbol
-          ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames)
-              .paperName
+          ? resolveSymbolIdentifiers(
+              raw.symbol,
+              tickerLookup,
+              unknownSuffixes,
+              unknownNames,
+              isoTime,
+            ).paperName
           : undefined,
         source: 'xtb',
         importBatch,
@@ -1265,8 +1295,13 @@ export async function parseXtbFile(
         amount: raw.amount,
         currency: accountCurrency,
         ticker: raw.symbol
-          ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames)
-              .paperName
+          ? resolveSymbolIdentifiers(
+              raw.symbol,
+              tickerLookup,
+              unknownSuffixes,
+              unknownNames,
+              isoTime,
+            ).paperName
           : undefined,
         source: 'xtb',
         importBatch,
@@ -1282,8 +1317,13 @@ export async function parseXtbFile(
         amount: raw.amount,
         currency: accountCurrency,
         ticker: raw.symbol
-          ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames)
-              .paperName
+          ? resolveSymbolIdentifiers(
+              raw.symbol,
+              tickerLookup,
+              unknownSuffixes,
+              unknownNames,
+              isoTime,
+            ).paperName
           : undefined,
         source: 'xtb',
         importBatch,
@@ -1358,7 +1398,7 @@ export async function parseXtbFile(
       amount: raw.amount,
       currency: accountCurrency,
       ticker: raw.symbol
-        ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames)
+        ? resolveSymbolIdentifiers(raw.symbol, tickerLookup, unknownSuffixes, unknownNames, isoTime)
             .paperName
         : undefined,
       source: 'xtb',

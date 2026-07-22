@@ -1160,3 +1160,50 @@ describe('parseXtbFile — szablon z kolumną Ticker a wiersze close trade (CFD)
     expect(result.warnings?.some((w) => w.includes('bez wiersza "close trade"'))).toBeFalsy();
   });
 });
+
+describe('parseXtbFile — aliasy ISIN (konwersja PDA→akcje REXA→REX)', () => {
+  const rexaBuy = (time: string) => ({
+    id: 1,
+    type: 'Stock purchase',
+    time,
+    comment: 'OPEN BUY 2 @ 13.69',
+    symbol: 'REXA.PL',
+    amount: -27.38,
+  });
+
+  it('zakup PDA (REXA.PL) w oknie aliasu migruje na REX.WA', async () => {
+    const buf = await buildXtbXlsx([rexaBuy('03/06/2026 09:17:41')]);
+    const { transactions } = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx');
+
+    const buy = transactions.data.find((t) => t.side === 'K');
+    expect(buy?.isin).toBe('REX.WA');
+    expect(buy?.paperName).toBe('REX.WA');
+    expect(buy?.currency).toBe('PLN');
+  });
+
+  it('wiersz datowany PO appliesUntil NIE jest aliasowany (ochrona przed reużyciem tickera)', async () => {
+    const buf = await buildXtbXlsx([rexaBuy('03/06/2027 09:17:41')]);
+    const { transactions } = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx');
+
+    const buy = transactions.data.find((t) => t.side === 'K');
+    expect(buy?.isin).toBe('REXA.WA');
+  });
+
+  it('zwykłe zakupy akcji (REX.PL) przechodzą bez zmian', async () => {
+    const buf = await buildXtbXlsx([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: '02/07/2026 09:30:02',
+        comment: 'OPEN BUY 3 @ 12.884',
+        symbol: 'REX.PL',
+        amount: -38.65,
+      },
+    ]);
+    const { transactions } = await parseXtbFile(buf, 'batch-1', 'PLN_12345_test.xlsx');
+
+    const buy = transactions.data.find((t) => t.side === 'K');
+    expect(buy?.isin).toBe('REX.WA');
+    expect(buy?.paperName).toBe('REX.WA');
+  });
+});

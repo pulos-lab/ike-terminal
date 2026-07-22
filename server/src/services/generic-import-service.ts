@@ -68,7 +68,12 @@ import {
   insertQuarantineRows,
   MAX_QUARANTINE_PER_BATCH,
 } from '../db/quarantine-repo.js';
-import { findIsinByName, seedTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
+import {
+  findIsinByName,
+  seedTickerMap,
+  upsertTickerMapEntry,
+  getTickerByIsin,
+} from '../db/ticker-map-repo.js';
 import { getDb } from '../db/connection.js';
 
 const SUGGESTION_THRESHOLD = 0.75;
@@ -763,6 +768,10 @@ async function runImportDocuments(args: {
         .filter((t) => t.isin === isin)
         .reduce((sum, t) => sum + (t.side === 'K' ? t.quantity : -t.quantity), 0);
     for (const u of resolution.unresolved) {
+      // Stub piszemy tylko przy pierwszym imporcie (brak wpisu) — przy kolejnych
+      // resolveUnknownIsins ponawia rozpoznanie stuba i sam go nadpisze prawdziwym
+      // tickerem, gdy źródło zacznie listować debiut (self-heal, bez bumpu wersji).
+      if (getTickerByIsin(u.isin, pid)) continue;
       if (Math.abs(openNet(u.isin)) > 0.001) {
         upsertTickerMapEntry(
           {

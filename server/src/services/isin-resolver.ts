@@ -7,13 +7,14 @@ import {
   findBondByIsin,
   findBondByTicker,
 } from 'shared';
-import { getTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
+import { getTickerMap, upsertTickerMapEntry, isProvisionalStub } from '../db/ticker-map-repo.js';
 import { searchYahoo } from './ticker-search.js';
 import { getBrCatalogService } from './biznesradar-catalog.js';
 import { fetchYahooPrice } from './yahoo-finance.js';
 import { resolveSector } from './sector-resolver.js';
 import { mapWithConcurrency } from './concurrency.js';
 import { normalizeBossaPaperName, isNewConnectPaperName } from './stooq-utils.js';
+import { pickPlausible } from './ticker-match.js';
 
 interface UnresolvedIsin {
   isin: string;
@@ -125,6 +126,19 @@ export const STOOQ_ALIASES: Record<string, string> = {
   ZAK: 'PDG', // Zaks → Pyramid Games (2019)
   SKN: 'SIM', // Skin-System → SimFabric (2019)
   BLU: 'CLC', // Blumerang Pre-IPO → Columbus Energy (2018)
+};
+
+/**
+ * Aliasy rebrandingowe dla papierów ZAGRANICZNYCH (stary ticker → obecny).
+ *
+ * Odpowiednik `STOOQ_ALIASES`, ale dla gałęzi zagranicznej. To jedyna droga do
+ * auto-naprawy zmiany tickera: Yahoo nie wystawia mapowania stary→nowy symbol.
+ * Wyszukiwarka zwraca wprawdzie `prevName`/`nameChangeDate`, ale tylko dla zmian
+ * NAZWY — dla wycofanego symbolu chart oddaje po prostu 404, a `search` podsuwa
+ * pierwszą lepszą spółkę o podobnej nazwie.
+ */
+export const FOREIGN_TICKER_ALIASES: Record<string, string> = {
+  RELI: 'EZRA', // Reliance Global Group → EZRA International Group (2026-01-26)
 };
 
 /**
@@ -358,8 +372,26 @@ export async function resolveIsin(
 
   // === Non-Polish or real ISINs: Yahoo first ===
 
+  // Alias rebrandingowy: jeśli znamy nowy ticker, pytamy Yahoo od razu o niego.
+  const foreignAlias = isPseudoIsin ? FOREIGN_TICKER_ALIASES[isin.toUpperCase()] : undefined;
+
+  // Walidacja trafień Yahoo (patrz ticker-match.ts). GENEZA: zgłoszenie
+  // 2026-07-20 — po zmianie tickera RELI→EZRA symbol zniknął z Yahoo, a
+  // `byIsin[0]` podstawiło `RS | Reliance, Inc.` (dystrybutor stali z S&P 500)
+  // i portfel pokazywał 395,93 USD zamiast 2,28 USD.
+  //
+  // Zakres celowo zawężony do ścieżki, którą zmierzono na produkcji:
+  //  - isPseudoIsin  — ścieżka prawdziwych ISIN-ów (DeGiro/IBKR) niezmierzona;
+  //  - !isPolishTicker — gałąź polska ma własny, osobny problem (ucinanie nazwy
+  //    do 3 znaków w Strategy 2), naprawiany oddzielnie;
+  //  - !cfdKnown     — mapa CFD rozwiązuje OIL→BZ=F, US500→ES=F, USDPLN→USDPLN=X,
+  //    gdzie symbol z definicji nie przypomina zapytania.
+  const cfdKnown = findCfdTicker(paperName) !== null || findCfdTicker(isin) !== null;
+  const shouldValidate = isPseudoIsin && !isPolishTicker && !cfdKnown;
+  const matchQueries = [foreignAlias, isin, paperName];
+
   // Strategy 1: Yahoo search by ISIN (exact identifier — reliable)
-  const byIsin = await searchYahoo(isin);
+  const byIsin = await searchYahoo(foreignAlias ?? isin);
   if (byIsin.length > 0) {
     // Preferencja .WA: zarówno dla polskich tickerów (isPolishTicker) jak i dla dual-listed
     // spółek gdzie user kupuje przez GPW (txCurrency === 'PLN'). Przykład: GreenX Metals
@@ -382,14 +414,14 @@ export async function resolveIsin(
     // Polish ticker z pseudoISIN/realPL bez .WA hita → NIE akceptujemy zagranicznego listingu,
     // niżej Strategy 2 (Stooq) spróbuje znaleźć .WA po nazwie.
     if (!isPolishTicker) {
-      return await buildEntry(
-        isin,
-        byIsin[0].symbol,
-        byIsin[0].name,
-        byIsin[0].exchange,
-        paperName,
-        txCurrency,
-      );
+      const hit = shouldValidate ? pickPlausible(byIsin, matchQueries) : byIsin[0];
+      if (hit) {
+        return await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
+      }
+      // Żadne trafienie nie odpowiada temu, o co pytaliśmy → NIE sięgamy po [0].
+      // Niżej Strategy 3 spróbuje po nazwie; gdy i to zawiedzie, resolver zwróci
+      // null, a import zapisze provisional stub (re-resolwowany przy kolejnym
+      // imporcie). Lepiej zero ceny niż cudza cena.
     }
   }
 
@@ -480,14 +512,19 @@ export async function resolveIsin(
             );
           }
         } else {
-          return await buildEntry(
-            isin,
-            byName[0].symbol,
-            byName[0].name,
-            byName[0].exchange,
-            paperName,
-            txCurrency,
-          );
+          const hit = shouldValidate ? pickPlausible(byName, matchQueries) : byName[0];
+          if (hit) {
+            return await buildEntry(
+              isin,
+              hit.symbol,
+              hit.name,
+              hit.exchange,
+              paperName,
+              txCurrency,
+            );
+          }
+          // Brak wiarygodnego trafienia — próbujemy kolejnego wariantu nazwy,
+          // a ostatecznie zwracamy null zamiast cudzej spółki.
         }
       }
     }
@@ -646,10 +683,15 @@ export async function resolveUnknownIsins(
 ): Promise<ResolveResult> {
   const existingMap = getTickerMap(portfolioId);
 
-  // Collect unique ISINs with their paper names and currencies
+  // Collect unique ISINs with their paper names and currencies.
+  // Re-attempt not only ISINs absent from the map, but also those anchored to a
+  // provisional stub (an unresolved-debut placeholder) — so a fresh listing
+  // self-heals on the next import once a price source finally lists it. A
+  // successful resolution overwrites the stub (the anchor no longer protects it).
   const unknowns = new Map<string, { paperName: string; currency: string; category?: string }>();
   for (const tx of transactions) {
-    if (!existingMap.has(tx.isin) && !unknowns.has(tx.isin)) {
+    const existing = existingMap.get(tx.isin);
+    if ((!existing || isProvisionalStub(existing)) && !unknowns.has(tx.isin)) {
       unknowns.set(tx.isin, {
         paperName: tx.paperName,
         currency: tx.currency,
@@ -687,7 +729,10 @@ export async function resolveUnknownIsins(
 
       // CFD instruments: resolve via static map (Yahoo/Stooq search won't find them)
       if (category === 'cfd') {
-        const cfdEntry = findCfdTicker(isin);
+        // Krypto/CFD zwykle mają w kolumnie symbolu ticker (np. Trade Republic: „BTC"),
+        // nie ISIN — gdy ISIN nie trafia w mapę, próbujemy nazwy papieru
+        // (np. „Bitcoin" → klucz BITCOIN → BTC-USD). Lustro ścieżki CFD-first wyżej.
+        const cfdEntry = findCfdTicker(isin) || findCfdTicker(paperName);
         if (cfdEntry) {
           const entry: TickerMapEntry = {
             isin,

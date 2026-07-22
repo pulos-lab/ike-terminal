@@ -473,10 +473,16 @@ export const api = {
     }),
   getCashFlow: () => request<CashFlowResponse>('/portfolio/cash-flow'),
 
-  postHistory: (body: { benchmark: string; startDate?: string; endDate?: string }) =>
+  /** Historia portfela. Opcjonalny portfolioId nadpisuje nagłówek X-Portfolio-Id
+   *  per wywołanie (widok Porównanie) — bez niego zapytanie dotyczy aktywnego portfela. */
+  postHistory: (
+    body: { benchmark: string; startDate?: string; endDate?: string },
+    portfolioId?: string,
+  ) =>
     request<PortfolioHistoryResponse>('/portfolio/history', {
       method: 'POST',
       body: JSON.stringify(body),
+      ...(portfolioId ? { headers: { 'X-Portfolio-Id': portfolioId } } : {}),
     }),
 
   // Stock Splits

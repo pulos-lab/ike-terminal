@@ -2,7 +2,14 @@ import { useMemo } from 'react';
 import { Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPercent, formatNumber } from '@/lib/formatters';
-import { chainLinkPct, computeBetaAlpha } from '@/lib/returns';
+import {
+  computeMetrics,
+  pickBest,
+  FALLBACK_RISK_FREE_PCT,
+  type PerformanceMetrics,
+  type BetterDirection,
+} from '@/lib/performance-metrics';
+import type { CompareSeries } from '@/lib/compare-series';
 import { cn } from '@/lib/utils';
 
 interface ChartDataPoint {
@@ -24,184 +31,234 @@ interface Props {
   showBenchmark?: boolean;
   /** Roczna stopa wolna od ryzyka w % (z /history); fallback do 5% gdy brak. */
   riskFreeRatePct?: number;
+  /** Tryb porównania (dashboard): aktywny portfel pierwszy; length ≥ 2 włącza
+   *  kafle wielowartościowe — wiersz per portfel w każdym kaflu. */
+  compareSeries?: CompareSeries[];
 }
 
-interface PerformanceMetrics {
-  totalReturn: number;
-  benchmarkReturn: number;
-  cagr: number;
-  volatility: number;
-  sharpeRatio: number;
-  maxDrawdown: number;
-  maxDrawdownDuration: number;
-  bestDay: number;
-  worstDay: number;
-  winRate: number;
-  calmarRatio: number;
-  sortinoRatio: number;
-  beta: number | null;
-  alphaAnnualPct: number | null;
+/** Definicja kafla w trybie porównania — lustro kafli trybu pojedynczego. */
+interface CompareTile {
+  key: string;
+  label: (benchmarkLabel: string) => string;
+  tooltip?: string;
+  value: (m: PerformanceMetrics) => number | null;
+  format: (v: number) => string;
+  /** 'none' = brak wyróżniania (beta ~1 jest neutralna, nie ma „lepiej"). */
+  better: BetterDirection | 'none';
+  /** Wartość barwiona gain/loss po znaku (zwroty). */
+  colorized?: boolean;
+  needsBenchmark?: boolean;
+  showRfSubtext?: boolean;
 }
 
-const FALLBACK_RISK_FREE_PCT = 5; // gdy serwer nie dostarczył stopy (stare odpowiedzi z cache)
-
-function computeMetrics(
-  data: ChartDataPoint[],
-  riskFreeAnnualPct: number,
-): PerformanceMetrics | null {
-  if (data.length < 2) return null;
-
-  const first = data[0];
-  const last = data[data.length - 1];
-
-  // Total return za widoczny okres — chain-linking (dzielenie indeksów),
-  // bo skumulowane procenty nie odejmują się wprost. Dla danych już
-  // zrebase'owanych (first = 0%) wynik jest identyczny jak last.returnPct.
-  const totalReturn = chainLinkPct(last.returnPct, first.returnPct);
-  const benchmarkReturn = chainLinkPct(last.benchmarkReturnPct, first.benchmarkReturnPct);
-
-  // Dzienne zwroty z indeksu TWR — ten sam powód co przy Max Drawdown niżej.
-  // Poprzednia formuła (V_t − V_{t−1} − CF)/V_{t−1} dzieliła przez wartość NETTO
-  // portfela: dla rachunków opcyjno-marginowych (IBKR) equity bywa bliskie zera
-  // lub ujemne i "najlepszy dzień" wychodził +4000%, a volatility/Sharpe/Sortino/
-  // win rate dziedziczyły ten sam śmieciowy mianownik. Silnik liczy TWR odpornie
-  // (sub-okresy przy equity <5% szczytu są zamrażane), więc iloraz indeksu daje
-  // sensowny dzienny zwrot także tam, gdzie surowa wartość eksploduje.
-  const dailyReturns: number[] = [];
-  // Parowane zwroty (portfel, benchmark) do bety/alfy — para tylko gdy oba
-  // indeksy poprzedniego dnia są dodatnie; benchmark bez danych (same zera
-  // po nieudanym fetchu) wykluczamy w całości.
-  const hasBenchmarkSeries = data.some((d) => d.benchmarkTwrPct !== 0);
-  const pairedReturns: Array<[number, number]> = [];
-  for (let i = 1; i < data.length; i++) {
-    const prevIndex = 1 + data[i - 1].twrPct / 100;
-    const curIndex = 1 + data[i].twrPct / 100;
-    if (prevIndex > 0) {
-      const portfolioDaily = curIndex / prevIndex - 1;
-      dailyReturns.push(portfolioDaily);
-      if (hasBenchmarkSeries) {
-        const prevBench = 1 + data[i - 1].benchmarkTwrPct / 100;
-        const curBench = 1 + data[i].benchmarkTwrPct / 100;
-        if (prevBench > 0) {
-          pairedReturns.push([portfolioDaily, curBench / prevBench - 1]);
-        }
-      }
-    }
-  }
-
-  if (dailyReturns.length === 0) return null;
-
-  // Period in years (calendar days)
-  const msPerDay = 86400000;
-  const startDate = new Date(first.date);
-  const endDate = new Date(last.date);
-  const totalDays = Math.max((endDate.getTime() - startDate.getTime()) / msPerDay, 1);
-  const years = totalDays / 365.25;
-
-  // CAGR — time-weighted (roczny ekwiwalent TWR).
-  // Użycie last.portfolioValue / first.portfolioValue byłoby błędne, bo
-  // portfolioValue rośnie także z wpłat — każdy deposit "napompowuje" wynik.
-  // TWR z definicji izoluje rynkowy zwrot od cash flows, więc jego annualizacja
-  // daje prawdziwy CAGR dla portfeli z aktywnym cash flow (dotyczy wszystkich
-  // portfeli — działa tak samo dla PLN i walutowych, bo twrPct jest już
-  // PLN-znormalizowany w engine). Dla rzeczywistej stopy zwrotu inwestora
-  // (money-weighted) porównaj z XIRR pokazywanym osobno.
-  const twrTotalGrowth = 1 + chainLinkPct(last.twrPct, first.twrPct) / 100;
-  const cagr =
-    years > 0 && twrTotalGrowth > 0 ? (Math.pow(twrTotalGrowth, 1 / years) - 1) * 100 : 0;
-
-  // Volatility (annualized std dev of daily returns)
-  const tradingDaysPerYear = 252;
-  const meanReturn = dailyReturns.reduce((s, r) => s + r, 0) / dailyReturns.length;
-  const variance =
-    dailyReturns.reduce((s, r) => s + (r - meanReturn) ** 2, 0) / dailyReturns.length;
-  const dailyVol = Math.sqrt(variance);
-  const volatility = dailyVol * Math.sqrt(tradingDaysPerYear) * 100;
-
-  // Sharpe Ratio
-  const dailyRiskFree = riskFreeAnnualPct / 100 / tradingDaysPerYear;
-  const excessReturns = dailyReturns.map((r) => r - dailyRiskFree);
-  const meanExcess = excessReturns.reduce((s, r) => s + r, 0) / excessReturns.length;
-  const sharpeRatio = dailyVol > 0 ? (meanExcess / dailyVol) * Math.sqrt(tradingDaysPerYear) : 0;
-
-  // Sortino Ratio (uses only downside deviation)
-  const downsideReturns = excessReturns.filter((r) => r < 0);
-  const downsideVariance =
-    downsideReturns.length > 0
-      ? downsideReturns.reduce((s, r) => s + r ** 2, 0) / dailyReturns.length
-      : 0;
-  const downsideDev = Math.sqrt(downsideVariance);
-  const sortinoRatio =
-    downsideDev > 0 ? (meanExcess / downsideDev) * Math.sqrt(tradingDaysPerYear) : 0;
-
-  // Max Drawdown & Max Drawdown Duration — oparte o indeks TWR, nie o
-  // portfolioValue. Czysty portfolioValue rośnie z wpłat i sztucznie
-  // podnosi peak (np. wpłata 1000 PLN tuż przed korektą fałszywie
-  // zwiększa drawdown). TWR izoluje rynkowy wpływ od cash flows,
-  // więc drawdown z TWR-index odpowiada rzeczywistej obsunięciu portfela.
-  let peak = 1 + data[0].twrPct / 100;
-  let maxDrawdown = 0;
-  let maxDrawdownDuration = 0;
-  let currentDrawdownStart = 0;
-
-  for (let i = 0; i < data.length; i++) {
-    const twrIndex = 1 + data[i].twrPct / 100;
-    if (twrIndex > peak) {
-      peak = twrIndex;
-      currentDrawdownStart = i;
-    }
-    const drawdown = peak > 0 ? (peak - twrIndex) / peak : 0;
-    if (drawdown > maxDrawdown) {
-      maxDrawdown = drawdown;
-    }
-    if (drawdown > 0) {
-      const duration = i - currentDrawdownStart;
-      if (duration > maxDrawdownDuration) {
-        maxDrawdownDuration = duration;
-      }
-    }
-  }
-
-  // Calmar Ratio (CAGR / Max Drawdown)
-  const calmarRatio = maxDrawdown > 0 ? cagr / 100 / maxDrawdown : 0;
-
-  // Best / Worst Day
-  const bestDay = Math.max(...dailyReturns) * 100;
-  const worstDay = Math.min(...dailyReturns) * 100;
-
-  // Win Rate
-  const winDays = dailyReturns.filter((r) => r > 0).length;
-  const winRate = (winDays / dailyReturns.length) * 100;
-
-  // Beta / alfa Jensena vs benchmark (null gdy benchmark bez danych / za krótki zakres)
-  const betaAlpha = computeBetaAlpha(pairedReturns, riskFreeAnnualPct);
-
-  return {
-    beta: betaAlpha?.beta ?? null,
-    alphaAnnualPct: betaAlpha?.alphaAnnualPct ?? null,
-    totalReturn,
-    benchmarkReturn,
-    cagr,
-    volatility,
-    sharpeRatio,
-    maxDrawdown: maxDrawdown * 100,
-    maxDrawdownDuration,
-    bestDay,
-    worstDay,
-    winRate,
-    calmarRatio,
-    sortinoRatio,
-  };
-}
+const COMPARE_TILES: CompareTile[] = [
+  {
+    key: 'totalReturn',
+    label: () => 'Stopa zwrotu',
+    value: (m) => m.totalReturn,
+    format: (v) => formatPercent(v),
+    better: 'high',
+    colorized: true,
+  },
+  {
+    key: 'benchmarkReturn',
+    label: (b) => `vs ${b || 'benchmark'}`,
+    tooltip:
+      'Każda wartość to osobna symulacja DCA benchmarku dla wpłat/wypłat danego portfela — dlatego mogą się różnić mimo wspólnego indeksu.',
+    value: (m) => m.benchmarkReturn,
+    format: (v) => formatPercent(v),
+    better: 'high',
+    colorized: true,
+    needsBenchmark: true,
+  },
+  {
+    key: 'cagr',
+    label: () => 'CAGR',
+    tooltip:
+      'Skumulowana roczna stopa wzrostu. Pokazuje, o ile % rocznie rósł portfel przy założeniu równomiernego wzrostu przez cały okres.',
+    value: (m) => m.cagr,
+    format: (v) => formatPercent(v),
+    better: 'high',
+    colorized: true,
+  },
+  {
+    key: 'volatility',
+    label: () => 'Volatility',
+    tooltip:
+      'Zmienność — odchylenie standardowe rocznych zwrotów. Im wyższa, tym większe wahania wartości portfela i ryzyko.',
+    value: (m) => m.volatility,
+    format: (v) => `${v.toFixed(2)}%`,
+    better: 'low',
+  },
+  {
+    key: 'sharpe',
+    label: () => 'Sharpe Ratio',
+    tooltip:
+      'Zwrot ponad stopę wolną od ryzyka na jednostkę zmienności. Wartość >1 dobra, >2 bardzo dobra. Stopa wolna od ryzyka z rentowności rocznych obligacji skarbowych USA (przybliżenie dla PLN).',
+    value: (m) => m.sharpeRatio,
+    format: (v) => formatNumber(v),
+    better: 'high',
+    showRfSubtext: true,
+  },
+  {
+    key: 'sortino',
+    label: () => 'Sortino Ratio',
+    tooltip:
+      'Jak Sharpe, ale uwzględnia wyłącznie zmienność ujemnych odchyleń (downside deviation) — dokładniej odzwierciedla realne ryzyko straty.',
+    value: (m) => m.sortinoRatio,
+    format: (v) => formatNumber(v),
+    better: 'high',
+  },
+  {
+    key: 'maxDrawdown',
+    label: () => 'Max Drawdown',
+    tooltip: 'Największe procentowe obsunięcie od szczytu (liczone na indeksie TWR).',
+    // Wartość ujemna (jak wyświetlana) — dzięki temu kolor po znaku i wybór
+    // najlepszego („mniej ujemne = płytsze obsunięcie") liczą to samo co widać.
+    value: (m) => -m.maxDrawdown,
+    format: (v) => formatPercent(v),
+    better: 'high',
+    colorized: true,
+  },
+  {
+    key: 'maxDdDuration',
+    label: () => 'Max DD Duration',
+    tooltip: 'Najdłuższy czas przebywania poniżej wcześniejszego szczytu.',
+    value: (m) => m.maxDrawdownDuration,
+    format: (v) => `${v} dni`,
+    better: 'low',
+  },
+  {
+    key: 'calmar',
+    label: () => 'Calmar Ratio',
+    tooltip:
+      'Roczny zwrot podzielony przez maksymalne obsunięcie (Max Drawdown). Mierzy zysk w stosunku do najgorszego scenariusza straty.',
+    value: (m) => m.calmarRatio,
+    format: (v) => formatNumber(v),
+    better: 'high',
+  },
+  {
+    key: 'bestDay',
+    label: () => 'Najlepszy dzień',
+    value: (m) => m.bestDay,
+    format: (v) => formatPercent(v),
+    better: 'high',
+    colorized: true,
+  },
+  {
+    // Mniej ujemny najgorszy dzień = lepszy, więc kierunek 'high'.
+    key: 'worstDay',
+    label: () => 'Najgorszy dzień',
+    value: (m) => m.worstDay,
+    format: (v) => formatPercent(v),
+    better: 'high',
+    colorized: true,
+  },
+  {
+    key: 'winRate',
+    label: () => 'Win Rate',
+    tooltip: 'Odsetek dni z dodatnim zwrotem.',
+    value: (m) => m.winRate,
+    format: (v) => `${formatNumber(v, 1)}%`,
+    better: 'high',
+  },
+  {
+    key: 'beta',
+    label: (b) => `Beta vs ${b || 'benchmark'}`,
+    tooltip:
+      'Wrażliwość portfela na ruchy benchmarku (regresja dziennych zwrotów TWR). Beta 1 = portfel faluje jak indeks; 1.3 = ruchy o ~30% mocniejsze w obie strony; <1 = spokojniej niż rynek.',
+    value: (m) => m.beta,
+    format: (v) => formatNumber(v),
+    better: 'none',
+    needsBenchmark: true,
+  },
+  {
+    key: 'alpha',
+    label: () => 'Alfa (rocznie)',
+    tooltip:
+      'Alfa Jensena — roczna nadwyżka zwrotu ponad to, co wynikałoby z samej ekspozycji na benchmark (bety). Dodatnia = dobór pozycji dodaje wartość względem pasywnego trzymania indeksu.',
+    value: (m) => m.alphaAnnualPct,
+    format: (v) => formatPercent(v),
+    better: 'high',
+    colorized: true,
+    needsBenchmark: true,
+    showRfSubtext: true,
+  },
+];
 
 export function PerformanceStats({
   data,
   benchmarkLabel,
   showBenchmark = true,
   riskFreeRatePct,
+  compareSeries,
 }: Props) {
   const rfPct = riskFreeRatePct ?? FALLBACK_RISK_FREE_PCT;
   const metrics = useMemo(() => computeMetrics(data, rfPct), [data, rfPct]);
+  const multi = !!compareSeries && compareSeries.length >= 2;
+  const columns = useMemo(
+    () =>
+      (compareSeries ?? []).map((s) => ({
+        portfolioId: s.portfolioId,
+        name: s.name,
+        color: s.color,
+        metrics: computeMetrics(s.points, rfPct),
+      })),
+    [compareSeries, rfPct],
+  );
+
+  const rfLabel = `rf = ${rfPct.toFixed(1)}%`;
+
+  if (multi) {
+    if (!columns.some((c) => c.metrics)) return null;
+    return (
+      <TooltipProvider>
+        <div className="space-y-1.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+            {COMPARE_TILES.map((tile) => {
+              const disabled = !!tile.needsBenchmark && !showBenchmark;
+              const values = columns.map((c) =>
+                disabled || !c.metrics ? null : tile.value(c.metrics),
+              );
+              const best = tile.better === 'none' ? null : pickBest(values, tile.better);
+              return (
+                <MultiStatTile
+                  key={tile.key}
+                  label={tile.label(benchmarkLabel)}
+                  tooltip={tile.tooltip}
+                  subtext={tile.showRfSubtext && !disabled ? rfLabel : undefined}
+                  disabled={disabled}
+                  rows={columns.map((c, i) => {
+                    const v = values[i];
+                    return {
+                      color: c.color,
+                      name: c.name,
+                      display: v === null ? '—' : tile.format(v),
+                      best: best !== null && v === best,
+                      // Kolor NIGDY nie oznacza „najlepszy" — wyłącznie znak wartości
+                      // (zysk/strata) i tylko dla metryk zwrotowych. Zwycięzcę
+                      // pokazuje podświetlenie wiersza, żeby oba sygnały się nie zlewały,
+                      // gdy np. obie wartości są dodatnie (obie zielone).
+                      className: cn(
+                        v === null && 'text-muted-foreground',
+                        tile.colorized &&
+                          v !== null &&
+                          (v > 0 ? 'text-gain' : v < 0 ? 'text-loss' : ''),
+                      ),
+                    };
+                  })}
+                />
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Podświetlony wiersz = najlepsza wartość metryki wśród porównywanych portfeli. Kolor
+            wartości oznacza wyłącznie zysk/stratę.
+          </p>
+        </div>
+      </TooltipProvider>
+    );
+  }
 
   if (!metrics) {
     return null;
@@ -211,7 +268,6 @@ export function PerformanceStats({
     v > 0 ? ('green' as const) : v < 0 ? ('red' as const) : ('default' as const);
   const hasBenchmark = showBenchmark && metrics.benchmarkReturn !== 0;
   const hasBetaAlpha = showBenchmark && metrics.beta !== null;
-  const rfLabel = `rf = ${rfPct.toFixed(1)}%`;
 
   return (
     <TooltipProvider>
@@ -303,6 +359,73 @@ function StatTile({ label, value, color = 'default', tooltip, subtext, disabled 
         {tooltip && <Info className="h-3 w-3 text-muted-foreground/60" />}
       </p>
       <p className={cn('text-base font-bold tabular-nums tracking-tight', colorClass)}>{value}</p>
+      {subtext && (
+        <p className="text-[10px] text-muted-foreground mt-0.5 tabular-nums">{subtext}</p>
+      )}
+    </div>
+  );
+
+  if (!tooltip) return content;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{content}</TooltipTrigger>
+      <TooltipContent className="max-w-[320px] text-xs leading-relaxed">{tooltip}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Kafel trybu porównania: jedna metryka, wiersz per portfel (kropka koloru
+ *  serii + wartość). Ta sama ramka co StatTile — kafel rośnie tylko w pionie. */
+function MultiStatTile({
+  label,
+  tooltip,
+  subtext,
+  disabled,
+  rows,
+}: {
+  label: string;
+  tooltip?: string;
+  subtext?: string;
+  disabled?: boolean;
+  rows: { color: string; name: string; display: string; best?: boolean; className?: string }[];
+}) {
+  const content = (
+    <div
+      className={cn(
+        'rounded-xl bg-card border border-border px-3 py-2.5',
+        disabled && 'opacity-50',
+      )}
+    >
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1 flex items-center gap-1">
+        {label}
+        {tooltip && <Info className="h-3 w-3 text-muted-foreground/60" />}
+      </p>
+      <div className="space-y-0.5">
+        {rows.map((r) => (
+          <p
+            key={`${r.color}-${r.name}`}
+            className={cn(
+              // Podświetlenie zwycięzcy: sygnał niezależny od koloru wartości
+              // (kolor = zysk/strata), czytelny też gdy wszystkie są zielone.
+              '-mx-1 flex items-center gap-1.5 rounded-md px-1 py-px',
+              r.best && 'bg-accent ring-1 ring-border',
+            )}
+            title={r.best ? `${r.name} — najlepszy wynik` : r.name}
+          >
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: r.color }} />
+            <span
+              className={cn(
+                'text-sm tabular-nums tracking-tight',
+                r.best ? 'font-bold' : 'font-medium',
+                r.className,
+              )}
+            >
+              {r.display}
+            </span>
+          </p>
+        ))}
+      </div>
       {subtext && (
         <p className="text-[10px] text-muted-foreground mt-0.5 tabular-nums">{subtext}</p>
       )}

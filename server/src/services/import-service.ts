@@ -62,6 +62,7 @@ import {
   upsertTickerMapEntry,
   getTickerByIsin,
   deleteTickerMapEntry,
+  isProvisionalStub,
 } from '../db/ticker-map-repo.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
 import { normalizeBossaPaperName } from './stooq-utils.js';
@@ -437,7 +438,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   }
   for (const isin of reconciledIsinsNeedingRealTicker) {
     const entry = getTickerByIsin(isin, pid);
-    if (entry && entry.ticker === entry.name && !entry.ticker.includes('.')) {
+    if (isProvisionalStub(entry)) {
       deleteTickerMapEntry(isin, pid);
     }
   }
@@ -467,8 +468,14 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     resolved = resolution.resolved;
     unresolved = resolution.unresolved;
 
-    // Fallback ticker_map entries dla nierozwiązanych z otwartymi pozycjami
+    // Fallback ticker_map entries dla nierozwiązanych z otwartymi pozycjami.
+    // Stub (prowizoryczny placeholder) piszemy TYLKO przy pierwszym imporcie
+    // (brak wpisu). Przy kolejnych imporcie stub już jest — resolveUnknownIsins
+    // traktuje go jako nierozwiązany i ponawia rozpoznanie, a przy sukcesie sam
+    // go nadpisuje prawdziwym tickerem (debiut self-heal). Bez tego guardu każdy
+    // kolejny import nadpisywałby identyczny stub i bumpował wersję danych.
     for (const u of unresolved) {
+      if (getTickerByIsin(u.isin, pid)) continue;
       const isinTxs = parsedTx.data.filter((t) => t.isin === u.isin);
       const net = isinTxs.reduce((sum, t) => sum + (t.side === 'K' ? t.quantity : -t.quantity), 0);
       if (Math.abs(net) > 0.001) {

@@ -46,6 +46,13 @@ export interface GenericParseOutput {
   rowTraces: RowTrace[];
   /** Ostrzeżenia silnika (PL) — łączone z warnings parserów w import-service. */
   warnings: string[];
+  /** Nagłówki (znormalizowane do string) — podstawa lintów strukturalnych. */
+  headers: string[];
+  /** 0-based indeks wiersza nagłówka w sparsowanym pliku (rowTrace.row = headerRowIndex+2+j). */
+  headerRowIndex: number;
+  /** Surowe wiersze DANYCH (od nagłówka w dół), przycięte — dla lintów, które
+   *  analizują KSZTAŁT kolumn (np. kolumna z ISIN-ami / prowizją nieużyta w mapowaniu). */
+  sampleCells: string[][];
 }
 
 /** Mapa klasa wiersza → sekcja mapowania w profilu (cash). */
@@ -114,6 +121,13 @@ export function parseWithProfile(
   const headerIdx = locateHeaderRow(rows, profile);
   const headers = rows[headerIdx].map((c) => String(c ?? ''));
   const resolver = new ColumnResolver(headers, profile.file.decimalSeparator);
+
+  // Surowa próbka wierszy danych (dla lintów strukturalnych). Przycięta —
+  // linty analizują KSZTAŁT kolumny, więc wystarczy reprezentatywna próbka.
+  const SAMPLE_CELLS_CAP = 500;
+  const sampleCells = rows
+    .slice(headerIdx + 1, headerIdx + 1 + SAMPLE_CELLS_CAP)
+    .map((r) => r.map((c) => String(c ?? '')));
 
   const transactions: Transaction[] = [];
   const operations: CashOperation[] = [];
@@ -414,6 +428,9 @@ export function parseWithProfile(
     operations: { data: operations, skipped: skippedOps },
     rowTraces,
     warnings,
+    headers,
+    headerRowIndex: headerIdx,
+    sampleCells,
   };
 }
 
@@ -658,7 +675,7 @@ function buildTransaction(
   // Aliasy ISIN (zdarzenia korporacyjne, np. redomiciliacja) — broker-niezależne.
   // Dla pseudo-ISIN-ów (= paperName) mapa kluczowana prawdziwymi ISIN-ami nie trafi → no-op.
   const pseudoIsin = isinRaw ?? paperNameRaw;
-  const { isin, paperName } = applyIsinAlias(pseudoIsin, paperNameRaw);
+  const { isin, paperName } = applyIsinAlias(pseudoIsin, paperNameRaw, dateIso);
 
   const check = validateTradeFields({ date: dateRaw, paperName, side, quantity, price });
   if (!check.ok) return skip(check.reason);
