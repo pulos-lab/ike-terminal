@@ -174,6 +174,21 @@ describe('GET /prices/instrument-history', () => {
     expect(fetchYahooHistory).not.toHaveBeenCalled();
   });
 
+  it('full=1 → pełna historia (start 1990-01-01, bez patrzenia na transakcje)', async () => {
+    const points = Array.from({ length: 20 }, (_, i) =>
+      point(`2020-01-${String(i + 1).padStart(2, '0')}`),
+    );
+    fetchYahooHistory.mockResolvedValueOnce(points);
+
+    const res = await fetch(
+      `${baseUrl}/api/prices/instrument-history?isin=${encodeURIComponent(GPW_ISIN)}&full=1`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as InstrumentHistoryResponse;
+    expect(body.points).toHaveLength(20);
+    expect(fetchYahooHistory).toHaveBeenCalledWith('TST.WA', '1990-01-01');
+  });
+
   it('NC: biznesradar pusty → zapas Stooq', async () => {
     fetchBiznesradarHistory.mockResolvedValueOnce([]);
     fetchStooqHistory.mockResolvedValueOnce([point('2026-04-01'), point('2026-04-02')]);

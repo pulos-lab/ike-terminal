@@ -61,9 +61,10 @@ router.get(
   }),
 );
 
-// GET /api/prices/instrument-history?isin=... — historia kursu jednego instrumentu
-// (wykres pozycji z markerami K/S). Zakres: od pierwszej transakcji minus 30 dni
-// bufora, żeby było widać kontekst kursu sprzed wejścia w pozycję.
+// GET /api/prices/instrument-history?isin=...[&full=1] — historia kursu jednego
+// instrumentu (wykres pozycji z markerami K/S). Zakres: od pierwszej transakcji
+// minus 30 dni bufora (kontekst kursu sprzed wejścia w pozycję); z full=1 pełna
+// dostępna historia notowań (preset ALL/3Y sięgający przed pierwszą transakcję).
 router.get(
   '/instrument-history',
   asyncHandler(async (req, res) => {
@@ -78,11 +79,18 @@ router.get(
       return;
     }
 
-    const txs = getTransactionsByIsin(isin, req.portfolioId);
-    const firstTxDate = txs.length ? txs[0].date.split('T')[0] : null;
-    const start = new Date(firstTxDate ? `${firstTxDate}T00:00:00Z` : Date.now());
-    start.setUTCDate(start.getUTCDate() - (firstTxDate ? 30 : 365));
-    const startDate = start.toISOString().split('T')[0];
+    let startDate: string;
+    if (req.query.full === '1') {
+      // Pełna historia — Yahoo utnie na faktycznym początku notowań; dla NC/Catalyst
+      // ogranicznikiem jest cap stron biznesradar (dociąga przyrostowo).
+      startDate = '1990-01-01';
+    } else {
+      const txs = getTransactionsByIsin(isin, req.portfolioId);
+      const firstTxDate = txs.length ? txs[0].date.split('T')[0] : null;
+      const start = new Date(firstTxDate ? `${firstTxDate}T00:00:00Z` : Date.now());
+      start.setUTCDate(start.getUTCDate() - (firstTxDate ? 30 : 365));
+      startDate = start.toISOString().split('T')[0];
+    }
 
     // Routing źródeł jak przy historii dashboardu: NC/Catalyst → biznesradar → Stooq,
     // reszta → Yahoo → Stooq (gdy Yahoo zwróci szczątkowe dane).

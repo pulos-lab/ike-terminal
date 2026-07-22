@@ -9,6 +9,7 @@ import {
   type SeriesMarker,
   type Time,
 } from 'lightweight-charts';
+import { Loader2 } from 'lucide-react';
 import type { TransactionWithMeta } from 'shared';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
@@ -54,11 +55,20 @@ export function InstrumentChart({
   const [range, setRange] = useState<string>('ALL');
   const rangeRef = useRef(range);
   const applyingPresetRef = useRef(false);
+  // Pełna historia notowań — dociągana dopiero, gdy user kliknie preset sięgający
+  // przed pierwszą transakcję (ALL, albo np. 3Y przy młodszej pozycji).
+  const [fullHistory, setFullHistory] = useState(false);
 
-  const { data: history, isLoading: historyLoading } = useQuery({
-    queryKey: QUERY_KEYS.instrumentHistory(isin),
-    queryFn: () => api.getInstrumentHistory(isin),
+  const {
+    data: history,
+    isLoading: historyLoading,
+    isFetching: historyFetching,
+  } = useQuery({
+    queryKey: QUERY_KEYS.instrumentHistory(isin, fullHistory),
+    queryFn: () => api.getInstrumentHistory(isin, { full: fullHistory }),
     staleTime: 12 * 60 * 60 * 1000, // historia dzienna — bez sensu refetchować częściej
+    // Przy przejściu tx→full wykres trzyma stare dane zamiast mrugać spinnerem
+    placeholderData: (prev) => prev,
   });
 
   const { data: txData, isLoading: txLoading } = useQuery({
@@ -112,6 +122,14 @@ export function InstrumentChart({
   const handlePresetClick = (preset: string) => {
     setRange(preset);
     rangeRef.current = preset;
+    // Preset wykracza przed załadowane dane → dociągnij pełną historię notowań;
+    // po jej nadejściu efekt przebuduje wykres i zastosuje rangeRef ponownie.
+    if (!fullHistory && points.length) {
+      const presetStart = preset !== 'ALL' ? getPresetStartDate(preset) : undefined;
+      if (preset === 'ALL' || (presetStart && presetStart < points[0].date)) {
+        setFullHistory(true);
+      }
+    }
     const chart = chartRef.current;
     if (!chart) return;
     applyingPresetRef.current = true;
@@ -320,6 +338,12 @@ export function InstrumentChart({
     <div>
       {showRangePresets && (
         <div className="mb-2 ml-auto flex w-fit items-center gap-0.5 rounded-md bg-muted p-0.5">
+          {fullHistory && historyFetching && (
+            <Loader2
+              className="mx-1 h-3 w-3 animate-spin text-muted-foreground"
+              aria-label="Dociąganie pełnej historii notowań"
+            />
+          )}
           {PRESET_RANGES.map((r) => (
             <button
               key={r}

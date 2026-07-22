@@ -191,9 +191,9 @@ export const api = {
   // Transactions CRUD
   getTransactions: () => request<TransactionsResponse>('/portfolio/transactions'),
 
-  getInstrumentHistory: (isin: string) =>
+  getInstrumentHistory: (isin: string, opts?: { full?: boolean }) =>
     request<InstrumentHistoryResponse>(
-      `/prices/instrument-history?isin=${encodeURIComponent(isin)}`,
+      `/prices/instrument-history?isin=${encodeURIComponent(isin)}${opts?.full ? '&full=1' : ''}`,
     ),
   createTransaction: (body: {
     date: string;
