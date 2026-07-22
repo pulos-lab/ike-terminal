@@ -94,6 +94,13 @@ export const DIVIDEND_TAX_IKE_IKZE: Record<string, number> = {
   NO: 0.15, // 15% WHT + 0%
 };
 
+// ============ Podatek od odsetek (od wolnych środków) ============
+// Odsetki od gotówki to przychód ze źródła polskiego (broker) — podatek Belki 19%
+// na koncie zwykłym, zwolnienie na IKE/IKZE. Bez zagranicznego WHT (inaczej niż
+// dywidendy). Broker zwykle pobiera go u źródła (np. XTB „Free funds interest tax").
+export const FREE_CASH_INTEREST_TAX_REGULAR = 0.19;
+export const FREE_CASH_INTEREST_TAX_IKE_IKZE = 0;
+
 /**
  * Awaryjne kursy walut → PLN, używane WYŁĄCZNIE gdy fetch z Yahoo zawiedzie.
  * Jedno źródło prawdy dla server (portfolio-engine, routes) — wartości orientacyjne,

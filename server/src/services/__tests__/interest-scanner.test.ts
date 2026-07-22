@@ -173,6 +173,39 @@ describe('computeInterestOperations', () => {
     // today w środku stycznia → 0 zamkniętych miesięcy
     expect(computeInterestOperations([], ops, [rate('PLN', 12)], '2023-01-20')).toEqual([]);
   });
+
+  it('podatek Belki 19% osobnym wierszem fee (konto zwykłe)', () => {
+    const ops = [deposit('2023-01-01', 10000)];
+    const out = computeInterestOperations([], ops, [rate('PLN', 12)], '2023-03-01', 0.19);
+    // sty + lut → 2 mies. × (odsetki + podatek) = 4 wiersze
+    expect(out).toHaveLength(4);
+    const jan = out.filter((o) => o.date === '2023-01-31');
+    const interest = jan.find((o) => o.subkind === 'interest')!;
+    const tax = jan.find((o) => o.operationType === 'fee')!;
+    expect(interest.amount).toBe(101.92);
+    // 101.92 × 0.19 = 19.3648 → 19.36, ujemny; osobny wiersz fee bez subkind (1:1 XTB)
+    expect(tax.amount).toBe(-19.36);
+    expect(tax.subkind).toBeUndefined();
+    expect(tax.description).toBe('Podatek od odsetek (19%)');
+    expect(tax.source).toBe('auto-interest');
+    expect(tax.importBatch).toBe(AUTO_INTEREST_BATCH);
+  });
+
+  it('IKE/IKZE (taxRate=0) → brak wiersza podatku, tylko odsetki brutto', () => {
+    const ops = [deposit('2023-01-01', 10000)];
+    const out = computeInterestOperations([], ops, [rate('PLN', 12)], '2023-03-01', 0);
+    expect(out.some((o) => o.operationType === 'fee')).toBe(false);
+    expect(out.every((o) => o.operationType === 'other' && o.subkind === 'interest')).toBe(true);
+  });
+
+  it('kapitalizuje na netto — podatek obniża podstawę kolejnych miesięcy', () => {
+    const ops = [deposit('2023-01-01', 10000)];
+    const out = computeInterestOperations([], ops, [rate('PLN', 12)], '2023-03-01', 0.19);
+    // Luty od salda netto (10000 + 101.92 − 19.36 = 10082.56):
+    // 10082.56 × 0.12 × 28/365 = 92.81 (bez podatku byłoby 92.99)
+    const feb = out.find((o) => o.date === '2023-02-28' && o.subkind === 'interest')!;
+    expect(feb.amount).toBe(92.81);
+  });
 });
 
 describe('buildCashDeltas', () => {

@@ -33,10 +33,18 @@ import {
   getMetadata,
   setMetadata,
 } from '../db/operations-repo.js';
-import type { CashOperation, FreeCashInterestRate, Transaction } from 'shared';
+import { FREE_CASH_INTEREST_TAX_REGULAR, FREE_CASH_INTEREST_TAX_IKE_IKZE } from 'shared';
+import type { CashOperation, FreeCashInterestRate, PortfolioSettings, Transaction } from 'shared';
 
 /** Marker batcha auto-odsetek — klucz delete-and-recompute. */
 export const AUTO_INTEREST_BATCH = 'auto-interest';
+
+/** Podatek Belki od odsetek: 0% na IKE/IKZE, 19% na koncie zwykłym. */
+export function interestTaxRate(settings: PortfolioSettings): number {
+  return settings.isIKE || settings.isIKZE
+    ? FREE_CASH_INTEREST_TAX_IKE_IKZE
+    : FREE_CASH_INTEREST_TAX_REGULAR;
+}
 
 export interface InterestScanResult {
   /** Czy zestaw wierszy w bazie faktycznie się zmienił (wpłynął na dataVersion). */
@@ -141,6 +149,7 @@ export function computeInterestOperations(
   operations: CashOperation[],
   rates: FreeCashInterestRate[] | undefined,
   today: string,
+  taxRate = 0,
 ): CashOperation[] {
   const active = activeRatesFromSettings(rates);
   if (active.size === 0) return [];
@@ -210,8 +219,28 @@ export function computeInterestOperations(
         source: 'auto-interest',
         importBatch: AUTO_INTEREST_BATCH,
       });
-      // Kapitalizacja: rata podnosi saldo kolejnych miesięcy.
+      // Kapitalizacja: rata BRUTTO podnosi saldo…
       balance.set(cur, (balance.get(cur) || 0) + amount);
+
+      // …a podatek (Belki) osobnym wierszem `fee` obniża je z powrotem — 1:1 jak
+      // broker (np. XTB „Free funds interest tax"). Kapitalizacja idzie więc na
+      // netto. IKE/IKZE: taxRate=0 → brak wiersza podatku.
+      if (taxRate > 0) {
+        const tax = round2(amount * taxRate);
+        if (tax >= 0.01) {
+          const taxPct = Math.round(taxRate * 100);
+          desired.push({
+            date: monthEnd,
+            operationType: 'fee',
+            description: `Podatek od odsetek (${taxPct}%)`,
+            amount: -tax,
+            currency: cur,
+            source: 'auto-interest',
+            importBatch: AUTO_INTEREST_BATCH,
+          });
+          balance.set(cur, (balance.get(cur) || 0) - tax);
+        }
+      }
     }
   }
 
@@ -266,6 +295,7 @@ export function scanInterest(portfolioId: string, force = false): InterestScanRe
       operations,
       portfolio.settings.freeCashInterest,
       today,
+      interestTaxRate(portfolio.settings),
     );
 
     let changed = false;
