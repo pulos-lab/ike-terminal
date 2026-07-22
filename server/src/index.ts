@@ -27,6 +27,7 @@ import { updateBenchmarkPrices } from './services/benchmark-updater.js';
 import { getBondCatalog } from './services/bond-catalog.js';
 import { backfillTickerNamesForPortfolio } from './services/ticker-name-backfill.js';
 import { scanAllPortfolios } from './services/dividend-scanner.js';
+import { scanAllInterest } from './services/interest-scanner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -299,6 +300,26 @@ setTimeout(() => {
 setInterval(
   () => {
     scanAllPortfolios().catch((err) => console.error('Dividend scan failed:', err));
+  },
+  12 * 60 * 60 * 1000,
+);
+
+// ── Interest scanner (oprocentowanie wolnych środków, raz/dobę per portfel) ──
+setTimeout(() => {
+  try {
+    scanAllInterest();
+  } catch (err) {
+    console.error('Initial interest scan failed:', err);
+  }
+}, 35_000);
+
+setInterval(
+  () => {
+    try {
+      scanAllInterest();
+    } catch (err) {
+      console.error('Interest scan failed:', err);
+    }
   },
   12 * 60 * 60 * 1000,
 );

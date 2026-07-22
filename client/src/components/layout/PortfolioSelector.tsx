@@ -25,7 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Plus, Settings, Trash2 } from 'lucide-react';
-import type { PortfolioSettings } from 'shared';
+import type { PortfolioSettings, FreeCashInterestRate } from 'shared';
 
 const NEW_PORTFOLIO_VALUE = '__new__';
 
@@ -61,7 +61,22 @@ export function PortfolioSelector() {
     commissionForeign: 0,
     minCommissionPl: 0,
     minCommissionForeign: 0,
+    freeCashInterest: [],
   });
+
+  // Oprocentowanie wolnych środków — helpery na tablicy stawek per waluta.
+  const interestRows: FreeCashInterestRate[] = editSettings.freeCashInterest ?? [];
+  const setInterestRows = (rows: FreeCashInterestRate[]) =>
+    setEditSettings({ ...editSettings, freeCashInterest: rows });
+  const updateInterestRow = (index: number, patch: Partial<FreeCashInterestRate>) =>
+    setInterestRows(interestRows.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  const addInterestRow = () =>
+    setInterestRows([
+      ...interestRows,
+      { currency: portfolioBaseCurrency, annualRatePct: 0, cap: undefined },
+    ]);
+  const removeInterestRow = (index: number) =>
+    setInterestRows(interestRows.filter((_, i) => i !== index));
 
   // Detect dominant currency of the active portfolio from its deposits.
   // IKE/IKZE are PLN-only products; for non-PLN portfolios (e.g. XTB USD sub-account)
@@ -361,6 +376,87 @@ export function PortfolioSelector() {
                   <span className="text-xs text-muted-foreground">w wal. giełdy</span>
                 </div>
               </div>
+            </div>
+
+            <Separator />
+
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-sm font-medium">Oprocentowanie wolnych środków</label>
+                <span className="text-xs text-muted-foreground">
+                  Aplikacja co miesiąc dopisze odsetki od dodatniego salda gotówki (kategoria
+                  „Odsetki"). Podaj roczną stawkę i opcjonalny limit kwoty osobno dla każdej waluty.
+                </span>
+              </div>
+
+              {interestRows.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="w-16">Waluta</span>
+                    <span className="w-20 text-right">Stawka %</span>
+                    <span className="w-28 text-right">Limit kwoty</span>
+                    <span className="w-8" />
+                  </div>
+                  {interestRows.map((row, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Input
+                        type="text"
+                        placeholder="PLN"
+                        value={row.currency}
+                        maxLength={3}
+                        onChange={(e) =>
+                          updateInterestRow(i, { currency: e.target.value.toUpperCase().trim() })
+                        }
+                        className="w-16 uppercase"
+                      />
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="4.00"
+                        value={row.annualRatePct || ''}
+                        onChange={(e) =>
+                          updateInterestRow(i, { annualRatePct: parseFloat(e.target.value) || 0 })
+                        }
+                        className="w-20 text-right"
+                      />
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="bez limitu"
+                        value={row.cap ?? ''}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          updateInterestRow(i, { cap: Number.isFinite(v) ? v : undefined });
+                        }}
+                        className="w-28 text-right"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeInterestRow(i)}
+                        aria-label="Usuń walutę"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="self-start"
+                onClick={addInterestRow}
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Dodaj walutę
+              </Button>
             </div>
           </div>
 
