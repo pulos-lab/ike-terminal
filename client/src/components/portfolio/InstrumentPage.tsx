@@ -95,7 +95,12 @@ export function InstrumentPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <InstrumentChart isin={isin} avgBuyPrice={position?.avgBuyPrice} height={460} />
+          <InstrumentChart
+            isin={isin}
+            avgBuyPrice={position?.avgBuyPrice}
+            height={460}
+            showRangePresets
+          />
         </CardContent>
       </Card>
 

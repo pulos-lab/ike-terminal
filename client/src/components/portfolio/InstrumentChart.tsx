@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   createChart,
@@ -13,14 +13,20 @@ import type { TransactionWithMeta } from 'shared';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { useTheme } from '@/lib/use-theme';
+import { getPresetStartDate } from '@/lib/returns';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { formatNumber, formatQuantity } from '@/lib/formatters';
+
+/** Te same etykiety co zakres wykresu dashboardu/share — spójna konwencja. */
+const PRESET_RANGES = ['1M', '3M', '6M', 'YTD', '1Y', '3Y', 'ALL'] as const;
 
 interface InstrumentChartProps {
   isin: string;
   height?: number;
   /** Pozioma linia śr. ceny nabycia (wartość z pozycji — już po korektach splitów). */
   avgBuyPrice?: number;
+  /** Pasek presetów zakresu (1M…ALL) nad wykresem — widok główny (strona instrumentu). */
+  showRangePresets?: boolean;
 }
 
 /**
@@ -32,11 +38,22 @@ interface InstrumentChartProps {
  * z dnia bez notowania — np. instrument zagraniczny a święto lokalne — nie
  * może wypaść z wykresu, bo lightweight-charts ignoruje czas spoza serii).
  */
-export function InstrumentChart({ isin, height = 400, avgBuyPrice }: InstrumentChartProps) {
+export function InstrumentChart({
+  isin,
+  height = 400,
+  avgBuyPrice,
+  showRangePresets = false,
+}: InstrumentChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const { isDark } = useTheme();
+  // Aktywny preset zakresu; '' = zakres ręczny (po zoomie/przesunięciu myszą).
+  // Ref-mirror, żeby efekt budujący wykres czytał aktualny preset bez bycia
+  // od niego zależnym (zmiana presetu NIE przebudowuje wykresu).
+  const [range, setRange] = useState<string>('ALL');
+  const rangeRef = useRef(range);
+  const applyingPresetRef = useRef(false);
 
   const { data: history, isLoading: historyLoading } = useQuery({
     queryKey: QUERY_KEYS.instrumentHistory(isin),
@@ -77,12 +94,43 @@ export function InstrumentChart({ isin, height = 400, avgBuyPrice }: InstrumentC
     return map;
   }, [points, instrumentTxs]);
 
+  // Ustawia widoczny zakres wg presetu. Preset starszy niż dane (albo ALL) →
+  // fitContent. Flagą applyingPresetRef zarządzają call-site'y (build/klik),
+  // żeby subskrypcja zakresu nie zdjęła podświetlenia po zmianie programowej.
+  const applyRangePreset = (chart: IChartApi, preset: string) => {
+    if (!points.length) return;
+    const firstDate = points[0].date;
+    const lastDate = points[points.length - 1].date;
+    const presetStart = preset && preset !== 'ALL' ? getPresetStartDate(preset) : undefined;
+    if (!presetStart || presetStart <= firstDate || presetStart >= lastDate) {
+      chart.timeScale().fitContent();
+    } else {
+      chart.timeScale().setVisibleRange({ from: presetStart as Time, to: lastDate as Time });
+    }
+  };
+
+  const handlePresetClick = (preset: string) => {
+    setRange(preset);
+    rangeRef.current = preset;
+    const chart = chartRef.current;
+    if (!chart) return;
+    applyingPresetRef.current = true;
+    applyRangePreset(chart, preset);
+    setTimeout(() => {
+      applyingPresetRef.current = false;
+    }, 100);
+  };
+
   useEffect(() => {
     if (!containerRef.current || !points.length) return;
 
     if (chartRef.current) {
       chartRef.current.remove();
     }
+
+    // Budowa wykresu odpala zdarzenia zakresu (fitContent, pierwszy resize) —
+    // przez chwilę traktujemy je jak programowe, żeby nie skasować presetu.
+    applyingPresetRef.current = true;
 
     const gainColor = isDark ? '#43c384' : '#1f845a';
     const lossColor = isDark ? '#e06a55' : '#c0392b';
@@ -155,17 +203,22 @@ export function InstrumentChart({ isin, height = 400, avgBuyPrice }: InstrumentC
     markers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
     createSeriesMarkers(priceSeries, markers);
 
-    chart.timeScale().fitContent();
+    applyRangePreset(chart, rangeRef.current);
 
     // Ograniczenie zakresu — nie wyjeżdżamy poza dane (z małym buforem)
     const maxIdx = points.length - 1;
     const buffer = Math.ceil(points.length * 0.03);
     let clamping = false;
-    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (!range || clamping) return;
-      const from = Math.max(range.from, -buffer);
-      const to = Math.min(range.to, maxIdx + buffer);
-      if (from !== range.from || to !== range.to) {
+    chart.timeScale().subscribeVisibleLogicalRangeChange((logical) => {
+      if (!logical || clamping) return;
+      // Ręczny zoom/pan unieważnia podświetlenie presetu (zakres już nie odpowiada etykiecie)
+      if (!applyingPresetRef.current && rangeRef.current) {
+        rangeRef.current = '';
+        setRange('');
+      }
+      const from = Math.max(logical.from, -buffer);
+      const to = Math.min(logical.to, maxIdx + buffer);
+      if (from !== logical.from || to !== logical.to) {
         clamping = true;
         chart.timeScale().setVisibleLogicalRange({ from, to });
         clamping = false;
@@ -234,7 +287,13 @@ export function InstrumentChart({ isin, height = 400, avgBuyPrice }: InstrumentC
     });
     observer.observe(containerRef.current);
 
+    // Zwolnienie flagi po ustabilizowaniu layoutu (pierwszy resize/fitContent)
+    const armTimer = setTimeout(() => {
+      applyingPresetRef.current = false;
+    }, 300);
+
     return () => {
+      clearTimeout(armTimer);
       observer.disconnect();
       chart.remove();
       chartRef.current = null;
@@ -258,28 +317,47 @@ export function InstrumentChart({ isin, height = 400, avgBuyPrice }: InstrumentC
   }
 
   return (
-    <div
-      style={{ position: 'relative' }}
-      ref={containerRef}
-      role="img"
-      aria-label={`Wykres kursu ${history?.ticker ?? ''} z zaznaczonymi transakcjami kupna i sprzedaży`}
-    >
+    <div>
+      {showRangePresets && (
+        <div className="mb-2 ml-auto flex w-fit items-center gap-0.5 rounded-md bg-muted p-0.5">
+          {PRESET_RANGES.map((r) => (
+            <button
+              key={r}
+              className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-medium transition-colors ${
+                range === r
+                  ? 'bg-primary/15 text-primary'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              onClick={() => handlePresetClick(r)}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+      )}
       <div
-        ref={tooltipRef}
-        style={{
-          display: 'none',
-          position: 'absolute',
-          zIndex: 10,
-          pointerEvents: 'none',
-          padding: '8px 12px',
-          borderRadius: '8px',
-          background: isDark ? '#1c1917' : '#fefdfb',
-          border: `1px solid ${isDark ? '#27272a' : '#e4e4e7'}`,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-          whiteSpace: 'nowrap',
-          color: isDark ? '#fafaf9' : '#1c1917',
-        }}
-      />
+        style={{ position: 'relative' }}
+        ref={containerRef}
+        role="img"
+        aria-label={`Wykres kursu ${history?.ticker ?? ''} z zaznaczonymi transakcjami kupna i sprzedaży`}
+      >
+        <div
+          ref={tooltipRef}
+          style={{
+            display: 'none',
+            position: 'absolute',
+            zIndex: 10,
+            pointerEvents: 'none',
+            padding: '8px 12px',
+            borderRadius: '8px',
+            background: isDark ? '#1c1917' : '#fefdfb',
+            border: `1px solid ${isDark ? '#27272a' : '#e4e4e7'}`,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            whiteSpace: 'nowrap',
+            color: isDark ? '#fafaf9' : '#1c1917',
+          }}
+        />
+      </div>
     </div>
   );
 }
