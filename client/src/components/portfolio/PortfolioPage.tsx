@@ -1,5 +1,6 @@
 import { useMemo, useState, useRef, useLayoutEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import type { Position } from 'shared';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -37,6 +38,7 @@ import { PortfolioDiversification } from './PortfolioDiversification';
 import { RiskReturnScatter } from './RiskReturnScatter';
 import { PortfolioOptionsCard } from './PortfolioOptionsCard';
 import { PortfolioPositionCardMobile } from './PortfolioPositionCardMobile';
+import { InstrumentSheet } from './InstrumentSheet';
 import { useToggleSet } from '@/hooks/useToggleSet';
 
 interface ColumnVisibility {
@@ -72,6 +74,9 @@ function saveVisibility(v: ColumnVisibility) {
 export function PortfolioPage() {
   const [colVis, setColVis] = useState<ColumnVisibility>(loadVisibility);
   const [expandedPositions, togglePosition] = useToggleSet<string>();
+  // Klik w wiersz pozycji → panel boczny z wykresem instrumentu (markery K/S);
+  // pełna strona /app/instrument/:isin dostępna linkiem z panelu.
+  const [sheetPos, setSheetPos] = useState<Position | null>(null);
 
   const toggleCol = (key: keyof ColumnVisibility) => {
     setColVis((prev) => {
@@ -300,7 +305,12 @@ export function PortfolioPage() {
                   </TableHeader>
                   <TableBody>
                     {regularPositions.map((pos) => (
-                      <TableRow key={pos.isin}>
+                      <TableRow
+                        key={pos.isin}
+                        className="cursor-pointer"
+                        title={`Pokaż wykres ${pos.ticker} z transakcjami`}
+                        onClick={() => setSheetPos(pos)}
+                      >
                         <TableCell className="font-mono font-medium">
                           {pos.ticker}
                           <CategoryBadge category={pos.category} />
@@ -546,6 +556,14 @@ export function PortfolioPage() {
       )}
 
       {regularPositions.length > 1 && <RiskReturnScatter positions={regularPositions} />}
+
+      <InstrumentSheet
+        position={sheetPos}
+        open={sheetPos !== null}
+        onOpenChange={(open) => {
+          if (!open) setSheetPos(null);
+        }}
+      />
     </div>
   );
 }

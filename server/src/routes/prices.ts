@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { DEFAULT_FX_PLN } from 'shared';
-import type { LivePrice, LivePricesResponse } from 'shared';
-import { fetchYahooPrice, fetchFxRate } from '../services/yahoo-finance.js';
-import { fetchStooqPrice } from '../services/stooq.js';
-import { fetchBiznesradarPrice } from '../services/biznesradar.js';
+import type { InstrumentHistoryResponse, LivePrice, LivePricesResponse } from 'shared';
+import { fetchYahooPrice, fetchFxRate, fetchYahooHistory } from '../services/yahoo-finance.js';
+import { fetchStooqPrice, fetchStooqHistory } from '../services/stooq.js';
+import { fetchBiznesradarPrice, fetchBiznesradarHistory } from '../services/biznesradar.js';
 import { fetchStockwatchBondPrice } from '../services/stockwatch-bonds.js';
-import { getAllTickers } from '../db/ticker-map-repo.js';
+import { getAllTickers, getTickerByIsin } from '../db/ticker-map-repo.js';
+import { getTransactionsByIsin } from '../db/transactions-repo.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { mapWithConcurrency } from '../services/concurrency.js';
 
@@ -55,6 +56,64 @@ router.get(
       prices,
       fx: { USDPLN: usdPln, CADPLN: cadPln, EURPLN: eurPln, GBPPLN: gbpPln },
       timestamp: new Date().toISOString(),
+    };
+    res.json(payload);
+  }),
+);
+
+// GET /api/prices/instrument-history?isin=... — historia kursu jednego instrumentu
+// (wykres pozycji z markerami K/S). Zakres: od pierwszej transakcji minus 30 dni
+// bufora, żeby było widać kontekst kursu sprzed wejścia w pozycję.
+router.get(
+  '/instrument-history',
+  asyncHandler(async (req, res) => {
+    const isin = typeof req.query.isin === 'string' ? req.query.isin : '';
+    if (!isin) {
+      res.status(400).json({ error: 'Parametr isin jest wymagany' });
+      return;
+    }
+    const entry = getTickerByIsin(isin, req.portfolioId);
+    if (!entry) {
+      res.status(404).json({ error: 'Nieznany instrument' });
+      return;
+    }
+
+    const txs = getTransactionsByIsin(isin, req.portfolioId);
+    const firstTxDate = txs.length ? txs[0].date.split('T')[0] : null;
+    const start = new Date(firstTxDate ? `${firstTxDate}T00:00:00Z` : Date.now());
+    start.setUTCDate(start.getUTCDate() - (firstTxDate ? 30 : 365));
+    const startDate = start.toISOString().split('T')[0];
+
+    // Routing źródeł jak przy historii dashboardu: NC/Catalyst → biznesradar → Stooq,
+    // reszta → Yahoo → Stooq (gdy Yahoo zwróci szczątkowe dane).
+    let points: Array<{ date: string; close: number }>;
+    let source: string;
+    if (entry.exchange === 'NC' || entry.exchange === 'CATALYST') {
+      points = await fetchBiznesradarHistory(entry.ticker, startDate);
+      source = 'biznesradar';
+      if (points.length < 2) {
+        points = await fetchStooqHistory(entry.ticker, startDate);
+        source = 'stooq';
+      }
+    } else {
+      points = await fetchYahooHistory(entry.ticker, startDate);
+      source = 'yahoo';
+      if (points.length < 10) {
+        const fallback = await fetchStooqHistory(entry.ticker, startDate);
+        if (fallback.length > points.length) {
+          points = fallback;
+          source = 'stooq';
+        }
+      }
+    }
+
+    const payload: InstrumentHistoryResponse = {
+      isin,
+      ticker: entry.ticker,
+      name: entry.name,
+      currency: entry.currency,
+      source,
+      points,
     };
     res.json(payload);
   }),

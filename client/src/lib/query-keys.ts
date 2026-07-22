@@ -23,6 +23,8 @@ export const QUERY_KEYS = {
    *  auto-reset przy zmianie portfela (resetPortfolioScopedQueries). */
   share: ['portfolio', 'share'] as const,
   livePrices: ['prices', 'live'] as const,
+  /** Historia kursu jednego instrumentu (wykres pozycji z markerami K/S). */
+  instrumentHistory: (isin: string) => ['prices', 'instrument-history', isin] as const,
   importStatus: ['import', 'status'] as const,
   /** Sprzedaże bez kupna (hub Importu) — detekcja liczona na żywo z transakcji. */
   orphanedSells: ['import', 'orphaned-sells'] as const,

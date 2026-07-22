@@ -7,6 +7,7 @@ import type {
   FeesResponse,
   FxHistoryResponse,
   ImportStatusResponse,
+  InstrumentHistoryResponse,
   LivePricesResponse,
   Portfolio,
   PortfolioHistoryResponse,
@@ -189,6 +190,11 @@ export const api = {
     }),
   // Transactions CRUD
   getTransactions: () => request<TransactionsResponse>('/portfolio/transactions'),
+
+  getInstrumentHistory: (isin: string) =>
+    request<InstrumentHistoryResponse>(
+      `/prices/instrument-history?isin=${encodeURIComponent(isin)}`,
+    ),
   createTransaction: (body: {
     date: string;
     ticker: string;

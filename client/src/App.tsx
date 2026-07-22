@@ -14,6 +14,7 @@ import { SharePublicPage } from '@/components/share/SharePublicPage';
 import { AppShell } from '@/components/layout/AppShell';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { PortfolioPage } from '@/components/portfolio/PortfolioPage';
+import { InstrumentPage } from '@/components/portfolio/InstrumentPage';
 import { TradesPage } from '@/components/transactions/TradesPage';
 import { DividendsPage } from '@/components/dividends/DividendsPage';
 import { CurrencyExchangePage } from '@/components/currency/CurrencyExchangePage';
@@ -63,6 +64,8 @@ function App() {
                         <Routes>
                           <Route path="/" element={<DashboardPage />} />
                           <Route path="/portfolio" element={<PortfolioPage />} />
+                          {/* Prototyp: dedykowana strona instrumentu (wariant C) */}
+                          <Route path="/instrument/:isin" element={<InstrumentPage />} />
                           <Route path="/trades" element={<TradesPage />} />
                           <Route path="/dividends" element={<DividendsPage />} />
                           <Route path="/currency" element={<CurrencyExchangePage />} />
