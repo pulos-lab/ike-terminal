@@ -10,6 +10,8 @@ import { getDb, closeDb } from '../db/connection.js';
 import { seedTickerMap } from '../db/ticker-map-repo.js';
 import { purgeAllData } from '../db/transactions-repo.js';
 import { deleteShareForPortfolio } from '../db/share-repo.js';
+import { scanInterest } from '../services/interest-scanner.js';
+import { isFiniteNumber } from './validation.js';
 import { DEMO_PORTFOLIO_ID } from 'shared';
 
 const router = Router();
@@ -22,6 +24,32 @@ router.use('/:id', (req, res, next) => {
   }
   next();
 });
+
+/**
+ * Waliduje `settings.freeCashInterest` (oprocentowanie wolnych środków). Zwraca
+ * komunikat błędu (string) gdy pole jest obecne i niepoprawne, albo null gdy OK.
+ * Silnik i zapis do bazy ufają temu polu, więc odsiewamy tu śmieci.
+ */
+function validateFreeCashInterest(settings: unknown): string | null {
+  if (!settings || typeof settings !== 'object') return null;
+  const fci = (settings as Record<string, unknown>).freeCashInterest;
+  if (fci === undefined || fci === null) return null;
+  if (!Array.isArray(fci)) return 'freeCashInterest musi być tablicą';
+  const seen = new Set<string>();
+  for (const entry of fci) {
+    if (!entry || typeof entry !== 'object') return 'Nieprawidłowy wpis oprocentowania';
+    const { currency, annualRatePct, cap } = entry as Record<string, unknown>;
+    if (typeof currency !== 'string' || !currency.trim()) return 'Wymagana waluta';
+    const cur = currency.trim().toUpperCase();
+    if (seen.has(cur)) return `Zduplikowana waluta: ${cur}`;
+    seen.add(cur);
+    if (!isFiniteNumber(annualRatePct) || annualRatePct < 0) return 'Stawka musi być liczbą ≥ 0';
+    if (cap !== undefined && cap !== null && (!isFiniteNumber(cap) || cap < 0)) {
+      return 'Limit (cap) musi być liczbą ≥ 0';
+    }
+  }
+  return null;
+}
 
 // GET /api/portfolios — returns portfolios owned by the authenticated user
 // Auto-creates a default portfolio if user has none
@@ -60,8 +88,23 @@ router.put('/:id', (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
   const { name, settings } = req.body;
+  const fciError = validateFreeCashInterest(settings);
+  if (fciError) return res.status(400).json({ error: fciError });
+
   const updated = updatePortfolio(id, { name, settings });
   if (!updated) return res.status(404).json({ error: 'Portfolio not found' });
+
+  // Przelicz auto-odsetki od razu po zmianie stawki/capu (force pomija dzienny
+  // throttle). Insert/delete wewnątrz bumpuje dataVersion → memo historii się
+  // unieważnia, więc dashboard i saldo pokazują nową wartość natychmiast.
+  if (settings !== undefined) {
+    try {
+      scanInterest(id, true);
+    } catch (err) {
+      console.error(`[portfolios] scanInterest po zapisie ustawień ${id}:`, err);
+    }
+  }
+
   res.json(updated);
 });
 

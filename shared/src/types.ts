@@ -24,6 +24,7 @@ export type RecordSource =
   | 'ibkr'
   | 'manual'
   | 'auto-yahoo'
+  | 'auto-interest' // odsetki naliczone przez interest-scanner (oprocentowanie wolnych środków)
   | 'generic';
 
 // ============ Transaction Types ============
@@ -1370,6 +1371,21 @@ export interface DetectResult {
 
 // ============ Portfolio Management ============
 
+/**
+ * Oprocentowanie wolnych środków — jedna stawka per waluta (stała w czasie,
+ * edytowalna w ustawieniach portfela). Konsumowane przez `interest-scanner.ts`,
+ * który miesięcznie dopisuje operacje `other`+`subkind:'interest'` do bazy.
+ */
+export interface FreeCashInterestRate {
+  currency: string; // ISO 4217 uppercase (PLN, USD, EUR…)
+  annualRatePct: number; // roczna stawka w % (np. 4 = 4% p.a.)
+  /**
+   * Maksymalne saldo (w tej walucie) objęte oprocentowaniem:
+   * odsetki = min(max(saldo, 0), cap) × stawka. 0 / undefined = bez limitu.
+   */
+  cap?: number;
+}
+
 export interface PortfolioSettings {
   isIKE: boolean;
   isIKZE: boolean;
@@ -1378,6 +1394,11 @@ export interface PortfolioSettings {
   commissionForeign: number; // prowizja zagraniczne w % (np. 0.29)
   minCommissionPl: number; // minimalna prowizja GPW w PLN
   minCommissionForeign: number; // minimalna prowizja zagraniczne
+  /**
+   * Oprocentowanie wolnych środków per waluta. Pusta lista / undefined =
+   * funkcja wyłączona (skaner usuwa wtedy wcześniej naliczone auto-odsetki).
+   */
+  freeCashInterest?: FreeCashInterestRate[];
 }
 
 export const DEFAULT_PORTFOLIO_SETTINGS: PortfolioSettings = {
@@ -1388,6 +1409,7 @@ export const DEFAULT_PORTFOLIO_SETTINGS: PortfolioSettings = {
   commissionForeign: 0,
   minCommissionPl: 0,
   minCommissionForeign: 0,
+  freeCashInterest: [],
 };
 
 export interface Portfolio {
