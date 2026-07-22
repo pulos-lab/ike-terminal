@@ -152,7 +152,10 @@ export const auth = betterAuth({
 
   trustedOrigins: isProduction
     ? [config.corsOrigin]
-    : ['http://localhost:5173', 'http://localhost:5174'],
+    : // Dev: klienty worktree'ów dostają kolejne porty (5173, 5174, 5179, 5184…) —
+      // jeden zakres zamiast dopisywania portu przy każdym nowym worktree
+      // (objaw braku: "Invalid origin" → 403 na sign-in mimo dobrych haseł).
+      Array.from({ length: 32 }, (_, i) => `http://localhost:${5173 + i}`),
 
   session: {
     cookieCache: {
