@@ -6,6 +6,7 @@ import { QUERY_KEYS } from '@/lib/query-keys';
 import { BENCHMARKS } from '@/lib/benchmarks';
 import { filterAndRebaseHistory, getPresetStartDate } from '@/lib/returns';
 import { usePortfolio } from '@/lib/portfolio-context';
+import { useLocalStorage } from '@/lib/use-local-storage';
 import { useTheme } from '@/lib/use-theme';
 import { compareSeriesColor, ACTIVE_SERIES_COLOR } from '@/lib/chart-palette';
 import type { CompareSeries } from '@/lib/compare-series';
@@ -73,11 +74,19 @@ function ChartLegend({
 export function DashboardPage() {
   const { activeName, activeId, portfolios } = usePortfolio();
   const { isDark } = useTheme();
-  const [benchmark, setBenchmark] = useState('sp500');
+  // Benchmark i tryb wykresu to trwałe preferencje (przeżywają zmianę zakładki
+  // i reload); localStorage może zawierać wartość spoza obecnej listy — klamra
+  // sprowadza ją do domyślnej zamiast wysyłać nieznany klucz do API.
+  const [storedBenchmark, setBenchmark] = useLocalStorage('dashboard-benchmark', 'sp500');
+  const benchmark = BENCHMARKS.some((b) => b.value === storedBenchmark) ? storedBenchmark : 'sp500';
   const [timeRange, setTimeRange] = useState<string>('ALL');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
-  const [chartMode, setChartMode] = useState<'mwr' | 'twr'>('mwr');
+  const [storedChartMode, setChartMode] = useLocalStorage<'mwr' | 'twr'>(
+    'dashboard-chart-mode',
+    'mwr',
+  );
+  const chartMode = storedChartMode === 'twr' ? 'twr' : 'mwr';
 
   // Tryb porównania: id INNYCH portfeli dokładanych na wykres (aktywny zawsze w grze).
   const [compareIds, setCompareIds] = useState<string[]>([]);
