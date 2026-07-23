@@ -10,7 +10,7 @@ import {
   type Time,
 } from 'lightweight-charts';
 import { Loader2 } from 'lucide-react';
-import type { TransactionWithMeta } from 'shared';
+import type { DividendRecord, TransactionWithMeta } from 'shared';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { useTheme } from '@/lib/use-theme';
@@ -76,6 +76,12 @@ export function InstrumentChart({
     queryFn: api.getTransactions,
   });
 
+  // Dywidendy nie bramkują renderu wykresu — markery dochodzą, gdy dane spłyną
+  const { data: divData } = useQuery({
+    queryKey: QUERY_KEYS.dividends,
+    queryFn: api.getDividends,
+  });
+
   const points = useMemo(
     () => [...(history?.points ?? [])].sort((a, b) => a.date.localeCompare(b.date)),
     [history?.points],
@@ -103,6 +109,22 @@ export function InstrumentChart({
     }
     return map;
   }, [points, instrumentTxs]);
+
+  // Wypłaty dywidend/kuponów instrumentu, też przypięte do sesji (dywidendy
+  // księgują się w dni wypłaty, które bywają poza sesjami notowań)
+  const divBySessionDate = useMemo(() => {
+    const map = new Map<string, DividendRecord[]>();
+    if (!points.length) return map;
+    const dates = points.map((p) => p.date);
+    for (const div of divData?.dividends ?? []) {
+      if (div.isin !== isin) continue;
+      const session = snapToSession(dates, div.date.split('T')[0]);
+      const list = map.get(session);
+      if (list) list.push(div);
+      else map.set(session, [div]);
+    }
+    return map;
+  }, [points, divData?.dividends, isin]);
 
   // Ustawia widoczny zakres wg presetu. Preset starszy niż dane (albo ALL) →
   // fitContent. Flagą applyingPresetRef zarządzają call-site'y (build/klik),
@@ -153,6 +175,7 @@ export function InstrumentChart({
     const gainColor = isDark ? '#43c384' : '#1f845a';
     const lossColor = isDark ? '#e06a55' : '#c0392b';
     const amberColor = isDark ? '#f59e0b' : '#c27a0a';
+    const divColor = isDark ? '#60a5fa' : '#2563eb';
     const currency = history?.currency ?? '';
 
     const chart = createChart(containerRef.current, {
@@ -204,7 +227,8 @@ export function InstrumentChart({
       });
     }
 
-    // Markery K/S — sortowanie po czasie jest wymagane przez lightweight-charts
+    // Markery K/S + wypłaty dywidend — sortowanie po czasie jest wymagane
+    // przez lightweight-charts
     const markers: SeriesMarker<Time>[] = [];
     for (const [session, txs] of txBySessionDate) {
       for (const tx of txs) {
@@ -217,6 +241,18 @@ export function InstrumentChart({
           text: `${tx.side} ${formatQuantity(tx.quantity)}`,
         });
       }
+    }
+    // Dywidendy: jedno kółko na linii kursu per dzień sesyjny (kilka wypłat
+    // jednego dnia — np. rozbicie brutto/podatek — nie mnoży markerów)
+    for (const session of divBySessionDate.keys()) {
+      markers.push({
+        time: session as Time,
+        position: 'inBar',
+        shape: 'circle',
+        color: divColor,
+        size: 0.7,
+        text: 'D',
+      });
     }
     markers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
     createSeriesMarkers(priceSeries, markers);
@@ -275,10 +311,22 @@ export function InstrumentChart({
         })
         .join('');
 
+      const divs = divBySessionDate.get(dateStr) ?? [];
+      const divRows = divs
+        .map(
+          (d) => `
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:2px">
+              <span style="width:8px;height:8px;border-radius:50%;background:${divColor};display:inline-block"></span>
+              ${d.subkind === 'coupon' ? 'Kupon' : 'Dywidenda'}: <strong>${formatNumber(d.amount)} ${d.currency}</strong>
+            </div>`,
+        )
+        .join('');
+
       tooltip.innerHTML = `
         <div style="font-size:11px;color:${isDark ? '#a8a29e' : '#71717a'};margin-bottom:4px">${dateStr}</div>
         <div style="font-size:12px">Kurs: <strong>${formatNumber(priceVal)} ${currency}</strong></div>
         ${txRows}
+        ${divRows}
       `;
 
       tooltip.style.display = 'block';
@@ -316,7 +364,7 @@ export function InstrumentChart({
       chart.remove();
       chartRef.current = null;
     };
-  }, [points, txBySessionDate, isDark, height, avgBuyPrice, history?.currency]);
+  }, [points, txBySessionDate, divBySessionDate, isDark, height, avgBuyPrice, history?.currency]);
 
   if (historyLoading || txLoading) {
     return (

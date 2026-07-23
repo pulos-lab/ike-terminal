@@ -46,7 +46,7 @@ export function InstrumentSheet({
                 </span>
               </SheetTitle>
               <SheetDescription className="flex items-center justify-between gap-2">
-                <span>Kurs z zaznaczonymi transakcjami kupna (▲) i sprzedaży (▼)</span>
+                <span>Kurs z transakcjami: kupno (▲), sprzedaż (▼), dywidenda (●)</span>
                 {/* mr-6: nie nachodzimy na wbudowany przycisk X w rogu panelu */}
                 <Button
                   variant="ghost"

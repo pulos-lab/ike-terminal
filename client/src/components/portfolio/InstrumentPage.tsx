@@ -90,7 +90,7 @@ export function InstrumentPage() {
           <CardTitle className="text-base">
             Kurs z transakcjami
             <span className="ml-2 text-muted-foreground font-normal">
-              (▲ kupno, ▼ sprzedaż{history ? ` | źródło: ${history.source}` : ''})
+              (▲ kupno, ▼ sprzedaż, ● dywidenda{history ? ` | źródło: ${history.source}` : ''})
             </span>
           </CardTitle>
         </CardHeader>
