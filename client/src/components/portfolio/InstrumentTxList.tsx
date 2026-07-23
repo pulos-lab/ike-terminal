@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { formatDate, formatNumber, formatQuantity, formatCurrency } from '@/lib/formatters';
+import { toQuotePrice } from './quote-price';
 
 /**
  * Zwięzła lista transakcji jednego instrumentu (do panelu bocznego / strony
@@ -13,6 +14,14 @@ export function InstrumentTxList({ isin, className }: { isin: string; className?
   const { data } = useQuery({
     queryKey: QUERY_KEYS.transactions,
     queryFn: api.getTransactions,
+  });
+
+  // Dzisiejsze kursy FX — do przeliczenia kwot PLN (Bossa/mBank zagranica)
+  // na walutę notowania tickera; serwer ma je w cache po załadowaniu pozycji.
+  const { data: livePrices } = useQuery({
+    queryKey: QUERY_KEYS.livePrices,
+    queryFn: api.getLivePrices,
+    staleTime: 5 * 60 * 1000,
   });
 
   const txs = useMemo(
@@ -31,15 +40,10 @@ export function InstrumentTxList({ isin, className }: { isin: string; className?
     <div className={className}>
       {txs.map((tx) => {
         const isBuy = tx.side === 'K';
-        // Bossa/mBank zagranica: endpoint nadpisuje `currency` walutą notowań,
-        // ale kwoty wiersza (price/total) pozostają w PLN — etykietujemy
-        // walutą rozliczenia, żeby nie pokazywać kwot PLN jako USD.
-        const totalCcy =
-          (tx.source === 'bossa' || tx.source === 'mbank') &&
-          tx.paymentCurrency &&
-          tx.paymentCurrency !== tx.currency
-            ? tx.paymentCurrency
-            : tx.currency;
+        // Kwoty w walucie notowania tickera (kupno w PLN z auto-przewalutowaniem
+        // Bossa/mBank → przeliczenie; "~" = dzisiejszy kurs, nie z dnia transakcji)
+        const qp = toQuotePrice(tx, livePrices?.fx);
+        const approxMark = qp.approx ? '~' : '';
         return (
           <div
             key={tx.id ?? `${tx.date}-${tx.side}-${tx.quantity}`}
@@ -55,12 +59,21 @@ export function InstrumentTxList({ isin, className }: { isin: string; className?
               </span>
               <span className="text-muted-foreground tabular-nums">{formatDate(tx.date)}</span>
             </div>
-            <div className="text-right tabular-nums">
+            <div
+              className="text-right tabular-nums"
+              title={
+                qp.approx
+                  ? 'Kwoty przeliczone dzisiejszym kursem FX (transakcja rozliczona w PLN przez auto-przewalutowanie brokera)'
+                  : undefined
+              }
+            >
               <span>
-                {formatQuantity(tx.quantity)} szt. @ {formatNumber(tx.price)}
+                {formatQuantity(tx.quantity)} szt. @ {approxMark}
+                {formatNumber(qp.price)}
               </span>
               <span className="ml-2 text-muted-foreground">
-                {formatCurrency(tx.total, totalCcy)}
+                {approxMark}
+                {formatCurrency(qp.total, qp.currency)}
               </span>
             </div>
           </div>

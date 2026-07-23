@@ -13,8 +13,15 @@ import {
   type Time,
 } from 'lightweight-charts';
 import { Loader2 } from 'lucide-react';
-import type { AppliedSpinOff, DividendRecord, StockSplit, TransactionWithMeta } from 'shared';
+import type {
+  AppliedSpinOff,
+  DividendRecord,
+  LiveFxRates,
+  StockSplit,
+  TransactionWithMeta,
+} from 'shared';
 import { api } from '@/lib/api-client';
+import { toQuotePrice } from './quote-price';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { useTheme } from '@/lib/use-theme';
 import { getPresetStartDate } from '@/lib/returns';
@@ -93,6 +100,15 @@ export function InstrumentChart({
     queryKey: QUERY_KEYS.spinOffs,
     queryFn: api.getSpinOffs,
   });
+  // Dzisiejsze kursy FX do przeliczeń w tooltipie (Bossa/mBank zagranica księgują
+  // w PLN). Ref zamiast dep efektu — odświeżenie kursów nie przebudowuje wykresu.
+  const { data: livePrices } = useQuery({
+    queryKey: QUERY_KEYS.livePrices,
+    queryFn: api.getLivePrices,
+    staleTime: 5 * 60 * 1000,
+  });
+  const fxRef = useRef<LiveFxRates | undefined>(undefined);
+  fxRef.current = livePrices?.fx;
 
   const points = useMemo(
     () => [...(history?.points ?? [])].sort((a, b) => a.date.localeCompare(b.date)),
@@ -445,10 +461,13 @@ export function InstrumentChart({
           const isBuy = tx.side === 'K';
           const color = isBuy ? gainColor : lossColor;
           const label = isBuy ? 'Kupno' : 'Sprzedaż';
+          // Cena w walucie notowania ("~" = przeliczenie dzisiejszym kursem FX)
+          const qp = toQuotePrice(tx, fxRef.current);
+          const approx = qp.approx ? '~' : '';
           return `
             <div style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:2px">
               <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block"></span>
-              ${label}: <strong>${formatQuantity(tx.quantity)} szt. @ ${formatNumber(tx.price)} ${tx.currency}</strong>
+              ${label}: <strong>${formatQuantity(tx.quantity)} szt. @ ${approx}${formatNumber(qp.price)} ${qp.currency}</strong>
             </div>`;
         })
         .join('');
