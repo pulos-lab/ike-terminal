@@ -31,6 +31,15 @@ export function InstrumentTxList({ isin, className }: { isin: string; className?
     <div className={className}>
       {txs.map((tx) => {
         const isBuy = tx.side === 'K';
+        // Bossa/mBank zagranica: endpoint nadpisuje `currency` walutą notowań,
+        // ale kwoty wiersza (price/total) pozostają w PLN — etykietujemy
+        // walutą rozliczenia, żeby nie pokazywać kwot PLN jako USD.
+        const totalCcy =
+          (tx.source === 'bossa' || tx.source === 'mbank') &&
+          tx.paymentCurrency &&
+          tx.paymentCurrency !== tx.currency
+            ? tx.paymentCurrency
+            : tx.currency;
         return (
           <div
             key={tx.id ?? `${tx.date}-${tx.side}-${tx.quantity}`}
@@ -51,7 +60,7 @@ export function InstrumentTxList({ isin, className }: { isin: string; className?
                 {formatQuantity(tx.quantity)} szt. @ {formatNumber(tx.price)}
               </span>
               <span className="ml-2 text-muted-foreground">
-                {formatCurrency(tx.total, tx.currency)}
+                {formatCurrency(tx.total, totalCcy)}
               </span>
             </div>
           </div>

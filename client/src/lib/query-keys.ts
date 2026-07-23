@@ -17,6 +17,7 @@ export const QUERY_KEYS = {
   fxHistory: ['portfolio', 'fx-history'] as const,
   fees: ['portfolio', 'fees'] as const,
   splits: ['portfolio', 'splits'] as const,
+  spinOffs: ['portfolio', 'spin-offs'] as const,
   corporateActions: ['portfolio', 'corporate-actions'] as const,
   additionalCosts: ['portfolio', 'additional-costs'] as const,
   /** Aktywny publiczny link portfela (ShareDialog) — prefix 'portfolio' =

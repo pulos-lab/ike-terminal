@@ -1,4 +1,5 @@
 import type {
+  AppliedSpinOff,
   CashFlowResponse,
   ClosedTradesResponse,
   CreateTransactionResult,
@@ -452,6 +453,8 @@ export const api = {
 
   // Stock Splits
   getSplits: () => request<SplitsResponse>('/portfolio/splits'),
+
+  getSpinOffs: () => request<{ spinOffs: AppliedSpinOff[] }>('/portfolio/spin-offs'),
   createSplit: (body: { isin: string; ticker: string; splitDate: string; ratio: number }) =>
     request<{ success: boolean }>('/portfolio/splits', {
       method: 'POST',

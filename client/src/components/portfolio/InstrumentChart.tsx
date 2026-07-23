@@ -4,13 +4,16 @@ import {
   createChart,
   createSeriesMarkers,
   AreaSeries,
+  LineSeries,
   LineStyle,
+  LineType,
   type IChartApi,
+  type ISeriesApi,
   type SeriesMarker,
   type Time,
 } from 'lightweight-charts';
 import { Loader2 } from 'lucide-react';
-import type { DividendRecord, TransactionWithMeta } from 'shared';
+import type { AppliedSpinOff, DividendRecord, StockSplit, TransactionWithMeta } from 'shared';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { useTheme } from '@/lib/use-theme';
@@ -76,10 +79,19 @@ export function InstrumentChart({
     queryFn: api.getTransactions,
   });
 
-  // Dywidendy nie bramkują renderu wykresu — markery dochodzą, gdy dane spłyną
+  // Dywidendy/splity/spin-offy nie bramkują renderu wykresu — markery dochodzą,
+  // gdy dane spłyną
   const { data: divData } = useQuery({
     queryKey: QUERY_KEYS.dividends,
     queryFn: api.getDividends,
+  });
+  const { data: splitsData } = useQuery({
+    queryKey: QUERY_KEYS.splits,
+    queryFn: api.getSplits,
+  });
+  const { data: spinOffsData } = useQuery({
+    queryKey: QUERY_KEYS.spinOffs,
+    queryFn: api.getSpinOffs,
   });
 
   const points = useMemo(
@@ -125,6 +137,97 @@ export function InstrumentChart({
     }
     return map;
   }, [points, divData?.dividends, isin]);
+
+  const instrumentSplits = useMemo(
+    () =>
+      (splitsData?.splits ?? [])
+        .filter((s) => s.isin === isin)
+        .sort((a, b) => a.splitDate.localeCompare(b.splitDate)),
+    [splitsData?.splits, isin],
+  );
+
+  // Spin-offy, w których instrument brał udział (jako rodzic lub dziecko);
+  // skipped_broker to też realne zdarzenie (broker sam zaksięgował dziecko),
+  // reverted — cofnięte, pomijamy.
+  const instrumentSpinOffs = useMemo(
+    () =>
+      (spinOffsData?.spinOffs ?? []).filter(
+        (s) => s.status !== 'reverted' && (s.parentIsin === isin || s.childIsin === isin),
+      ),
+    [spinOffsData?.spinOffs, isin],
+  );
+
+  const splitBySessionDate = useMemo(() => {
+    const map = new Map<string, StockSplit>();
+    if (!points.length) return map;
+    const dates = points.map((p) => p.date);
+    for (const s of instrumentSplits) map.set(snapToSession(dates, s.splitDate), s);
+    return map;
+  }, [points, instrumentSplits]);
+
+  const spinOffBySessionDate = useMemo(() => {
+    const map = new Map<string, AppliedSpinOff>();
+    if (!points.length) return map;
+    const dates = points.map((p) => p.date);
+    for (const s of instrumentSpinOffs) map.set(snapToSession(dates, s.exDate), s);
+    return map;
+  }, [points, instrumentSpinOffs]);
+
+  // Schodkowa linia średniego kosztu w czasie: po każdej transakcji K/S średnia
+  // się zmienia; gdy pozycja spada do zera — przerwa (whitespace). Spin-off
+  // obniża koszt rodzica o zamrożoną alokację.
+  const avgCostData = useMemo(() => {
+    if (!points.length || !instrumentTxs.length) return [];
+    // Ceny transakcji bywają w innej walucie niż notowania — przeliczenie
+    // wymagałoby historycznego FX, więc w takiej sytuacji linii nie rysujemy
+    // (statyczna śr. cena z silnika, już poprawnie przeliczona, zostaje).
+    // Dwa przypadki: (a) jawna rozbieżność walut; (b) Bossa/mBank zagranica —
+    // endpoint transakcji nadpisuje `currency` walutą notowań z ticker_map,
+    // ale surowa cena pozostaje w PLN (auto-FX brokera), co zdradza
+    // paymentCurrency ≠ currency przy tych źródłach.
+    const priceNotInQuote = (t: TransactionWithMeta) =>
+      (history?.currency ? t.currency !== history.currency : false) ||
+      ((t.source === 'bossa' || t.source === 'mbank') &&
+        !!t.paymentCurrency &&
+        t.paymentCurrency !== t.currency);
+    if (instrumentTxs.some(priceNotInQuote)) return [];
+    // Instrument ze splitem: cache price_history.db bywa NIEJEDNOLICIE
+    // adjustowany (wiersze sprzed splitu zapisane w dawnej skali, nowe w nowej
+    // — pułapka „split-window", por. PR #186), więc żadna korekta po stronie
+    // klienta nie jest wiarygodna. Linii nie rysujemy; marker splitu zostaje.
+    if (instrumentSplits.length) return [];
+    const parentSpinOffs = instrumentSpinOffs
+      .filter((s) => s.parentIsin === isin && s.status === 'applied')
+      .sort((a, b) => a.exDate.localeCompare(b.exDate));
+    let shares = 0;
+    let cost = 0;
+    let ti = 0;
+    let si = 0;
+    const out: Array<{ time: string; value?: number }> = [];
+    for (const p of points) {
+      while (ti < instrumentTxs.length && instrumentTxs[ti].date.split('T')[0] <= p.date) {
+        const tx = instrumentTxs[ti++];
+        if (tx.side === 'K') {
+          shares += tx.quantity;
+          cost += tx.quantity * tx.price;
+        } else if (shares > 0) {
+          cost -= tx.quantity * (cost / shares);
+          shares -= tx.quantity;
+          if (shares <= 1e-9) {
+            shares = 0;
+            cost = 0;
+          }
+        }
+      }
+      while (si < parentSpinOffs.length && parentSpinOffs[si].exDate <= p.date) {
+        cost *= 1 - parentSpinOffs[si].allocationPct;
+        si++;
+      }
+      if (shares > 1e-9 && cost > 0) out.push({ time: p.date, value: cost / shares });
+      else out.push({ time: p.date });
+    }
+    return out;
+  }, [points, instrumentTxs, instrumentSplits, instrumentSpinOffs, isin, history?.currency]);
 
   // Ustawia widoczny zakres wg presetu. Preset starszy niż dane (albo ALL) →
   // fitContent. Flagą applyingPresetRef zarządzają call-site'y (build/klik),
@@ -176,6 +279,8 @@ export function InstrumentChart({
     const lossColor = isDark ? '#e06a55' : '#c0392b';
     const amberColor = isDark ? '#f59e0b' : '#c27a0a';
     const divColor = isDark ? '#60a5fa' : '#2563eb';
+    const eventColor = isDark ? '#c084fc' : '#9333ea';
+    const avgCostColor = isDark ? '#a1a1aa' : '#78716c';
     const currency = history?.currency ?? '';
 
     const chart = createChart(containerRef.current, {
@@ -227,6 +332,21 @@ export function InstrumentChart({
       });
     }
 
+    // Schodkowa linia średniego kosztu w czasie (przerwy, gdy pozycja = 0)
+    let avgCostSeries: ISeriesApi<'Line'> | null = null;
+    if (avgCostData.some((d) => d.value != null)) {
+      avgCostSeries = chart.addSeries(LineSeries, {
+        color: avgCostColor,
+        lineWidth: 1,
+        lineType: LineType.WithSteps,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+        priceFormat: { type: 'custom', formatter: (v: number) => formatNumber(v) },
+      });
+      avgCostSeries.setData(avgCostData.map((d) => ({ ...d, time: d.time as Time })));
+    }
+
     // Markery K/S + wypłaty dywidend — sortowanie po czasie jest wymagane
     // przez lightweight-charts
     const markers: SeriesMarker<Time>[] = [];
@@ -252,6 +372,28 @@ export function InstrumentChart({
         color: divColor,
         size: 0.7,
         text: 'D',
+      });
+    }
+    // Zdarzenia korporacyjne: splity i spin-offy (kwadrat nad świecą)
+    for (const [session, split] of splitBySessionDate) {
+      markers.push({
+        time: session as Time,
+        position: 'aboveBar',
+        shape: 'square',
+        color: eventColor,
+        size: 0.7,
+        text: `Split ${splitRatioLabel(split.ratio)}`,
+      });
+    }
+    for (const [session, so] of spinOffBySessionDate) {
+      markers.push({
+        time: session as Time,
+        position: 'aboveBar',
+        shape: 'square',
+        color: eventColor,
+        size: 0.7,
+        text:
+          so.parentIsin === isin ? `Spin-off ${so.childTicker}` : `Spin-off z ${so.parentTicker}`,
       });
     }
     markers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
@@ -322,11 +464,41 @@ export function InstrumentChart({
         )
         .join('');
 
+      const eventRow = (label: string) => `
+        <div style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:2px">
+          <span style="width:8px;height:8px;background:${eventColor};display:inline-block"></span>
+          ${label}
+        </div>`;
+      const split = splitBySessionDate.get(dateStr);
+      const splitRow = split
+        ? eventRow(
+            `${split.ratio < 1 ? 'Reverse split' : 'Split'} <strong>${splitRatioLabel(split.ratio)}</strong>`,
+          )
+        : '';
+      const so = spinOffBySessionDate.get(dateStr);
+      const spinOffRow = so
+        ? eventRow(
+            so.parentIsin === isin
+              ? `Spin-off: <strong>${so.childTicker}</strong> (−${(so.allocationPct * 100).toFixed(1)}% kosztu)`
+              : `Wydzielenie z <strong>${so.parentTicker}</strong>`,
+          )
+        : '';
+
+      const avg = avgCostSeries ? param.seriesData.get(avgCostSeries) : undefined;
+      const avgVal = avg && 'value' in avg ? (avg as { value: number }).value : null;
+      const avgRow =
+        avgVal !== null
+          ? `<div style="font-size:12px;color:${isDark ? '#a8a29e' : '#71717a'}">Śr. koszt: <strong>${formatNumber(avgVal)} ${currency}</strong></div>`
+          : '';
+
       tooltip.innerHTML = `
         <div style="font-size:11px;color:${isDark ? '#a8a29e' : '#71717a'};margin-bottom:4px">${dateStr}</div>
         <div style="font-size:12px">Kurs: <strong>${formatNumber(priceVal)} ${currency}</strong></div>
+        ${avgRow}
         ${txRows}
         ${divRows}
+        ${splitRow}
+        ${spinOffRow}
       `;
 
       tooltip.style.display = 'block';
@@ -364,7 +536,19 @@ export function InstrumentChart({
       chart.remove();
       chartRef.current = null;
     };
-  }, [points, txBySessionDate, divBySessionDate, isDark, height, avgBuyPrice, history?.currency]);
+  }, [
+    points,
+    txBySessionDate,
+    divBySessionDate,
+    splitBySessionDate,
+    spinOffBySessionDate,
+    avgCostData,
+    isin,
+    isDark,
+    height,
+    avgBuyPrice,
+    history?.currency,
+  ]);
 
   if (historyLoading || txLoading) {
     return (
@@ -432,6 +616,11 @@ export function InstrumentChart({
       </div>
     </div>
   );
+}
+
+/** „2:1" dla splitu (ratio 2), „1:20" dla reverse splitu (ratio 0.05). */
+function splitRatioLabel(ratio: number): string {
+  return ratio < 1 ? `1:${Math.round(1 / ratio)}` : `${Math.round(ratio)}:1`;
 }
 
 /**
