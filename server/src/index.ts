@@ -10,8 +10,8 @@ import { auth, closeAuthDb } from './auth.js';
 import { requireAuth } from './middleware/auth.js';
 import { demoAccess, demoLimiter, requireAuthOrDemo } from './middleware/demo-access.js';
 import { initRegistry, getAllPortfolios } from './db/portfolio-registry.js';
-import { getDb, closeDb } from './db/connection.js';
-import { seedTickerMap, migrateGpwToYahoo } from './db/ticker-map-repo.js';
+import { closeDb } from './db/connection.js';
+import { initAllPortfolioDbs } from './db/startup-init.js';
 import { portfolioMiddleware } from './middleware/portfolio.js';
 import portfoliosRouter from './routes/portfolios.js';
 import pricesRouter from './routes/prices.js';
@@ -175,13 +175,17 @@ app.get('/api/benchmark-diag', async (_req, res) => {
 // ── Database initialization ─────────────────────────────────────────────────
 initRegistry();
 
-for (const portfolio of getAllPortfolios()) {
-  getDb(portfolio.id);
-  seedTickerMap(portfolio.id);
-  const migrated = migrateGpwToYahoo(portfolio.id);
-  if (migrated > 0) console.log(`  Migrated ${migrated} GPW tickers to Yahoo in ${portfolio.id}`);
+// Guard per portfel (initAllPortfolioDbs): zepsuta baza jednego portfela nie
+// blokuje startu serwera — incydent 2026-07-23 (root-owned demo.db → crash-loop).
+const dbInit = initAllPortfolioDbs();
+if (dbInit.failed.length > 0) {
+  console.error(
+    `Databases initialized WITH ERRORS: ${dbInit.ok.length} OK, ` +
+      `${dbInit.failed.length} pominięte (${dbInit.failed.map((f) => f.id).join(', ')}).`,
+  );
+} else {
+  console.log('All databases initialized, ticker maps seeded.');
 }
-console.log('All databases initialized, ticker maps seeded.');
 
 // ── Protected API Routes (auth + portfolio middleware applied only to /api) ──
 app.use('/api/portfolios', requireAuth, portfolioMiddleware, portfoliosRouter);
