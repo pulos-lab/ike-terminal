@@ -1217,6 +1217,18 @@ export interface LivePricesResponse {
   timestamp: string;
 }
 
+/** GET /prices/instrument-history — historia kursu jednego instrumentu
+ *  (wykres pozycji z markerami K/S). Zakres od pierwszej transakcji −30 dni. */
+export interface InstrumentHistoryResponse {
+  isin: string;
+  ticker: string;
+  name: string;
+  currency: string;
+  /** Faktycznie użyte źródło: 'yahoo' | 'biznesradar' | 'stooq'. */
+  source: string;
+  points: Array<{ date: string; close: number }>;
+}
+
 export interface OrphanedSell {
   paperName: string;
   isin: string;

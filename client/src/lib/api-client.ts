@@ -1,4 +1,5 @@
 import type {
+  AppliedSpinOff,
   CashFlowResponse,
   ClosedTradesResponse,
   CreateTransactionResult,
@@ -7,6 +8,7 @@ import type {
   FeesResponse,
   FxHistoryResponse,
   ImportStatusResponse,
+  InstrumentHistoryResponse,
   LivePricesResponse,
   Portfolio,
   PortfolioHistoryResponse,
@@ -230,6 +232,11 @@ export const api = {
     }),
   // Transactions CRUD
   getTransactions: () => request<TransactionsResponse>('/portfolio/transactions'),
+
+  getInstrumentHistory: (isin: string, opts?: { full?: boolean }) =>
+    request<InstrumentHistoryResponse>(
+      `/prices/instrument-history?isin=${encodeURIComponent(isin)}${opts?.full ? '&full=1' : ''}`,
+    ),
   createTransaction: (body: {
     date: string;
     ticker: string;
@@ -487,6 +494,8 @@ export const api = {
 
   // Stock Splits
   getSplits: () => request<SplitsResponse>('/portfolio/splits'),
+
+  getSpinOffs: () => request<{ spinOffs: AppliedSpinOff[] }>('/portfolio/spin-offs'),
   createSplit: (body: { isin: string; ticker: string; splitDate: string; ratio: number }) =>
     request<{ success: boolean }>('/portfolio/splits', {
       method: 'POST',

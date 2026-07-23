@@ -17,12 +17,17 @@ export const QUERY_KEYS = {
   fxHistory: ['portfolio', 'fx-history'] as const,
   fees: ['portfolio', 'fees'] as const,
   splits: ['portfolio', 'splits'] as const,
+  spinOffs: ['portfolio', 'spin-offs'] as const,
   corporateActions: ['portfolio', 'corporate-actions'] as const,
   additionalCosts: ['portfolio', 'additional-costs'] as const,
   /** Aktywny publiczny link portfela (ShareDialog) — prefix 'portfolio' =
    *  auto-reset przy zmianie portfela (resetPortfolioScopedQueries). */
   share: ['portfolio', 'share'] as const,
   livePrices: ['prices', 'live'] as const,
+  /** Historia kursu jednego instrumentu (wykres pozycji z markerami K/S);
+   *  full = pełna historia notowań (preset sięgający przed pierwszą transakcję). */
+  instrumentHistory: (isin: string, full = false) =>
+    ['prices', 'instrument-history', isin, full ? 'full' : 'tx'] as const,
   importStatus: ['import', 'status'] as const,
   /** Sprzedaże bez kupna (hub Importu) — detekcja liczona na żywo z transakcji. */
   orphanedSells: ['import', 'orphaned-sells'] as const,

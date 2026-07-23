@@ -8,7 +8,8 @@ import {
   formatPLN,
   formatQuantity,
 } from '@/lib/formatters';
-import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import { AlertTriangle, ChartLine, ChevronDown, ChevronRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { Position } from 'shared';
 
 interface SplitInfo {
@@ -52,6 +53,7 @@ export function PortfolioPositionCardMobile({
   isExpanded,
   onToggle,
 }: Props) {
+  const navigate = useNavigate();
   const value = useNativeCcy
     ? formatCurrency(position.currentValue ?? 0, baseCurrency)
     : formatPLN(position.currentValuePln);
@@ -173,6 +175,15 @@ export function PortfolioPositionCardMobile({
               {formatCurrency(position.profitLoss, position.currency)}
             </span>
           </div>
+          {/* Na mobile panel boczny jest za wąski na wykres — nawigujemy na
+              pełną stronę instrumentu. */}
+          <button
+            className="mt-1.5 flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card py-1.5 text-xs font-medium text-foreground/80 active:bg-muted/60"
+            onClick={() => navigate(`/app/instrument/${encodeURIComponent(position.isin)}`)}
+          >
+            <ChartLine className="h-3.5 w-3.5" />
+            Wykres z transakcjami
+          </button>
         </div>
       )}
     </div>
