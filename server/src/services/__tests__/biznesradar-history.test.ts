@@ -31,6 +31,16 @@ vi.mock('../history-cache.js', () => ({
 }));
 
 import { parseBiznesradarHistoryTable, fetchBiznesradarHistory } from '../biznesradar.js';
+import { setBiznesradarGuardForTests, getBiznesradarGuard } from '../biznesradar-guard.js';
+import { createSourceGuard, createMemoryGuardStore } from '../source-guard.js';
+
+// Świeży guard per test — bez tego default singleton otwierałby realny price_history.db.
+beforeEach(() => {
+  setBiznesradarGuardForTests(
+    createSourceGuard({ name: 'biznesradar', store: createMemoryGuardStore(), notify: () => {} }),
+  );
+});
+afterEach(() => setBiznesradarGuardForTests(null));
 
 // ── Fixtury tabeli qTableFull ───────────────────────────────────────────────
 const HEADER =
@@ -171,5 +181,35 @@ describe('fetchBiznesradarHistory', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1); // break po pierwszej blokadzie
     expect(data).toEqual([{ date: '2026-06-01', close: 0.4 }]); // cache
+  });
+
+  it('str. 1 z kodem 200 bez tabeli → parse-miss history:<key>', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => makeResp(url, '<html>nowy layout bez qTableFull</html>')),
+    );
+    await fetchBiznesradarHistory('EXC', '2026-07-01');
+    expect(getBiznesradarGuard().getState().parseMissKeys).toEqual(['history:exc']);
+  });
+
+  it('404 nie rejestruje parse-missa', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => makeResp(url, 'nie istnieje', 404)),
+    );
+    await fetchBiznesradarHistory('XXX', '2026-07-01');
+    expect(getBiznesradarGuard().getState().parseMissKeys).toEqual([]);
+  });
+
+  it('udany fetch rejestruje sukces i czyści miss klucza', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => serve(url)),
+    );
+    getBiznesradarGuard().registerParseMiss('history:exc');
+    await fetchBiznesradarHistory('EXC', '2026-07-10');
+    const state = getBiznesradarGuard().getState();
+    expect(state.parseMissKeys).toEqual([]);
+    expect(state.lastSuccessAt).not.toBeNull();
   });
 });

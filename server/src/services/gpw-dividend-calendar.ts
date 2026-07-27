@@ -25,6 +25,8 @@ import fs from 'fs';
 import path from 'path';
 import { config } from '../config.js';
 import type { UpcomingDividend } from 'shared';
+import { detectBiznesradarBlock, getBiznesradarGuard } from './biznesradar-guard.js';
+import type { SourceGuard } from './source-guard.js';
 
 // ── Typy ────────────────────────────────────────────────────────────────────
 
@@ -326,6 +328,8 @@ export interface GpwDividendCalendarServiceOptions {
   now?: () => Date;
   /** Przerwa między requestami (default 1000 ms; testy podają 0). */
   politenessDelayMs?: number;
+  /** Wspólny guard biznesradar (default: singleton); dotyczy TYLKO stron biznesradar. */
+  guard?: SourceGuard;
 }
 
 export interface GpwDividendCalendarService {
@@ -355,6 +359,7 @@ export function createGpwDividendCalendarService(
   const now = options.now ?? (() => new Date());
   const politenessDelayMs = options.politenessDelayMs ?? 1000;
   const dbFile = options.dbFile ?? path.join(config.dataDir, 'price_history.db');
+  const guard = options.guard ?? getBiznesradarGuard();
 
   let db: Database.Database | null = null;
   let inFlightRefresh: Promise<void> | null = null;
@@ -403,22 +408,42 @@ export function createGpwDividendCalendarService(
       .run(key, isoTimestamp);
   }
 
-  async function fetchPage(url: string): Promise<string> {
-    const resp = await fetchFn(url, {
-      headers: { 'User-Agent': USER_AGENT },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${url}`);
-    return await resp.text();
-  }
-
+  /**
+   * Pobranie i parse jednego źródła; awaria → [] (partial-merge z pozostałych).
+   * `guardKey` podawany WYŁĄCZNIE dla stron biznesradar — włącza integrację
+   * z guardem: respektowanie bezpiecznika, detekcję blokady anti-bot
+   * i rejestrację parse-missów (0 wierszy z odpowiedzi 200 = kandydat na
+   * zmianę markupu; strony zawierają też wpisy historyczne, więc nigdy nie są
+   * legalnie puste). Stockwatch chodzi bez guarda.
+   */
   async function fetchSource(
     url: string,
     parser: (html: string, now: Date) => GpwCalendarEntry[],
+    guardKey?: string,
   ): Promise<GpwCalendarEntry[]> {
+    if (guardKey && guard.isBlocked()) {
+      console.warn(`[gpw-dividend-calendar] bezpiecznik biznesradar otwarty — pomijam ${url}`);
+      return [];
+    }
     try {
-      const html = await fetchPage(url);
-      return parser(html, now());
+      const resp = await fetchFn(url, {
+        headers: { 'User-Agent': USER_AGENT },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      // Body czytamy także przy !ok — markery challenge przychodzą w treści 403/503.
+      const html = await resp.text().catch(() => '');
+      if (guardKey && detectBiznesradarBlock(resp.status, html)) {
+        guard.registerBlock();
+        console.warn(`[gpw-dividend-calendar] blokada anti-bot (HTTP ${resp.status}) dla ${url}`);
+        return [];
+      }
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${url}`);
+      const rows = parser(html, now());
+      if (guardKey) {
+        if (rows.length === 0) guard.registerParseMiss(guardKey, { structural: true });
+        else guard.registerSuccess(guardKey);
+      }
+      return rows;
     } catch (err) {
       console.warn(`[gpw-dividend-calendar] Nie udało się pobrać ${url}:`, err);
       return [];
@@ -431,9 +456,9 @@ export function createGpwDividendCalendarService(
 
     const stockwatchEntries = await fetchSource(STOCKWATCH_URL, parseStockwatch);
     await sleep(politenessDelayMs);
-    const brGpw = await fetchSource(BIZNESRADAR_GPW_URL, parseBiznesradar);
+    const brGpw = await fetchSource(BIZNESRADAR_GPW_URL, parseBiznesradar, 'calendar:gpw');
     await sleep(politenessDelayMs);
-    const brNc = await fetchSource(BIZNESRADAR_NC_URL, parseBiznesradar);
+    const brNc = await fetchSource(BIZNESRADAR_NC_URL, parseBiznesradar, 'calendar:nc');
     const biznesradarEntries = [...brGpw, ...brNc];
 
     if (stockwatchEntries.length === 0 && biznesradarEntries.length === 0) {

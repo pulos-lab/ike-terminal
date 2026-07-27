@@ -12,6 +12,16 @@ import {
   createGpwDividendCalendarService,
   type GpwCalendarEntry,
 } from '../gpw-dividend-calendar.js';
+import { createSourceGuard, createMemoryGuardStore } from '../source-guard.js';
+
+/** Świeży guard per serwis — bez wstrzyknięcia default singleton otwierałby realną bazę. */
+function makeGuard() {
+  return createSourceGuard({
+    name: 'biznesradar',
+    store: createMemoryGuardStore(),
+    notify: () => {},
+  });
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -327,7 +337,11 @@ describe('upcomingFromCalendarEntry', () => {
 describe('createGpwDividendCalendarService', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  function makeService(opts: { failing?: () => boolean; clock: { now: Date } }) {
+  function makeService(opts: {
+    failing?: () => boolean;
+    clock: { now: Date };
+    guard?: ReturnType<typeof makeGuard>;
+  }) {
     const fetchCalls: string[] = [];
     const fetchFn = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
@@ -342,6 +356,7 @@ describe('createGpwDividendCalendarService', () => {
       dbFile: ':memory:',
       now: () => opts.clock.now,
       politenessDelayMs: 0,
+      guard: opts.guard ?? makeGuard(),
     });
     return { service, fetchCalls };
   }
@@ -425,6 +440,7 @@ describe('createGpwDividendCalendarService', () => {
       dbFile: ':memory:',
       now: () => NOW,
       politenessDelayMs: 0,
+      guard: makeGuard(),
     });
 
     const cal = await service.getCalendar();
@@ -432,6 +448,79 @@ describe('createGpwDividendCalendarService', () => {
     // biznesradarowe przybliżenie ex-date (z prawem + 1 dzień roboczy)
     expect(cal.byTicker.get('STF')?.exDate).toBe('2026-08-18');
     expect(cal.byShortName.has('SNIEZKA')).toBe(false); // stockwatch-only nieobecne
+    service.close();
+  });
+
+  it('strony biznesradar 200-puste → parse-miss calendar:gpw/nc; stockwatch dalej zapisany', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const guard = makeGuard();
+    const fetchFn = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('stockwatch')) return new Response(stockwatchHtml, { status: 200 });
+      return new Response('<html><body>nowy layout bez tabeli</body></html>', { status: 200 });
+    }) as unknown as typeof fetch;
+    const service = createGpwDividendCalendarService({
+      fetchFn,
+      dbFile: ':memory:',
+      now: () => NOW,
+      politenessDelayMs: 0,
+      guard,
+    });
+
+    const cal = await service.getCalendar();
+    expect(cal.byShortName.has('SNIEZKA')).toBe(true); // partial-merge ze stockwatch
+    expect(guard.getState().parseMissKeys).toEqual(['calendar:gpw', 'calendar:nc']);
+    service.close();
+    vi.restoreAllMocks();
+  });
+
+  it('blokada anti-bot (403) na stronach BR → registerBlock, bez wyjątku', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const guard = makeGuard();
+    const fetchFn = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('stockwatch')) return new Response(stockwatchHtml, { status: 200 });
+      return new Response('Access denied', { status: 403 });
+    }) as unknown as typeof fetch;
+    const service = createGpwDividendCalendarService({
+      fetchFn,
+      dbFile: ':memory:',
+      now: () => NOW,
+      politenessDelayMs: 0,
+      guard,
+    });
+
+    const cal = await service.getCalendar();
+    expect(cal.byShortName.has('SNIEZKA')).toBe(true);
+    expect(guard.getState().consecutiveBlocks).toBe(2); // obie strony BR
+    expect(guard.getState().parseMissKeys).toEqual([]); // blokada ≠ parse-miss
+    service.close();
+    vi.restoreAllMocks();
+  });
+
+  it('bezpiecznik otwarty → fetch tylko stockwatch (1 wywołanie zamiast 3)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const guard = makeGuard();
+    for (let i = 0; i < 3; i++) guard.registerBlock();
+    const clock = { now: new Date(NOW) };
+    const { service, fetchCalls } = makeService({ clock, guard });
+
+    const cal = await service.getCalendar();
+    expect(fetchCalls).toEqual(['https://www.stockwatch.pl/dywidendy']);
+    expect(cal.byShortName.has('SNIEZKA')).toBe(true);
+    service.close();
+    vi.restoreAllMocks();
+  });
+
+  it('udane strony BR rejestrują sukces (lastSuccessAt) i czyszczą missy', async () => {
+    const guard = makeGuard();
+    guard.registerParseMiss('calendar:gpw', { structural: true });
+    const clock = { now: new Date(NOW) };
+    const { service } = makeService({ clock, guard });
+
+    await service.getCalendar();
+    expect(guard.getState().parseMissKeys).toEqual([]);
+    expect(guard.getState().lastSuccessAt).not.toBeNull();
     service.close();
   });
 });

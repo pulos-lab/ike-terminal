@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -8,6 +8,20 @@ import {
   createBrCatalogService,
   searchNcStatic,
 } from '../biznesradar-catalog.js';
+import { createSourceGuard, createMemoryGuardStore } from '../source-guard.js';
+
+/**
+ * Świeży guard per serwis — bez jawnego wstrzyknięcia default singleton
+ * otwierałby realny price_history.db i (przy alercie) dynamic-importem
+ * admin-notifications inicjalizował auth.
+ */
+function makeGuard() {
+  return createSourceGuard({
+    name: 'biznesradar',
+    store: createMemoryGuardStore(),
+    notify: () => {},
+  });
+}
 
 // ── Payload testowy ─────────────────────────────────────────────────────────
 // Realne kształty wpisów z service-data-short-js/1 (2026-07-16). MIN_PLAUSIBLE
@@ -284,7 +298,12 @@ describe('searchNcStatic', () => {
 describe('createBrCatalogService', () => {
   it('NC po tickerze/nazwie → .WA/NC/PLN; GPW → GPW/PLN; jeden fetch na wiele wyszukiwań', async () => {
     const { fn, calls } = makeFetch({ catalog: [makePayload()] });
-    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+    const svc = createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: fn,
+      politenessDelayMs: 0,
+    });
 
     for (const q of ['AIT', 'AITON', 'aiton caldwell']) {
       const hit = (await svc.search(q)).find((r) => r.symbol === 'AIT.WA');
@@ -308,7 +327,12 @@ describe('createBrCatalogService', () => {
 
   it('dokładne trafienie tickera nie ginie pod capem dopasowań', async () => {
     const { fn } = makeFetch({ catalog: [makePayload(600)] });
-    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+    const svc = createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: fn,
+      politenessDelayMs: 0,
+    });
     // "Z0" prefiksowo łapie Z000–Z099 (100 wpisów przed Z0 w katalogu);
     // exact ticker Z0 siedzi na KOŃCU — bez pre-sortu wypadłby za capem.
     const results = await svc.search('Z0');
@@ -320,6 +344,7 @@ describe('createBrCatalogService', () => {
   it('awaria fetchu → fallback statyczna mapa NC (search nigdy nie rzuca)', async () => {
     const { fn } = makeFetch({ catalog: [new Error('network down')] });
     const svc = createBrCatalogService({
+      guard: makeGuard(),
       dbFile: ':memory:',
       fetchFn: fn,
       coldStartWaitMs: 10,
@@ -338,6 +363,7 @@ describe('createBrCatalogService', () => {
     const { fn, calls } = makeFetch({ catalog: [makePayload(), truncated] });
     const nowRef = { value: new Date('2026-07-16T10:00:00Z') };
     const svc = createBrCatalogService({
+      guard: makeGuard(),
       dbFile: ':memory:',
       fetchFn: fn,
       now: () => nowRef.value,
@@ -360,14 +386,24 @@ describe('createBrCatalogService', () => {
     const dbFile = path.join(dir, 'price_history.db');
     try {
       const first = makeFetch({ catalog: [makePayload()] });
-      const svc1 = createBrCatalogService({ dbFile, fetchFn: first.fn, politenessDelayMs: 0 });
+      const svc1 = createBrCatalogService({
+        guard: makeGuard(),
+        dbFile,
+        fetchFn: first.fn,
+        politenessDelayMs: 0,
+      });
       expect((await svc1.search('KGHM')).length).toBeGreaterThan(0);
       expect(first.calls()).toBe(1);
       svc1.close();
 
       // „Restart": nowa instancja, ta sama baza — index z DB, zero fetchy
       const second = makeFetch({ catalog: [makePayload()] });
-      const svc2 = createBrCatalogService({ dbFile, fetchFn: second.fn, politenessDelayMs: 0 });
+      const svc2 = createBrCatalogService({
+        guard: makeGuard(),
+        dbFile,
+        fetchFn: second.fn,
+        politenessDelayMs: 0,
+      });
       const kgh = (await svc2.search('KGHM')).find((r) => r.symbol === 'KGH.WA');
       expect(kgh).toBeDefined();
       expect(second.calls()).toBe(0);
@@ -383,6 +419,7 @@ describe('createBrCatalogService', () => {
     });
     const nowRef = { value: new Date('2026-07-16T10:00:00Z') };
     const svc = createBrCatalogService({
+      guard: makeGuard(),
       dbFile: ':memory:',
       fetchFn: fn,
       now: () => nowRef.value,
@@ -414,7 +451,12 @@ describe('createBrCatalogService — GlobalConnect i kolizja NC', () => {
 
   it('spółki GlobalConnect NIE są podpowiadane (AAPL.WA wycięty przez stronę GC)', async () => {
     const { fn, gcCalls } = makeFetch({ catalog: [makePayload()] });
-    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+    const svc = createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: fn,
+      politenessDelayMs: 0,
+    });
 
     const results = await svc.search('APPLE');
     expect(results.find((r) => r.symbol === 'AAPL.WA')).toBeUndefined();
@@ -444,6 +486,7 @@ describe('createBrCatalogService — GlobalConnect i kolizja NC', () => {
 
       const { fn, calls } = makeFetch({ catalog: [makePayload()] });
       const svc = createBrCatalogService({
+        guard: makeGuard(),
         dbFile,
         fetchFn: fn,
         now: () => new Date('2026-07-16T10:00:00Z'),
@@ -467,6 +510,7 @@ describe('createBrCatalogService — GlobalConnect i kolizja NC', () => {
     });
     const nowRef = { value: new Date('2026-07-16T10:00:00Z') };
     const svc = createBrCatalogService({
+      guard: makeGuard(),
       dbFile: ':memory:',
       fetchFn: fn,
       now: () => nowRef.value,
@@ -489,7 +533,12 @@ describe('createBrCatalogService — GlobalConnect i kolizja NC', () => {
 
   it('kolizja kodu tickera z mapą NC rozstrzygana nazwą: ORL=Orzeł → NC, ABK≠ABAK → GPW', async () => {
     const { fn } = makeFetch({ catalog: [makePayload()] });
-    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+    const svc = createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: fn,
+      politenessDelayMs: 0,
+    });
 
     // ORL jest w mapie NC jako ORZLOPONY i skrót BR to potwierdza → NC
     const orl = (await svc.findByTicker('ORL'))!;
@@ -510,7 +559,12 @@ describe('createBrCatalogService — GlobalConnect i kolizja NC', () => {
 describe('findByTicker / findByName', () => {
   it('findByTicker: dokładne trafienie, akceptuje sufiks .WA, klasyfikuje NC/GPW', async () => {
     const { fn } = makeFetch({ catalog: [makePayload()] });
-    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+    const svc = createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: fn,
+      politenessDelayMs: 0,
+    });
 
     expect((await svc.findByTicker('KGH'))?.symbol).toBe('KGH.WA');
     expect((await svc.findByTicker('kgh.wa'))?.symbol).toBe('KGH.WA');
@@ -522,7 +576,12 @@ describe('findByTicker / findByName', () => {
 
   it('findByTicker z expectedName: weryfikacja nazwy odrzuca fałszywe trafienia', async () => {
     const { fn } = makeFetch({ catalog: [makePayload()] });
-    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+    const svc = createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: fn,
+      politenessDelayMs: 0,
+    });
 
     // zgodna nazwa (diakrytyki znormalizowane): przechodzi
     expect(await svc.findByTicker('KGH', 'KGHM POLSKA MIEDZ')).not.toBeNull();
@@ -540,7 +599,12 @@ describe('findByTicker / findByName', () => {
 
   it('findByName: dokładny skrót i prefiks nazwy; null dla nieznanych', async () => {
     const { fn } = makeFetch({ catalog: [makePayload()] });
-    const svc = createBrCatalogService({ dbFile: ':memory:', fetchFn: fn, politenessDelayMs: 0 });
+    const svc = createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: fn,
+      politenessDelayMs: 0,
+    });
 
     expect((await svc.findByName('KGHM'))?.symbol).toBe('KGH.WA'); // skrót exact
     expect((await svc.findByName('AITON CALDWELL'))?.symbol).toBe('AIT.WA'); // prefiks nazwy
@@ -555,6 +619,7 @@ describe('findByTicker / findByName', () => {
   it('findByTicker/findByName przy niedostępnym katalogu → null (bez rzucania)', async () => {
     const { fn } = makeFetch({ catalog: [new Error('down')] });
     const svc = createBrCatalogService({
+      guard: makeGuard(),
       dbFile: ':memory:',
       fetchFn: fn,
       coldStartWaitMs: 10,
@@ -563,6 +628,100 @@ describe('findByTicker / findByName', () => {
 
     expect(await svc.findByTicker('KGH')).toBeNull();
     expect(await svc.findByName('KGHM')).toBeNull();
+    svc.close();
+  });
+});
+
+// ── Integracja z guardem biznesradar ────────────────────────────────────────
+
+describe('createBrCatalogService — guard biznesradar', () => {
+  it('403 → registerBlock; stary katalog zostaje (stale-while-error)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const guard = makeGuard();
+    let blocked = false;
+    const fetchFn = (async (url: string | URL) => {
+      if (blocked) return { ok: false, status: 403, text: async () => 'Access denied' } as Response;
+      const u = String(url);
+      const body = u.includes('service-data-short-js') ? makePayload() : GC_HTML;
+      return { ok: true, status: 200, text: async () => body } as Response;
+    }) as unknown as typeof fetch;
+    const nowRef = { value: new Date('2026-07-16T10:00:00Z') };
+    const svc = createBrCatalogService({
+      guard,
+      dbFile: ':memory:',
+      fetchFn,
+      now: () => nowRef.value,
+      politenessDelayMs: 0,
+    });
+
+    expect((await svc.search('KGHM')).length).toBeGreaterThan(0);
+    expect(guard.getState().consecutiveBlocks).toBe(0);
+
+    // Po TTL: serwis dostaje 403 → blokada zarejestrowana, stary katalog serwowany.
+    // Refresh leci w tle (stale-while-revalidate) — czekamy na rejestrację.
+    blocked = true;
+    nowRef.value = new Date('2026-07-18T10:00:00Z');
+    const kgh = (await svc.search('KGHM')).find((r) => r.symbol === 'KGH.WA');
+    expect(kgh).toBeDefined();
+    await vi.waitFor(() => expect(guard.getState().consecutiveBlocks).toBe(1));
+    svc.close();
+    vi.restoreAllMocks();
+  });
+
+  it('200 z uciętym payloadem (<500 wpisów) → parse-miss klucza catalog', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const guard = makeGuard();
+    const truncated = `var symbols = ${JSON.stringify(INTERESTING.slice(0, 2))};`;
+    const { fn } = makeFetch({ catalog: [truncated] });
+    const svc = createBrCatalogService({
+      guard,
+      dbFile: ':memory:',
+      fetchFn: fn,
+      coldStartWaitMs: 10,
+      politenessDelayMs: 0,
+    });
+
+    await svc.search('KGHM');
+    expect(guard.getState().parseMissKeys).toEqual(['catalog']);
+    svc.close();
+    vi.restoreAllMocks();
+  });
+
+  it('bezpiecznik otwarty → zero fetchy (fallback statyczna mapa NC)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const guard = makeGuard();
+    for (let i = 0; i < 3; i++) guard.registerBlock();
+    expect(guard.isBlocked()).toBe(true);
+
+    const { fn, calls, gcCalls } = makeFetch({ catalog: [makePayload()] });
+    const svc = createBrCatalogService({
+      guard,
+      dbFile: ':memory:',
+      fetchFn: fn,
+      coldStartWaitMs: 10,
+      politenessDelayMs: 0,
+    });
+
+    const results = await svc.search('AITON');
+    expect(results.find((r) => r.symbol === 'AIT.WA')).toBeDefined(); // z mapy NC
+    expect(calls()).toBe(0);
+    expect(gcCalls()).toBe(0);
+    svc.close();
+    vi.restoreAllMocks();
+  });
+
+  it('udany refresh rejestruje sukces (lastSuccessAt)', async () => {
+    const guard = makeGuard();
+    const { fn } = makeFetch({ catalog: [makePayload()] });
+    const svc = createBrCatalogService({
+      guard,
+      dbFile: ':memory:',
+      fetchFn: fn,
+      politenessDelayMs: 0,
+    });
+    await svc.search('KGHM');
+    expect(guard.getState().lastSuccessAt).not.toBeNull();
+    expect(guard.getState().parseMissKeys).toEqual([]);
     svc.close();
   });
 });

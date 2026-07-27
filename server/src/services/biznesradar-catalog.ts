@@ -29,6 +29,8 @@ import Database from 'better-sqlite3';
 import { NC_TICKER_MAP } from 'shared';
 import type { TickerSearchResult } from 'shared';
 import { config } from '../config.js';
+import { detectBiznesradarBlock, getBiznesradarGuard } from './biznesradar-guard.js';
+import type { SourceGuard } from './source-guard.js';
 
 const CATALOG_URL = 'https://www.biznesradar.pl/service-data-short-js/1';
 /**
@@ -57,9 +59,9 @@ const COLD_START_WAIT_MS = 2_500;
 /**
  * Sanity: pełny katalog BDM ma ~5 tys. wpisów. Odpowiedź z mniej niż
  * MIN_PLAUSIBLE_ENTRIES traktujemy jak awarię (ucięty/zmieniony format),
- * żeby nie nadpisać dobrego katalogu śmieciem.
+ * żeby nie nadpisać dobrego katalogu śmieciem. Eksport dla check:biznesradar.
  */
-const MIN_PLAUSIBLE_ENTRIES = 500;
+export const MIN_PLAUSIBLE_ENTRIES = 500;
 /** Górny limit dopasowań zwracanych do merge'a w searchTickers. */
 const MAX_MATCHES = 50;
 
@@ -224,6 +226,8 @@ export interface BrCatalogServiceOptions {
   dbFile?: string;
   coldStartWaitMs?: number;
   politenessDelayMs?: number;
+  /** Wspólny guard biznesradar (default: singleton); testy wstrzykują świeży. */
+  guard?: SourceGuard;
 }
 
 export interface BrCatalogService {
@@ -249,6 +253,7 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
   const dbFile = options.dbFile ?? path.join(config.dataDir, 'price_history.db');
   const coldStartWaitMs = options.coldStartWaitMs ?? COLD_START_WAIT_MS;
   const politenessDelayMs = options.politenessDelayMs ?? POLITENESS_DELAY_MS;
+  const guard = options.guard ?? getBiznesradarGuard();
 
   let db: Database.Database | null = null;
   let index: BrCatalogEntry[] | null = null; // null = jeszcze nie ładowany z DB
@@ -309,15 +314,37 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
       headers: { 'User-Agent': USER_AGENT },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
+    // Body czytamy także przy !ok — markery challenge (captcha/Cloudflare)
+    // przychodzą w treści odpowiedzi 403/503.
+    const body = await resp.text().catch(() => '');
+    if (detectBiznesradarBlock(resp.status, body)) {
+      guard.registerBlock();
+      throw new Error(`blokada anti-bot (HTTP ${resp.status}) for ${url}`);
+    }
     if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${url}`);
-    return await resp.text();
+    return body;
   }
 
   async function doRefresh(): Promise<void> {
     setState('last_attempt', now().toISOString());
+    // Bezpiecznik otwarty — nie dobijamy odciętego serwisu; stary katalog
+    // zostaje (stale-while-error), last_attempt daje naturalny retry ≥1h.
+    if (guard.isBlocked()) {
+      console.warn('[biznesradar-catalog] bezpiecznik biznesradar otwarty — pomijam odświeżenie');
+      return;
+    }
     try {
-      const rawEntries = parseBrCatalog(await fetchPage(CATALOG_URL));
+      const payload = await fetchPage(CATALOG_URL);
+      let rawEntries: BrCatalogEntry[];
+      try {
+        rawEntries = parseBrCatalog(payload);
+      } catch (err) {
+        // 200 OK, ale payload nie jest katalogiem — kandydat na zmianę formatu.
+        guard.registerParseMiss('catalog', { structural: true });
+        throw err;
+      }
       if (rawEntries.length < MIN_PLAUSIBLE_ENTRIES) {
+        guard.registerParseMiss('catalog', { structural: true });
         throw new Error(`podejrzanie mało wpisów (${rawEntries.length}) — nie nadpisuję katalogu`);
       }
 
@@ -327,6 +354,7 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
       await new Promise((resolve) => setTimeout(resolve, politenessDelayMs));
       const gcTickers = parseGcTickers(await fetchPage(GLOBALCONNECT_URL));
       if (gcTickers.size < 5) {
+        guard.registerParseMiss('catalog-gc', { structural: true });
         throw new Error(
           `podejrzanie mało tickerów GlobalConnect (${gcTickers.size}) — możliwa zmiana strony`,
         );
@@ -344,6 +372,8 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
       setState('last_success', now().toISOString());
       setState('schema_version', CATALOG_SCHEMA_VERSION);
       index = entries;
+      guard.registerSuccess('catalog');
+      guard.registerSuccess('catalog-gc');
     } catch (err) {
       // Stale-while-error: stary index/baza zostają; retry po RETRY_INTERVAL_MS.
       console.warn('[biznesradar-catalog] odświeżenie katalogu nie powiodło się:', err);

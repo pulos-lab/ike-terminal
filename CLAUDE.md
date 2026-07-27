@@ -147,4 +147,5 @@ Pole `country` w `ticker_map` (kanoniczna nazwa EN z Yahoo `assetProfile.country
 - `npm run scrape:gpw-sectors -w server` — regeneracja `gpw-sector-map.ts` ze stockwatch.pl
 - `npm run scrape:catalyst-bonds -w server` — regeneracja `bond-map-data.ts` z obligacje.pl (~6 min; gpwcatalyst.pl blokuje boty WAF-em)
 - `npm run check:spinoff-sources -w server` — żywa diagnostyka źródeł spin-offów (stockanalysis + SEC EDGAR; `--all` = ratio dla wszystkich zdarzeń)
+- `npm run check:biznesradar -w server` — żywy smoke wszystkich powierzchni biznesradar (live/historia/katalog/dywidendy; `--ticker=XYZ`); guard źródła (`source-guard.ts` + `biznesradar-guard.ts`) wykrywa odcięcie anti-bot i zmianę markupu, maile do admina przy przejściu stanu, stan w polu `sources` w `/api/health`
 - `start.command` — alternatywny skrypt startowy (kill portów + start + open browser)

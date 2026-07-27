@@ -10,7 +10,11 @@ vi.mock('../email.js', async (importOriginal) => {
 });
 vi.mock('../../auth.js', () => ({ getAuthDb: vi.fn() }));
 
-import { notifyNewImportProfile, notifyNewBugReport } from '../admin-notifications.js';
+import {
+  notifyNewImportProfile,
+  notifyNewBugReport,
+  notifySourceGuardAlert,
+} from '../admin-notifications.js';
 import { sendEmail } from '../email.js';
 import { getAuthDb } from '../../auth.js';
 
@@ -131,5 +135,56 @@ describe('notifyNewBugReport', () => {
     const arg = vi.mocked(sendEmail).mock.calls[0][0];
     expect(arg.html).not.toContain('<script>');
     expect(arg.html).toContain('&lt;script&gt;');
+  });
+});
+
+describe('notifySourceGuardAlert', () => {
+  it('blokada: wysyła do admina z blockedUntil i instrukcją diagnozy', async () => {
+    await notifySourceGuardAlert({
+      source: 'biznesradar',
+      kind: 'blocked',
+      blockedUntil: '2026-07-27T11:00:00.000Z',
+      consecutiveBlocks: 3,
+      lastSuccessAt: '2026-07-27T09:00:00.000Z',
+    });
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    const arg = vi.mocked(sendEmail).mock.calls[0][0];
+    expect(arg.to).toBe(ADMIN.email);
+    expect(arg.subject).toBe('Źródło danych biznesradar: wykryto blokadę anti-bot');
+    expect(arg.html).toContain('2026-07-27T11:00:00.000Z');
+    expect(arg.html).toContain('check:biznesradar');
+    expect(arg.html).toContain('/api/health');
+  });
+
+  it('markup: temat i klucze pustych parse’ów w treści', async () => {
+    await notifySourceGuardAlert({
+      source: 'biznesradar',
+      kind: 'markup-change',
+      missKeys: ['live:AAA', 'catalog'],
+      lastSuccessAt: null,
+    });
+    const arg = vi.mocked(sendEmail).mock.calls[0][0];
+    expect(arg.subject).toBe('Źródło danych biznesradar: podejrzenie zmiany markupu');
+    expect(arg.html).toContain('live:AAA, catalog');
+    expect(arg.html).toContain('brak danych'); // lastSuccessAt null
+  });
+
+  it('pomija, gdy wyłączone (ADMIN_NOTIFICATIONS=off)', async () => {
+    process.env.ADMIN_NOTIFICATIONS = 'off';
+    await notifySourceGuardAlert({ source: 'biznesradar', kind: 'blocked' });
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('no-op, gdy brak admina w bazie', async () => {
+    mockAuthDb(undefined);
+    await notifySourceGuardAlert({ source: 'biznesradar', kind: 'blocked' });
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('nie rzuca, gdy sendEmail zawiedzie', async () => {
+    vi.mocked(sendEmail).mockRejectedValueOnce(new Error('boom'));
+    await expect(
+      notifySourceGuardAlert({ source: 'biznesradar', kind: 'blocked' }),
+    ).resolves.toBeUndefined();
   });
 });
