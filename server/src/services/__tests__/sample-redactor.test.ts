@@ -28,6 +28,32 @@ describe('sample-redactor — redactCell', () => {
     expect(redactCell('30c841b3-068d-44f0-980a')).toBe('30c841b3-068d-44f0-980a');
     expect(redactCell('PB6XHFHSNDT97F32')).toBe('PB6XHFHSNDT97F32');
   });
+
+  it('NIE maskuje ISIN-ów z czysto numerycznym NSIN (10 cyfr po kodzie kraju)', () => {
+    // Sedno fixu: numeryczny NSIN wyglądał dla LONG_DIGITS_RE jak numer rachunku.
+    expect(redactCell('US0378331005')).toBe('US0378331005'); // Apple — klasyczny CUSIP
+    expect(redactCell('DE0007164600')).toBe('DE0007164600'); // SAP
+    expect(redactCell('CY1000031710')).toBe('CY1000031710'); // ASBIS (raport PKO BM)
+    expect(redactCell('PL0000108817')).toBe('PL0000108817'); // obligacja skarbowa
+    expect(redactCell('NL0010273215')).toBe('NL0010273215');
+    // ISIN-y z literą w NSIN nigdy nie były maskowane — bez regresji.
+    expect(redactCell('PLLUBAW00013')).toBe('PLLUBAW00013');
+    expect(redactCell('IE00B4L5Y983')).toBe('IE00B4L5Y983');
+  });
+
+  it('zostawia ISIN wewnątrz opisu operacji, maskując resztę wzorców', () => {
+    expect(redactCell('Dywidenda ASBIS ISIN CY1000031710 brutto')).toBe(
+      'Dywidenda ASBIS ISIN CY1000031710 brutto',
+    );
+    expect(redactCell('Przelew 123456789012 dot. US0378331005')).toBe(
+      'Przelew *** dot. US0378331005',
+    );
+  });
+
+  it('ochrona ISIN nie osłabia maskowania rachunków (IBAN jest dłuższy niż 12 znaków)', () => {
+    expect(redactCell('PL61109010140000071219812874')).not.toMatch(/\d{9}/);
+    expect(redactCell('DE89370400440532013000')).not.toMatch(/\d{9}/);
+  });
 });
 
 describe('sample-redactor — redactSampleRows', () => {
