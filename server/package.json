@@ -12,6 +12,7 @@
     "scrape:catalyst-bonds": "tsx scripts/scrape-catalyst-bonds.ts",
     "compare:generic": "tsx scripts/compare-generic-import.ts",
     "check:spinoff-sources": "tsx scripts/check-spinoff-sources.ts",
+    "check:biznesradar": "tsx scripts/check-biznesradar.ts",
     "fix:nc": "tsx src/scripts/fix-nc-misidentification.ts",
     "fix:auto-dividend-tax": "tsx src/scripts/fix-auto-dividend-tax.ts",
     "fix:xtb-interest-subkind": "tsx src/scripts/fix-xtb-interest-subkind.ts",

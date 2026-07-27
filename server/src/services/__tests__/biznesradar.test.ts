@@ -1,10 +1,28 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseBiznesradarPrice,
   detectBiznesradarBlock,
   fetchBiznesradarPrice,
   getBiznesradarBlockState,
 } from '../biznesradar.js';
+import { setBiznesradarGuardForTests, getBiznesradarGuard } from '../biznesradar-guard.js';
+import {
+  createSourceGuard,
+  createMemoryGuardStore,
+  type SourceGuardAlert,
+} from '../source-guard.js';
+
+// Świeży guard per test (memory store + spy) — bez tego default singleton
+// otwierałby realny price_history.db i dynamic-importem admin-notifications
+// inicjalizował auth przy pierwszym alercie.
+const notifySpy = vi.fn<(alert: SourceGuardAlert) => void>();
+beforeEach(() => {
+  notifySpy.mockClear();
+  setBiznesradarGuardForTests(
+    createSourceGuard({ name: 'biznesradar', store: createMemoryGuardStore(), notify: notifySpy }),
+  );
+});
+afterEach(() => setBiznesradarGuardForTests(null));
 
 describe('parseBiznesradarPrice', () => {
   it('parsuje kurs NC (grosze) z q_ch_act', () => {
@@ -82,5 +100,54 @@ describe('fetchBiznesradarPrice — bezpiecznik (circuit breaker)', () => {
     const price = await fetchBiznesradarPrice('BLK4');
     expect(price).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(3); // nadal 3 — nie dobijamy odciętego serwisu
+
+    // przejście stanu = jedno powiadomienie admina
+    expect(notifySpy).toHaveBeenCalledTimes(1);
+    expect(notifySpy.mock.calls[0][0]).toMatchObject({ source: 'biznesradar', kind: 'blocked' });
+  });
+});
+
+describe('fetchBiznesradarPrice — detekcja zmiany markupu (parse-miss)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('200 OK bez q_ch_act na 3 różnych tickerach → suspectedMarkupChange + notify 1×', async () => {
+    const fetchMock = vi.fn(
+      async () => new Response('<html><body>nowy layout bez kursu</body></html>', { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchBiznesradarPrice('MK1');
+    await fetchBiznesradarPrice('MK2');
+    expect(getBiznesradarGuard().getState().suspectedMarkupChange).toBe(false);
+    await fetchBiznesradarPrice('MK3');
+
+    const state = getBiznesradarGuard().getState();
+    expect(state.suspectedMarkupChange).toBe(true);
+    expect(state.blocked).toBe(false); // to NIE jest odcięcie
+    expect(state.parseMissKeys).toEqual(['live:MK1', 'live:MK2', 'live:MK3']);
+    expect(notifySpy).toHaveBeenCalledTimes(1);
+    expect(notifySpy.mock.calls[0][0]).toMatchObject({ kind: 'markup-change' });
+  });
+
+  it('404 (nieznany ticker) NIE rejestruje parse-missa', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Strona nie istnieje', { status: 404 })),
+    );
+    await fetchBiznesradarPrice('MISS404');
+    expect(getBiznesradarGuard().getState().parseMissKeys).toEqual([]);
+  });
+
+  it('udany parse rejestruje sukces (lastSuccessAt) — grace tłumi alarm markupu', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<span class="q_ch_act">1.23</span>', { status: 200 })),
+    );
+    await fetchBiznesradarPrice('OKX');
+    const state = getBiznesradarGuard().getState();
+    expect(state.lastSuccessAt).not.toBeNull();
+    expect(state.parseMissKeys).toEqual([]);
   });
 });

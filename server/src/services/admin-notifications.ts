@@ -1,6 +1,7 @@
 import { getAuthDb } from '../auth.js';
 import { config, isProduction } from '../config.js';
 import type { ImportProfileRow } from '../db/import-profiles-repo.js';
+import type { SourceGuardAlert } from './source-guard.js';
 import { escapeHtml, sendEmail } from './email.js';
 
 /**
@@ -152,6 +153,58 @@ export interface BugReportNotification {
   description: string;
   reporterEmail: string | null;
   reporterUserId: string;
+}
+
+/**
+ * Powiadom admina o przejściu stanu guarda źródła danych (odcięcie anti-bot /
+ * podejrzenie zmiany markupu). Dedup (max 1 mail / stan / 24 h, persystentny)
+ * robi WOŁAJĄCY — source-guard; ta funkcja tylko wysyła. Nigdy nie rzuca.
+ */
+export async function notifySourceGuardAlert(alert: SourceGuardAlert): Promise<void> {
+  try {
+    if (!isAdminNotificationsEnabled()) return;
+    const admin = getAdminRecipient();
+    if (!admin) return;
+
+    const isBlock = alert.kind === 'blocked';
+    const source = escapeHtml(alert.source);
+    const details = [
+      isBlock && alert.blockedUntil
+        ? `<li>Bezpiecznik otwarty do: <b>${escapeHtml(alert.blockedUntil)}</b></li>`
+        : '',
+      isBlock && alert.consecutiveBlocks
+        ? `<li>Blokad pod rząd: <b>${alert.consecutiveBlocks}</b></li>`
+        : '',
+      !isBlock && alert.missKeys?.length
+        ? `<li>Puste parse'y (klucze): <b>${escapeHtml(alert.missKeys.join(', '))}</b></li>`
+        : '',
+      `<li>Ostatni udany parse: ${alert.lastSuccessAt ? escapeHtml(alert.lastSuccessAt) : 'brak danych'}</li>`,
+    ]
+      .filter(Boolean)
+      .join('');
+    const body = `
+      <p style="margin:0 0 8px;">${
+        isBlock
+          ? `Źródło <b>${source}</b> odcina nasz ruch (429/403/challenge anti-bot). Fetch-e są wstrzymane na czas backoffu i wznowią się same — jeśli blokada nie ustąpi, przyjdzie kolejny mail (max 1/24 h).`
+          : `Źródło <b>${source}</b> odpowiada 200 OK, ale parsery nic nie wyciągają — prawdopodobnie zmienił się markup stron i parser wymaga naprawy.`
+      }</p>
+      <ul style="margin:0 0 8px; padding-left:18px;">${details}</ul>
+      <p style="margin:0;">Diagnoza: <code>npm run check:${source} -w server</code> (żywy smoke wszystkich endpointów źródła).</p>`;
+    await sendEmail({
+      to: admin.email,
+      subject: isBlock
+        ? `Źródło danych ${alert.source}: wykryto blokadę anti-bot`
+        : `Źródło danych ${alert.source}: podejrzenie zmiany markupu`,
+      html: emailShell(
+        isBlock ? 'Blokada źródła danych' : 'Podejrzenie zmiany markupu źródła',
+        body,
+        '/api/health',
+        'Stan źródeł na żywo (/api/health)',
+      ),
+    });
+  } catch (err) {
+    console.error('[admin-notifications] notifySourceGuardAlert failed:', err);
+  }
 }
 
 /** Powiadom admina o nowym zgłoszeniu błędu. Pomija własne zgłoszenia admina. Nigdy nie rzuca. */

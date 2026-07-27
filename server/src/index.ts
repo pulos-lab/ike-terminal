@@ -29,6 +29,7 @@ import { getBondCatalog } from './services/bond-catalog.js';
 import { backfillTickerNamesForPortfolio } from './services/ticker-name-backfill.js';
 import { scanAllPortfolios } from './services/dividend-scanner.js';
 import { scanAllInterest } from './services/interest-scanner.js';
+import { getBiznesradarGuard } from './services/biznesradar-guard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -151,11 +152,22 @@ app.use(
 
 // ── Health check (public, no auth) ──────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
+  // Stan guardów źródeł scrapowanych — POLE INFORMACYJNE: odcięcie/zmiana
+  // markupu źródła NIE zmienia statusu ani kodu HTTP (deploy waliduje
+  // `curl -sf` i nie może oblewać przez awarię zewnętrznego serwisu).
+  let sources: Record<string, unknown>;
+  try {
+    sources = { biznesradar: getBiznesradarGuard().getState() };
+  } catch (err) {
+    console.error('[health] odczyt stanu guarda źródeł nie powiódł się:', err);
+    sources = { biznesradar: { error: 'unavailable' } };
+  }
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     googleAuthEnabled: !!(config.googleClientId && config.googleClientSecret),
+    sources,
   });
 });
 
