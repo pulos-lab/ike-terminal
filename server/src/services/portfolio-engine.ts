@@ -14,6 +14,7 @@ import type {
   AppliedSpinOff,
   FxImpact,
   FxImpactCurrencyEntry,
+  ImpliedFxFlow,
 } from 'shared';
 import {
   fetchYahooPrice,
@@ -1547,7 +1548,7 @@ export function detectBaseCurrency(operations: CashOperation[]): string {
  *  Działa TYLKO dla par zawierających PLN ('PLN/USD', 'USD/PLN', 'EUR/PLN', …).
  *  Zwraca null dla cross-rate par ('USD/EUR', 'EUR/GBP', …) — tam op.fxRate
  *  nie jest kursem vs PLN, więc caller musi użyć historical PLN rate
- *  przekazany przez `historicalCrossRates` do computeFxImpact.
+ *  przekazany przez `historicalPlnRates` do computeFxImpact.
  *
  *  Konwencje w istniejących danych:
  *  - Bossa/DEGIRO PLN-involved: fxRate = PLN per X (rate > 1 dla USD/EUR/GBP/CHF)
@@ -1565,59 +1566,74 @@ function plnPerXFromOp(op: CashOperation): number | null {
   return op.fxRate; // bossa, degiro, mbank, manual
 }
 
+/** Zdarzenie księgi walutowej — znormalizowany przepływ przekraczający granicę
+ *  PLN↔X (lub granicę portfela), zbudowany z CashOperation albo ImpliedFxFlow. */
+type FxLedgerEvent = {
+  /** YYYY-MM-DD — klucz sortowania chronologicznego. */
+  dateKey: string;
+  /** Kwota natywna ze znakiem: > 0 wpływ do ekspozycji, < 0 rozchód. */
+  amount: number;
+  /** Kurs PLN per 1 X dla tego zdarzenia; null = nieznany (księgowanie
+   *  neutralne po bieżącej średniej / rozchód bez wyniku zrealizowanego). */
+  plnPerX: number | null;
+};
+
 /** Oblicza "wpływ walut" — różnicę między dzisiejszym kursem PLN a średnim
- *  ważonym kursem zakupu walut obcych w portfelu.
+ *  kursem nabycia walut obcych AKTUALNIE trzymanych w portfelu, plus wynik
+ *  ZREALIZOWANY na rozchodach.
  *
- *  Dwa scenariusze obsługiwane jednolicie przez per-currency agregację:
+ *  Księga walutowa (średnia krocząca / moving-average inventory) per waluta X:
+ *  wszystkie przepływy przekraczające granicę PLN↔X przetwarzane chronologicznie.
+ *  - Wpływ z kursem: saldo += ilość, koszt += ilość × kurs (zmienia średnią).
+ *  - Wpływ bez kursu (np. dywidenda bez danych historycznych): księgowany po
+ *    bieżącej średniej — utrzymuje saldo, nie zniekształca średniej. Przy pustej
+ *    księdze pomijany (nie ma czym wycenić).
+ *  - Rozchód: zdejmuje min(ilość, saldo) po bieżącej średniej (średnia bez zmian);
+ *    przy znanym kursie rozchodu dokłada `ilość × (kurs − średnia)` do realizedPln.
+ *    Nadwyżka ponad saldo (luki w danych) jest ignorowana — księga nie schodzi
+ *    poniżej zera.
+ *  Ten model naprawia dawne zniekształcenie: dożywotnia średnia WSZYSTKICH nabyć
+ *  (bez rozchodów) mieszała kursy walut dawno wymienionych z powrotem na PLN
+ *  do średniej obecnie trzymanego salda.
  *
- *  **Scenariusz 1: Single-currency portfel** (np. XTB USD sub-konto)
- *  - Obca waluta względem PLN = jedyna waluta portfela (USD)
- *  - Acquisition events: deposits z ustawionym fxRate (Transfer → deposit przez
- *    parser XTB)
- *  - Exposure USD = całość portfela w USD (cash + stocks — przekazane jako
- *    foreignExposures.get('USD'))
+ *  Źródła zdarzeń:
+ *  - operations: KAŻDY typ operacji w walucie X ≠ PLN (fx_exchange obie nogi,
+ *    deposit/withdrawal, dividend, fee, odsetki, …) poza corporate_action_pending
+ *    (nie wchodzi do cashflow). Kurs: plnPerXFromOp (fxPair z PLN) →
+ *    historicalPlnRates[data][X] → null.
+ *  - impliedFlows (z route): przepływy wynikające z transakcji rozliczanych
+ *    w innej walucie niż kwotowanie (Bossa Zagranica w PLN, XTB/DEGIRO
+ *    z paymentCurrency). `pln` dokładne gdy znane, inaczej historical.
+ *  Transakcje rozliczane natywnie (cash X ↔ akcje X) NIE są zdarzeniami księgi —
+ *  nie przekraczają granicy walutowej (ekspozycja = cash + akcje łącznie).
  *
- *  **Scenariusz 2: Multi-currency portfel** (np. Bossa PLN z USD/EUR)
- *  - Obce waluty = każda != PLN w exposure
- *  - Acquisition events: fx_exchange credit legs (op.currency=X, amount>0)
- *    + deposits z fxRate (rzadko dla Bossa, ale XTB deposit też mógłby tu być)
- *  - Exposure per waluta X = cash_X + Σ stocks denominated in X
+ *  Matematyka per waluta (na końcu księgi):
+ *    avg_pln_per_x = koszt_pozostały / saldo_pozostałe   (null gdy saldo 0)
+ *    impact_pln = exposure_x × (today − avg)             (niezrealizowany)
+ *    impact_pct = (today / avg − 1) × 100
+ *    realized_pln = Σ rozchody × (kurs_rozchodu − średnia_w_momencie)
  *
- *  Matematyka per waluta:
- *    pln_per_x_i = plnPerXFromOp(event_i)
- *    x_acquired_i = |event_i.amount|
- *    avg_pln_per_x = Σ (x_acquired × pln_per_x) / Σ x_acquired
- *    today_pln_per_x = fetchFxRate(X+PLN)
- *    impact_pln = exposure_x × (today - avg)
- *    impact_pct = (today / avg - 1) × 100
- *
- *  Zwraca `null` gdy:
- *  - brak obcych walut w ekspozycji (portfel czysto PLN-owy)
- *  - żadna obca waluta nie ma acquisition events z fxRate
- */
+ *  Zwraca `null` gdy brak obcych walut w ekspozycji (portfel czysto PLN-owy)
+ *  lub żadna nie ma dzisiejszego kursu. Waluty w pełni opuszczone (ekspozycja 0)
+ *  nie mają wpisu — ich zrealizowany wynik nie jest raportowany (backlog). */
 export function computeFxImpact(
   operations: CashOperation[],
   foreignExposures: Map<string, number>, // currency → native exposure (cash + stocks)
   todayFxRatesToPln: Map<string, number>, // currency → PLN per X
   totalPortfolioValuePln: number, // wartość CAŁEGO portfela w PLN
-  /** Historical PLN rates dla cross-rate ops (fxPair bez PLN, np. USD/EUR).
-   *  Mapa: date (YYYY-MM-DD) → currency → PLN per X na ten dzień.
-   *  Caller (route) pre-fetchuje Yahoo history dla cross-rate fx_exchange ops,
-   *  żeby engine mógł użyć historycznego kursu jako proxy dla "ile PLN
-   *  kosztowałoby kupno tej waluty na rynku tego dnia" — dla ops gdzie
-   *  op.fxRate to cross-rate (np. USD per EUR), nie vs PLN. */
-  historicalCrossRates: Map<string, Map<string, number>> = new Map(),
+  /** Historyczne kursy PLN per X: date (YYYY-MM-DD) → currency → kurs.
+   *  Caller (route) pre-fetchuje Yahoo history dla dat wszystkich zdarzeń
+   *  bez bezpośredniego kursu vs PLN (cross-rate fx_exchange, dywidendy,
+   *  wypłaty, nogi implied X↔Y, …) — proxy "ile PLN kosztowałaby ta waluta
+   *  na rynku tego dnia". */
+  historicalPlnRates: Map<string, Map<string, number>> = new Map(),
   /** Pre-computed exposurePln per waluta (z tej samej mapy FX co totalPortfolioValuePln).
    *  Gdy podane, nadpisuje liczone wewnętrznie `exposureNative × todayFx` — gwarantuje że
    *  Σ exposurePln + część PLN = totalPortfolioValuePln (matematycznie). */
   exposurePlnByCurrency?: Map<string, number>,
-  /** Implied acquisition events dla transakcji walut obcych rozliczanych przez brokera
-   *  w PLN (np. Bossa: kupno CSU.TO/CAD płacone z PLN bez explicit fx_exchange).
-   *  Caller (route) pre-fetchuje Yahoo historical native price na dacie transakcji
-   *  i wylicza `acquiredNative = qty × native_price`, `plnPaid = transaction.value`.
-   *  Mapa: currency → { acquiredNative (Σ), plnPaid (Σ) }.
-   *  Akumulowane z acquisition events z `operations` (nie zamieniają się). */
-  impliedAcquisitions?: Map<string, { acquiredNative: number; plnPaid: number }>,
+  /** Przepływy walutowe wynikające z transakcji (patrz ImpliedFxFlow w shared).
+   *  Scalane chronologicznie ze zdarzeniami z `operations`. */
+  impliedFlows?: ImpliedFxFlow[],
 ): FxImpact | null {
   const breakdown: FxImpactCurrencyEntry[] = [];
 
@@ -1628,48 +1644,92 @@ export function computeFxImpact(
     const todayPlnPerCurrency = todayFxRatesToPln.get(currency) ?? 0;
     if (todayPlnPerCurrency <= 0) continue;
 
-    let totalAcquiredNative = 0;
-    let sumAcquiredTimesPlnPerX = 0;
+    const curKey = currency.toUpperCase();
+    const events: FxLedgerEvent[] = [];
+
     for (const op of operations) {
       // Klucze foreignExposures są znormalizowane do GBP — operacja wpisana
       // ręcznie jako GBX (pensy) musi trafić do tego samego kubełka.
       const opCur = op.currency?.toUpperCase() === 'GBX' ? 'GBP' : op.currency?.toUpperCase();
-      if (opCur !== currency.toUpperCase()) continue;
-      const isAcquisitionFx = op.operationType === 'fx_exchange' && op.amount > 0;
-      const isDepositWithFx = op.operationType === 'deposit' && op.fxRate !== undefined;
-      if (!isAcquisitionFx && !isDepositWithFx) continue;
+      if (opCur !== curKey) continue;
+      // corporate_action_pending nie wchodzi do cashflow portfela — pomijamy.
+      if (op.operationType === 'corporate_action_pending') continue;
+      if (!Number.isFinite(op.amount) || op.amount === 0) continue;
 
       // Dwa źródła kursu PLN per X:
       //   1. Direct (fxPair zawiera PLN) — plnPerXFromOp rozpoznaje Bossa/DEGIRO/XTB conv.
-      //   2. Cross-rate (np. USD/EUR) — op.fxRate nie jest vs PLN, użyj historical Yahoo
-      //      rate dla currency → PLN na dacie operacji (przekazane przez caller).
-      let plnPerX = plnPerXFromOp(op);
-      if (plnPerX === null) {
-        const dateKey = op.date.split('T')[0];
-        plnPerX = historicalCrossRates.get(dateKey)?.get(currency.toUpperCase()) ?? null;
+      //   2. Historical (cross-rate fx, dywidendy, wypłaty, opłaty bez kursu) —
+      //      kurs Yahoo z dnia operacji przekazany przez caller.
+      const dateKey = op.date.split('T')[0];
+      const plnPerX = plnPerXFromOp(op) ?? historicalPlnRates.get(dateKey)?.get(curKey) ?? null;
+      events.push({ dateKey, amount: op.amount, plnPerX: plnPerX && plnPerX > 0 ? plnPerX : null });
+    }
+
+    if (impliedFlows) {
+      for (const flow of impliedFlows) {
+        if (flow.currency.toUpperCase() !== curKey) continue;
+        if (!Number.isFinite(flow.amountNative) || flow.amountNative <= 0) continue;
+        const dateKey = flow.date.split('T')[0];
+        const rate =
+          flow.pln !== undefined && flow.pln > 0
+            ? flow.pln / flow.amountNative
+            : (historicalPlnRates.get(dateKey)?.get(curKey) ?? null);
+        events.push({
+          dateKey,
+          amount: flow.kind === 'buy' ? flow.amountNative : -flow.amountNative,
+          plnPerX: rate && rate > 0 ? rate : null,
+        });
       }
-      if (plnPerX === null || plnPerX <= 0) continue;
-      const acquired = Math.abs(op.amount);
-      totalAcquiredNative += acquired;
-      sumAcquiredTimesPlnPerX += acquired * plnPerX;
     }
 
-    // Doliczyć implied acquisitions (broker rozliczał wewnętrznie w PLN, np. Bossa CAD).
-    const implied = impliedAcquisitions?.get(currency.toUpperCase());
-    if (implied && implied.acquiredNative > 0) {
-      totalAcquiredNative += implied.acquiredNative;
-      sumAcquiredTimesPlnPerX += implied.plnPaid;
+    // Chronologicznie; w obrębie dnia wpływy przed rozchodami (wymiana + wypłata
+    // tego samego dnia nie powinna sztucznie ścinać salda).
+    events.sort((a, b) =>
+      a.dateKey !== b.dateKey ? (a.dateKey < b.dateKey ? -1 : 1) : Math.sign(b.amount - a.amount),
+    );
+
+    let balance = 0; // natywne saldo księgi (waluta "wewnątrz" portfela)
+    let costPln = 0; // koszt PLN pozostałego salda
+    let realizedPln = 0;
+    let totalAcquiredNative = 0;
+    for (const ev of events) {
+      const qty = Math.abs(ev.amount);
+      if (ev.amount > 0) {
+        if (ev.plnPerX !== null) {
+          balance += qty;
+          costPln += qty * ev.plnPerX;
+          totalAcquiredNative += qty;
+        } else if (balance > 0) {
+          // Wpływ bez kursu — po bieżącej średniej (saldo rośnie, avg bez zmian).
+          costPln += qty * (costPln / balance);
+          balance += qty;
+          totalAcquiredNative += qty;
+        }
+        // Pusta księga + brak kursu → zdarzenie niewycenialne, pomijamy.
+      } else {
+        if (balance <= 0) continue;
+        const avg = costPln / balance;
+        const disposed = Math.min(qty, balance);
+        if (ev.plnPerX !== null) realizedPln += disposed * (ev.plnPerX - avg);
+        balance -= disposed;
+        costPln -= disposed * avg;
+        if (balance < 1e-9) {
+          balance = 0;
+          costPln = 0;
+        }
+      }
     }
 
-    // Acquisition-dependent fields — gdy brak ANY acquisition events (operations + implied),
-    // ekspozycja jest pokazywana ale impact jest nieznany (avg=null, impact=0).
+    // Acquisition-dependent fields — gdy księga pusta (brak wycenialnych nabyć
+    // albo wszystko rozchodowane), ekspozycja jest pokazywana ale impact jest
+    // nieznany (avg=null, impact=0).
     let avgPlnPerCurrency: number | null = null;
     let impactPln = 0;
     let impactPct = 0;
-    if (totalAcquiredNative > 0) {
-      avgPlnPerCurrency = sumAcquiredTimesPlnPerX / totalAcquiredNative;
+    if (balance > 1e-9 && costPln > 0) {
+      avgPlnPerCurrency = costPln / balance;
       impactPln = exposureNative * (todayPlnPerCurrency - avgPlnPerCurrency);
-      impactPct = avgPlnPerCurrency > 0 ? (todayPlnPerCurrency / avgPlnPerCurrency - 1) * 100 : 0;
+      impactPct = (todayPlnPerCurrency / avgPlnPerCurrency - 1) * 100;
     }
 
     const exposurePln =
@@ -1687,6 +1747,7 @@ export function computeFxImpact(
       impactPln,
       impactPct,
       totalAcquiredNative,
+      realizedPln,
     });
   }
 
@@ -1694,6 +1755,7 @@ export function computeFxImpact(
 
   const foreignExposurePln = breakdown.reduce((s, e) => s + e.exposurePln, 0);
   const fxImpactPln = breakdown.reduce((s, e) => s + e.impactPln, 0);
+  const fxRealizedPln = breakdown.reduce((s, e) => s + e.realizedPln, 0);
   // Main: wpływ na cały portfel (intuicyjne, małe dla portfeli z małą walutową częścią)
   const fxImpactPct = totalPortfolioValuePln > 0 ? (fxImpactPln / totalPortfolioValuePln) * 100 : 0;
   // Secondary: wpływ na część zagraniczną (większe, pokazuje "ile ruszył walutowy kawałek")
@@ -1706,6 +1768,7 @@ export function computeFxImpact(
     fxImpactPct,
     fxImpactPctOfForeign,
     fxImpactPln,
+    fxRealizedPln,
     foreignExposurePln,
     foreignExposurePctOfPortfolio,
     totalPortfolioValuePln,
