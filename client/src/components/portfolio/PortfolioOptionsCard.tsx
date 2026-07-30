@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
-import type { Position } from 'shared';
+import type { Position, UpcomingEarnings } from 'shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -14,7 +14,14 @@ import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
-import { formatCurrency, formatNumber, formatPLN, formatQuantity } from '@/lib/formatters';
+import { EarningsBadge } from './EarningsBadge';
+import {
+  daysUntilDate,
+  formatCurrency,
+  formatNumber,
+  formatPLN,
+  formatQuantity,
+} from '@/lib/formatters';
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { PortfolioOptionsGreeks } from './PortfolioOptionsGreeks';
 
@@ -56,13 +63,7 @@ function legWord(n: number): string {
   return `${n} ${n >= 5 ? 'nóg' : 'nogi'}`;
 }
 
-function daysToExpiry(expiry: string): number {
-  const today = new Date().toISOString().slice(0, 10);
-  return Math.round(
-    (new Date(`${expiry}T00:00:00Z`).getTime() - new Date(`${today}T00:00:00Z`).getTime()) /
-      86_400_000,
-  );
-}
+const daysToExpiry = daysUntilDate;
 
 /** "DKNG 60 PUT" z optionMeta; fallback: paperName (symbol IBKR jest czytelny). */
 function legLabel(pos: Position): string {
@@ -184,7 +185,15 @@ const ExpiryWarning = () => (
 );
 
 /** Wiersz pojedynczej nogi — używany dla grup 1-nogowych (indent=false) i po rozwinięciu (indent). */
-function LegRow({ pos, indent }: { pos: Position; indent?: boolean }) {
+function LegRow({
+  pos,
+  indent,
+  earnings,
+}: {
+  pos: Position;
+  indent?: boolean;
+  earnings?: UpcomingEarnings;
+}) {
   const isShort = pos.shares < 0;
   return (
     <TableRow className={indent ? 'bg-muted/30' : undefined}>
@@ -199,6 +208,7 @@ function LegRow({ pos, indent }: { pos: Position; indent?: boolean }) {
           </Badge>
         )}
         {pos.expiryPassed && <ExpiryWarning />}
+        <EarningsBadge earnings={earnings} />
       </TableCell>
       <TableCell className="text-muted-foreground whitespace-nowrap">
         {pos.optionMeta?.expiry ?? '—'}
@@ -242,10 +252,16 @@ function LegRow({ pos, indent }: { pos: Position; indent?: boolean }) {
 export function PortfolioOptionsCard({
   positions,
   totalValuePln,
+  earningsByIsin,
 }: {
   positions: Position[];
   totalValuePln: number;
+  /** Publikacje wyników SPÓŁEK BAZOWYCH — klucz to ISIN pozycji opcyjnej. */
+  earningsByIsin?: Map<string, UpcomingEarnings>;
 }) {
+  // Wszystkie nogi grupy dzielą spółkę bazową, więc wystarczy pierwsza z terminem.
+  const groupEarnings = (g: OptionGroup): UpcomingEarnings | undefined =>
+    g.legs.map((l) => earningsByIsin?.get(l.isin)).find(Boolean);
   const groups = useMemo(() => buildGroups(positions), [positions]);
   const [expanded, toggle] = useToggleSet<string>();
   const [tab, setTab] = useState<'positions' | 'greeks'>('positions');
@@ -298,7 +314,14 @@ export function PortfolioOptionsCard({
               <TableBody>
                 {groups.map((g) => {
                   // Pojedyncza noga — zwykły wiersz (bez rozwijania).
-                  if (g.legs.length === 1) return <LegRow key={g.key} pos={g.legs[0]} />;
+                  if (g.legs.length === 1)
+                    return (
+                      <LegRow
+                        key={g.key}
+                        pos={g.legs[0]}
+                        earnings={earningsByIsin?.get(g.legs[0].isin)}
+                      />
+                    );
 
                   const isOpen = expanded.has(g.key);
                   return (
@@ -329,6 +352,7 @@ export function PortfolioOptionsCard({
                               </Badge>
                             )}
                             {g.expiryPassed && <ExpiryWarning />}
+                            <EarningsBadge earnings={groupEarnings(g)} />
                           </span>
                         </TableCell>
                         <TableCell className="text-muted-foreground whitespace-nowrap">
@@ -357,7 +381,15 @@ export function PortfolioOptionsCard({
                           <PLBadge value={g.netProfitLossPct} />
                         </TableCell>
                       </TableRow>
-                      {isOpen && g.legs.map((leg) => <LegRow key={leg.isin} pos={leg} indent />)}
+                      {isOpen &&
+                        g.legs.map((leg) => (
+                          <LegRow
+                            key={leg.isin}
+                            pos={leg}
+                            indent
+                            earnings={earningsByIsin?.get(leg.isin)}
+                          />
+                        ))}
                     </Fragment>
                   );
                 })}

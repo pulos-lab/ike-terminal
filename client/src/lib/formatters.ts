@@ -72,6 +72,19 @@ export function formatDate(dateStr: string): string {
 }
 
 /**
+ * Ile dni kalendarzowych dzieli DZIŚ od `dateStr` (ujemne = przeszłość).
+ * Arytmetyka na UTC-północy, świadomie bez lokalnego `new Date()` na obu końcach —
+ * inaczej zmiana czasu potrafi zgubić albo dorzucić dobę.
+ */
+export function daysUntilDate(dateStr: string): number {
+  const today = new Date().toISOString().slice(0, 10);
+  const target = Date.parse(`${dateStr.slice(0, 10)}T00:00:00Z`);
+  const from = Date.parse(`${today}T00:00:00Z`);
+  if (!Number.isFinite(target)) return Number.NaN;
+  return Math.round((target - from) / 86_400_000);
+}
+
+/**
  * SQLite CURRENT_TIMESTAMP zapisuje UTC bez oznaczenia strefy
  * ('YYYY-MM-DD HH:MM:SS'). Tu Date round-trip jest CELOWY: normalizujemy do
  * ISO + 'Z' i pokazujemy datę w lokalnej strefie użytkownika (timestamp to

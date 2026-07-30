@@ -32,6 +32,7 @@ import {
 import { computePortfolioHistoryMemoized } from './history-memo.js';
 import { applyPendingSpinOffs, getPendingRatioSpinOffs } from './spin-offs-applier.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
+import { getEarningsCalendarService } from './earnings/earnings-calendar.js';
 
 /**
  * Widoki portfela (historia zwrotów, otwarte pozycje) wyciągnięte z handlerów
@@ -433,6 +434,10 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     // Wykryte, ale czekające na ratio z SEC (czysty odczyt z DB — refresh
     // tabeli zdarzeń wykonał się już w applierze powyżej)
     pendingRatioSpinOffs: getPendingRatioSpinOffs(pid, tickerMap),
+    // Nadchodzące publikacje wyników — czysty odczyt z kalendarza (bez sieci).
+    // Ta funkcja obsługuje też widok publiczny, więc nie może na nic czekać;
+    // odświeżanie źródeł chodzi z timerów w index.ts.
+    upcomingEarnings: getEarningsCalendarService().getUpcomingForPositions(positions),
     baseCurrency,
   };
 }

@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef, useLayoutEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { Position } from 'shared';
+import type { Position, UpcomingEarnings } from 'shared';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -38,6 +38,7 @@ import { PortfolioDiversification } from './PortfolioDiversification';
 import { RiskReturnScatter } from './RiskReturnScatter';
 import { PortfolioOptionsCard } from './PortfolioOptionsCard';
 import { PortfolioPositionCardMobile } from './PortfolioPositionCardMobile';
+import { EarningsBadge } from './EarningsBadge';
 import { InstrumentSheet } from './InstrumentSheet';
 import { useToggleSet } from '@/hooks/useToggleSet';
 
@@ -186,6 +187,13 @@ export function PortfolioPage() {
     return map;
   }, [data?.pendingRatioSpinOffs]);
 
+  // Nadchodzące publikacje wyników (okno D+45 z serwera; ikona zapala się od D−7).
+  const earningsMap = useMemo(() => {
+    const map = new Map<string, UpcomingEarnings>();
+    for (const e of data?.upcomingEarnings ?? []) map.set(e.isin, e);
+    return map;
+  }, [data?.upcomingEarnings]);
+
   const cashPositions = data?.cashPositions ?? [];
 
   // Columns before "Wartość (PLN)": Ticker, Nazwa, Ilość, [Śr. cena], Prowizje, Kurs, [Zmiana]
@@ -264,6 +272,7 @@ export function PortfolioPage() {
                     useNativeCcy={useNativeCcy}
                     splitInfo={recentSplitMap.get(pos.isin)}
                     spinOffInfo={recentSpinOffChildMap.get(pos.isin)}
+                    earningsInfo={earningsMap.get(pos.isin)}
                     isExpanded={expandedPositions.has(pos.isin)}
                     onToggle={() => togglePosition(pos.isin)}
                   />
@@ -314,6 +323,7 @@ export function PortfolioPage() {
                         <TableCell className="font-mono font-medium">
                           {pos.ticker}
                           <CategoryBadge category={pos.category} />
+                          <EarningsBadge earnings={earningsMap.get(pos.isin)} />
                           {pos.maturityPassed && (
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -486,7 +496,11 @@ export function PortfolioPage() {
         </CardContent>
       </Card>
 
-      <PortfolioOptionsCard positions={optionPositions} totalValuePln={data?.totalValuePln ?? 0} />
+      <PortfolioOptionsCard
+        positions={optionPositions}
+        totalValuePln={data?.totalValuePln ?? 0}
+        earningsByIsin={earningsMap}
+      />
 
       {cashPositions.length > 0 && (
         <Card>

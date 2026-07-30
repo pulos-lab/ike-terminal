@@ -1,0 +1,90 @@
+{
+  "data": {
+    "asOf": "Wed, Aug 5, 2026",
+    "headers": {
+      "time": "Time",
+      "symbol": "Symbol",
+      "name": "Company Name",
+      "marketCap": "Market Cap",
+      "fiscalQuarterEnding": "Fiscal Quarter Ending",
+      "epsForecast": "Consensus EPS* Forecast",
+      "noOfEsts": "# of Ests",
+      "lastYearRptDt": "Last Year's Report Date",
+      "lastYearEPS": "Last year's EPS*"
+    },
+    "rows": [
+      {
+        "lastYearRptDt": "8/07/2025",
+        "lastYearEPS": "$6.31",
+        "time": "time-pre-market",
+        "symbol": "LLY",
+        "name": "Eli Lilly and Company",
+        "marketCap": "$1,139,525,936,088",
+        "fiscalQuarterEnding": "Jun/2026",
+        "epsForecast": "$6.71",
+        "noOfEsts": "4"
+      },
+      {
+        "lastYearRptDt": "8/06/2025",
+        "lastYearEPS": "$0.97",
+        "time": "time-not-supplied",
+        "symbol": "NVO",
+        "name": "Novo Nordisk A/S",
+        "marketCap": "$228,392,656,222",
+        "fiscalQuarterEnding": "Jun/2026",
+        "epsForecast": "$0.81",
+        "noOfEsts": "4"
+      },
+      {
+        "lastYearRptDt": "8/06/2025",
+        "lastYearEPS": "$1.61",
+        "time": "time-pre-market",
+        "symbol": "DIS",
+        "name": "Walt Disney Company (The)",
+        "marketCap": "$171,011,645,036",
+        "fiscalQuarterEnding": "Jun/2026",
+        "epsForecast": "$1.89",
+        "noOfEsts": "8"
+      },
+      {
+        "lastYearRptDt": "8/06/2025",
+        "lastYearEPS": "$0.25",
+        "time": "time-pre-market",
+        "symbol": "SHOP",
+        "name": "Shopify Inc.",
+        "marketCap": "$166,931,487,716",
+        "fiscalQuarterEnding": "Jun/2026",
+        "epsForecast": "$0.28",
+        "noOfEsts": "13"
+      },
+      {
+        "lastYearRptDt": "7/30/2025",
+        "lastYearEPS": "$1.51",
+        "time": "time-after-hours",
+        "symbol": "WDC",
+        "name": "Western Digital Corporation",
+        "marketCap": "$159,256,931,807",
+        "fiscalQuarterEnding": "Jun/2026",
+        "epsForecast": "$3.24",
+        "noOfEsts": "4"
+      },
+      {
+        "lastYearRptDt": "8/14/2025",
+        "lastYearEPS": "$0.02",
+        "time": "time-after-hours",
+        "symbol": "SNDK",
+        "name": "Sandisk Corporation",
+        "marketCap": "$150,442,904,255",
+        "fiscalQuarterEnding": "Jun/2026",
+        "epsForecast": "$33.28",
+        "noOfEsts": "4"
+      }
+    ]
+  },
+  "message": null,
+  "status": {
+    "rCode": 200,
+    "bCodeMessage": null,
+    "developerMessage": null
+  }
+}
