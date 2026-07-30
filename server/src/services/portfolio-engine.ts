@@ -1884,13 +1884,13 @@ export async function computePortfolioHistory(
     }
   }
 
-  // ── Opcje: przygotowanie wyceny wartością wewnętrzną (intrinsic) ──
-  // Yahoo nie ma historii cen opcji (OCC ticker → 404), więc bez tego silnik interpoluje
-  // martwą premię między transakcjami — dla głęboko-ITM krótkiej pozycji jej zobowiązanie
-  // znika z wyceny (portfel zawyżony miesiącami). Parsujemy kontrakt (option_contracts lub
-  // z OCC tickera) i wyceniamy po intrinsic z kursu instrumentu BAZOWEGO, który pobieramy
-  // z Yahoo (root OCC = ticker Yahoo dla opcji US). Bazowy już tradowany osobno → reużycie
-  // jego serii bez dublowania fetchu.
+  // ── Opcje: przygotowanie wyceny (premia rynkowa + floor intrinsic) ──
+  // Historię premii OCC pobieramy jak każdy zagraniczny ticker (Yahoo v8 chart kwotuje
+  // aktywne kontrakty; wygasłe → 404 → pusta seria). Kurs instrumentu BAZOWEGO jest
+  // potrzebny do flooru intrinsic — bez niego martwa premia głęboko-ITM shorta zaniża
+  // zobowiązanie (portfel zawyżony miesiącami). Parsujemy kontrakt (option_contracts lub
+  // z OCC tickera); bazowy już tradowany osobno → reużycie jego serii bez dublowania
+  // fetchu (root OCC = ticker Yahoo dla opcji US).
   interface HeldOption {
     occTicker: string;
     optionType: 'C' | 'P';
@@ -2040,28 +2040,63 @@ export async function computePortfolioHistory(
 
   await Promise.all(fetchPromises);
 
-  // ── Opcje: wypełnienie map cen wartością wewnętrzną z kursu instrumentu bazowego ──
-  // Nadpisuje pustą serię OCC (Yahoo → 404) wartością intrinsic per dzień. Dni transakcji
-  // zostaną potem doprecyzowane realną premią (nadpisanie cen tx niżej), a interpolacja
-  // premii sama się pominie (opcje mają teraz komplet punktów). Short (ujemne shares) →
-  // ujemne zobowiązanie; mnożnik ×100 nakłada bondMultByIsin.
+  // ── Opcje: seria wyceny = premia rynkowa (forward-fill) z floorem intrinsic ──
+  // Yahoo v8 chart MA historię premii aktywnych kontraktów OCC (seria rzadka — opcje
+  // handlują nie codziennie); wygasłe kontrakty → 404 → pusta seria. Dla każdego dnia
+  // bazowego: forward-fill ostatniej znanej premii + floor wartości wewnętrznej
+  // (no-arbitrage: opcja nigdy nie jest warta mniej niż intrinsic). Premia dowozi wartość
+  // czasową (OTM > 0 — bez tego zmiany premii w ogóle nie ruszały wyceny portfela),
+  // intrinsic chroni przed nieaktualną premią głęboko-ITM (zobowiązanie shorta rośnie
+  // z kursem bazowego, choć kontrakt nie handluje). Dni transakcji zostaną potem
+  // doprecyzowane realną premią (nadpisanie cen tx niżej), a interpolacja premii sama
+  // się pominie (opcje mają komplet punktów). Short (ujemne shares) → ujemne
+  // zobowiązanie; mnożnik ×100 nakłada bondMultByIsin.
   //
   // KLUCZOWE: kursy historyczne Yahoo są SKORYGOWANE o splity (np. OTLY 1:20, LCID 1:10),
   // a strike opcji jest w skali WSPÓŁCZESNEJ (z dnia handlu). Sprowadzamy kurs bazowego do
   // skali strike'a mnożąc przez iloczyn ratio zdarzeń split PO danej dacie (real = yahoo ×
-  // Πratio; reverse 1:20 ratio=0.05 → ×0.05; forward 4:1 ratio=4 → ×4).
+  // Πratio; reverse 1:20 ratio=0.05 → ×0.05; forward 4:1 ratio=4 → ×4). Premii OCC NIE
+  // skalujemy — kontrakt jest kwotowany w skali swojego strike'a.
+  // Premie z WŁASNYCH transakcji jako dodatkowe punkty serii — seria Yahoo bywa rzadka
+  // (opcje handlują nie codziennie), a fill użytkownika to realna premia rynkowa z tego
+  // dnia; bez seedu okres od otwarcia do pierwszego punktu Yahoo wyceniałby OTM na 0.
+  // Wiersze przypisania/wykonania pomijamy (cena tam to strike, nie premia).
+  const txPremiumsByOcc = new Map<string, Array<{ date: string; price: number }>>();
+  if (heldOptions.length > 0) {
+    const occSet = new Set(heldOptions.map((o) => o.occTicker));
+    for (const tx of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
+      if (tx.category !== 'option' || tx.optionEvent || !(tx.price > 0)) continue;
+      const occ = tickerMap.get(tx.isin)?.ticker;
+      if (!occ || !occSet.has(occ)) continue;
+      let arr = txPremiumsByOcc.get(occ);
+      if (!arr) txPremiumsByOcc.set(occ, (arr = []));
+      arr.push({ date: tx.date.split('T')[0], price: tx.price });
+    }
+  }
+
   for (const opt of heldOptions) {
     const underlyingSeries = historicalPrices.get(opt.underlyingKey);
     if (!underlyingSeries || underlyingSeries.size === 0) continue; // brak kursu bazowego
     const events = underlyingSplitEvents.get(opt.underlyingKey) ?? [];
-    const priceMap = historicalPrices.get(opt.occTicker) ?? new Map<string, number>();
+    const premiumSeries = historicalPrices.get(opt.occTicker) ?? new Map<string, number>();
+    const txPoints = txPremiumsByOcc.get(opt.occTicker) ?? [];
+    const merged = new Map<string, number>();
+    let lastPremium = 0; // serie fetcherów są rosnące po dacie → prosty forward-fill
+    let txIdx = 0;
     for (const [date, yahooPrice] of underlyingSeries) {
       if (date > opt.expiry) continue; // po wygaśnięciu kontrakt bezwartościowy
       let scale = 1;
       for (const e of events) if (e.date > date) scale *= e.ratio;
-      priceMap.set(date, optionIntrinsicValue(opt.optionType, yahooPrice * scale, opt.strike));
+      const intrinsic = optionIntrinsicValue(opt.optionType, yahooPrice * scale, opt.strike);
+      while (txIdx < txPoints.length && txPoints[txIdx].date <= date) {
+        lastPremium = txPoints[txIdx].price;
+        txIdx++;
+      }
+      const premium = premiumSeries.get(date);
+      if (premium !== undefined && premium > 0) lastPremium = premium; // Yahoo close > premia tx z tego dnia
+      merged.set(date, Math.max(intrinsic, lastPremium));
     }
-    historicalPrices.set(opt.occTicker, priceMap);
+    historicalPrices.set(opt.occTicker, merged);
   }
 
   // ── Transaction cash impacts — księgowane w walucie ROZLICZENIA ──
