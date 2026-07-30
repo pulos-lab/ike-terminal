@@ -36,6 +36,11 @@ const BROKER_DEDUP_COVERAGE = 0.9;
 /** Backoff nieudanych prób sieciowych per zdarzenie (ticker dziecka bez notowań itp.). */
 const DEFER_RETRY_MS = 60 * 60 * 1000;
 
+/** Jak długo (dni od ex-date) sygnalizujemy zdarzenie czekające na ratio z SEC. */
+const PENDING_RATIO_WINDOW_DAYS = 14;
+/** Tolerancja dopasowania ex-date zdarzenia ze scrapera do wiersza w `spin_offs`. */
+const KNOWN_EVENT_DATE_TOLERANCE_DAYS = 7;
+
 /** Clamp frakcji alokacji — poza tym zakresem cena jest podejrzana, nie aplikujemy. */
 const MIN_ALLOC = 0.001;
 const MAX_ALLOC = 0.9;
@@ -149,15 +154,44 @@ async function collectCandidates(override?: SpinOffMapEntry[]): Promise<Candidat
 /**
  * Zdarzenia wykryte przez scraper, ale czekające na ratio z SEC — do sygnalizacji
  * w UI przy rodzicach obecnych w portfelu. Czysty odczyt z DB (bez sieci).
+ *
+ * Dwa wygaszacze, bo `ratio IS NULL` to stan DOMYŚLNY każdego świeżo zescrape'owanego
+ * zdarzenia (strona źródłowa nie podaje parytetu) i bez nich komunikat wisi wiecznie:
+ *  - okno czasowe: sygnalizujemy zdarzenia nadchodzące i świeże (ex-date nie starsza
+ *    niż PENDING_RATIO_WINDOW_DAYS). Jeśli po tym czasie SEC nie dał jednoznacznego
+ *    ratio, to nie jest już „zaraz się pojawi" tylko cicha porażka rezolwera —
+ *    użytkownik ma dodać pozycję ręcznie, nie patrzeć na ℹ w nieskończoność.
+ *  - portfel już wie o zdarzeniu: dowolny wiersz w `spin_offs` (applied /
+ *    skipped_broker / reverted) oznacza rozstrzygnięcie — mapa statyczna wyprzedziła
+ *    rezolwer, broker sam zaksięgował dziecko albo user cofnął. Bez tego filtra
+ *    komunikat „pozycja pojawi się automatycznie" wraca po wygaśnięciu badge'a
+ *    zdarzenia zastosowanego (realny przypadek SPGI→MBGL).
  */
 export function getPendingRatioSpinOffs(
+  pid: string,
   tickerMap: Map<string, TickerMapEntry>,
+  now: Date = new Date(),
 ): Array<{ parentTicker: string; childTicker: string; exDate: string }> {
   try {
     const held = new Set([...tickerMap.values()].map((e) => e.ticker.toUpperCase()));
+    const cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() - PENDING_RATIO_WINDOW_DAYS);
+    const cutoffStr = cutoff.toISOString().split('T')[0];
+    const known = getSpinOffs(pid);
     return getSpinoffEventsService()
       .getPendingRatioEvents()
       .filter((e) => held.has(e.parentTicker.toUpperCase()))
+      .filter((e) => e.exDate >= cutoffStr)
+      .filter(
+        (e) =>
+          !known.some(
+            (k) =>
+              k.parentTicker.toUpperCase() === e.parentTicker.toUpperCase() &&
+              // Tolerancja na różne konwencje daty (ostatni dzień z prawem vs
+              // dzień dystrybucji) między mapą statyczną a scraperem.
+              isoDaysDiff(k.exDate, e.exDate) <= KNOWN_EVENT_DATE_TOLERANCE_DAYS,
+          ),
+      )
       .map((e) => ({
         parentTicker: e.parentTicker,
         childTicker: e.childTicker,

@@ -43,6 +43,14 @@ import { getEarningsCalendarService } from './earnings/earnings-calendar.js';
  * dobę) — bezpieczne też przy ruchu anonimowym.
  */
 
+/**
+ * Ile dni wisi wyjaśnienie spin-offu przy pozycji. Badge jest komunikatem
+ * jednorazowym ("skąd wzięły się te akcje / dlaczego spadł koszt nabycia") —
+ * po dwóch tygodniach od zobaczenia zmiany nie niesie już informacji, a wisi
+ * przy pozycji jako stały ⚠ i rozmywa sygnał realnych ostrzeżeń.
+ */
+export const SPIN_OFF_BADGE_WINDOW_DAYS = 14;
+
 /** Load saved splits from DB and convert to DetectedSplit format for the engine. */
 export function loadSplitsForEngine(pid: string): DetectedSplit[] {
   return getSplits(pid).map((s) => ({
@@ -64,12 +72,11 @@ export function loadSpinOffsForEngine(pid: string): AppliedSpinOff[] {
 }
 
 /**
- * Spin-offy do badge'a "skąd wzięła się ta pozycja" (30 dni — rzadsze niż
- * splity, wyjaśnienie powinno wisieć dłużej). Okno liczone od ex-date LUB od
- * ZASTOSOWANIA: zdarzenie dodane do mapy po miesiącach (Syn2bio: ex 2026-04-02,
- * wpis w mapie 2026-07-08) aplikuje się długo po ex — pozycja dziecka pojawia
- * się użytkownikowi dopiero przy aplikacji i wtedy badge musi być widoczny.
- * Eksport dla testów; `now` wstrzykiwane wyłącznie testowo.
+ * Spin-offy do badge'a "skąd wzięła się ta pozycja". Okno liczone od ex-date LUB
+ * od ZASTOSOWANIA: zdarzenie dodane do mapy po miesiącach (Syn2bio: ex
+ * 2026-04-02, wpis w mapie 2026-07-08) aplikuje się długo po ex — pozycja
+ * dziecka pojawia się użytkownikowi dopiero przy aplikacji i wtedy badge musi
+ * być widoczny. Eksport dla testów; `now` wstrzykiwane wyłącznie testowo.
  */
 export function selectRecentSpinOffs(
   spinOffs: AppliedSpinOff[],
@@ -83,14 +90,14 @@ export function selectRecentSpinOffs(
   ratio: number;
   allocationPct: number;
 }> {
-  const monthAgo = new Date(now);
-  monthAgo.setDate(monthAgo.getDate() - 30);
-  const monthAgoStr = monthAgo.toISOString().split('T')[0];
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - SPIN_OFF_BADGE_WINDOW_DAYS);
+  const cutoffStr = cutoff.toISOString().split('T')[0];
   return spinOffs
     .filter(
       (s) =>
         s.status === 'applied' &&
-        (s.exDate >= monthAgoStr || (s.appliedAt ?? '').slice(0, 10) >= monthAgoStr),
+        (s.exDate >= cutoffStr || (s.appliedAt ?? '').slice(0, 10) >= cutoffStr),
     )
     .map((s) => ({
       parentIsin: s.parentIsin,
@@ -426,7 +433,7 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     recentSpinOffs,
     // Wykryte, ale czekające na ratio z SEC (czysty odczyt z DB — refresh
     // tabeli zdarzeń wykonał się już w applierze powyżej)
-    pendingRatioSpinOffs: getPendingRatioSpinOffs(tickerMap),
+    pendingRatioSpinOffs: getPendingRatioSpinOffs(pid, tickerMap),
     // Nadchodzące publikacje wyników — czysty odczyt z kalendarza (bez sieci).
     // Ta funkcja obsługuje też widok publiczny, więc nie może na nic czekać;
     // odświeżanie źródeł chodzi z timerów w index.ts.

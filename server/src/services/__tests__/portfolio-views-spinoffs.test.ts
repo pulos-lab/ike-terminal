@@ -51,6 +51,17 @@ describe('selectRecentSpinOffs — okno badge’a', () => {
     expect(rows).toHaveLength(0);
   });
 
+  it('zastosowanie sprzed 13 dni → badge jeszcze widoczny', () => {
+    const rows = selectRecentSpinOffs([spinOff({ appliedAt: '2026-06-25 09:00:00' })], NOW);
+    expect(rows).toHaveLength(1);
+  });
+
+  it('zastosowanie sprzed 15 dni → badge już wygasł (okno 14 dni)', () => {
+    // Komunikat jednorazowy: użytkownik zaimportował, zobaczył, koniec.
+    const rows = selectRecentSpinOffs([spinOff({ appliedAt: '2026-06-23 09:00:00' })], NOW);
+    expect(rows).toHaveLength(0);
+  });
+
   it('status ≠ applied nigdy nie daje badge’a', () => {
     const rows = selectRecentSpinOffs(
       [
