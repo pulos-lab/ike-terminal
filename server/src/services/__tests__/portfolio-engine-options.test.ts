@@ -331,14 +331,82 @@ describe('computePortfolioHistory — wycena opcji wartością wewnętrzną z ku
     vi.clearAllMocks();
   });
 
-  it('short PUT ITM wyceniany po intrinsic, nie po martwej/interpolowanej premii', async () => {
-    const itm = await runWithUnderlying(30); // put 60: intrinsic = 30
-    const otm = await runWithUnderlying(100); // put 60: intrinsic = 0
+  it('short PUT ITM wyceniany po intrinsic (floor), OTM po ostatniej znanej premii', async () => {
+    const itm = await runWithUnderlying(30); // put 60: intrinsic 30 > premia 16.32 → 30
+    const otm = await runWithUnderlying(100); // put 60: intrinsic 0 → seed premii z tx 16.32
     expect(itm).toBeTruthy();
     expect(otm).toBeTruthy();
     // Różnica wartości portfela = wyłącznie wkład opcji (cash identyczny w obu biegach):
-    // ITM: -1 × 30 × 100 × 4 = -12000 PLN; OTM: 0 → różnica ≈ 12000, ITM niżej.
-    expect(otm.portfolioValue - itm.portfolioValue).toBeCloseTo(12000, 0);
+    // ITM: -1 × 30 × 100 × 4 = -12000 PLN (martwa premia 16.32 NIE zaniża zobowiązania);
+    // OTM: -1 × 16.32 × 100 × 4 = -6528 PLN (ostatnia premia, nie intrinsic 0).
+    expect(otm.portfolioValue - itm.portfolioValue).toBeCloseTo(12000 - 6528, 0);
+  });
+
+  it('historia premii OCC z Yahoo: OTM wyceniana po premii (forward-fill), nie po intrinsic 0', async () => {
+    // Long put 60 przy bazowym 100 (intrinsic 0). Yahoo zwraca rzadką serię premii —
+    // wartość portfela ma podążać za premią, a dni bez obrotu brać ostatnią znaną premię.
+    (yahoo.fetchYahooHistory as any).mockImplementation(async (ticker: string) => {
+      if (ticker === 'DKNG') return flatSeries('2021-11-01', '2022-05-20', 100);
+      if (ticker === 'USDPLN=X') return flatSeries('2021-11-01', '2022-05-20', 4);
+      if (ticker === 'XYZ') return flatSeries('2021-11-01', '2026-12-31', 10);
+      if (ticker === 'DKNG220520P00060000')
+        return [
+          { date: '2021-11-30', close: 12 },
+          { date: '2021-12-03', close: 8 }, // luka 12-01/12-02 → forward-fill 12
+        ];
+      return [];
+    });
+    const { history } = await computePortfolioHistory(
+      [optTx({ side: 'K' }), xyzBuy()], // long 1 kontrakt + długa XYZ (trzyma historię)
+      [deposit],
+      histTickerMap,
+      '',
+      'none',
+      undefined,
+      undefined,
+      [],
+      'PLN',
+      [],
+      optionContracts,
+    );
+    const at = (d: string) => history.find((h) => h.date === d)!;
+    // 1 kontrakt × premia × 100 × USDPLN 4: 11-30 → 4800, 12-01/02 (bez obrotu) → nadal 4800,
+    // 12-03 → 3200. Różnice dzienne izolują wkład opcji (reszta portfela stała).
+    expect(at('2021-12-01').portfolioValue - at('2021-11-30').portfolioValue).toBeCloseTo(0, 0);
+    expect(at('2021-12-03').portfolioValue - at('2021-12-01').portfolioValue).toBeCloseTo(
+      (8 - 12) * 100 * 4,
+      0,
+    );
+  });
+
+  it('floor intrinsic: głęboko-ITM short nie korzysta z nieaktualnej (niższej) premii', async () => {
+    // Short put 60, bazowy spada do 30 → intrinsic 30. Ostatnia premia z obrotu to 20
+    // (sprzed spadku) — wycena MUSI wziąć max(intrinsic, premia) = 30, nie martwe 20.
+    (yahoo.fetchYahooHistory as any).mockImplementation(async (ticker: string) => {
+      if (ticker === 'DKNG') return flatSeries('2021-11-01', '2022-05-20', 30);
+      if (ticker === 'USDPLN=X') return flatSeries('2021-11-01', '2022-05-20', 4);
+      if (ticker === 'XYZ') return flatSeries('2021-11-01', '2026-12-31', 10);
+      if (ticker === 'DKNG220520P00060000') return [{ date: '2021-11-05', close: 20 }];
+      return [];
+    });
+    const { history } = await computePortfolioHistory(
+      [optTx(), xyzBuy()], // short DKNG 60 P
+      [deposit],
+      histTickerMap,
+      '',
+      'none',
+      undefined,
+      undefined,
+      [],
+      'PLN',
+      [],
+      optionContracts,
+    );
+    const nov30 = history.find((h) => h.date === '2021-11-30')!;
+    const cashOnly = history.find((h) => h.date === '2021-11-03')!; // przed openem shorta
+    // Wkład opcji 2021-11-30 = −1 × 30 × 100 × 4 = −12000 (intrinsic), nie −8000 (premia).
+    // XYZ kupione 11-04 za 100 PLN (cash-neutralne przy wycenie = cenie kupna).
+    expect(nov30.portfolioValue - cashOnly.portfolioValue).toBeCloseTo(-12000 + 1631.32 * 4, 0);
   });
 
   it('opcja OTM (intrinsic 0) nie skacze w luki weekendowe mimo transakcji nie po kolei', async () => {
