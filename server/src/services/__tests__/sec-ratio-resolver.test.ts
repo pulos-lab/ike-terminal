@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
+// Nagrana odpowiedź efts.sec.gov na zapytanie o SPGI→MBGL (2026-07). Fixture
+// pochodzi z REALNEGO żądania — kształt `_source` jest tu jedynym źródłem prawdy.
+import FTS_REAL_RESPONSE from './__fixtures__/edgar-fts-spgi.json' with { type: 'json' };
 import {
   parseRatioFromSentence,
   extractRatioFromFiling,
@@ -100,12 +103,26 @@ describe('htmlToText / edgarDocUrlFromHit', () => {
     expect(htmlToText('<p>S&amp;P <b>Global</b></p><style>x{}</style>')).toBe('S&P Global');
   });
 
-  it('buduje URL dokumentu z hitu FTS (accession bez myślników, CIK bez zer)', () => {
-    const url = edgarDocUrlFromHit({
-      _id: '0001104659-26-066592:tm2528763d9_ex99-1.htm',
-      _source: { cik: '0002090312' },
-    });
-    expect(url).toBe(
+  it('buduje URL dokumentu z REALNEJ odpowiedzi FTS (accession bez myślników, CIK bez zer)', () => {
+    // Regresja: poprzedni fixture był pisany ręcznie i używał pola `cik`, którego
+    // EDGAR nie zwraca — kod czytał to samo nieistniejące pole, więc test był
+    // zielony, a rezolwer nie pobrał w produkcji ani jednego filingu. Ten fixture
+    // to nagrana odpowiedź efts.sec.gov (pole `ciks`, tablica).
+    const hit = FTS_REAL_RESPONSE.hits.hits[0];
+    expect(hit._source.ciks).toEqual(['0002090312']);
+    expect(hit._source).not.toHaveProperty('cik');
+    expect(edgarDocUrlFromHit(hit)).toBe(
+      'https://www.sec.gov/Archives/edgar/data/2090312/000110465926066592/tm2528763d9_ex99-1.htm',
+    );
+  });
+
+  it('akceptuje też pojedyncze `cik` (zgodność wstecz, gdyby EDGAR wrócił do l. poj.)', () => {
+    expect(
+      edgarDocUrlFromHit({
+        _id: '0001104659-26-066592:tm2528763d9_ex99-1.htm',
+        _source: { cik: '0002090312' },
+      }),
+    ).toBe(
       'https://www.sec.gov/Archives/edgar/data/2090312/000110465926066592/tm2528763d9_ex99-1.htm',
     );
   });
@@ -116,17 +133,37 @@ describe('htmlToText / edgarDocUrlFromHit', () => {
   });
 });
 
-describe('resolveSpinoffRatioFromSec (mock fetch)', () => {
-  const FTS_RESPONSE = {
-    hits: {
-      hits: [
-        {
-          _id: '0001104659-26-066592:tm2528763d9_ex99-1.htm',
-          _source: { cik: '2090312' },
-        },
-      ],
-    },
+describe('secUserAgent (nagłówek wymagany przez SEC)', () => {
+  const withContact = async (value: string | undefined) => {
+    const prev = process.env.SEC_CONTACT;
+    if (value === undefined) delete process.env.SEC_CONTACT;
+    else process.env.SEC_CONTACT = value;
+    const fetchFn = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    await resolveSpinoffRatioFromSec(EVENT, fetchFn as unknown as typeof fetch);
+    if (prev === undefined) delete process.env.SEC_CONTACT;
+    else process.env.SEC_CONTACT = prev;
+    const init = fetchFn.mock.calls[0][1] as { headers: Record<string, string> };
+    return init.headers['User-Agent'];
   };
+
+  it('bez SEC_CONTACT używa kontaktu z prawdziwą domeną (localhost → 403 z sec.gov)', async () => {
+    const ua = await withContact(undefined);
+    expect(ua).toContain('@');
+    expect(ua).not.toMatch(/localhost/i);
+  });
+
+  it('SEC_CONTACT z domeną localhost jest odrzucany na rzecz domyślnego', async () => {
+    const ua = await withContact('IKE admin@localhost');
+    expect(ua).not.toMatch(/localhost/i);
+  });
+
+  it('poprawny SEC_CONTACT jest używany bez zmian', async () => {
+    expect(await withContact('Jan Kowalski jan@example.com')).toBe('Jan Kowalski jan@example.com');
+  });
+});
+
+describe('resolveSpinoffRatioFromSec (mock fetch)', () => {
+  const FTS_RESPONSE = FTS_REAL_RESPONSE;
 
   it('FTS → dokument → jednoznaczne ratio + sourceUrl; formularze 8-K i 10-12B w zapytaniu', async () => {
     const fetchFn = vi.fn().mockImplementation(async (url: string) => {

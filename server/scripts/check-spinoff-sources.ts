@@ -105,6 +105,19 @@ async function main() {
       (checkAll ? '' : ' (użyj --all dla wszystkich)') +
       `, mapa: ${SPIN_OFF_MAP.length} wpis(ów).`,
   );
+
+  // Pojedyncze „brak ratio" jest normalne (nie każdy filing formułuje parytet
+  // jednoznacznie), ale ZERO trafień przy niepustej próbce to sygnał awarii
+  // transportu, nie właściwość źródła — dokładnie tak wyglądał bug z polem
+  // `ciks` (rezolwer nie pobrał ani jednego dokumentu i milczał).
+  if (toCheck.length > 0 && resolved === 0) {
+    console.log(
+      '\n⚠ ZERO rozwiązanych ratio przy ' +
+        `${toCheck.length} sprawdzonych zdarzeniach — to nietypowe. Sprawdź logi ` +
+        '[sec-ratio] powyżej: HTTP 403 = User-Agent bez prawdziwej domeny (SEC_CONTACT), ' +
+        'brak URL-a z trafienia = zmiana kształtu odpowiedzi EDGAR-a.',
+    );
+  }
 }
 
 main().catch((err) => {

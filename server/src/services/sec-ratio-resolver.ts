@@ -41,10 +41,30 @@ const MAX_DOCS = 3;
 /** Sanity: ratio poza tym zakresem = błąd parsowania, nie realna dystrybucja. */
 const MIN_RATIO = 0.01;
 const MAX_RATIO = 20;
+/** Kontakt w User-Agent, gdy `SEC_CONTACT` nie jest ustawiony (patrz secUserAgent). */
+const DEFAULT_SEC_CONTACT = 'IKE-Terminal-PortfolioManager admin@tixterminal.app';
 
+/**
+ * SEC wymaga identyfikacji z kontaktem: "Nazwa kontakt@domena", i EGZEKWUJE to
+ * na `www.sec.gov/Archives` — zmierzone na tym samym dokumencie:
+ * `…admin@localhost` → HTTP 403, `admin@tixterminal.app` → HTTP 200.
+ * `efts.sec.gov` (samo wyszukiwanie) przepuszcza jedno i drugie, więc wcześniejszy
+ * default z `localhost` dawał trafienia i dopiero pobranie filingu leciało w 403.
+ * Adres bez `@` lub z domeną localhost jest odrzucany — lepiej wysłać działający
+ * default niż nagłówek, który SEC odbije.
+ */
 function secUserAgent(): string {
-  // SEC wymaga identyfikacji z kontaktem: "Nazwa kontakt@domena".
-  return process.env.SEC_CONTACT ?? 'IKE-Terminal-PortfolioManager admin@localhost';
+  const configured = process.env.SEC_CONTACT?.trim();
+  if (configured && configured.includes('@') && !/@\S*localhost/i.test(configured)) {
+    return configured;
+  }
+  if (configured) {
+    console.warn(
+      `[sec-ratio] SEC_CONTACT="${configured}" nie wygląda na adres z domeną — SEC odbije takie ` +
+        'żądanie (403). Używam domyślnego kontaktu.',
+    );
+  }
+  return DEFAULT_SEC_CONTACT;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -209,7 +229,11 @@ export function extractRatioFromFiling(
 
 interface EdgarFtsHit {
   _id: string; // "0001104659-26-066592:tm2528763d9_ex99-1.htm"
-  _source?: { cik?: string | string[] };
+  // UWAGA: EDGAR zwraca `ciks` (l. mnoga, TABLICA zero-paddowanych CIK-ów) —
+  // fixture zapisany w testach pochodzi z realnej odpowiedzi. `cik` (l. poj.)
+  // nigdy nie istniał; kod czytający to pole nie budował URL-a dla ŻADNEGO
+  // trafienia, więc rezolwer nie przeczytał ani jednego filingu.
+  _source?: { ciks?: string[]; cik?: string | string[] };
 }
 
 function isoAddDays(iso: string, days: number): string {
@@ -222,7 +246,7 @@ function isoAddDays(iso: string, days: number): string {
 export function edgarDocUrlFromHit(hit: EdgarFtsHit): string | null {
   const [accession, filename] = hit._id.split(':');
   if (!accession || !filename) return null;
-  const rawCik = hit._source?.cik;
+  const rawCik = hit._source?.ciks ?? hit._source?.cik;
   const cik = Array.isArray(rawCik) ? rawCik[0] : rawCik;
   if (!cik) return null;
   const cikNum = String(parseInt(cik, 10));
@@ -264,16 +288,24 @@ export async function resolveSpinoffRatioFromSec(
     return null;
   }
 
+  // Cichy `continue` przy każdym z tych kroków ukrywał awarię transportu jako
+  // „SEC nie zna ratio" — stąd logi przy porażkach, których nie widać w wyniku.
   for (const hit of hits.slice(0, MAX_DOCS)) {
     const docUrl = edgarDocUrlFromHit(hit);
-    if (!docUrl) continue;
+    if (!docUrl) {
+      console.warn(`[sec-ratio] Nie umiem zbudować URL-a z trafienia FTS: ${hit._id}`);
+      continue;
+    }
     await sleep(POLITENESS_DELAY_MS);
     try {
       const resp = await fetchFn(docUrl, {
         headers: { 'User-Agent': secUserAgent() },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
-      if (!resp.ok) continue;
+      if (!resp.ok) {
+        console.warn(`[sec-ratio] HTTP ${resp.status} przy pobieraniu ${docUrl}`);
+        continue;
+      }
       const content = await resp.text();
       const ratio = extractRatioFromFiling(content, event);
       if (ratio !== null) {

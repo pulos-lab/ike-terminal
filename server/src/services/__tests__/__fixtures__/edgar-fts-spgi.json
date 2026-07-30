@@ -1,0 +1,38 @@
+{
+  "took": 26,
+  "timed_out": false,
+  "hits": {
+    "total": {
+      "value": 1,
+      "relation": "eq"
+    },
+    "max_score": 7.209578,
+    "hits": [
+      {
+        "_index": "edgar_file",
+        "_id": "0001104659-26-066592:tm2528763d9_ex99-1.htm",
+        "_score": 7.209578,
+        "_source": {
+          "ciks": ["0002090312"],
+          "period_ending": null,
+          "file_num": ["001-43276"],
+          "display_names": ["Mobility Global Inc.  (MBGL)  (CIK 0002090312)"],
+          "xsl": null,
+          "sequence": "10",
+          "root_forms": ["10-12B"],
+          "file_date": "2026-05-27",
+          "biz_states": ["VA"],
+          "sics": ["7389"],
+          "form": "10-12B/A",
+          "adsh": "0001104659-26-066592",
+          "film_num": ["261022154"],
+          "biz_locations": ["Reston, VA"],
+          "file_type": "EX-99.1",
+          "file_description": "EXHIBIT 99.1",
+          "inc_states": ["DE"],
+          "items": []
+        }
+      }
+    ]
+  }
+}
