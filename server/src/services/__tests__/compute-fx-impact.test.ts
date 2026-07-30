@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { computeFxImpact } from '../portfolio-engine.js';
-import type { CashOperation } from 'shared';
+import type { CashOperation, ImpliedFxFlow } from 'shared';
 
 function op(
   overrides: Partial<CashOperation> & {
@@ -69,14 +69,16 @@ describe('computeFxImpact', () => {
     expect(result!.foreignExposurePctOfPortfolio).toBeCloseTo(30, 2);
   });
 
-  it('CAD z impliedAcquisitions — Poziom 2: dostaje realny avg kurs i impact się liczy', () => {
+  it('CAD z implied flows — Poziom 2: dostaje realny avg kurs i impact się liczy', () => {
     const operations: CashOperation[] = [];
     const foreignExposures = new Map([['CAD', 9986]]);
     const todayFx = new Map([['CAD', 2.65]]);
     const totalPortfolioValuePln = 100000;
 
     // Bossa Zagranica: kupno 2 sztuk CSU.TO za 14212 PLN, native price ≈ $4993 CAD
-    const implied = new Map([['CAD', { acquiredNative: 9986, plnPaid: 14212.02 }]]);
+    const implied: ImpliedFxFlow[] = [
+      { date: '2024-01-10', currency: 'CAD', amountNative: 9986, kind: 'buy', pln: 14212.02 },
+    ];
 
     const result = computeFxImpact(
       operations,
@@ -116,7 +118,9 @@ describe('computeFxImpact', () => {
       ['CAD', 3.0],
     ]);
     const totalPortfolioValuePln = 5000;
-    const implied = new Map([['CAD', { acquiredNative: 100, plnPaid: 280 }]]);
+    const implied: ImpliedFxFlow[] = [
+      { date: '2024-01-10', currency: 'CAD', amountNative: 100, kind: 'buy', pln: 280 },
+    ];
 
     const result = computeFxImpact(
       operations,
@@ -153,7 +157,9 @@ describe('computeFxImpact', () => {
     ];
     const foreignExposures = new Map([['USD', 1500]]);
     const todayFx = new Map([['USD', 4.3]]);
-    const implied = new Map([['USD', { acquiredNative: 500, plnPaid: 2250 }]]);
+    const implied: ImpliedFxFlow[] = [
+      { date: '2024-02-10', currency: 'USD', amountNative: 500, kind: 'buy', pln: 2250 },
+    ];
 
     const result = computeFxImpact(
       operations,

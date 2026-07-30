@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { computeFxImpact } from '../portfolio-engine.js';
-import type { CashOperation } from 'shared';
+import type { CashOperation, ImpliedFxFlow } from 'shared';
 
 function fxOp(
   overrides: Partial<CashOperation> & { amount: number; currency: string },
@@ -101,9 +101,11 @@ describe('computeFxImpact', () => {
     expect(eur.impactPln).toBeCloseTo(300 * 0.2, 6);
   });
 
-  it('implied acquisitions (Bossa rozliczana w PLN) dolicza się do średniej', () => {
+  it('implied flows (Bossa rozliczana w PLN) doliczają się do średniej', () => {
     // Brak operacji FX; nabycie wynika z transakcji: 1000 CAD za 3000 PLN → avg 3.00.
-    const implied = new Map([['CAD', { acquiredNative: 1000, plnPaid: 3000 }]]);
+    const implied: ImpliedFxFlow[] = [
+      { date: '2024-01-10', currency: 'CAD', amountNative: 1000, kind: 'buy', pln: 3000 },
+    ];
     const result = computeFxImpact(
       [],
       new Map([['CAD', 1000]]),
@@ -155,5 +157,191 @@ describe('computeFxImpact', () => {
 
     const usd = result!.breakdown.find((b) => b.currency === 'USD')!;
     expect(usd.exposurePln).toBe(4187.5);
+  });
+});
+
+describe('computeFxImpact — księga walutowa (średnia krocząca + realized)', () => {
+  it('round-trip nie zatruwa średniej: avg = kurs ostatniego nabycia, strata w realized', () => {
+    // Kupno 1000 USD @4.50 → wymiana wszystkiego z powrotem @4.00 (realna strata
+    // −500 PLN) → ponowne kupno 1000 USD @3.60. Stary algorytm: avg = 4.05 i
+    // fikcyjny impact −4000 przy kursie 3.65. Nowy: avg = 3.60 (tylko obecne
+    // saldo), impact +50, a −500 ląduje w realized.
+    const ops = [
+      fxOp({ amount: 1000, currency: 'USD', fxRate: 4.5, date: '2022-01-10T10:00:00' }),
+      fxOp({ amount: -1000, currency: 'USD', fxRate: 4.0, date: '2023-06-10T10:00:00' }),
+      fxOp({ amount: 1000, currency: 'USD', fxRate: 3.6, date: '2025-02-10T10:00:00' }),
+    ];
+    const result = computeFxImpact(ops, new Map([['USD', 1000]]), new Map([['USD', 3.65]]), 100000);
+
+    const usd = result!.breakdown.find((b) => b.currency === 'USD')!;
+    expect(usd.avgPlnPerCurrency).toBeCloseTo(3.6, 10);
+    expect(usd.impactPln).toBeCloseTo(1000 * (3.65 - 3.6), 6);
+    expect(usd.realizedPln).toBeCloseTo(1000 * (4.0 - 4.5), 6);
+    expect(usd.totalAcquiredNative).toBeCloseTo(2000, 6); // oba nabycia, diagnostycznie
+    expect(result!.fxRealizedPln).toBeCloseTo(-500, 6);
+  });
+
+  it('częściowy rozchód: średnia bez zmian, realized = ilość × (kurs − avg)', () => {
+    const ops = [
+      fxOp({ amount: 1000, currency: 'USD', fxRate: 4.0, date: '2024-01-10T10:00:00' }),
+      fxOp({ amount: -400, currency: 'USD', fxRate: 4.2, date: '2024-02-10T10:00:00' }),
+    ];
+    const result = computeFxImpact(ops, new Map([['USD', 600]]), new Map([['USD', 4.1]]), 100000);
+
+    const usd = result!.breakdown.find((b) => b.currency === 'USD')!;
+    expect(usd.avgPlnPerCurrency).toBeCloseTo(4.0, 10);
+    expect(usd.impactPln).toBeCloseTo(600 * 0.1, 6);
+    expect(usd.realizedPln).toBeCloseTo(400 * 0.2, 6);
+  });
+
+  it('wypłata bez kursu: zdejmuje saldo po średniej, realized bez zmian', () => {
+    const ops = [
+      fxOp({ amount: 1000, currency: 'USD', fxRate: 4.0, date: '2024-01-10T10:00:00' }),
+      {
+        date: '2024-03-10T10:00:00',
+        operationType: 'withdrawal',
+        description: 'Wypłata USD',
+        amount: -300,
+        currency: 'USD',
+        source: 'bossa',
+      } as CashOperation,
+    ];
+    const result = computeFxImpact(ops, new Map([['USD', 700]]), new Map([['USD', 4.2]]), 100000);
+
+    const usd = result!.breakdown.find((b) => b.currency === 'USD')!;
+    expect(usd.avgPlnPerCurrency).toBeCloseTo(4.0, 10);
+    expect(usd.impactPln).toBeCloseTo(700 * 0.2, 6);
+    expect(usd.realizedPln).toBe(0);
+  });
+
+  it('dywidenda w walucie wchodzi do średniej po kursie historycznym z dnia', () => {
+    const ops = [
+      fxOp({ amount: 1000, currency: 'USD', fxRate: 4.0, date: '2024-01-10T10:00:00' }),
+      {
+        date: '2024-03-05T10:00:00',
+        operationType: 'dividend',
+        description: 'Dywidenda AAPL',
+        amount: 200,
+        currency: 'USD',
+        source: 'bossa',
+      } as CashOperation,
+    ];
+    const historical = new Map([['2024-03-05', new Map([['USD', 4.5]])]]);
+    const result = computeFxImpact(
+      ops,
+      new Map([['USD', 1200]]),
+      new Map([['USD', 4.2]]),
+      100000,
+      historical,
+    );
+
+    const usd = result!.breakdown.find((b) => b.currency === 'USD')!;
+    // avg = (1000×4.0 + 200×4.5) / 1200 = 4900/1200
+    expect(usd.avgPlnPerCurrency).toBeCloseTo(4900 / 1200, 10);
+    expect(usd.totalAcquiredNative).toBeCloseTo(1200, 6);
+  });
+
+  it('wpływ bez żadnego kursu księgowany neutralnie po bieżącej średniej', () => {
+    const ops = [
+      fxOp({ amount: 1000, currency: 'USD', fxRate: 4.0, date: '2024-01-10T10:00:00' }),
+      {
+        date: '2024-03-05T10:00:00',
+        operationType: 'dividend',
+        description: 'Dywidenda bez kursu',
+        amount: 200,
+        currency: 'USD',
+        source: 'bossa',
+      } as CashOperation,
+    ];
+    const result = computeFxImpact(ops, new Map([['USD', 1200]]), new Map([['USD', 4.2]]), 100000);
+
+    const usd = result!.breakdown.find((b) => b.currency === 'USD')!;
+    expect(usd.avgPlnPerCurrency).toBeCloseTo(4.0, 10); // średnia nietknięta
+    expect(usd.totalAcquiredNative).toBeCloseTo(1200, 6); // saldo urosło
+  });
+
+  it('rozchód ponad saldo jest przycinany; kolejne nabycie zaczyna świeżą średnią', () => {
+    const ops = [
+      fxOp({ amount: 300, currency: 'USD', fxRate: 4.0, date: '2024-01-10T10:00:00' }),
+      fxOp({ amount: -1000, currency: 'USD', fxRate: 4.2, date: '2024-02-10T10:00:00' }),
+      fxOp({ amount: 500, currency: 'USD', fxRate: 3.6, date: '2024-03-10T10:00:00' }),
+    ];
+    const result = computeFxImpact(ops, new Map([['USD', 500]]), new Map([['USD', 3.7]]), 100000);
+
+    const usd = result!.breakdown.find((b) => b.currency === 'USD')!;
+    expect(usd.avgPlnPerCurrency).toBeCloseTo(3.6, 10);
+    expect(usd.realizedPln).toBeCloseTo(300 * 0.2, 6); // tylko pokryta część
+    expect(usd.impactPln).toBeCloseTo(500 * 0.1, 6);
+  });
+
+  it('w obrębie dnia wpływ księgowany przed rozchodem', () => {
+    // Rozchód wpisany PRZED nabyciem z tą samą datą nie może ściąć pustego salda.
+    const ops = [
+      fxOp({ amount: -200, currency: 'USD', fxRate: 4.1, date: '2024-01-10T09:00:00' }),
+      fxOp({ amount: 500, currency: 'USD', fxRate: 4.0, date: '2024-01-10T15:00:00' }),
+    ];
+    const result = computeFxImpact(ops, new Map([['USD', 300]]), new Map([['USD', 4.2]]), 100000);
+
+    const usd = result!.breakdown.find((b) => b.currency === 'USD')!;
+    expect(usd.avgPlnPerCurrency).toBeCloseTo(4.0, 10);
+    expect(usd.realizedPln).toBeCloseTo(200 * 0.1, 6);
+  });
+
+  it('implied sell (sprzedaż rozliczona do PLN) zdejmuje saldo i realizuje wynik', () => {
+    const implied: ImpliedFxFlow[] = [
+      { date: '2024-01-10', currency: 'CAD', amountNative: 1000, kind: 'buy', pln: 3000 },
+      { date: '2024-06-10', currency: 'CAD', amountNative: 400, kind: 'sell', pln: 1300 },
+    ];
+    const result = computeFxImpact(
+      [],
+      new Map([['CAD', 600]]),
+      new Map([['CAD', 3.1]]),
+      100000,
+      new Map(),
+      undefined,
+      implied,
+    );
+
+    const cad = result!.breakdown.find((b) => b.currency === 'CAD')!;
+    expect(cad.avgPlnPerCurrency).toBeCloseTo(3.0, 10);
+    expect(cad.realizedPln).toBeCloseTo(1300 - 400 * 3.0, 6); // = 100
+    expect(cad.impactPln).toBeCloseTo(600 * 0.1, 6);
+  });
+
+  it('implied flow bez pln wyceniany po historycznym kursie z dnia (nogi X↔Y)', () => {
+    const implied: ImpliedFxFlow[] = [
+      { date: '2024-03-05', currency: 'EUR', amountNative: 300, kind: 'buy' },
+    ];
+    const historical = new Map([['2024-03-05', new Map([['EUR', 4.3]])]]);
+    const result = computeFxImpact(
+      [],
+      new Map([['EUR', 300]]),
+      new Map([['EUR', 4.5]]),
+      100000,
+      historical,
+      undefined,
+      implied,
+    );
+
+    const eur = result!.breakdown.find((b) => b.currency === 'EUR')!;
+    expect(eur.avgPlnPerCurrency).toBeCloseTo(4.3, 10);
+    expect(eur.impactPln).toBeCloseTo(300 * 0.2, 6);
+  });
+
+  it('pełny rozchód → avg null, impact 0, ale realized zostaje w breakdown', () => {
+    // Cała waluta wymieniona z powrotem, a ekspozycja > 0 z innego źródła
+    // (np. akcje w USD kupione natywnie z danymi lukami) — kurs wejścia nieznany,
+    // ale zrealizowany wynik z wymian jest faktem i zostaje.
+    const ops = [
+      fxOp({ amount: 1000, currency: 'USD', fxRate: 4.0, date: '2024-01-10T10:00:00' }),
+      fxOp({ amount: -1000, currency: 'USD', fxRate: 4.3, date: '2024-05-10T10:00:00' }),
+    ];
+    const result = computeFxImpact(ops, new Map([['USD', 250]]), new Map([['USD', 4.2]]), 100000);
+
+    const usd = result!.breakdown.find((b) => b.currency === 'USD')!;
+    expect(usd.avgPlnPerCurrency).toBeNull();
+    expect(usd.impactPln).toBe(0);
+    expect(usd.realizedPln).toBeCloseTo(300, 6);
+    expect(result!.fxRealizedPln).toBeCloseTo(300, 6);
   });
 });

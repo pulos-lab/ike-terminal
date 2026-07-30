@@ -168,6 +168,15 @@ function FxImpactTooltipBody({ fxImpact }: { fxImpact: FxImpact }) {
             • Zmiana kursów ważona: {formatPercent(fxImpact.fxImpactPctOfForeign)} (impact na część
             walutową)
           </li>
+          {Math.abs(fxImpact.fxRealizedPln) >= 0.01 && (
+            <li>
+              • Zrealizowany wynik walutowy:{' '}
+              <span className={plColor(fxImpact.fxRealizedPln)}>
+                {formatPLN(fxImpact.fxRealizedPln)}
+              </span>{' '}
+              (z wymian, wypłat i sprzedaży — poza główną metryką)
+            </li>
+          )}
         </ul>
       </div>
 
@@ -176,7 +185,9 @@ function FxImpactTooltipBody({ fxImpact }: { fxImpact: FxImpact }) {
         <ul className="space-y-1.5">
           {fxImpact.breakdown.map((e) => (
             <li key={e.currency} className="text-muted-foreground">
-              <div className="font-medium text-foreground">
+              {/* TooltipContent ma odwrócone kolory (bg-foreground text-background) —
+                  wyróżnienie w środku to text-background; text-foreground znika w tle. */}
+              <div className="font-medium text-background">
                 {e.currency}:{' '}
                 {e.avgPlnPerCurrency !== null
                   ? `${formatPercent(e.impactPct)} kursu (${formatPLN(e.impactPln)})`
@@ -188,12 +199,18 @@ function FxImpactTooltipBody({ fxImpact }: { fxImpact: FxImpact }) {
               </div>
               {e.avgPlnPerCurrency !== null ? (
                 <div className="text-[10px] pl-2">
-                  • Średni kurs: {e.avgPlnPerCurrency.toFixed(3)} → dziś:{' '}
+                  • Średni kurs nabycia (bieżące saldo): {e.avgPlnPerCurrency.toFixed(3)} → dziś:{' '}
                   {e.todayPlnPerCurrency.toFixed(3)}
                 </div>
               ) : (
                 <div className="text-[10px] pl-2 italic text-muted-foreground/70">
                   • Brak danych o kursie wejścia (broker rozliczał wewnętrznie)
+                </div>
+              )}
+              {Math.abs(e.realizedPln) >= 0.01 && (
+                <div className="text-[10px] pl-2">
+                  • Zrealizowane:{' '}
+                  <span className={plColor(e.realizedPln)}>{formatPLN(e.realizedPln)}</span>
                 </div>
               )}
             </li>
@@ -202,8 +219,11 @@ function FxImpactTooltipBody({ fxImpact }: { fxImpact: FxImpact }) {
       </div>
 
       <p className="text-muted-foreground text-[10px] pt-1 border-t border-border">
-        Metryka pokazuje zysk/stratę wynikającą wyłącznie ze zmian kursu walut między datami Twoich
-        wpłat (lub wymian FX) a dniem dzisiejszym. Nie uwzględnia zwrotu z rynku.
+        Średni kurs liczony księgą walutową (średnia krocząca) z pełnej historii przepływów:
+        wymiany, wpłaty/wypłaty, dywidendy i transakcje przewalutowane przez brokera. Rozchody
+        zdejmują saldo po bieżącej średniej — waluta wymieniona z powrotem nie zniekształca kursu
+        obecnych zasobów, a jej wynik trafia do pozycji „zrealizowane". Metryka nie uwzględnia
+        zwrotu z rynku.
       </p>
     </div>
   );

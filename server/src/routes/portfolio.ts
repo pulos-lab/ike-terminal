@@ -43,6 +43,7 @@ import type {
   FxExchangeInput,
   StockSplitInput,
   UpcomingDividend,
+  ImpliedFxFlow,
 } from 'shared';
 import {
   fetchYahooPrice,
@@ -1212,140 +1213,210 @@ router.get(
     }
     const totalPortfolioValuePln = stocksValuePln + cashValuePln;
 
-    // Historical PLN rates dla cross-rate fx_exchange (np. DEGIRO USD↔EUR, gdzie
-    // op.fxRate nie jest kursem vs PLN). Skanujemy operations dla cross-rate
-    // credit legs (amount > 0, fxPair bez 'PLN'), zbieramy (currency, date) sets,
-    // fetchujemy zakres historii z Yahoo per waluta, budujemy mapę którą engine
-    // użyje jako proxy ("ile PLN kosztowałoby kupno waluty na rynku tego dnia").
-    const crossRateDatesByCurrency = new Map<string, Set<string>>();
+    // ===== Wpływ walut: dane wejściowe księgi walutowej =====
+    // Silnik (computeFxImpact) przetwarza chronologicznie WSZYSTKIE przepływy
+    // przekraczające granicę PLN↔X (średnia krocząca + wynik zrealizowany).
+    // Route dostarcza: (1) historyczne kursy X→PLN dla zdarzeń bez bezpośredniego
+    // kursu, (2) implied przepływy z transakcji rozliczanych w innej walucie niż
+    // kwotowanie. Liczą się tylko waluty z bieżącą ekspozycją > 0 — tylko te
+    // silnik czyta (waluty w pełni opuszczone nie mają wpisu w breakdown).
+    const fxRelevantCurrencies = new Set<string>();
+    for (const [cur, exposure] of foreignExposures) {
+      if (exposure > 0 && (todayFxRatesToPln.get(cur) ?? 0) > 0) {
+        fxRelevantCurrencies.add(cur.toUpperCase());
+      }
+    }
+
+    // Daty wymagające historycznego kursu X→PLN (proxy "ile PLN kosztowałaby ta
+    // waluta na rynku tego dnia"): operacje bez pary fxPair z PLN (cross-rate
+    // fx_exchange — obie nogi, dywidendy, odsetki, opłaty, wypłaty, wpłaty bez
+    // kursu) + nogi implied transakcji bez dokładnej kwoty PLN.
+    const histRateDatesByCurrency = new Map<string, Set<string>>();
+    const addHistRateDate = (cur: string, date: string) => {
+      if (!fxRelevantCurrencies.has(cur)) return;
+      const dates = histRateDatesByCurrency.get(cur) ?? new Set<string>();
+      dates.add(date);
+      histRateDatesByCurrency.set(cur, dates);
+    };
     for (const op of operations) {
-      if (op.operationType !== 'fx_exchange') continue;
-      if (op.amount <= 0) continue;
-      if (!op.fxPair || op.fxPair.toUpperCase().includes('PLN')) continue;
-      const cur = (op.currency || '').toUpperCase();
-      if (!cur || cur === 'PLN') continue;
-      const dates = crossRateDatesByCurrency.get(cur) ?? new Set<string>();
-      dates.add(op.date.split('T')[0]);
-      crossRateDatesByCurrency.set(cur, dates);
+      if (op.operationType === 'corporate_action_pending') continue; // poza cashflow
+      if (!op.amount) continue;
+      const rawCur = (op.currency || '').toUpperCase();
+      if (!rawCur || rawCur === 'PLN') continue;
+      const cur = rawCur === 'GBX' ? 'GBP' : rawCur;
+      const hasDirectPlnRate =
+        op.fxRate !== undefined && op.fxRate > 0 && op.fxPair?.toUpperCase().includes('PLN');
+      if (hasDirectPlnRate) continue; // silnik użyje plnPerXFromOp
+      addHistRateDate(cur, op.date.split('T')[0]);
     }
 
-    const historicalCrossRates = new Map<string, Map<string, number>>();
-    if (crossRateDatesByCurrency.size > 0) {
-      await Promise.all(
-        [...crossRateDatesByCurrency.entries()].map(async ([cur, dates]) => {
-          const sortedDates = [...dates].sort();
-          const start = sortedDates[0];
-          const end = sortedDates[sortedDates.length - 1];
-          try {
-            const history = await fetchYahooHistory(`${cur}PLN=X`, start, end);
-            const dateToRate = new Map<string, number>();
-            for (const d of history) dateToRate.set(d.date, d.close);
-            for (const date of dates) {
-              let rate = dateToRate.get(date);
-              // Weekend/holiday fallback — najbliższa wcześniejsza data
-              if (!rate) {
-                const earlier = [...dateToRate.keys()]
-                  .filter((d) => d <= date)
-                  .sort()
-                  .pop();
-                if (earlier) rate = dateToRate.get(earlier);
-              }
-              if (rate && rate > 0) {
-                let dateMap = historicalCrossRates.get(date);
-                if (!dateMap) {
-                  dateMap = new Map();
-                  historicalCrossRates.set(date, dateMap);
-                }
-                dateMap.set(cur, rate);
-              }
-            }
-          } catch {
-            // Brak historii → cross-rate ops dla tej waluty pomijane (null plnPerX)
-          }
-        }),
-      );
-    }
-
-    // Implied FX acquisitions — dla zakupów zagranicznych akcji rozliczanych przez
-    // brokera bezpośrednio w PLN, gdzie nie ma explicit fx_exchange w bazie (typowy
-    // scenariusz Bossa Zagranica: kupno CSU.TO/CAD płacone z PLN, broker konwertuje
-    // wewnętrznie i nie eksponuje kursu w pliku importu).
+    // Implied przepływy walutowe z transakcji — trzy tory:
     //
-    // Warunek: tx.side='K' AND tx.currency='PLN' AND ticker_map.currency != 'PLN'.
-    // Dla każdej takiej transakcji fetchujemy Yahoo historical native close cenę
-    // na dacie transakcji i wyliczamy implied rate jako proxy:
-    //   acquiredNative = qty × native_price       // ile waluty obcej "weszło" do portfela
-    //   plnPaid = tx.value                        // ile PLN zapłacono (bez prowizji)
-    // Engine sumuje to z acquisition events z `operations` (akumulacja, nie zamiana).
+    // Tor A (proxy Yahoo): tx zapisana w PLN na papierze kwotowanym w X (legacy
+    //   Bossa Zagranica — plik daje tylko kwoty PLN). Kwota natywna z historycznej
+    //   ceny papieru: acquiredNative = qty × native_close, pln = tx.value.
+    //   K = buy (PLN wyszło, ekspozycja X weszła), S = sell (odwrotnie).
+    //
+    // Tor B (dokładny kurs brokera): paymentCurrency != currency + fxRate
+    //   (XTB po fixie walut, reconciler Bossa/mBank z kursem). Nogi:
+    //   quote (X): K=buy / S=sell kwoty tx.value; pln dokładne gdy payment=PLN.
+    //   payment (Y != PLN): K=sell / S=buy kwoty tx.value × fxRate po kursie
+    //   historycznym Y→PLN.
+    //
+    // Tor C (kurs historyczny): paymentCurrency != currency BEZ fxRate
+    //   (reconciler wykrył auto-FX, ale broker nie eksportuje kursu — Bossa).
+    //   Noga quote po historycznym kursie X→PLN; noga payment pomijana
+    //   (kwoty nie da się wyliczyć bez kursu; payment=PLN i tak nie ma nogi).
+    //
+    // Pominięte źródła/kategorie:
+    // - degiro/ibkr: konwersje walutowe są już nogami fx_exchange w operations
+    //   (DEGIRO paruje WSZYSTKIE AutoFX, IBKR ma jawny Forex) — implied nogi
+    //   liczyłyby ten sam przepływ drugi raz;
+    // - cfd: nie rozlicza się przez cash ledger (jak w reconcilerze);
+    // - bond: ceny w % nominału — tx.value nie jest kwotą pieniężną.
+    const impliedFlows: ImpliedFxFlow[] = [];
     type ImpliedTxBucket = { nativeCcy: string; dates: Set<string>; txs: Transaction[] };
     const impliedTxsByTicker = new Map<string, ImpliedTxBucket>();
     for (const tx of transactions) {
-      if (tx.side !== 'K') continue;
-      const settleCcy = (tx.currency || '').toUpperCase();
-      if (settleCcy !== 'PLN') continue; // cross-rate (np. DEGIRO USD↔EUR) obsługiwane przez historicalCrossRates
+      if (tx.source === 'degiro' || tx.source === 'ibkr') continue;
+      if (tx.category === 'cfd' || tx.category === 'bond') continue;
+      if (!Number.isFinite(tx.value) || tx.value <= 0) continue;
+      const quoteRaw = (tx.currency || '').toUpperCase();
+      const payRaw = (tx.paymentCurrency || '').toUpperCase();
+      const quoteCcy = quoteRaw === 'GBX' ? 'GBP' : quoteRaw;
+      const payCcy = payRaw === 'GBX' ? 'GBP' : payRaw;
+      const dateKey = tx.date.split('T')[0];
+
+      if (payRaw && payCcy !== quoteCcy) {
+        // Tor B/C — rozliczenie przewalutowane przez brokera.
+        const hasFxRate = tx.fxRate !== undefined && tx.fxRate > 0;
+        if (quoteCcy !== 'PLN' && fxRelevantCurrencies.has(quoteCcy)) {
+          const amountNative = quoteRaw === 'GBX' ? tx.value / 100 : tx.value;
+          const flow: ImpliedFxFlow = {
+            date: tx.date,
+            currency: quoteCcy,
+            amountNative,
+            kind: tx.side === 'K' ? 'buy' : 'sell',
+          };
+          if (hasFxRate && payCcy === 'PLN') {
+            flow.pln = tx.value * tx.fxRate!; // fxRate = payment per quote
+          } else {
+            addHistRateDate(quoteCcy, dateKey); // tor C / noga X przy płatności Y
+          }
+          impliedFlows.push(flow);
+        }
+        if (hasFxRate && payCcy !== 'PLN' && fxRelevantCurrencies.has(payCcy)) {
+          const amountPay = tx.value * tx.fxRate!;
+          impliedFlows.push({
+            date: tx.date,
+            currency: payCcy,
+            amountNative: payRaw === 'GBX' ? amountPay / 100 : amountPay,
+            kind: tx.side === 'K' ? 'sell' : 'buy',
+          });
+          addHistRateDate(payCcy, dateKey);
+        }
+        continue;
+      }
+
+      // Tor A — tx zapisana w PLN, papier kwotowany w walucie obcej.
+      if (quoteRaw !== 'PLN') continue;
       const entry = tickerMap.get(tx.isin);
       const yahooTicker = entry?.ticker;
       if (!yahooTicker) continue;
       const rawNative = (entry?.currency || '').toUpperCase();
-      if (!rawNative || rawNative === 'PLN') continue; // akcja kwotowana w PLN — żaden implied rate niepotrzebny
+      if (!rawNative || rawNative === 'PLN') continue; // papier w PLN — brak przewalutowania
       const nativeCcy = rawNative === 'GBX' ? 'GBP' : rawNative;
+      if (!fxRelevantCurrencies.has(nativeCcy)) continue;
       let bucket = impliedTxsByTicker.get(yahooTicker);
       if (!bucket) {
         bucket = { nativeCcy, dates: new Set<string>(), txs: [] };
         impliedTxsByTicker.set(yahooTicker, bucket);
       }
-      bucket.dates.add(tx.date.split('T')[0]);
+      bucket.dates.add(dateKey);
       bucket.txs.push(tx);
     }
 
-    const impliedAcquisitions = new Map<string, { acquiredNative: number; plnPaid: number }>();
-    if (impliedTxsByTicker.size > 0) {
-      await Promise.all(
-        [...impliedTxsByTicker.entries()].map(async ([ticker, bucket]) => {
-          const sortedDates = [...bucket.dates].sort();
-          const start = sortedDates[0];
-          const end = sortedDates[sortedDates.length - 1];
-          try {
-            const history = await fetchYahooHistory(ticker, start, end);
-            const dateToPrice = new Map<string, number>();
-            for (const d of history) dateToPrice.set(d.date, d.close);
-            for (const tx of bucket.txs) {
-              const date = tx.date.split('T')[0];
-              let nativePrice = dateToPrice.get(date);
-              if (!nativePrice) {
-                // Weekend/holiday fallback — najbliższa wcześniejsza data
-                const earlier = [...dateToPrice.keys()]
-                  .filter((d) => d <= date)
-                  .sort()
-                  .pop();
-                if (earlier) nativePrice = dateToPrice.get(earlier);
-              }
-              if (!nativePrice || nativePrice <= 0) continue;
-              const acquiredNative = tx.quantity * nativePrice;
-              const plnPaid = tx.value;
-              if (acquiredNative <= 0 || plnPaid <= 0) continue;
-              const cur = bucket.nativeCcy;
-              const existing = impliedAcquisitions.get(cur) ?? { acquiredNative: 0, plnPaid: 0 };
-              existing.acquiredNative += acquiredNative;
-              existing.plnPaid += plnPaid;
-              impliedAcquisitions.set(cur, existing);
+    // Fetch historii: kursy X→PLN (zakres per waluta) + ceny natywne tickerów
+    // toru A — równolegle, wspólny Promise.all.
+    const historicalPlnRates = new Map<string, Map<string, number>>();
+    await Promise.all([
+      ...[...histRateDatesByCurrency.entries()].map(async ([cur, dates]) => {
+        const sortedDates = [...dates].sort();
+        const start = sortedDates[0];
+        const end = sortedDates[sortedDates.length - 1];
+        try {
+          const history = await fetchYahooHistory(`${cur}PLN=X`, start, end);
+          const dateToRate = new Map<string, number>();
+          for (const d of history) dateToRate.set(d.date, d.close);
+          for (const date of dates) {
+            let rate = dateToRate.get(date);
+            // Weekend/holiday fallback — najbliższa wcześniejsza data
+            if (!rate) {
+              const earlier = [...dateToRate.keys()]
+                .filter((d) => d <= date)
+                .sort()
+                .pop();
+              if (earlier) rate = dateToRate.get(earlier);
             }
-          } catch {
-            // Brak historii → implied dla tego tickera pomijany; waluta dostanie
-            // avgPlnPerCurrency=null w breakdown jeśli nie ma żadnego innego acquisition event.
+            if (rate && rate > 0) {
+              let dateMap = historicalPlnRates.get(date);
+              if (!dateMap) {
+                dateMap = new Map();
+                historicalPlnRates.set(date, dateMap);
+              }
+              dateMap.set(cur, rate);
+            }
           }
-        }),
-      );
-    }
+        } catch {
+          // Brak historii → zdarzenia tej waluty bez kursu (silnik księguje
+          // neutralnie po bieżącej średniej / pomija realized).
+        }
+      }),
+      ...[...impliedTxsByTicker.entries()].map(async ([ticker, bucket]) => {
+        const sortedDates = [...bucket.dates].sort();
+        const start = sortedDates[0];
+        const end = sortedDates[sortedDates.length - 1];
+        try {
+          const history = await fetchYahooHistory(ticker, start, end);
+          const dateToPrice = new Map<string, number>();
+          for (const d of history) dateToPrice.set(d.date, d.close);
+          for (const tx of bucket.txs) {
+            const date = tx.date.split('T')[0];
+            let nativePrice = dateToPrice.get(date);
+            if (!nativePrice) {
+              // Weekend/holiday fallback — najbliższa wcześniejsza data
+              const earlier = [...dateToPrice.keys()]
+                .filter((d) => d <= date)
+                .sort()
+                .pop();
+              if (earlier) nativePrice = dateToPrice.get(earlier);
+            }
+            if (!nativePrice || nativePrice <= 0) continue;
+            const amountNative = tx.quantity * nativePrice;
+            if (amountNative <= 0) continue;
+            impliedFlows.push({
+              date: tx.date,
+              currency: bucket.nativeCcy,
+              amountNative,
+              kind: tx.side === 'K' ? 'buy' : 'sell',
+              pln: tx.value,
+            });
+          }
+        } catch {
+          // Brak historii → implied dla tego tickera pominięty; waluta dostanie
+          // avgPlnPerCurrency=null w breakdown jeśli księga nie ma innych nabyć.
+        }
+      }),
+    ]);
 
     const fxImpact = computeFxImpact(
       operations,
       foreignExposures,
       todayFxRatesToPln,
       totalPortfolioValuePln,
-      historicalCrossRates,
+      historicalPlnRates,
       exposurePlnByCurrency,
-      impliedAcquisitions,
+      impliedFlows,
     );
 
     // KROK 4: ujednolicenie wartości na ekranie. currentValue = LIVE wycena (ta sama

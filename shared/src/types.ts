@@ -434,7 +434,17 @@ export interface PortfolioMetrics {
 }
 
 /** Metryka "Wpływ walut" — różnica między dzisiejszym kursem PLN a
- *  średnim ważonym kursem zakupu wszystkich walut obcych w portfelu.
+ *  średnim kursem nabycia walut obcych AKTUALNIE trzymanych w portfelu.
+ *
+ *  Średni kurs liczony jest księgą walutową metodą średniej kroczącej
+ *  (moving-average inventory): przepływy przekraczające granicę PLN↔X są
+ *  przetwarzane chronologicznie — nabycia (wymiany, wpłaty, dywidendy,
+ *  kupna rozliczane przez brokera z PLN) podnoszą saldo i koszt, rozchody
+ *  (wymiany z powrotem, wypłaty, sprzedaże rozliczane do PLN) zdejmują
+ *  saldo po bieżącej średniej i generują wynik ZREALIZOWANY. Dzięki temu
+ *  waluta dawno wymieniona z powrotem na PLN nie zniekształca średniej
+ *  dla obecnie trzymanego salda (dawniej: dożywotnia średnia wszystkich
+ *  nabyć bez rozchodów).
  *
  *  Obsługuje dwa scenariusze:
  *  1. Single-currency portfel (baseCurrency != 'PLN', np. XTB USD sub-konto):
@@ -453,8 +463,14 @@ export interface FxImpact {
    *  Pokazuje "ile ruszyła sama walutowa część" — większa liczba niż
    *  fxImpactPct jeśli obce waluty to tylko kawałek portfela. */
   fxImpactPctOfForeign: number;
-  /** Łączna kwota w PLN — suma per-currency impactów. */
+  /** Łączna kwota w PLN — suma per-currency impactów (NIEZREALIZOWANY,
+   *  na bieżącej ekspozycji). */
   fxImpactPln: number;
+  /** ZREALIZOWANY wynik walutowy w PLN — suma per-currency realizedPln
+   *  z rozchodów księgi (wymiany z powrotem na PLN, wypłaty, sprzedaże
+   *  rozliczane do PLN). Osobno od fxImpactPln — nie wchodzi do głównej
+   *  metryki %. Obejmuje tylko waluty z bieżącą ekspozycją > 0. */
+  fxRealizedPln: number;
   /** Łączna ekspozycja na obce waluty w PLN (suma exposurePln z breakdown). */
   foreignExposurePln: number;
   /** Jaki % portfela stanowi część zagraniczna (obce waluty łącznie). */
@@ -475,10 +491,12 @@ export interface FxImpactCurrencyEntry {
   exposurePln: number;
   /** Jaki % całego portfela stanowi ta waluta (exposurePln / totalPortfolio). */
   exposurePctOfPortfolio: number;
-  /** Średni ważony kurs PLN za 1 jednostkę waluty przy zakupach.
+  /** Średni kurs PLN za 1 jednostkę waluty dla POZOSTAŁEGO salda księgi
+   *  (średnia krocząca: rozchody zdejmują saldo po bieżącej średniej, więc
+   *  waluta wymieniona z powrotem na PLN nie zniekształca kursu obecnych zasobów).
    *  `null` gdy waluta jest w portfelu (np. CSU.TO/CAD kupione przez Bossa za PLN),
-   *  ale brak operacji `fx_exchange`/`deposit` z fxRate ani implied rate z Yahoo —
-   *  ekspozycja jest znana, ale kurs wejścia nie. Frontend pokazuje "brak danych". */
+   *  ale księga jest pusta — brak jakiegokolwiek wycenialnego przepływu nabycia.
+   *  Frontend pokazuje "brak danych". */
   avgPlnPerCurrency: number | null;
   /** Dzisiejszy kurs PLN za 1 jednostkę waluty. */
   todayPlnPerCurrency: number;
@@ -488,8 +506,35 @@ export interface FxImpactCurrencyEntry {
   /** Wpływ walut dla tej waluty jako % zmiany kursu (today/avg − 1).
    *  0 gdy `avgPlnPerCurrency` jest null. */
   impactPct: number;
-  /** Łączna suma wydarzeń "zakupu" tej waluty (natywnie). */
+  /** Łączna suma wydarzeń "zakupu" tej waluty (natywnie) w całej historii —
+   *  wliczając nabycia później rozchodowane. Diagnostyczne, nie do avg. */
   totalAcquiredNative: number;
+  /** ZREALIZOWANY wynik walutowy tej waluty w PLN: Σ po rozchodach księgi
+   *  `ilość × (kurs rozchodu − średnia w momencie rozchodu)`. 0 gdy brak
+   *  rozchodów lub brak kursów rozchodu. */
+  realizedPln: number;
+}
+
+/** Przepływ walutowy wynikający z TRANSAKCJI (nie CashOperation) — zasila księgę
+ *  walutową computeFxImpact. Route buduje je z transakcji przekraczających granicę
+ *  walut przy rozliczeniu:
+ *  - Bossa Zagranica: tx w PLN na papierze kwotowanym w X → kwota natywna
+ *    z historycznej ceny Yahoo (proxy), `pln` = tx.value;
+ *  - XTB/DEGIRO z paymentCurrency: kurs brokera z tx.fxRate — dla rozliczeń
+ *    w PLN `pln` dokładne; dla nóg X↔Y `pln` pominięte (silnik wycenia po
+ *    historycznym kursie PLN z `historicalPlnRates`). */
+export interface ImpliedFxFlow {
+  /** Data transakcji (ISO; silnik używa części YYYY-MM-DD). */
+  date: string;
+  /** Waluta przepływu — uppercase, znormalizowana (GBX → GBP). */
+  currency: string;
+  /** Kwota natywna przepływu, zawsze > 0 (kierunek w `kind`). */
+  amountNative: number;
+  /** 'buy' = waluta weszła do ekspozycji, 'sell' = wyszła. */
+  kind: 'buy' | 'sell';
+  /** Dokładna kwota PLN zapłacona (buy) / otrzymana (sell), gdy znana.
+   *  Brak → silnik wycenia amountNative po historycznym kursie z dnia. */
+  pln?: number;
 }
 
 // ============ Stock Split Types ============
