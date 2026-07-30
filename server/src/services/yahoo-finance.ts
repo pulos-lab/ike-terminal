@@ -103,6 +103,60 @@ export async function fetchDividendCalendar(ticker: string): Promise<DividendCal
   }
 }
 
+// ============ Earnings Calendar (v10) ============
+
+export interface YahooEarningsDate {
+  /** YYYY-MM-DD — data z kalendarza Yahoo. */
+  date: string;
+  /**
+   * true, gdy Yahoo podał WIDEŁKI dat (dwa wpisy) albo oznaczył datę jako szacunkową.
+   * Widełki to sygnał, że spółka jeszcze nie ogłosiła terminu — Yahoo interpoluje
+   * go z historycznego rytmu raportowania.
+   */
+  isEstimate: boolean;
+}
+
+/**
+ * Najbliższy termin publikacji wyników z Yahoo v10 quoteSummary.
+ *
+ * Używany dla giełd, których nie pokrywa kalendarz Nasdaq (XETRA, TSX) — dla USA
+ * lepszy jest Nasdaq, bo podaje porę sesji. Yahoo bywa rate-limitowane (429);
+ * traktujemy to jako brak danych, nie błąd.
+ */
+export async function fetchEarningsCalendar(ticker: string): Promise<YahooEarningsDate | null> {
+  const cacheKey = `yahoo_earncal_${ticker}`;
+  const cached = getCached<YahooEarningsDate | null>(cacheKey);
+  if (cached !== undefined) return cached;
+
+  try {
+    const result = await yahooQuoteSummary(ticker, ['calendarEvents']);
+    const raw = result?.calendarEvents?.earnings;
+    if (!raw) {
+      setCached(cacheKey, null, 6 * 3600);
+      return null;
+    }
+
+    const dates: number[] = (raw.earningsDate ?? [])
+      .map((d: any) => d?.raw)
+      .filter((n: unknown): n is number => typeof n === 'number' && Number.isFinite(n));
+    if (dates.length === 0) {
+      setCached(cacheKey, null, 6 * 3600);
+      return null;
+    }
+
+    const earliest = Math.min(...dates);
+    const value: YahooEarningsDate = {
+      date: new Date(earliest * 1000).toISOString().split('T')[0],
+      isEstimate: dates.length > 1 || raw.isEarningsDateEstimate === true,
+    };
+    setCached(cacheKey, value, 24 * 3600);
+    return value;
+  } catch (error) {
+    console.warn(`Yahoo earnings calendar fetch failed for ${ticker}:`, error);
+    return null;
+  }
+}
+
 // ============ Asset Profile (v10) ============
 
 export interface AssetProfile {

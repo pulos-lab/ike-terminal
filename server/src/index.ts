@@ -25,6 +25,7 @@ import { purgeAllRawFiles } from './db/import-profiles-repo.js';
 import shareRouter from './routes/share.js';
 import publicShareRouter from './routes/public-share.js';
 import { updateBenchmarkPrices } from './services/benchmark-updater.js';
+import { getEarningsCalendarService } from './services/earnings/earnings-calendar.js';
 import { getBondCatalog } from './services/bond-catalog.js';
 import { backfillTickerNamesForPortfolio } from './services/ticker-name-backfill.js';
 import { scanAllPortfolios } from './services/dividend-scanner.js';
@@ -363,6 +364,38 @@ setInterval(
     }
   },
   12 * 60 * 60 * 1000,
+);
+
+// ── Kalendarz publikacji wyników ───────────────────────────────────────────
+// Odświeżanie MUSI chodzić z timera, a nie leniwie w handlerze jak kalendarz
+// dywidend: zamiatanie kalendarza Nasdaq to kilkadziesiąt żądań (~15 s), więc
+// czekanie na nie w ścieżce /positions zamieniłoby widok portfela w wąskie gardło.
+// Terminarz polskich spółek dociąga się dodatkowo leniwie, gdy w portfelu pojawi
+// się spółka, której slug widzimy pierwszy raz.
+setTimeout(() => {
+  getEarningsCalendarService()
+    .refreshAll()
+    .catch((err) => console.error('Initial earnings calendar refresh failed:', err));
+}, 45_000);
+
+setInterval(
+  () => {
+    getEarningsCalendarService()
+      .refreshAll()
+      .catch((err) => console.error('Earnings calendar refresh failed:', err));
+  },
+  24 * 60 * 60 * 1000,
+);
+
+// Bliskie okno częściej — to w nim spółki najczęściej przesuwają termin,
+// a właśnie ono zasila alert „za 7 dni".
+setInterval(
+  () => {
+    getEarningsCalendarService()
+      .refreshUs({ nearWindowOnly: true })
+      .catch((err) => console.error('Earnings near-window refresh failed:', err));
+  },
+  6 * 60 * 60 * 1000,
 );
 
 // ── Katalog obligacji: wczytaj on-demand dograne serie do rejestru runtime (Etap 2 #167) ──

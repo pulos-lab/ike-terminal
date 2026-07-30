@@ -10,7 +10,8 @@ import {
 } from '@/lib/formatters';
 import { AlertTriangle, ChartLine, ChevronDown, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import type { Position } from 'shared';
+import type { Position, UpcomingEarnings } from 'shared';
+import { EarningsBadge } from './EarningsBadge';
 
 interface SplitInfo {
   ratio: number;
@@ -31,6 +32,8 @@ interface Props {
   splitInfo?: SplitInfo;
   /** Pozycja powstała z wydzielenia (spin-off) — badge wyjaśniający pochodzenie akcji. */
   spinOffInfo?: SpinOffInfo;
+  /** Nadchodząca publikacja wyników — ikona zapala się na 7 dni przed. */
+  earningsInfo?: UpcomingEarnings;
   isExpanded: boolean;
   onToggle: () => void;
 }
@@ -50,6 +53,7 @@ export function PortfolioPositionCardMobile({
   useNativeCcy,
   splitInfo,
   spinOffInfo,
+  earningsInfo,
   isExpanded,
   onToggle,
 }: Props) {
@@ -91,6 +95,7 @@ export function PortfolioPositionCardMobile({
             )}
             <span className="font-mono font-semibold text-sm truncate">{position.ticker}</span>
             <CategoryBadge category={position.category} />
+            <EarningsBadge earnings={earningsInfo} size="sm" stopPropagation />
             {splitInfo && splitLabel && (
               <Tooltip>
                 <TooltipTrigger asChild>

@@ -358,6 +358,50 @@ export interface UpcomingDividend {
   source?: 'gpw-calendar' | 'yahoo';
 }
 
+/**
+ * Jak pewny jest termin publikacji. Rozróżnienie jest widoczne w UI, bo alert „za 7 dni"
+ * oparty na estymacie ±5 dni bez oznaczenia eroduje zaufanie do całej aplikacji.
+ *  - `confirmed`  — spółka ogłosiła termin (PL: raport bieżący z terminami raportów
+ *                   okresowych, obowiązkowy wg §84 rozporządzenia MF; US: Nasdaq podaje porę sesji),
+ *  - `tentative`  — termin zapowiedziany, ale bez potwierdzenia pory / źródło nie gwarantuje,
+ *  - `estimated`  — data wyliczona z historycznego rytmu raportowania, nie od spółki.
+ */
+export type EarningsConfidence = 'confirmed' | 'tentative' | 'estimated';
+
+/** Pora publikacji względem sesji: before market open / after market close. */
+export type EarningsSession = 'bmo' | 'amc' | 'unknown';
+
+export type EarningsReportKind = 'quarterly' | 'semiannual' | 'annual';
+
+export type EarningsSource = 'nasdaq' | 'bankier' | 'yahoo' | 'sec-estimate';
+
+/**
+ * Nadchodząca publikacja raportu okresowego dla pozycji w portfelu.
+ *
+ * `reportDate` to data KALENDARZOWA RYNKU EMITENTA — świadomie bez konwersji stref.
+ * Publikacja `amc` (16:05 ET) wypada w Polsce nad ranem następnego dnia, ale przesuwanie
+ * daty rozjechałoby nas z każdym serwisem, na którym użytkownik ją zweryfikuje; skutek
+ * opisujemy słownie w tooltipie.
+ */
+export interface UpcomingEarnings {
+  /** ISIN pozycji (dla opcji pseudo-ISIN `OPT:{OCC}`) — klucz mapy w UI. */
+  isin: string;
+  /** Ticker spółki RAPORTUJĄCEJ; dla opcji jest to spółka bazowa, nie ticker OCC. */
+  ticker: string;
+  /** YYYY-MM-DD w kalendarzu rynku emitenta. */
+  reportDate: string;
+  /** Dni do publikacji policzone serwerowo; klient i tak przelicza (patrz staleTime). */
+  daysUntil: number;
+  confidence: EarningsConfidence;
+  session: EarningsSession | null;
+  /** Surowa etykieta okresu ze źródła — „Q3 2026", „I półrocze 2026"; null gdy brak. */
+  fiscalLabel: string | null;
+  reportKind: EarningsReportKind | null;
+  source: EarningsSource;
+  /** true = pozycja opcyjna, termin dotyczy spółki bazowej. */
+  viaUnderlying?: boolean;
+}
+
 export interface DividendInput {
   date: string;
   ticker: string;
@@ -987,6 +1031,12 @@ export interface PortfolioPositionsResponse {
   recentSpinOffs: RecentSpinOff[];
   /** Wykryte spin-offy rodziców z portfela czekające na ratio z SEC. */
   pendingRatioSpinOffs: PendingRatioSpinOff[];
+  /**
+   * Nadchodzące publikacje wyników dla pozycji (okno D+0..D+45; UI zapala ikonę od D−7).
+   * Puste przy awarii źródeł — kalendarz NIGDY nie wywraca widoku portfela.
+   * Celowo NIE trafia do widoku publicznego (whitelist w `share-redaction.ts`).
+   */
+  upcomingEarnings: UpcomingEarnings[];
   /** Waluta bazowa portfela (np. 'PLN' dla Bossa, 'USD' dla XTB USD sub-account). */
   baseCurrency: string;
 }

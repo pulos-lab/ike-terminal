@@ -144,6 +144,19 @@ describe('toPublicPositions', () => {
     stocksValuePln: 1500,
     cashValuePln: 1000,
     recentSplits: [{ isin: 'X', ticker: 'X', date: '2025-01-01', ratio: 2 }],
+    upcomingEarnings: [
+      {
+        isin: 'PLOPTTC00011',
+        ticker: 'CDR.WA',
+        reportDate: '2026-08-05',
+        daysUntil: 4,
+        confidence: 'confirmed' as const,
+        session: null,
+        fiscalLabel: 'I półrocze 2026',
+        reportKind: 'semiannual' as const,
+        source: 'bankier' as const,
+      },
+    ],
     baseCurrency: 'PLN',
   };
 
@@ -165,6 +178,15 @@ describe('toPublicPositions', () => {
     expect(pub.cashPositions[0]).toEqual({ currency: 'PLN', weight: 40 });
     expect(pub).not.toHaveProperty('totalValuePln');
     expect(pub).not.toHaveProperty('recentSplits');
+    expect(pub).not.toHaveProperty('upcomingEarnings');
+  });
+
+  it('kalendarz wyników nie wycieka do widoku publicznego', () => {
+    // Terminarz sam w sobie jest informacją publiczną, ale ZESTAW spółek z terminami
+    // zdradzałby skład portfela także wtedy, gdy właściciel ukrył kwoty.
+    for (const showAmounts of [false, true]) {
+      expect(toPublicPositions(VIEW, showAmounts)).not.toHaveProperty('upcomingEarnings');
+    }
   });
 
   it('showAmounts=true: kwoty obecne, ale buyLots/recentSplits nadal ukryte', () => {
