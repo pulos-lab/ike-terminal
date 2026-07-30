@@ -172,6 +172,10 @@ const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // ≤1×/24h
 const RETRY_INTERVAL_MS = 60 * 60 * 1000; // po awarii: ponów najwcześniej po 1h
 /** Maks. liczba zdarzeń, dla których jeden refresh próbuje rozwiązać ratio z SEC. */
 const MAX_RATIO_LOOKUPS_PER_REFRESH = 5;
+/** Po tylu nieudanych próbach odpuszczamy ratio (rotacja i tak wraca do wiersza co kilka dni). */
+const MAX_RATIO_ATTEMPTS = 20;
+/** Zdarzenia starsze niż tyle dni od ex-date nie są już odpytywane w SEC. */
+const RATIO_LOOKUP_MAX_AGE_DAYS = 90;
 
 export interface SpinoffEventsServiceOptions {
   fetchFn?: typeof fetch;
@@ -248,6 +252,8 @@ export function createSpinoffEventsService(
           ratio REAL,
           ratio_source_url TEXT,
           fetched_at TEXT NOT NULL,
+          ratio_attempts INTEGER NOT NULL DEFAULT 0,
+          last_ratio_attempt TEXT,
           PRIMARY KEY (parent_ticker, ex_date)
         );
         CREATE TABLE IF NOT EXISTS spinoff_events_fetch_state (
@@ -255,6 +261,19 @@ export function createSpinoffEventsService(
           value TEXT NOT NULL
         );
       `);
+      // Migracja istniejących baz: kolumny rotacji prób ratio (dodane osobno,
+      // bo CREATE TABLE IF NOT EXISTS nie dotyka tabeli, która już jest).
+      const shape = new Set(
+        (db.prepare(`PRAGMA table_info(spinoff_events)`).all() as Array<{ name: string }>).map(
+          (c) => c.name,
+        ),
+      );
+      if (!shape.has('ratio_attempts')) {
+        db.exec('ALTER TABLE spinoff_events ADD COLUMN ratio_attempts INTEGER NOT NULL DEFAULT 0');
+      }
+      if (!shape.has('last_ratio_attempt')) {
+        db.exec('ALTER TABLE spinoff_events ADD COLUMN last_ratio_attempt TEXT');
+      }
     }
     return db;
   }
@@ -274,15 +293,32 @@ export function createSpinoffEventsService(
       .run(key, isoTimestamp);
   }
 
-  /** Krok 2 refreshu: uzupełnij ratio z SEC dla wierszy z ratio IS NULL. */
+  /**
+   * Krok 2 refreshu: uzupełnij ratio z SEC dla wierszy z ratio IS NULL.
+   *
+   * Kolejność ROTACYJNA (najdawniej próbowane pierwsze, nigdy nieproszone na
+   * samym początku — w SQLite NULL sortuje się przed wartościami). Wcześniejsze
+   * `ORDER BY ex_date DESC LIMIT 5` powodowało, że przy ≥5 zaległych zdarzeniach
+   * te starsze nie dostawały już NIGDY kolejnej próby: na prodzie 5 najstarszych
+   * z 10 wisiało nietkniętych, a 5 najnowszych było odpytywanych codziennie.
+   *
+   * Dwie bramki ograniczają jałowe odpytywanie EDGAR-a: zdarzenia starsze niż
+   * RATIO_LOOKUP_MAX_AGE_DAYS (filing dawno by już był) i te po
+   * MAX_RATIO_ATTEMPTS próbach są odpuszczane.
+   */
   async function resolveMissingRatios(): Promise<void> {
+    const maxAge = new Date(now());
+    maxAge.setDate(maxAge.getDate() - RATIO_LOOKUP_MAX_AGE_DAYS);
+    const maxAgeStr = maxAge.toISOString().split('T')[0];
+
     const pending = getDb()
       .prepare(
         `SELECT parent_ticker, parent_name, child_ticker, child_name, ex_date
-         FROM spinoff_events WHERE ratio IS NULL
-         ORDER BY ex_date DESC LIMIT ?`,
+         FROM spinoff_events
+         WHERE ratio IS NULL AND ex_date >= ? AND ratio_attempts < ?
+         ORDER BY last_ratio_attempt ASC, ex_date DESC LIMIT ?`,
       )
-      .all(MAX_RATIO_LOOKUPS_PER_REFRESH) as Array<{
+      .all(maxAgeStr, MAX_RATIO_ATTEMPTS, MAX_RATIO_LOOKUPS_PER_REFRESH) as Array<{
       parent_ticker: string;
       parent_name: string | null;
       child_ticker: string;
@@ -291,6 +327,15 @@ export function createSpinoffEventsService(
     }>;
 
     for (const row of pending) {
+      // Licznik podbijany PRZED próbą — inaczej resolver wywracający się w kółko
+      // (timeout, HTTP 500 EDGAR-a) nigdy nie wyczerpałby limitu prób.
+      getDb()
+        .prepare(
+          `UPDATE spinoff_events
+             SET ratio_attempts = ratio_attempts + 1, last_ratio_attempt = ?
+           WHERE parent_ticker = ? AND ex_date = ?`,
+        )
+        .run(now().toISOString(), row.parent_ticker, row.ex_date);
       try {
         const resolved = await ratioResolver({
           parentTicker: row.parent_ticker,

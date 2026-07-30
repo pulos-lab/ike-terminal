@@ -80,6 +80,30 @@ describe('createSpinoffEventsService', () => {
   const mockPageFetch = (html: string) =>
     vi.fn().mockResolvedValue(new Response(html, { status: 200 })) as unknown as typeof fetch;
 
+  /** Jak mockPageFetch, ale świeży Response per wywołanie — scenariusze
+   *  wieloprzebiegowe czytają body przy każdym refreshu. */
+  const freshPageFetch = (html: string) =>
+    vi
+      .fn()
+      .mockImplementation(
+        async () => new Response(html, { status: 200 }),
+      ) as unknown as typeof fetch;
+
+  /** Minimalna tabela w kształcie źródła — do scenariuszy z liczbą zdarzeń
+   *  spoza fixture'a (rotacja lookupów, bramki wieku/prób). */
+  const makeSpinoffsHtml = (rows: string[][]) => `
+    <table>
+      <thead><tr><th>Date</th><th>Parent</th><th>New Stock</th></tr></thead>
+      <tbody>
+        ${rows
+          .map(
+            ([date, parent, child]) =>
+              `<tr><td>${date}</td><td>${parent}</td><td>${child}</td></tr>`,
+          )
+          .join('')}
+      </tbody>
+    </table>`;
+
   it('refresh zapisuje zdarzenia bez ratio; getEvents zwraca tylko kompletne; pending widoczne', async () => {
     const fetchFn = mockPageFetch(FIXTURE_HTML);
     // Resolver zna ratio tylko dla SPGI→MBGL
@@ -170,6 +194,82 @@ describe('createSpinoffEventsService', () => {
     fail = false;
     await service.getEvents();
     expect((fetchFn as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFail + 1);
+    service.close();
+  });
+
+  it('lookupy ratio rotują — przy nadmiarze zaległych każdy dostaje swoją kolej', async () => {
+    // 7 zdarzeń, limit 5 na refresh. Stara kolejność (ex_date DESC) odpytywała
+    // w kółko te same 5 najnowszych — 2 najstarsze nie dostawały już nigdy próby.
+    const rows = [
+      ['Jul 1, 2026', 'AAA', 'AAX'],
+      ['Jun 28, 2026', 'BBB', 'BBX'],
+      ['Jun 25, 2026', 'CCC', 'CCX'],
+      ['Jun 22, 2026', 'DDD', 'DDX'],
+      ['Jun 19, 2026', 'EEE', 'EEX'],
+      ['Jun 16, 2026', 'FFF', 'FFX'],
+      ['Jun 13, 2026', 'GGG', 'GGX'],
+    ];
+    let clock = NOW.getTime();
+    const ratioResolver = vi.fn().mockResolvedValue(null);
+    const service = createSpinoffEventsService({
+      fetchFn: freshPageFetch(makeSpinoffsHtml(rows)),
+      dbFile: ':memory:',
+      now: () => new Date(clock),
+      ratioResolver,
+    });
+
+    await service.getEvents();
+    const firstRound = ratioResolver.mock.calls.map((c) => c[0].parentTicker);
+    expect(firstRound).toHaveLength(5);
+
+    clock += 25 * 60 * 60 * 1000;
+    ratioResolver.mockClear();
+    await service.getEvents();
+    const secondRound = ratioResolver.mock.calls.map((c) => c[0].parentTicker);
+
+    // Nigdy nieproszone (last_ratio_attempt NULL) idą pierwsze
+    expect(secondRound.slice(0, 2).sort()).toEqual(['FFF', 'GGG']);
+    // Po dwóch rundach każde zdarzenie było odpytane przynajmniej raz
+    expect(new Set([...firstRound, ...secondRound]).size).toBe(7);
+    service.close();
+  });
+
+  it('odpuszcza ratio po wyczerpaniu prób (nie odpytuje EDGAR-a w nieskończoność)', async () => {
+    let clock = NOW.getTime();
+    const ratioResolver = vi.fn().mockResolvedValue(null);
+    const service = createSpinoffEventsService({
+      fetchFn: freshPageFetch(makeSpinoffsHtml([['Jul 1, 2026', 'AAA', 'AAX']])),
+      dbFile: ':memory:',
+      now: () => new Date(clock),
+      ratioResolver,
+    });
+
+    for (let i = 0; i < 25; i++) {
+      await service.getEvents();
+      clock += 25 * 60 * 60 * 1000;
+    }
+    expect(ratioResolver).toHaveBeenCalledTimes(20); // MAX_RATIO_ATTEMPTS
+    service.close();
+  });
+
+  it('nie odpytuje SEC o zdarzenia sprzed ponad 90 dni', async () => {
+    const ratioResolver = vi.fn().mockResolvedValue(null);
+    const service = createSpinoffEventsService({
+      fetchFn: mockPageFetch(
+        makeSpinoffsHtml([
+          ['Jul 1, 2026', 'AAA', 'AAX'],
+          ['Jan 5, 2026', 'OLD', 'OLX'], // ~180 dni przed NOW
+        ]),
+      ),
+      dbFile: ':memory:',
+      now: () => NOW,
+      ratioResolver,
+    });
+
+    await service.getEvents();
+    expect(ratioResolver.mock.calls.map((c) => c[0].parentTicker)).toEqual(['AAA']);
+    // Zdarzenie zostaje w tabeli (sygnalizację wygasza dopiero warstwa widoku)
+    expect(service.getPendingRatioEvents()).toHaveLength(2);
     service.close();
   });
 
