@@ -10,6 +10,7 @@ import {
   detectColumnShift,
   columnShiftWarning,
   rawRowForWarning,
+  roundFxRate,
 } from './utils.js';
 
 /**
@@ -30,15 +31,28 @@ import {
  * similar to DEGIRO), and currency is inferred from the exchange column (Giełda).
  */
 
-/** mBank exchange name → quote currency mapping */
+/**
+ * mBank exchange name → quote currency mapping.
+ *
+ * Fallback używany WYŁĄCZNIE gdy w pliku brakuje kolumny „Waluta" po kursie.
+ * Kody z realnych eksportów (2007–2026) to `USA-NYSE`, `USA-NASDAQ`, `WWA-GPW`,
+ * `GBR-LSE`, `DEU-XETRA`; warianty `UK-`/`GER-` zostają dla starszych plików.
+ *
+ * UWAGA na `GBR-LSE`: londyńskie ETF-y bywają kwotowane w USD (np. VUAA LN ETF
+ * w realnym eksporcie ma `Kurs` w USD), więc GBP to tylko domysł. Użycie tego
+ * fallbacku zawsze generuje ostrzeżenie — waluta z pliku ma pierwszeństwo.
+ */
 const EXCHANGE_CURRENCY: Record<string, string> = {
   'USA-NASDAQ': 'USD',
   'USA-NYSE': 'USD',
   'USA-AMEX': 'USD',
   'WWA-GPW': 'PLN',
   'WWA-NC': 'PLN',
+  'DEU-XETRA': 'EUR',
+  'DEU-FSE': 'EUR',
   'GER-XETRA': 'EUR',
   'GER-FSE': 'EUR',
+  'GBR-LSE': 'GBP',
   'UK-LSE': 'GBP',
 };
 
@@ -64,6 +78,12 @@ export function parseMbankTransactions(
   const transactions: Transaction[] = [];
   const skipped: SkippedRow[] = [];
   const warnings: string[] = [];
+  /** Wiersze walutowe bez możliwości wyliczenia kursu (brak kolumny „Wartość"). */
+  let fxUnavailable = 0;
+  /** Wiersze, w których prowizja w innej walucie musiała zostać pominięta. */
+  let commissionDropped = 0;
+  /** Wiersze, w których walutę zgadywano z kolumny „Giełda". */
+  let exchangeFallback = 0;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -85,6 +105,12 @@ export function parseMbankTransactions(
     const priceCurrency = at(colMap.priceCurrency)?.trim();
     const commission = parseNumber(at(colMap.commission));
     const exchange = at(colMap.exchange)?.trim();
+    // Kolumna „Wartość" = kwota rozliczenia w walucie rachunku (PLN), NIE ilość×kurs.
+    // Zweryfikowane na 267 wierszach realnego rachunku: dla wierszy jednowalutowych
+    // Wartość == ilość×kurs co do grosza (68/68), prowizja nigdy nie wchodzi do Wartości.
+    const settleValue = parseNumber(at(colMap.value));
+    const settleCurrency = at(colMap.valueCurrency)?.trim();
+    const commissionCurrency = at(colMap.commissionCurrency)?.trim();
 
     // Ochrona przed cichym przesunięciem kolumn (dodatkowy separator w którymś polu):
     // sygnały treści, nie liczba kolumn. Kolumny z indeksem −1 dają undefined = brak sygnału.
@@ -111,9 +137,41 @@ export function parseMbankTransactions(
 
     const isoDate = parseDottedDate(dateStr!);
     const value = roundTo2(quantity * price);
-    const total = computeTotal(side as 'K' | 'S', value, commission);
     // Infer currency from exchange column when price currency is empty
     const currency = priceCurrency || EXCHANGE_CURRENCY[exchange || ''] || 'PLN';
+    if (!priceCurrency && exchange && EXCHANGE_CURRENCY[exchange]) exchangeFallback++;
+
+    // Waluta rozliczenia z pliku. eMakler to rachunek złotowy — przy papierze
+    // notowanym w USD/EUR mBank przewalutowuje po WŁASNYM kursie i obciąża konto
+    // kwotą z kolumny „Wartość". Wcześniej paymentCurrency było zaszyte na 'PLN'.
+    const paymentCurrency = settleCurrency || 'PLN';
+
+    // Kurs rozliczenia wprost z pliku (konwencja payment-per-quote, jak Transaction.fxRate
+    // i parser XTB): Wartość[PLN] / (ilość × Kurs[USD]). Na realnym rachunku daje
+    // 3,54–4,36 dla USD/PLN (mediana 3,7035) z rozrzutem w dniu <0,35% (spread mBanku
+    // per zlecenie). Bez tego silnik przeliczał total kursem rynkowym z Yahoo.
+    let fxRate: number | undefined;
+    if (paymentCurrency !== currency && settleValue > 0 && value > 0) {
+      fxRate = roundFxRate(settleValue / value);
+    }
+
+    // Prowizja jest naliczana od kwoty W PLN (0,29% zagranica / 0,39% GPW wg taryfy,
+    // potwierdzone co do grosza na 114 ze 164 zleceń zagranicznych — reszta to prowizja
+    // minimalna). `total` musi zostać w walucie kwotowania, bo silnik liczy przepływ
+    // jako total × fxRate — więc prowizję przeliczamy na walutę kwotowania.
+    const commissionCcy = commissionCurrency || paymentCurrency;
+    let commissionQuote = commission;
+    if (commission !== 0 && commissionCcy !== currency) {
+      if (fxRate) {
+        commissionQuote = roundTo2(commission / fxRate);
+      } else {
+        commissionQuote = 0; // lepiej pominąć niż doliczyć złotówki do dolarów
+        commissionDropped++;
+      }
+    }
+    const total = computeTotal(side as 'K' | 'S', value, commissionQuote);
+
+    if (paymentCurrency !== currency && !fxRate) fxUnavailable++;
 
     transactions.push({
       date: isoDate,
@@ -123,10 +181,11 @@ export function parseMbankTransactions(
       side: side as 'K' | 'S',
       price,
       value,
-      commission, // May be 0 when charged separately in operations file (like DEGIRO)
+      commission: commissionQuote, // w walucie kwotowania (patrz wyżej); 0 gdy plik jej nie podaje
       total,
       currency, // quote — priceCurrency or inferred from exchange
-      paymentCurrency: 'PLN', // mBank eMakler IKE/IKZE: account w PLN
+      paymentCurrency, // waluta rozliczenia z kolumny przy „Wartość" (rachunek eMakler = PLN)
+      fxRate, // kurs mBanku z pliku; undefined gdy rozliczenie w walucie kwotowania
       source: 'mbank',
       importBatch,
     });
@@ -139,10 +198,30 @@ export function parseMbankTransactions(
   if (colMap.commission < 0) missingCols.push('Prowizja (przyjęto 0)');
   if (colMap.priceCurrency < 0) missingCols.push('Waluta kursu (inferowana z giełdy lub PLN)');
   if (colMap.exchange < 0) missingCols.push('Giełda (waluta domyślnie PLN)');
+  if (colMap.value < 0) missingCols.push('Wartość (brak kursu przewalutowania)');
   if (missingCols.length > 0 && transactions.length > 0) {
+    // Ostrzeżenie o brakujących kolumnach zostaje JEDNO i zagregowane — dopisujemy
+    // do niego skutek inferencji zamiast mnożyć komunikaty o tej samej przyczynie.
+    const fallbackNote =
+      exchangeFallback > 0
+        ? ` Walutę kwotowania wywnioskowano z kolumny „Giełda" w ${exchangeFallback} transakcjach — ` +
+          `sprawdź papiery z LSE, bywają notowane w USD mimo giełdy w GBR.`
+        : '';
     warnings.push(
       `mBank: w nagłówku pliku brakuje kolumn: ${missingCols.join('; ')} — ` +
-        `zweryfikuj prowizje i waluty zaimportowanych transakcji.`,
+        `zweryfikuj prowizje i waluty zaimportowanych transakcji.${fallbackNote}`,
+    );
+  }
+  if (fxUnavailable > 0) {
+    warnings.push(
+      `mBank: ${fxUnavailable} transakcji w walucie obcej bez kwoty rozliczenia w pliku — ` +
+        `kurs przewalutowania nie został wyliczony, silnik użyje kursu rynkowego z dnia transakcji.`,
+    );
+  }
+  if (commissionDropped > 0) {
+    warnings.push(
+      `mBank: w ${commissionDropped} transakcjach pominięto prowizję — jest podana w innej ` +
+        `walucie niż kurs, a bez kwoty rozliczenia nie da się jej przeliczyć.`,
     );
   }
 
@@ -209,6 +288,13 @@ function findHeaderRow(lines: string[]): {
       // Price currency is the first Waluta after Kurs
       const priceCurrencyIdx = priceIdx >= 0 ? cols.indexOf('waluta', priceIdx + 1) : -1;
 
+      // Kwota rozliczenia + jej waluta: „…;Prowizja;Waluta;Wartość;Waluta".
+      // startsWith('warto') zamiast równości — pliki bywają dekodowane z CP1250
+      // niepoprawnie i „Wartość" przychodzi jako „Warto¶æ" (tak jak „Giełda"→„Gie³da").
+      const commissionCurrencyIdx = prowizjaIdx >= 0 ? cols.indexOf('waluta', prowizjaIdx + 1) : -1;
+      const valueIdx = cols.findIndex((c) => c.startsWith('warto'));
+      const valueCurrencyIdx = valueIdx >= 0 ? cols.indexOf('waluta', valueIdx + 1) : -1;
+
       // Indeksy pozycyjne TYLKO tam, gdzie są niezbędne dla znanego formatu legacy
       // ("Czas;Walor;Giełda;Rodzaj;Liczba;Kurs;..."): liczba→4 i kurs→5 — bez nich
       // legacy nie sparsowałby się wcale (pola obowiązkowe walidacji). Pozostałe
@@ -227,6 +313,9 @@ function findHeaderRow(lines: string[]): {
           price: priceIdx >= 0 ? priceIdx : 5,
           priceCurrency: priceCurrencyIdx,
           commission: prowizjaIdx,
+          commissionCurrency: commissionCurrencyIdx,
+          value: valueIdx,
+          valueCurrency: valueCurrencyIdx,
         },
       };
     }
@@ -247,4 +336,10 @@ interface ColumnMap {
   priceCurrency: number;
   /** −1 = kolumna nieobecna w nagłówku — prowizja przyjęta jako 0 */
   commission: number;
+  /** Waluta prowizji (kolumna „Waluta" po „Prowizja"). −1 = przyjmujemy walutę rozliczenia. */
+  commissionCurrency: number;
+  /** Kwota rozliczenia („Wartość"). −1 = brak → nie da się wyliczyć kursu przewalutowania. */
+  value: number;
+  /** Waluta kwoty rozliczenia (kolumna „Waluta" po „Wartość"). −1 = przyjmujemy PLN. */
+  valueCurrency: number;
 }
