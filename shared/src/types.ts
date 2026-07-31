@@ -1295,6 +1295,21 @@ export interface ImportStatusResponse {
 }
 
 /** GET /api/import/orphaned-sells */
+/**
+ * Prośba o ponowne wgranie wyciągu — zakładana, gdy poprawka parsera nie może
+ * odtworzyć danych z bazy, bo wiersze przy imporcie w ogóle nie powstały.
+ */
+export interface ReimportNotice {
+  id: number;
+  /** Broker, którego dotyczy (etykieta z BROKER_LABELS albo surowy identyfikator). */
+  source: string;
+  /** Krótkie „co się stało" — wyświetlane jako tytuł. */
+  reason: string;
+  /** Opcjonalne rozwinięcie: co dokładnie przepadło i co zrobić. */
+  detail: string | null;
+  createdAt: string;
+}
+
 export interface OrphanedSellsResponse {
   /** Oczekujące na decyzję (spin-off / Ignoruj). */
   pending: OrphanedSell[];
