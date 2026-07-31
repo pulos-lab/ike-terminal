@@ -279,6 +279,76 @@ export function dividendExistsForDateAndTicker(
   return row.cnt > 0;
 }
 
+export interface AutoDividendOverlap {
+  ticker: string;
+  brokerDate: string;
+  brokerAmount: number;
+  autoDate: string;
+  autoAmount: number;
+  autoCurrency: string;
+}
+
+/**
+ * Znajduje dywidendy `auto-yahoo`, które MOGĄ dublować świeżo zaimportowane
+ * dywidendy brokera. **Niczego nie usuwa** — zwraca listę do pokazania
+ * użytkownikowi.
+ *
+ * Skaner pilnuje jednego kierunku (`dividendExistsForDateAndTicker` nie tworzy
+ * wpisu, gdy dywidenda brokera już jest), ale kierunek odwrotny — użytkownik
+ * wgrywa wyciąg PO tym, jak skaner dopisał swoje szacunki — nie jest niczym
+ * chroniony, bo dedup przy wstawianiu jest exact-match po (data, typ, kwota,
+ * waluta, ticker), a broker i Yahoo różnią się w każdym z tych pól: Yahoo
+ * księguje na ex-dacie i brutto, broker na dacie wypłaty i netto.
+ *
+ * DLACZEGO OSTRZEŻENIE, A NIE KASOWANIE: na produkcji (161 portfeli) jedyna
+ * para w oknie 35 dni to GSK.L — auto-yahoo 1377,00 PLN obok wpisu brokera
+ * 87,55 PLN, 34 dni odstępu. To dwa RÓŻNE zdarzenia, a automat „broker wygrywa"
+ * skasowałby prawdziwą dywidendę. Rozstrzyga użytkownik, nie heurystyka.
+ *
+ * Okno i normalizacja tickera są takie same jak w `dividendExistsForDateAndTicker`,
+ * żeby obie strony widziały tę samą parę.
+ */
+export function findAutoDividendOverlaps(
+  portfolioId: string,
+  brokerDividends: CashOperation[],
+): AutoDividendOverlap[] {
+  const candidates = brokerDividends.filter(
+    (op) => op.operationType === 'dividend' && op.source !== 'auto-yahoo' && op.ticker,
+  );
+  if (candidates.length === 0) return [];
+
+  const db = getDb(portfolioId);
+  const stmt = db.prepare(
+    `SELECT substr(date, 1, 10) AS d, amount, currency FROM cash_operations
+      WHERE operation_type = 'dividend' AND source = 'auto-yahoo'
+        AND (ticker = ? OR ticker = ?)
+        AND abs(julianday(substr(date, 1, 10)) - julianday(?)) <= 30`,
+  );
+
+  const overlaps: AutoDividendOverlap[] = [];
+  for (const op of candidates) {
+    const ticker = op.ticker!;
+    const base = ticker.replace(/\.\w+$/, '');
+    const brokerDate = op.date.split('T')[0];
+    const rows = stmt.all(ticker, base, brokerDate) as {
+      d: string;
+      amount: number;
+      currency: string;
+    }[];
+    for (const r of rows) {
+      overlaps.push({
+        ticker,
+        brokerDate,
+        brokerAmount: op.amount,
+        autoDate: r.d,
+        autoAmount: r.amount,
+        autoCurrency: r.currency,
+      });
+    }
+  }
+  return overlaps;
+}
+
 /**
  * Get the date of the most recent dividend in the portfolio (any source).
  * Used by dividend-scanner to determine scan start date.

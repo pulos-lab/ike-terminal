@@ -53,6 +53,7 @@ import {
 import { getActionableOrphanedSells } from './orphaned-sells.js';
 import {
   insertOperationsWithDedup,
+  findAutoDividendOverlaps,
   insertOperation,
   getAllOperations,
 } from '../db/operations-repo.js';
@@ -341,9 +342,22 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
 
     // 2. Operacje
     if (parsedOps && parsedOps.data.length > 0) {
+      // Możliwe dublowanie z szacunkami skanera SPRAWDZAMY PRZED wstawieniem —
+      // po nim nie odróżnimy wpisu brokera od tego, co już było.
+      const overlaps = findAutoDividendOverlaps(pid, parsedOps.data);
       const r = insertOperationsWithDedup(parsedOps.data, pid);
       result.operationsImported = r.inserted;
       insertedOpsDuplicates.push(...r.duplicates);
+
+      // Świadomie tylko ostrzegamy: rozstrzygnięcie „która z tych dwóch jest
+      // prawdziwa" wymaga wiedzy, której nie mamy (patrz findAutoDividendOverlaps).
+      for (const o of overlaps) {
+        crossFileWarnings.push(
+          `Dywidenda ${o.ticker} z wyciągu (${o.brokerDate}, ${o.brokerAmount}) może dublować ` +
+            `wcześniejszy szacunek aplikacji (${o.autoDate}, ${o.autoAmount} ${o.autoCurrency}). ` +
+            `Sprawdź panel Dywidendy i usuń nadmiarowy wpis.`,
+        );
+      }
     }
 
     // 3. Reconciliation — dispatch po OBECNOŚCI markerów z parsera operacji

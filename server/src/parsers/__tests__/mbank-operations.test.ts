@@ -155,7 +155,7 @@ describe('parseMbankOperations', () => {
     ]);
   });
 
-  it('nie bierze za przelew zwrotu z redukcji IPO ani korekty dywidendy', () => {
+  it('zwrot z redukcji IPO nie jest przelewem; korekta dywidendy jest dywidendą', () => {
     const csv = buildCsv([
       '12.01.2025 10:00:00,BRMW3820201130_716 ipo mobruk - redukcja zwrot srodkow,"1 000,00"',
       '13.01.2025 10:00:00,Korekta dywidendy CY1000031710 (ASBIS) z dnia 2022-12-05,"27,10"',
@@ -163,7 +163,68 @@ describe('parseMbankOperations', () => {
 
     const result = parseMbankOperations(csv, 'batch-test');
 
-    expect(result.data.map((o) => o.operationType)).toEqual(['other', 'other']);
+    // Zwrot nadpłaty z redukcji zapisu zostaje nieklasyfikowany — to nie przelew
+    // z banku ani dywidenda. Korekta dywidendy trafia natomiast do Dywidend:
+    // ekonomicznie jest dopłatą do wcześniejszej wypłaty, a nie „innym" ruchem.
+    expect(result.data.map((o) => o.operationType)).toEqual(['other', 'dividend']);
+  });
+
+  it('kwota w DALSZEJ kolumnie (dodatkowe puste pole) nie ginie jako zerowa', () => {
+    // Realne wiersze dywidend mają cztery pola przy trzykolumnowym nagłówku:
+    // `Data;Opis;;Kwota`. Sztywne czytanie row[2] dawało 0 → wiersz znikał.
+    const csv = buildCsv(['15.12.2021 11:00:00,Jakaś operacja,,21,00']);
+
+    const result = parseMbankOperations(csv, 'batch-test');
+
+    expect(result.skipped).toHaveLength(0);
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].amount).toBe(21);
+    expect(result.warnings?.join(' ')).toContain('dalszej kolumnie');
+  });
+
+  it('nie bierze za kwotę czegoś, co liczbą nie jest', () => {
+    const csv = buildCsv(['15.12.2021 11:00:00,Operacja,,NIE-LICZBA']);
+
+    const result = parseMbankOperations(csv, 'batch-test');
+
+    expect(result.data).toHaveLength(0);
+    expect(result.skipped[0].reason).toBe('zero_amount');
+  });
+
+  it('krótka forma dywidendy → dywidenda, nie „inne"', () => {
+    const csv = buildCsv([
+      '15.12.2021 11:00:00,Dywidenda: DP: 2021-09-17 PLVOTUM00016 (VOT),,21,00',
+    ]);
+
+    const result = parseMbankOperations(csv, 'batch-test');
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].operationType).toBe('dividend');
+    expect(result.data[0].ticker).toBe('PLVOTUM00016');
+    expect(result.data[0].amount).toBe(21);
+  });
+
+  it('korekta dywidendy (wzorzec z produkcji) → dywidenda z tickerem', () => {
+    const csv = buildCsv([
+      '01.12.2022 11:00:00,Korekta dywidendy CY1000031710 (ASBIS) z dnia 2022-12-01,27.10',
+    ]);
+
+    const result = parseMbankOperations(csv, 'batch-test');
+
+    expect(result.data[0].operationType).toBe('dividend');
+    expect(result.data[0].ticker).toBe('CY1000031710');
+    expect(result.data[0].details).toBe('ASBIS');
+  });
+
+  it('długa forma dywidendy dalej działa (bez regresji)', () => {
+    const csv = buildCsv([
+      '30.03.2026 11:00:00,Dywidenda z 4 PW: US5951121038 DP: 2026-03-30 stawka brutto w wal.: 0.15 stawka pod.: 15%,2.10',
+    ]);
+
+    const result = parseMbankOperations(csv, 'batch-test');
+
+    expect(result.data[0].operationType).toBe('dividend');
+    expect(result.data[0].ticker).toBe('US5951121038');
   });
 
   it('„IKE/IKZE WYPELNIONY LIMIT" to wiersz informacyjny, nie operacja gotówkowa', () => {
