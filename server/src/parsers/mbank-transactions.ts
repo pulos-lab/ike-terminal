@@ -29,6 +29,29 @@ import {
  * Commission and currency columns may be empty in newer exports.
  * When empty, commission defaults to 0 (charged separately in operations file,
  * similar to DEGIRO), and currency is inferred from the exchange column (Giełda).
+ *
+ * ── Dwa produkty mBanku, dwa modele rozliczenia (zweryfikowane 2026-07-31) ──
+ *
+ * eMakler (usługa w bankowości) rozlicza się WYŁĄCZNIE w PLN — „Zlecenia
+ * w eMaklerze możesz składać tylko w PLN. Kurs podajemy w walucie, ale pokrycie
+ * zlecenia stanowią PLN" (mbank.pl, FAQ rynki zagraniczne). Regulamin zleceń
+ * z rozliczeniem w walutach obcych explicite wyklucza rachunki eMakler oraz
+ * IKE i IKZE. Przewalutowanie robi broker zagraniczny KBC Bank NV po kursie
+ * mid-Reuters odświeżanym co pół godziny ± marża 0,1%.
+ *
+ * Rachunek w BM mBanku (mInwestor/mDM) prowadzony jest w PLN, EUR, USD i GBP
+ * z subkontami walutowymi, a walutę rozliczenia można zmienić PER ZLECENIE.
+ *
+ * Dlatego `paymentCurrency` czytamy z pliku zamiast zakładać PLN: dla eMaklera
+ * wyjdzie i tak PLN, a plik z rachunku mBM rozliczony w walucie notowania da
+ * waluty równe → bez `fxRate` i bez przeliczania prowizji (ona też jest wtedy
+ * w walucie notowania). Nie wiemy, czy eksport z mInwestora ma ten sam układ
+ * kolumn i w ogóle trafia do tego parsera — publicznych sampli mDM brak.
+ *
+ * Marża 0,1% na stronę tłumaczy też rozrzut kursów implikowanych z pliku
+ * w obrębie jednego dnia (mierzone <0,35%) — to spread brokera per zlecenie,
+ * nie błąd danych. Kurs z pliku jest więc DOKŁADNYM kursem rozliczenia
+ * z marżą, czego kurs rynkowy z Yahoo nigdy nie odda.
  */
 
 /**

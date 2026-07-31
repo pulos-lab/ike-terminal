@@ -15,6 +15,12 @@ import {
  * Format: comma or semicolon delimited, Windows-1250 encoding (pre-decoded).
  * Columns: Data, Opis, Kwota
  *
+ * Plik nie ma kolumny waluty, a operacje księgujemy jako PLN. To jest poprawne
+ * dla eMaklera, który rozlicza się wyłącznie w złotych (patrz komentarz
+ * w mbank-transactions.ts), ale NIE byłoby poprawne dla rachunku w BM mBanku
+ * (mInwestor) z subkontami EUR/USD/GBP. Gdyby kiedyś pojawił się plik z mDM,
+ * walutę trzeba będzie wziąć skądinąd — tu nie ma jej z czego odczytać.
+ *
  * Operation types classified from the Opis (description) column:
  *   - "Dywidenda z N PW: ISIN ..."         → dividend
  *   - "WYC.BK: ..."                        → deposit (bank transfer in)
