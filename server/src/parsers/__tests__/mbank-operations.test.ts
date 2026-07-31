@@ -127,4 +127,57 @@ describe('parseMbankOperations', () => {
     expect(result.data).toHaveLength(0);
     expect(result.skipped).toHaveLength(0);
   });
+
+  it('rozpoznaje przelewy spoza prefiksów WYC.BK/WYP.BK (kierunek ze znaku kwoty)', () => {
+    // Wzorce z realnych rachunków; numery zmienione. Przed poprawką wszystkie
+    // te wiersze lądowały jako 'other' i nie zasilały cash flow.
+    const csv = buildCsv([
+      '05.01.2025 10:00:00,Uzn. konta podst. środkami z banku. Dysp. nr: 11111111,"5 000,00"',
+      '06.01.2025 10:00:00,PL10000001 R:22222222 Przelew z r-ku brokerskiego na bankowy - wolne środki,"-1 200,00"',
+      '07.01.2025 10:00:00,Przelew z r-ku R:22222222 w BM - więcej informacji,"-300,00"',
+      '08.01.2025 10:00:00,PRZELEW NA IKZE 33333333,"10 000,00"',
+      '09.01.2025 10:00:00,33333333 ZASILENIE IKZE,"2 500,00"',
+      '10.01.2025 10:00:00,33333333 DOPŁATA DO LIMITU IKZE 2021 OS SAMOZATRUDNIONA,"3 155,40"',
+      '11.01.2025 10:00:00,IKZE 2025,"15 611,40"',
+    ]);
+
+    const result = parseMbankOperations(csv, 'batch-test');
+
+    expect(result.data).toHaveLength(7);
+    expect(result.data.map((o) => o.operationType)).toEqual([
+      'deposit',
+      'withdrawal',
+      'withdrawal',
+      'deposit',
+      'deposit',
+      'deposit',
+      'deposit',
+    ]);
+  });
+
+  it('nie bierze za przelew zwrotu z redukcji IPO ani korekty dywidendy', () => {
+    const csv = buildCsv([
+      '12.01.2025 10:00:00,BRMW3820201130_716 ipo mobruk - redukcja zwrot srodkow,"1 000,00"',
+      '13.01.2025 10:00:00,Korekta dywidendy CY1000031710 (ASBIS) z dnia 2022-12-05,"27,10"',
+    ]);
+
+    const result = parseMbankOperations(csv, 'batch-test');
+
+    expect(result.data.map((o) => o.operationType)).toEqual(['other', 'other']);
+  });
+
+  it('„IKE/IKZE WYPELNIONY LIMIT" to wiersz informacyjny, nie operacja gotówkowa', () => {
+    // Kwota w tym wierszu to ustawowy limit wpłat na dany rok. Księgowany jako
+    // operacja dokładał na rachunek kilkadziesiąt tysięcy fantomowych złotych.
+    const csv = buildCsv([
+      '01.01.2024 13:07:17,IKE WYPELNIONY LIMIT,23 472,00',
+      '01.01.2025 13:11:00,IKZE WYPEŁNIONY LIMIT,10 407,60',
+    ]);
+
+    const result = parseMbankOperations(csv, 'batch-test');
+
+    expect(result.data).toHaveLength(0);
+    expect(result.skipped).toHaveLength(2);
+    expect(result.skipped.map((s) => s.reason)).toEqual(['summary_row', 'summary_row']);
+  });
 });

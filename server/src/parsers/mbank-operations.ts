@@ -15,10 +15,20 @@ import {
  * Format: comma or semicolon delimited, Windows-1250 encoding (pre-decoded).
  * Columns: Data, Opis, Kwota
  *
+ * Plik nie ma kolumny waluty, a operacje księgujemy jako PLN. To jest poprawne
+ * dla eMaklera, który rozlicza się wyłącznie w złotych (patrz komentarz
+ * w mbank-transactions.ts), ale NIE byłoby poprawne dla rachunku w BM mBanku
+ * (mInwestor) z subkontami EUR/USD/GBP. Gdyby kiedyś pojawił się plik z mDM,
+ * walutę trzeba będzie wziąć skądinąd — tu nie ma jej z czego odczytać.
+ *
  * Operation types classified from the Opis (description) column:
  *   - "Dywidenda z N PW: ISIN ..."         → dividend
  *   - "WYC.BK: ..."                        → deposit (bank transfer in)
  *   - "WYP.BK: ..."                        → withdrawal (bank transfer out)
+ *   - "Uzn. konta podst. …" / "Przelew z r-ku …" / "PRZELEW NA IKZE …" /
+ *     "ZASILENIE IKZE" / "DOPŁATA DO LIMITU IKZE …" / "IKZE 2025"
+ *                                          → deposit albo withdrawal wg znaku kwoty
+ *   - "IKE/IKZE WYPELNIONY LIMIT"          → skipped (wiersz informacyjny, kwota = limit roczny)
  *   - "Blokada środków ..."                → skipped (internal order blocking)
  *   - "Odblokowanie środków ..."           → skipped (internal order unblocking)
  *   - "WYC: ... PW: ISIN"                 → skipped (T+2 transaction settlement)
@@ -37,6 +47,27 @@ const DEPOSIT_RE = /^WYC\.BK:/;
 /** Bank withdrawal: "WYP.BK: ..." (assumed pattern based on WYC.BK convention) */
 const WITHDRAWAL_RE = /^WYP\.BK:/;
 
+/**
+ * Pozostałe formy przelewów gotówkowych w opisach eMaklera.
+ *
+ * `WYC.BK:` / `WYP.BK:` wyżej to tylko dwie z co najmniej ośmiu form, jakich
+ * używa broker — wzorce poniżej pochodzą ze 100 operacji z trzech realnych
+ * rachunków, gdzie 97 lądowało w koszu „Inne" zamiast zasilać cash flow
+ * (dziesiątki tysięcy złotych poza wykresem i poza limitami IKE/IKZE).
+ *
+ * Kierunek bierzemy ze ZNAKU KWOTY, nie z brzmienia opisu: ten sam tytuł
+ * potrafi być uznaniem i obciążeniem, a znak jest jednoznaczny.
+ */
+const TRANSFER_RES: RegExp[] = [
+  /^Uzn\.\s*konta\s+podst\./i, // "Uzn. konta podst. środkami z banku. Dysp. nr: …"
+  /Przelew\s+z\s+r-ku\s+brokerskiego\s+na\s+bankowy/i, // "PL… R:… Przelew z r-ku brokerskiego na bankowy - wolne środki"
+  /^Przelew\s+z\s+r-ku\s+R:/i, // "Przelew z r-ku R:… w BM - więcej informacji"
+  /^PRZELEW\s+NA\s+IK(?:E|ZE)\b/i, // "PRZELEW NA IKZE 92500177"
+  /\bZASILENIE\s+IK(?:E|ZE)\b/i, // "92500177 ZASILENIE IKZE"
+  /\bDOP[ŁL]ATA\s+DO\s+LIMITU\s+IK(?:E|ZE)\b/i, // "… DOPŁATA DO LIMITU IKZE 2021 OS SAMOZATRUDNIONA"
+  /^IK(?:E|ZE)\s+\d{4}\s*$/i, // goły tytuł roczny: "IKZE 2025" = wpłata na dany rok
+];
+
 /** Transaction settlement: "WYC: 112082964 NOT: 119127638 ZLC: 105038258 PW: PLKMPTR00012" */
 const SETTLEMENT_RE = /^WYC:\s+\d+.*PW:\s+\S+/;
 
@@ -45,6 +76,16 @@ const BLOCK_RE = /^Blokada\s/;
 
 /** Order unblock: "Odblokowanie środków pod zlecenie ..." */
 const UNBLOCK_RE = /^Odblokowanie\s/;
+
+/**
+ * Wiersz informacyjny o rocznym limicie wpłat na IKE/IKZE:
+ * "IKE WYPELNIONY LIMIT" / "IKZE WYPEŁNIONY LIMIT".
+ *
+ * Kwota w takim wierszu to USTAWOWY LIMIT na dany rok, nie przepływ pieniężny.
+ * Księgowanie go jako operacji gotówkowej dokładało na rachunek kilkadziesiąt
+ * tysięcy fantomowych złotych (6 wierszy × 15,7–26 tys. w realnym eksporcie).
+ */
+const LIMIT_INFO_RE = /^IK(?:E|ZE)\s+WYPE[ŁL]NIONY\s+LIMIT/i;
 
 export function parseMbankOperations(
   csvContent: string,
@@ -115,6 +156,12 @@ export function parseMbankOperations(
       continue;
     }
 
+    // ── Skip informational rows (roczny limit wpłat IKE/IKZE) ──
+    if (LIMIT_INFO_RE.test(description)) {
+      skipped.push({ row: rowNum, reason: 'summary_row', paperName: description });
+      continue;
+    }
+
     if (amount === 0) {
       skipped.push({ row: rowNum, reason: 'zero_amount', paperName: description });
       continue;
@@ -160,6 +207,20 @@ export function parseMbankOperations(
       operations.push({
         date: isoDate,
         operationType: amount < 0 ? 'withdrawal' : 'deposit',
+        description,
+        amount,
+        currency: 'PLN',
+        source: 'mbank',
+        importBatch,
+      });
+      continue;
+    }
+
+    // ── Pozostałe formy przelewów (kierunek ze znaku kwoty) ──
+    if (TRANSFER_RES.some((re) => re.test(description))) {
+      operations.push({
+        date: isoDate,
+        operationType: amount > 0 ? 'deposit' : 'withdrawal',
         description,
         amount,
         currency: 'PLN',
