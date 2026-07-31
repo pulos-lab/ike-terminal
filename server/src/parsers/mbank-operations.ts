@@ -3,6 +3,7 @@ import type { CashOperation, ParseResult, SkippedRow } from 'shared';
 import {
   normalizeForDetect,
   parseNumber,
+  isStrictNumber,
   parseDottedDate,
   detectColumnShift,
   columnShiftWarning,
@@ -78,6 +79,56 @@ const BLOCK_RE = /^Blokada\s/;
 const UNBLOCK_RE = /^Odblokowanie\s/;
 
 /**
+ * Korekta dywidendy: "Korekta dywidendy CY1000031710 (ASBIS) z dnia 2022-12-01".
+ *
+ * Wzorzec z REALNEGO wyciągu produkcyjnego. Do tej pory taki wiersz lądował
+ * jako `other`, czyli poza panelem Dywidend i poza sumą dywidend — mimo że to
+ * dopłata do wcześniejszej wypłaty. eMakler używa tu krótkiego zapisu
+ * `<ISIN> (<TICKER>)`, innego niż długa forma obsługiwana przez DIVIDEND_RE.
+ */
+const DIVIDEND_CORRECTION_RE = /^Korekta\s+dywidendy\s+(\S+)\s*\(([^)]+)\)/i;
+
+/**
+ * Krótka forma dywidendy: "Dywidenda: DP: 2021-09-17 PLVOTUM00016 (VOT)".
+ *
+ * STATUS DOWODU: nie widzieliśmy jej w surowym eksporcie — pochodzi z pliku
+ * zrekonstruowanego przez użytkownika (który w innym miejscu odwrócił znaczenie
+ * kolumny „Wartość", więc nie jest wiarygodnym źródłem formatu). Ale OBA jej
+ * człony są niezależnie potwierdzone w prawdziwych danych: `DP:` występuje
+ * w długiej formie obsługiwanej przez DIVIDEND_RE, a zapis `<ISIN> (<TICKER>)`
+ * w produkcyjnym wierszu „Korekta dywidendy CY1000031710 (ASBIS)".
+ *
+ * Wzorzec jest wąski (wymaga dokładnie tego kształtu), więc pomyłka nic nie
+ * kosztuje: brak dopasowania = wiersz ląduje w `other`, czyli dokładnie tam,
+ * gdzie trafiłby bez tej gałęzi. Zysk przy trafieniu: dywidenda w panelu
+ * Dywidend zamiast w „Inne".
+ */
+const DIVIDEND_SHORT_RE = /^Dywidenda:\s*DP:\s*(\d{4}-\d{2}-\d{2})\s+(\S+)\s*\(([^)]+)\)/i;
+
+/**
+ * Kwota operacji: normalnie trzecia kolumna, ale REALNE eksporty potrafią mieć
+ * dodatkowe puste pole między opisem a kwotą (nagłówek deklaruje `Data;Opis;Kwota`,
+ * a wiersz ma cztery pola: `Data;Opis;;Kwota`).
+ *
+ * Wcześniej czytaliśmy sztywno `row[2]`, więc taki wiersz dawał kwotę 0 i był
+ * pomijany jako `zero_amount` — pieniądze znikały po cichu. Teraz przy pustej
+ * trzeciej kolumnie szukamy pierwszego pola, które JEST liczbą (`isStrictNumber`,
+ * nie „coś, co się parsuje"), i raportujemy fakt w ostrzeżeniach.
+ */
+function readAmount(row: string[]): { amount: number; shifted: boolean } {
+  const primary = row[2]?.trim();
+  if (primary) return { amount: parseNumber(primary), shifted: false };
+
+  for (let i = 3; i < row.length; i++) {
+    const candidate = row[i]?.trim();
+    if (candidate && isStrictNumber(candidate)) {
+      return { amount: parseNumber(candidate), shifted: true };
+    }
+  }
+  return { amount: 0, shifted: false };
+}
+
+/**
  * Wiersz informacyjny o rocznym limicie wpłat na IKE/IKZE:
  * "IKE WYPELNIONY LIMIT" / "IKZE WYPEŁNIONY LIMIT".
  *
@@ -107,6 +158,8 @@ export function parseMbankOperations(
   const operations: CashOperation[] = [];
   const skipped: SkippedRow[] = [];
   const warnings: string[] = [];
+  /** Wiersze, w których kwotę trzeba było wziąć z dalszej kolumny niż trzecia. */
+  let amountFromLaterColumn = 0;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -119,7 +172,8 @@ export function parseMbankOperations(
 
     const dateStr = row[0]?.trim();
     const description = row[1]?.trim();
-    const amount = parseNumber(row[2]);
+    const { amount, shifted } = readAmount(row);
+    if (shifted) amountFromLaterColumn++;
 
     if (!dateStr) {
       skipped.push({ row: rowNum, reason: 'missing_date', paperName: description });
@@ -190,6 +244,43 @@ export function parseMbankOperations(
       continue;
     }
 
+    const shortDividend = DIVIDEND_SHORT_RE.exec(description);
+    if (shortDividend) {
+      const [, exDate, isin, ticker] = shortDividend;
+      operations.push({
+        date: isoDate,
+        operationType: 'dividend',
+        description: `Dywidenda ${ticker} (${isin}, DP ${exDate})`,
+        amount,
+        currency: 'PLN',
+        ticker: isin, // konwencja mBanku — patrz gałąź DIVIDEND_RE
+        details: ticker,
+        source: 'mbank',
+        importBatch,
+      });
+      continue;
+    }
+
+    const correction = DIVIDEND_CORRECTION_RE.exec(description);
+    if (correction) {
+      const [, isin, ticker] = correction;
+      operations.push({
+        date: isoDate,
+        operationType: 'dividend',
+        description,
+        amount,
+        currency: 'PLN',
+        // Konwencja mBanku: w `ticker` trzymamy ISIN (parser nie zna tickerów
+        // Yahoo), tak samo jak w gałęzi DIVIDEND_RE wyżej. Skrót z nawiasu
+        // zostaje w opisie — jest czytelny dla użytkownika.
+        ticker: isin,
+        details: ticker,
+        source: 'mbank',
+        importBatch,
+      });
+      continue;
+    }
+
     if (DEPOSIT_RE.test(description)) {
       operations.push({
         date: isoDate,
@@ -240,6 +331,14 @@ export function parseMbankOperations(
       source: 'mbank',
       importBatch,
     });
+  }
+
+  if (amountFromLaterColumn > 0) {
+    warnings.push(
+      `mBank: w ${amountFromLaterColumn} wierszach kwota była w dalszej kolumnie niż deklaruje ` +
+        `nagłówek (dodatkowe puste pole w wierszu) — wcześniej takie wiersze znikały jako zerowe. ` +
+        `Zweryfikuj je w historii operacji.`,
+    );
   }
 
   return { data: operations, skipped, warnings: warnings.length > 0 ? warnings : undefined };
