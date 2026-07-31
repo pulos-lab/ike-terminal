@@ -28,6 +28,10 @@ export const QUERY_KEYS = {
    *  full = pełna historia notowań (preset sięgający przed pierwszą transakcję). */
   instrumentHistory: (isin: string, full = false) =>
     ['prices', 'instrument-history', isin, full ? 'full' : 'tx'] as const,
+  /** Historia kursu pary walutowej (wykres w zakładce Waluty z markerami wymian).
+   *  Prefix 'portfolio' — zakres serii zależy od wymian aktywnego portfela. */
+  fxPairHistory: (pair: string, full = false) =>
+    ['portfolio', 'fx-pair-history', pair, full ? 'full' : 'tx'] as const,
   importStatus: ['import', 'status'] as const,
   /** Sprzedaże bez kupna (hub Importu) — detekcja liczona na żywo z transakcji. */
   orphanedSells: ['import', 'orphaned-sells'] as const,

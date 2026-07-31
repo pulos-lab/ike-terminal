@@ -6,7 +6,9 @@ import type {
   DepositsResponse,
   DividendsResponse,
   FeesResponse,
+  FxChartPair,
   FxHistoryResponse,
+  FxPairHistoryResponse,
   ImportStatusResponse,
   InstrumentHistoryResponse,
   LivePricesResponse,
@@ -195,6 +197,10 @@ export const api = {
   getInstrumentHistory: (isin: string, opts?: { full?: boolean }) =>
     request<InstrumentHistoryResponse>(
       `/prices/instrument-history?isin=${encodeURIComponent(isin)}${opts?.full ? '&full=1' : ''}`,
+    ),
+  getFxPairHistory: (pair: FxChartPair, opts?: { full?: boolean }) =>
+    request<FxPairHistoryResponse>(
+      `/prices/fx-pair-history?pair=${pair}${opts?.full ? '&full=1' : ''}`,
     ),
   createTransaction: (body: {
     date: string;

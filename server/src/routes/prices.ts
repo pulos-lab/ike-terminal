@@ -1,12 +1,20 @@
 import { Router } from 'express';
 import { DEFAULT_FX_PLN } from 'shared';
-import type { InstrumentHistoryResponse, LivePrice, LivePricesResponse } from 'shared';
+import type {
+  FxChartPair,
+  FxPairHistoryResponse,
+  InstrumentHistoryResponse,
+  LivePrice,
+  LivePricesResponse,
+} from 'shared';
 import { fetchYahooPrice, fetchFxRate, fetchYahooHistory } from '../services/yahoo-finance.js';
 import { fetchStooqPrice, fetchStooqHistory } from '../services/stooq.js';
 import { fetchBiznesradarPrice, fetchBiznesradarHistory } from '../services/biznesradar.js';
 import { fetchStockwatchBondPrice } from '../services/stockwatch-bonds.js';
 import { getAllTickers, getTickerByIsin } from '../db/ticker-map-repo.js';
 import { getTransactionsByIsin } from '../db/transactions-repo.js';
+import { getAllOperations } from '../db/operations-repo.js';
+import { extractFxExchanges } from '../services/portfolio-engine.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { mapWithConcurrency } from '../services/concurrency.js';
 
@@ -121,6 +129,78 @@ router.get(
       name: entry.name,
       currency: entry.currency,
       source,
+      points,
+    };
+    res.json(payload);
+  }),
+);
+
+/** Pary wykresu walut: waluty składowe (do dopasowania wymian) + waluta kwotowania. */
+const FX_CHART_PAIRS: Record<FxChartPair, { currencies: [string, string]; quoteIn: string }> = {
+  USDPLN: { currencies: ['USD', 'PLN'], quoteIn: 'PLN' },
+  EURPLN: { currencies: ['EUR', 'PLN'], quoteIn: 'PLN' },
+  USDEUR: { currencies: ['USD', 'EUR'], quoteIn: 'EUR' },
+};
+
+// GET /api/prices/fx-pair-history?pair=USDPLN|EURPLN|USDEUR[&full=1] — historia
+// kursu pary walutowej (wykres w zakładce Waluty z markerami wymian). Zakres: od
+// najwcześniejszej wymiany danej pary minus 30 dni bufora; bez wymian — 1 rok;
+// full=1 — pełna dostępna historia. USDEUR = iloraz USDPLN/EURPLN per data
+// (Yahoo ma parę USDEUR=X, ale liczymy z par PLN-owych: spójność z kaflem
+// USD/EUR na stronie + obie serie i tak siedzą w cache).
+router.get(
+  '/fx-pair-history',
+  asyncHandler(async (req, res) => {
+    const pair = typeof req.query.pair === 'string' ? req.query.pair : '';
+    if (!(pair in FX_CHART_PAIRS)) {
+      res.status(400).json({ error: 'Parametr pair: USDPLN, EURPLN lub USDEUR' });
+      return;
+    }
+    const { currencies, quoteIn } = FX_CHART_PAIRS[pair as FxChartPair];
+
+    let startDate: string;
+    if (req.query.full === '1') {
+      startDate = '1990-01-01';
+    } else {
+      // Najwcześniejsza wymiana tej pary — dopasowanie po ZBIORZE walut, nie po
+      // stringu fx_pair (bossa pisze "PLN/USD", IBKR "USD/PLN").
+      const exchanges = extractFxExchanges(getAllOperations(req.portfolioId));
+      const [a, b] = currencies;
+      let firstDate: string | null = null;
+      for (const ex of exchanges) {
+        const match =
+          (ex.currencyFrom === a && ex.currencyTo === b) ||
+          (ex.currencyFrom === b && ex.currencyTo === a);
+        if (!match) continue;
+        const d = ex.date.split('T')[0];
+        if (!firstDate || d < firstDate) firstDate = d;
+      }
+      const start = new Date(firstDate ? `${firstDate}T00:00:00Z` : Date.now());
+      start.setUTCDate(start.getUTCDate() - (firstDate ? 30 : 365));
+      startDate = start.toISOString().split('T')[0];
+    }
+
+    let points: Array<{ date: string; close: number }>;
+    if (pair === 'USDEUR') {
+      const [usdPln, eurPln] = await Promise.all([
+        fetchYahooHistory('USDPLN=X', startDate),
+        fetchYahooHistory('EURPLN=X', startDate),
+      ]);
+      const eurByDate = new Map(eurPln.map((p) => [p.date, p.close]));
+      points = [];
+      for (const p of usdPln) {
+        const eur = eurByDate.get(p.date);
+        if (eur && eur > 0 && p.close > 0) {
+          points.push({ date: p.date, close: p.close / eur });
+        }
+      }
+    } else {
+      points = await fetchYahooHistory(`${pair}=X`, startDate);
+    }
+
+    const payload: FxPairHistoryResponse = {
+      pair: pair as FxChartPair,
+      currency: quoteIn,
       points,
     };
     res.json(payload);

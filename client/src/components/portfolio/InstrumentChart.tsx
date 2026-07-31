@@ -1,18 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import {
-  createChart,
-  createSeriesMarkers,
-  AreaSeries,
-  LineSeries,
-  LineStyle,
-  LineType,
-  type IChartApi,
-  type ISeriesApi,
-  type SeriesMarker,
-  type Time,
-} from 'lightweight-charts';
-import { Loader2 } from 'lucide-react';
+import type { SeriesMarker, Time } from 'lightweight-charts';
 import type {
   AppliedSpinOff,
   DividendRecord,
@@ -24,12 +12,9 @@ import { api } from '@/lib/api-client';
 import { toQuotePrice } from './quote-price';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { useTheme } from '@/lib/use-theme';
-import { getPresetStartDate } from '@/lib/returns';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
+import { PriceMarkerChart, snapToSession } from '@/components/shared/PriceMarkerChart';
 import { formatNumber, formatQuantity } from '@/lib/formatters';
-
-/** Te same etykiety co zakres wykresu dashboardu/share — spójna konwencja. */
-const PRESET_RANGES = ['1M', '3M', '6M', 'YTD', '1Y', '3Y', 'ALL'] as const;
 
 interface InstrumentChartProps {
   isin: string;
@@ -48,6 +33,10 @@ interface InstrumentChartProps {
  * Markery są przypinane do najbliższej sesji ≥ daty transakcji (transakcja
  * z dnia bez notowania — np. instrument zagraniczny a święto lokalne — nie
  * może wypaść z wykresu, bo lightweight-charts ignoruje czas spoza serii).
+ *
+ * Mechanika wykresu (seria, markery, tooltip, presety, clamping) mieszka we
+ * wspólnym `PriceMarkerChart` — tu tylko dane instrumentu i treść
+ * markerów/tooltipa.
  */
 export function InstrumentChart({
   isin,
@@ -55,16 +44,7 @@ export function InstrumentChart({
   avgBuyPrice,
   showRangePresets = false,
 }: InstrumentChartProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const tooltipRef = useRef<HTMLDivElement>(null);
   const { isDark } = useTheme();
-  // Aktywny preset zakresu; '' = zakres ręczny (po zoomie/przesunięciu myszą).
-  // Ref-mirror, żeby efekt budujący wykres czytał aktualny preset bez bycia
-  // od niego zależnym (zmiana presetu NIE przebudowuje wykresu).
-  const [range, setRange] = useState<string>('ALL');
-  const rangeRef = useRef(range);
-  const applyingPresetRef = useRef(false);
   // Pełna historia notowań — dociągana dopiero, gdy user kliknie preset sięgający
   // przed pierwszą transakcję (ALL, albo np. 3Y przy młodszej pozycji).
   const [fullHistory, setFullHistory] = useState(false);
@@ -101,7 +81,7 @@ export function InstrumentChart({
     queryFn: api.getSpinOffs,
   });
   // Dzisiejsze kursy FX do przeliczeń w tooltipie (Bossa/mBank zagranica księgują
-  // w PLN). Ref zamiast dep efektu — odświeżenie kursów nie przebudowuje wykresu.
+  // w PLN). Ref zamiast dep — odświeżenie kursów nie przebudowuje wykresu.
   const { data: livePrices } = useQuery({
     queryKey: QUERY_KEYS.livePrices,
     queryFn: api.getLivePrices,
@@ -245,131 +225,18 @@ export function InstrumentChart({
     return out;
   }, [points, instrumentTxs, instrumentSplits, instrumentSpinOffs, isin, history?.currency]);
 
-  // Ustawia widoczny zakres wg presetu. Preset starszy niż dane (albo ALL) →
-  // fitContent. Flagą applyingPresetRef zarządzają call-site'y (build/klik),
-  // żeby subskrypcja zakresu nie zdjęła podświetlenia po zmianie programowej.
-  const applyRangePreset = (chart: IChartApi, preset: string) => {
-    if (!points.length) return;
-    const firstDate = points[0].date;
-    const lastDate = points[points.length - 1].date;
-    const presetStart = preset && preset !== 'ALL' ? getPresetStartDate(preset) : undefined;
-    if (!presetStart || presetStart <= firstDate || presetStart >= lastDate) {
-      chart.timeScale().fitContent();
-    } else {
-      chart.timeScale().setVisibleRange({ from: presetStart as Time, to: lastDate as Time });
-    }
-  };
+  const gainColor = isDark ? '#43c384' : '#1f845a';
+  const lossColor = isDark ? '#e06a55' : '#c0392b';
+  const divColor = isDark ? '#60a5fa' : '#2563eb';
+  const eventColor = isDark ? '#c084fc' : '#9333ea';
 
-  const handlePresetClick = (preset: string) => {
-    setRange(preset);
-    rangeRef.current = preset;
-    // Preset wykracza przed załadowane dane → dociągnij pełną historię notowań;
-    // po jej nadejściu efekt przebuduje wykres i zastosuje rangeRef ponownie.
-    if (!fullHistory && points.length) {
-      const presetStart = preset !== 'ALL' ? getPresetStartDate(preset) : undefined;
-      if (preset === 'ALL' || (presetStart && presetStart < points[0].date)) {
-        setFullHistory(true);
-      }
-    }
-    const chart = chartRef.current;
-    if (!chart) return;
-    applyingPresetRef.current = true;
-    applyRangePreset(chart, preset);
-    setTimeout(() => {
-      applyingPresetRef.current = false;
-    }, 100);
-  };
-
-  useEffect(() => {
-    if (!containerRef.current || !points.length) return;
-
-    if (chartRef.current) {
-      chartRef.current.remove();
-    }
-
-    // Budowa wykresu odpala zdarzenia zakresu (fitContent, pierwszy resize) —
-    // przez chwilę traktujemy je jak programowe, żeby nie skasować presetu.
-    applyingPresetRef.current = true;
-
-    const gainColor = isDark ? '#43c384' : '#1f845a';
-    const lossColor = isDark ? '#e06a55' : '#c0392b';
-    const amberColor = isDark ? '#f59e0b' : '#c27a0a';
-    const divColor = isDark ? '#60a5fa' : '#2563eb';
-    const eventColor = isDark ? '#c084fc' : '#9333ea';
-    const avgCostColor = isDark ? '#a1a1aa' : '#78716c';
-    const currency = history?.currency ?? '';
-
-    const chart = createChart(containerRef.current, {
-      height,
-      layout: {
-        background: { color: 'transparent' },
-        textColor: isDark ? '#a1a1aa' : '#787068',
-        fontFamily: 'Inter, system-ui, sans-serif',
-      },
-      grid: {
-        vertLines: { color: isDark ? '#27272a' : '#ede9df' },
-        horzLines: { color: isDark ? '#27272a' : '#ede9df' },
-      },
-      rightPriceScale: {
-        borderColor: isDark ? '#27272a' : '#ddd5c8',
-      },
-      timeScale: {
-        borderColor: isDark ? '#27272a' : '#ddd5c8',
-        timeVisible: false,
-      },
-      crosshair: {
-        horzLine: { labelBackgroundColor: isDark ? '#27272a' : '#1c1917' },
-        vertLine: { labelBackgroundColor: isDark ? '#27272a' : '#1c1917' },
-      },
-    });
-
-    chartRef.current = chart;
-
-    const priceSeries = chart.addSeries(AreaSeries, {
-      lineColor: amberColor,
-      topColor: isDark ? 'rgba(245,158,11,0.18)' : 'rgba(194,122,10,0.12)',
-      bottomColor: isDark ? 'rgba(245,158,11,0.02)' : 'rgba(194,122,10,0.01)',
-      lineWidth: 2,
-      lastValueVisible: true,
-      priceLineVisible: true,
-      priceFormat: { type: 'custom', formatter: (v: number) => formatNumber(v) },
-    });
-
-    priceSeries.setData(points.map((p) => ({ time: p.date as Time, value: p.close })));
-
-    if (avgBuyPrice != null && avgBuyPrice > 0) {
-      priceSeries.createPriceLine({
-        price: avgBuyPrice,
-        color: isDark ? '#71717a' : '#787068',
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: 'śr. cena',
-      });
-    }
-
-    // Schodkowa linia średniego kosztu w czasie (przerwy, gdy pozycja = 0)
-    let avgCostSeries: ISeriesApi<'Line'> | null = null;
-    if (avgCostData.some((d) => d.value != null)) {
-      avgCostSeries = chart.addSeries(LineSeries, {
-        color: avgCostColor,
-        lineWidth: 1,
-        lineType: LineType.WithSteps,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-        priceFormat: { type: 'custom', formatter: (v: number) => formatNumber(v) },
-      });
-      avgCostSeries.setData(avgCostData.map((d) => ({ ...d, time: d.time as Time })));
-    }
-
-    // Markery K/S + wypłaty dywidend — sortowanie po czasie jest wymagane
-    // przez lightweight-charts
-    const markers: SeriesMarker<Time>[] = [];
+  // Markery K/S + wypłaty dywidend + zdarzenia korporacyjne
+  const markers = useMemo(() => {
+    const out: SeriesMarker<Time>[] = [];
     for (const [session, txs] of txBySessionDate) {
       for (const tx of txs) {
         const isBuy = tx.side === 'K';
-        markers.push({
+        out.push({
           time: session as Time,
           position: isBuy ? 'belowBar' : 'aboveBar',
           shape: isBuy ? 'arrowUp' : 'arrowDown',
@@ -381,7 +248,7 @@ export function InstrumentChart({
     // Dywidendy: jedno kółko na linii kursu per dzień sesyjny (kilka wypłat
     // jednego dnia — np. rozbicie brutto/podatek — nie mnoży markerów)
     for (const session of divBySessionDate.keys()) {
-      markers.push({
+      out.push({
         time: session as Time,
         position: 'inBar',
         shape: 'circle',
@@ -392,7 +259,7 @@ export function InstrumentChart({
     }
     // Zdarzenia korporacyjne: splity i spin-offy (kwadrat nad świecą)
     for (const [session, split] of splitBySessionDate) {
-      markers.push({
+      out.push({
         time: session as Time,
         position: 'aboveBar',
         shape: 'square',
@@ -402,7 +269,7 @@ export function InstrumentChart({
       });
     }
     for (const [session, so] of spinOffBySessionDate) {
-      markers.push({
+      out.push({
         time: session as Time,
         position: 'aboveBar',
         shape: 'square',
@@ -412,49 +279,22 @@ export function InstrumentChart({
           so.parentIsin === isin ? `Spin-off ${so.childTicker}` : `Spin-off z ${so.parentTicker}`,
       });
     }
-    markers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
-    createSeriesMarkers(priceSeries, markers);
+    return out;
+  }, [
+    txBySessionDate,
+    divBySessionDate,
+    splitBySessionDate,
+    spinOffBySessionDate,
+    isin,
+    gainColor,
+    lossColor,
+    divColor,
+    eventColor,
+  ]);
 
-    applyRangePreset(chart, rangeRef.current);
-
-    // Ograniczenie zakresu — nie wyjeżdżamy poza dane (z małym buforem)
-    const maxIdx = points.length - 1;
-    const buffer = Math.ceil(points.length * 0.03);
-    let clamping = false;
-    chart.timeScale().subscribeVisibleLogicalRangeChange((logical) => {
-      if (!logical || clamping) return;
-      // Ręczny zoom/pan unieważnia podświetlenie presetu (zakres już nie odpowiada etykiecie)
-      if (!applyingPresetRef.current && rangeRef.current) {
-        rangeRef.current = '';
-        setRange('');
-      }
-      const from = Math.max(logical.from, -buffer);
-      const to = Math.min(logical.to, maxIdx + buffer);
-      if (from !== logical.from || to !== logical.to) {
-        clamping = true;
-        chart.timeScale().setVisibleLogicalRange({ from, to });
-        clamping = false;
-      }
-    });
-
-    // Tooltip: kurs + transakcje z danego dnia sesyjnego
-    chart.subscribeCrosshairMove((param) => {
-      const tooltip = tooltipRef.current;
-      if (!tooltip) return;
-
-      if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
-        tooltip.style.display = 'none';
-        return;
-      }
-
-      const price = param.seriesData.get(priceSeries);
-      const priceVal = price && 'value' in price ? (price as { value: number }).value : null;
-      if (priceVal === null) {
-        tooltip.style.display = 'none';
-        return;
-      }
-
-      const dateStr = String(param.time);
+  // Wiersze tooltipa dla dnia sesyjnego: transakcje + dywidendy + zdarzenia
+  const tooltipRowsFor = useCallback(
+    (dateStr: string) => {
       const txs = txBySessionDate.get(dateStr) ?? [];
       const txRows = txs
         .map((tx) => {
@@ -503,71 +343,38 @@ export function InstrumentChart({
           )
         : '';
 
-      const avg = avgCostSeries ? param.seriesData.get(avgCostSeries) : undefined;
-      const avgVal = avg && 'value' in avg ? (avg as { value: number }).value : null;
-      const avgRow =
-        avgVal !== null
-          ? `<div style="font-size:12px;color:${isDark ? '#a8a29e' : '#71717a'}">Śr. koszt: <strong>${formatNumber(avgVal)} ${currency}</strong></div>`
-          : '';
+      return `${txRows}${divRows}${splitRow}${spinOffRow}`;
+    },
+    [
+      txBySessionDate,
+      divBySessionDate,
+      splitBySessionDate,
+      spinOffBySessionDate,
+      isin,
+      gainColor,
+      lossColor,
+      divColor,
+      eventColor,
+    ],
+  );
 
-      tooltip.innerHTML = `
-        <div style="font-size:11px;color:${isDark ? '#a8a29e' : '#71717a'};margin-bottom:4px">${dateStr}</div>
-        <div style="font-size:12px">Kurs: <strong>${formatNumber(priceVal)} ${currency}</strong></div>
-        ${avgRow}
-        ${txRows}
-        ${divRows}
-        ${splitRow}
-        ${spinOffRow}
-      `;
+  const stepSeries = useMemo(
+    () =>
+      avgCostData.some((d) => d.value != null)
+        ? { data: avgCostData, tooltipLabel: 'Śr. koszt' }
+        : undefined,
+    [avgCostData],
+  );
 
-      tooltip.style.display = 'block';
+  const priceLine = useMemo(
+    () =>
+      avgBuyPrice != null && avgBuyPrice > 0
+        ? { price: avgBuyPrice, title: 'śr. cena' }
+        : undefined,
+    [avgBuyPrice],
+  );
 
-      const chartRect = containerRef.current!.getBoundingClientRect();
-      const tooltipWidth = tooltip.offsetWidth;
-      const tooltipHeight = tooltip.offsetHeight;
-
-      let left = param.point.x + 16;
-      if (left + tooltipWidth > chartRect.width) {
-        left = param.point.x - tooltipWidth - 16;
-      }
-      let top = param.point.y - tooltipHeight / 2;
-      top = Math.max(0, Math.min(top, chartRect.height - tooltipHeight));
-
-      tooltip.style.left = `${left}px`;
-      tooltip.style.top = `${top}px`;
-    });
-
-    const observer = new ResizeObserver(() => {
-      if (containerRef.current) {
-        chart.applyOptions({ width: containerRef.current.clientWidth });
-      }
-    });
-    observer.observe(containerRef.current);
-
-    // Zwolnienie flagi po ustabilizowaniu layoutu (pierwszy resize/fitContent)
-    const armTimer = setTimeout(() => {
-      applyingPresetRef.current = false;
-    }, 300);
-
-    return () => {
-      clearTimeout(armTimer);
-      observer.disconnect();
-      chart.remove();
-      chartRef.current = null;
-    };
-  }, [
-    points,
-    txBySessionDate,
-    divBySessionDate,
-    splitBySessionDate,
-    spinOffBySessionDate,
-    avgCostData,
-    isin,
-    isDark,
-    height,
-    avgBuyPrice,
-    history?.currency,
-  ]);
+  const handleNeedFullHistory = useCallback(() => setFullHistory(true), []);
 
   if (historyLoading || txLoading) {
     return (
@@ -586,74 +393,23 @@ export function InstrumentChart({
   }
 
   return (
-    <div>
-      {showRangePresets && (
-        <div className="mb-2 ml-auto flex w-fit items-center gap-0.5 rounded-md bg-muted p-0.5">
-          {fullHistory && historyFetching && (
-            <Loader2
-              className="mx-1 h-3 w-3 animate-spin text-muted-foreground"
-              aria-label="Dociąganie pełnej historii notowań"
-            />
-          )}
-          {PRESET_RANGES.map((r) => (
-            <button
-              key={r}
-              className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-medium transition-colors ${
-                range === r
-                  ? 'bg-primary/15 text-primary'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-              onClick={() => handlePresetClick(r)}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
-      )}
-      <div
-        style={{ position: 'relative' }}
-        ref={containerRef}
-        role="img"
-        aria-label={`Wykres kursu ${history?.ticker ?? ''} z zaznaczonymi transakcjami kupna i sprzedaży`}
-      >
-        <div
-          ref={tooltipRef}
-          style={{
-            display: 'none',
-            position: 'absolute',
-            zIndex: 10,
-            pointerEvents: 'none',
-            padding: '8px 12px',
-            borderRadius: '8px',
-            background: isDark ? '#1c1917' : '#fefdfb',
-            border: `1px solid ${isDark ? '#27272a' : '#e4e4e7'}`,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-            whiteSpace: 'nowrap',
-            color: isDark ? '#fafaf9' : '#1c1917',
-          }}
-        />
-      </div>
-    </div>
+    <PriceMarkerChart
+      points={points}
+      currency={history?.currency ?? ''}
+      markers={markers}
+      tooltipRowsFor={tooltipRowsFor}
+      stepSeries={stepSeries}
+      priceLine={priceLine}
+      height={height}
+      showRangePresets={showRangePresets}
+      isFetchingFull={fullHistory && historyFetching}
+      onNeedFullHistory={fullHistory ? undefined : handleNeedFullHistory}
+      ariaLabel={`Wykres kursu ${history?.ticker ?? ''} z zaznaczonymi transakcjami kupna i sprzedaży`}
+    />
   );
 }
 
 /** „2:1" dla splitu (ratio 2), „1:20" dla reverse splitu (ratio 0.05). */
 function splitRatioLabel(ratio: number): string {
   return ratio < 1 ? `1:${Math.round(1 / ratio)}` : `${Math.round(ratio)}:1`;
-}
-
-/**
- * Najbliższa sesja ≥ podanej daty (binary search po posortowanych datach);
- * transakcja późniejsza niż ostatnie notowanie → ostatnia sesja.
- */
-function snapToSession(sortedDates: string[], txDate: string): string {
-  let lo = 0;
-  let hi = sortedDates.length - 1;
-  if (txDate > sortedDates[hi]) return sortedDates[hi];
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (sortedDates[mid] < txDate) lo = mid + 1;
-    else hi = mid;
-  }
-  return sortedDates[lo];
 }

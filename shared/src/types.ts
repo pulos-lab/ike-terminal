@@ -1228,6 +1228,19 @@ export interface InstrumentHistoryResponse {
   points: Array<{ date: string; close: number }>;
 }
 
+/** Pary walutowe wykresu w zakładce Waluty (whitelist endpointu fx-pair-history). */
+export type FxChartPair = 'USDPLN' | 'EURPLN' | 'USDEUR';
+
+/** GET /prices/fx-pair-history — historia kursu pary walutowej (wykres
+ *  w zakładce Waluty z markerami wymian). USDEUR liczony jako iloraz
+ *  USDPLN/EURPLN per data — spójnie z kaflem USD/EUR. */
+export interface FxPairHistoryResponse {
+  pair: FxChartPair;
+  /** Waluta kwotowania (PLN dla par PLN-owych, EUR dla USDEUR). */
+  currency: string;
+  points: Array<{ date: string; close: number }>;
+}
+
 export interface OrphanedSell {
   paperName: string;
   isin: string;

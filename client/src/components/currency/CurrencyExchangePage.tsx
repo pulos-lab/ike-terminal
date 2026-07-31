@@ -17,6 +17,7 @@ import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { AddFxExchangeDialog } from './AddFxExchangeDialog';
+import { FxRateChart } from './FxRateChart';
 import { formatNumber, formatDate } from '@/lib/formatters';
 import { Plus, Trash2 } from 'lucide-react';
 import { ExpandableCard, ExpandableCardSubRow } from '@/components/ui/expandable-card';
@@ -100,6 +101,15 @@ export function CurrencyExchangePage() {
           </Card>
         </div>
       )}
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Wykres kursu</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <FxRateChart />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-2">
