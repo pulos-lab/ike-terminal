@@ -1,6 +1,14 @@
 // ============ Broker Types ============
 
-export type BrokerType = 'auto' | 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'ibkr' | 'generic';
+export type BrokerType =
+  | 'auto'
+  | 'bossa'
+  | 'mbank'
+  | 'degiro'
+  | 'xtb'
+  | 'ibkr'
+  | 'trading212'
+  | 'generic';
 
 export const BROKER_LABELS: Record<BrokerType, string> = {
   auto: 'Wykryj automatycznie',
@@ -9,6 +17,7 @@ export const BROKER_LABELS: Record<BrokerType, string> = {
   degiro: 'DEGIRO',
   xtb: 'XTB',
   ibkr: 'Interactive Brokers',
+  trading212: 'Trading 212',
   generic: 'Inny broker (profil)',
 };
 
@@ -22,6 +31,7 @@ export type RecordSource =
   | 'degiro'
   | 'xtb'
   | 'ibkr'
+  | 'trading212'
   | 'manual'
   | 'auto-yahoo'
   | 'auto-interest' // odsetki naliczone przez interest-scanner (oprocentowanie wolnych środków)

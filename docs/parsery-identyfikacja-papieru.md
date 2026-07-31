@@ -24,21 +24,21 @@ Resolver **nie wie, z którego parsera przyszła transakcja**. Dostaje trzy stri
 
 ## Zestawienie zbiorcze
 
-| | **Bossa** | **DEGIRO** | **IBKR** | **XTB** | **mBank** |
-|---|---|---|---|---|---|
-| format | CSV `;` | CSV `,` | HTML | XLSX | CSV `;`/`,` |
-| **ISIN w pliku** | ✅ | ✅ | ✅ (osobna sekcja) | ❌ | ❌ |
-| ticker w pliku | ✅ | ❌ | ✅ | ✅ lub nazwa | ❌ |
-| `isin` w bazie | realny ISIN | realny ISIN | realny ISIN | ticker Yahoo | nazwa 1:1 |
-| `paperName` | ticker z sufiksami | nazwa produktu | `Description` | **= `isin`** | **= `isin`** |
-| pseudo-ISIN | — | — | awaryjnie | **zawsze** | **zawsze** |
-| `paymentCurrency` | `PLN` → reconcile | `EUR` → reconcile | **= `currency`** | waluta konta | `PLN` |
-| `fxRate` | — | ✅ (odwrócony) | — | ✅ | — |
-| ułamkowe akcje | ❌ | ✅ | ✅ | ✅ | ❌ |
-| kategorie | `bond` | — | `stock`/`etf`/`bond`/`option` | `stock`/`etf`/`cfd` | — |
-| zmiany ISIN | — | — | ✅ | aliasy tickerów | — |
+| | **Bossa** | **DEGIRO** | **IBKR** | **XTB** | **mBank** | **T212** |
+|---|---|---|---|---|---|---|
+| format | CSV `;` | CSV `,` | HTML | XLSX | CSV `;`/`,` | CSV `,` |
+| **ISIN w pliku** | ✅ | ✅ | ✅ (osobna sekcja) | ❌ | ❌ | ✅ |
+| ticker w pliku | ✅ | ❌ | ✅ | ✅ lub nazwa | ❌ | ✅ |
+| `isin` w bazie | realny ISIN | realny ISIN | realny ISIN | ticker Yahoo | nazwa 1:1 | realny ISIN |
+| `paperName` | ticker z sufiksami | nazwa produktu | `Description` | **= `isin`** | **= `isin`** | `Name` |
+| pseudo-ISIN | — | — | awaryjnie | **zawsze** | **zawsze** | — |
+| `paymentCurrency` | `PLN` → reconcile | `EUR` → reconcile | **= `currency`** | waluta konta | z pliku | `Currency (Total)` |
+| `fxRate` | — | ✅ (odwrócony) | — | ✅ | ✅ (wyliczony) | ✅ (odwrócony) |
+| ułamkowe akcje | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| kategorie | `bond` | — | `stock`/`etf`/`bond`/`option` | `stock`/`etf`/`cfd` | — | — |
+| zmiany ISIN | — | — | ✅ | aliasy tickerów | — | — |
 
-Jednym zdaniem: **Bossa i DEGIRO mówią wprost czym jest papier, IBKR mówi to w dwóch miejscach i trzeba je skleić, a XTB i mBank w ogóle nie mówią — trzeba wywnioskować.**
+Jednym zdaniem: **Bossa, DEGIRO i Trading 212 mówią wprost czym jest papier, IBKR mówi to w dwóch miejscach i trzeba je skleić, a XTB i mBank w ogóle nie mówią — trzeba wywnioskować.**
 
 ---
 
@@ -242,6 +242,40 @@ const currency = priceCurrency || EXCHANGE_CURRENCY[exchange || ''] || 'PLN';
 `USA-NASDAQ→USD`, `WWA-GPW→PLN`, `GER-XETRA→EUR`, `UK-LSE→GBP`.
 
 Ponieważ `isin = paperName` i nie ma żadnego innego sygnału, **ta jedna inferencja przesądza o całej strategii resolwowania** (patrz niżej).
+
+Fallback jest jednak używany WYŁĄCZNIE gdy w pliku brakuje kolumny „Waluta" — realne eksporty ją mają, a wtedy waluta idzie wprost z pliku. `paymentCurrency` i `fxRate` też pochodzą z pliku (kolumna „Wartość" to kwota rozliczenia w PLN, więc kurs = Wartość / (ilość × Kurs)).
+
+---
+
+## Trading 212
+
+Jedyny broker, który podaje **wszystko naraz**: prawdziwy ISIN, ticker i pełną nazwę w tym samym wierszu. Identyfikacja papieru jest więc trywialna — `isin` to realny ISIN, `paperName` to `Name`, żadnych pseudo-ISIN-ów i żadnej resolucji po nazwie.
+
+Cała trudność tego formatu leży gdzie indziej: **nagłówek nie jest stały**. Na 27 realnych plikach naliczyliśmy 14 wariantów, bo T212 dokłada kolumny zależnie od tego, co się w okresie wydarzyło, i używa DWÓCH różnych porządków kolumn:
+
+```
+Action,Time,ISIN,Ticker,Name,No. of shares,Price / share,…,Notes,ID,…
+Action,Time,ISIN,Ticker,Name,Notes,ID,No. of shares,Price / share,…
+```
+
+Dlatego mapowanie idzie **wyłącznie po nazwach** (`t212-columns.ts`), a nie po indeksach. Kolumna `Time` bywa nazwana `Time (UTC)` — alias jest w mapie.
+
+### Waluty: trzy naraz w jednym wierszu
+
+```
+Market buy, NVDA, 0.0267 szt, 453.33 USD, Exchange rate 1.10047, Total 11.02 EUR, fee 0.02 EUR
+```
+
+- `Currency (Price / share)` = waluta **notowania** → `Transaction.currency`
+- `Currency (Total)` = waluta **rozliczenia** → `paymentCurrency`
+- `Exchange rate` jest quote-per-payment (jak „Kurs wymiany" DEGIRO) → `fxRate` = jego **odwrotność**
+- `Total` to kwota obciążenia konta i **zawiera już opłatę za przewalutowanie** — dlatego `value` liczymy z ilości i ceny, nigdy z `Total`
+
+Opłata potrafi być w **trzeciej** walucie: realny plik ma „Stamp duty reserve tax" w GBP przy notowaniu w GBX i rozliczeniu w EUR. Przeliczanie jej kursem z pliku zaniżyłoby wynik ~17×, więc funt i pens mają własny przelicznik (1 GBP = 100 GBX), a opłata w walucie, której nie da się przeliczyć, jest pomijana z ostrzeżeniem.
+
+### Klasyfikacja tylko po pełnej liście
+
+W próbkach istnieje `Market look` — wiersz wyglądający **identycznie** jak `Market buy` (ten sam papier, ilość, cena), który transakcją nie jest. Dlatego `t212-actions.ts` dopasowuje pełne wartości, nigdy prefiksy; jedyny wyjątek to rodzina `Dividend (…)`, gdzie podtyp w nawiasie jest otwartą listą. Nierozpoznany typ trafia do kwarantanny.
 
 ---
 
