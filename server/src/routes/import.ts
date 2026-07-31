@@ -13,6 +13,7 @@ import { asyncHandler } from '../middleware/async-handler.js';
 import importGenericRouter from './import-generic.js';
 import importQuarantineRouter from './import-quarantine.js';
 import { clearQuarantine, countQuarantineByStatus } from '../db/quarantine-repo.js';
+import { getActiveReimportNotices, dismissReimportNotice } from '../db/reimport-notices-repo.js';
 import {
   dismissOrphanedSell,
   restoreOrphanedSell,
@@ -156,6 +157,27 @@ router.get('/status', (req, res) => {
     quarantinePending: countQuarantineByStatus(pid).pending,
     orphanedSellsPending: getOrphanedSellsView(pid).pending.length,
   });
+});
+
+// ── Prośby o ponowne wgranie wyciągu ─────────────────────────────────────────
+// Zakładane przez migracje/skrypty, gdy poprawka parsera NIE MOŻE odtworzyć
+// danych z bazy (wiersze przepadły przy imporcie). Dotychczasowy `needs_reimport`
+// obsługuje tylko import uniwersalny — patrz db/reimport-notices-repo.ts.
+
+/** GET /api/import/reimport-notices → lista aktywnych próśb */
+router.get('/reimport-notices', (req, res) => {
+  res.json({ notices: getActiveReimportNotices(req.portfolioId) });
+});
+
+/** POST /api/import/reimport-notices/:id/dismiss — odłożenie na bok. */
+router.post('/reimport-notices/:id/dismiss', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Nieprawidłowy identyfikator' });
+  }
+  const ok = dismissReimportNotice(req.portfolioId, id);
+  if (!ok) return res.status(404).json({ error: 'Nie znaleziono aktywnej prośby' });
+  return res.json({ dismissed: true });
 });
 
 // ── Sprzedaże bez kupna ──────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ImportDialog } from './ImportDialog';
 import { OrphanedSellsSection } from './OrphanedSellsSection';
+import { ReimportNoticesSection } from './ReimportNoticesSection';
 import { QuarantineSection } from './quarantine/QuarantinePage';
 import { GenericBatchesSection } from './generic/GenericBatchesSection';
 
@@ -47,6 +48,9 @@ export function ImportHubPage() {
       </div>
 
       <Separator />
+
+      {/* Najwyżej, bo wymaga akcji użytkownika, której nic innego nie zastąpi. */}
+      <ReimportNoticesSection onUpload={() => setImportOpen(true)} />
 
       <OrphanedSellsSection />
 

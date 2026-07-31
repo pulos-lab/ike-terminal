@@ -512,6 +512,12 @@ export const api = {
   // Import
   getImportStatus: () => request<ImportStatusResponse>('/import/status'),
 
+  // ── Prośby o ponowne wgranie wyciągu (hub Importu) ──────────────────────────
+  getReimportNotices: () =>
+    request<{ notices: import('shared').ReimportNotice[] }>('/import/reimport-notices'),
+  dismissReimportNotice: (id: number) =>
+    request<{ dismissed: boolean }>(`/import/reimport-notices/${id}/dismiss`, { method: 'POST' }),
+
   // ── Sprzedaże bez kupna (hub Importu) ───────────────────────────────────────
   getOrphanedSells: () => request<import('shared').OrphanedSellsResponse>('/import/orphaned-sells'),
   dismissOrphanedSell: (isin: string, missingQuantity: number) =>

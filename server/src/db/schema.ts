@@ -189,6 +189,21 @@ export function initSchema(db: Database.Database): void {
       missing_quantity REAL NOT NULL,
       dismissed_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Prośby o ponowne wgranie wyciągu, gdy poprawka parsera NIE MOŻE odtworzyć
+    -- danych z bazy (bo ich tam nie ma — wiersze przepadły przy imporcie).
+    -- Dotychczasowy mechanizm needs_reimport obsługuje wyłącznie importy
+    -- uniwersalne (klucz obcy do profilu), więc parsery wbudowane nie miały jak
+    -- o nic poprosić. UNIQUE(source, reason) czyni zakładanie idempotentnym.
+    CREATE TABLE IF NOT EXISTS reimport_notices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      detail TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      dismissed_at TEXT,
+      UNIQUE(source, reason)
+    );
   `);
 
   // Migrations for existing databases

@@ -31,6 +31,7 @@ export const QUERY_KEYS = {
   importStatus: ['import', 'status'] as const,
   /** Sprzedaże bez kupna (hub Importu) — detekcja liczona na żywo z transakcji. */
   orphanedSells: ['import', 'orphaned-sells'] as const,
+  reimportNotices: ['import', 'reimport-notices'] as const,
   /** Historia portfela w widoku Porównanie — kluczowana JAWNIE per portfolioId,
    *  więc celowo z prefiksem 'portfolios' (nie 'portfolio'): dane nie zależą od
    *  aktywnego portfela i mają przeżyć resetPortfolioScopedQueries przy jego
