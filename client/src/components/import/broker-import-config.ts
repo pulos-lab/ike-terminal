@@ -11,7 +11,7 @@ import type { BrokerType } from 'shared';
  */
 
 /** Brokerzy ze znanym schematem importu (osobno od ścieżki „Inny broker"). */
-export type KnownBroker = 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'ibkr';
+export type KnownBroker = 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'ibkr' | 'trading212';
 
 export type FileRole = 'transactions' | 'operations';
 
@@ -44,6 +44,7 @@ export const BROKER_TILES: Array<{ id: KnownBroker | 'generic'; tagline: string 
   { id: 'mbank', tagline: '1 plik CSV (operacje opcjonalnie)' },
   { id: 'xtb', tagline: '1 plik XLSX' },
   { id: 'ibkr', tagline: 'Pliki HTML (Activity Statement, 1 na rok)' },
+  { id: 'trading212', tagline: '1 plik CSV (transakcje + gotówka)' },
   { id: 'generic', tagline: 'Inny broker — plik CSV lub XLSX' },
 ];
 
@@ -151,6 +152,27 @@ export const BROKER_IMPORT_CONFIG: Record<KnownBroker, BrokerImportConfig> = {
     formatNote: 'Format XTB: skoroszyt XLSX (Excel).',
   },
 
+  trading212: {
+    exportSteps: [
+      'Zaloguj się do Trading 212 → menu History (Historia).',
+      'Kliknij ikonę eksportu i zaznacz WSZYSTKIE typy zdarzeń (Orders, Dividends, Transactions, Interest) — pominięcie któregoś zostawi luki w portfelu.',
+      'Zakres dat ustaw na cały okres inwestowania; eksport przychodzi mailem albo do pobrania jako CSV.',
+      'Wgraj ten jeden plik poniżej i kliknij Importuj.',
+    ],
+    files: [
+      {
+        role: 'transactions',
+        label: 'Eksport historii (CSV)',
+        accept: '.csv',
+        multiple: false,
+        required: true,
+        hint: 'Jeden plik zawiera wszystko: kupna i sprzedaże, dywidendy, wpłaty, wypłaty, odsetki, wymiany walut i splity.',
+      },
+    ],
+    formatNote:
+      'Format Trading 212: CSV z przecinkami. Zestaw kolumn zmienia się zależnie od tego, co się w okresie wydarzyło — import radzi sobie z każdym wariantem.',
+  },
+
   ibkr: {
     exportSteps: [
       'Zaloguj się do IBKR Client Portal → menu Performance & Reports → Statements.',
@@ -177,5 +199,9 @@ export const GENERIC_TILE_LABEL = 'Inny broker';
 
 /** Czy dany id to znany broker z configiem. */
 export function isKnownBroker(id: BrokerType | 'generic' | null): id is KnownBroker {
-  return id === 'bossa' || id === 'mbank' || id === 'degiro' || id === 'xtb' || id === 'ibkr';
+  // Wyprowadzone z BROKER_IMPORT_CONFIG, a nie wypisane ręcznie: lista pisana
+  // z palca rozjechała się przy dodaniu Trading 212 i kreator odsyłał do okna
+  // importu po kafelek, którego tam nie było — plik nie dawał się zaimportować
+  // żadną drogą, mimo że parser działał.
+  return id !== null && id !== 'generic' && id in BROKER_IMPORT_CONFIG;
 }
