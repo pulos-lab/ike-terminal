@@ -58,6 +58,13 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
    - Obligacje UST: qty normalizowane do nominał/100 (cena w % → `inferBondNominal`=100); Forex → para nóg `fx_exchange` + prowizja w walucie BAZOWEJ (nagłówek „Comm in PLN" — także dla par EUR.USD!); transfery Inter-Company między kontami POMIJANE (oba konta = jeden portfel, ciągłość kosztu z historii)
    - **Pułapka nagłówków**: kolumny zmieniają się między blokami JEDNEJ tabeli (Forex: „Comm in PLN" vs „Comm/Fee") i między latami (ContractInfo `Underlying` od 2024; Symbol bywa listą aliasów „META, FB") — ekstraktor dzieli tabelę na segmenty per `<th>`, mapowanie zawsze po nazwach
    - Golden test na realnych plikach (skip bez katalogu): `import/ibkr/` — uzgadnia saldo per waluta z Cash Report ±0.25
+6. **Trading 212** — JEDEN plik CSV z transakcjami, operacjami gotówkowymi i splitami (parser `server/src/parsers/trading212/`, rejestr `COMBINED_PARSER_REGISTRY`)
+   - **Nagłówek nie jest stały**: 14 wariantów na 27 realnych plikach (kolumny podatków/opłat dochodzą zależnie od zdarzeń) + DWA różne porządki kolumn (`Notes,ID` raz po `Name`, raz na końcu) + alias `Time` / `Time (UTC)`. Mapowanie WYŁĄCZNIE po nazwach (`t212-columns.ts`) — indeksy pozycyjne są wykluczone
+   - Waluty: `Currency (Price / share)` = notowanie, `Currency (Total)` = rozliczenie, `Exchange rate` = quote-per-payment (jak DEGIRO) → `fxRate` to jego odwrotność. `Total` zawiera już opłatę przewalutowania, więc `value` liczymy z ilości × ceny
+   - Opłaty bywają w TRZECIEJ walucie (stamp duty w GBP przy notowaniu GBX) — przelicznik funt/pens, reszta pomijana z ostrzeżeniem
+   - Klasyfikacja po PEŁNEJ liście wartości `Action`, nigdy po prefiksie: `Market look` wygląda identycznie jak `Market buy` i transakcją nie jest. Wyjątek: rodzina `Dividend (…)` z otwartą listą podtypów
+   - Karta płatnicza (`Card debit`/`Card credit`/`Spending cashback`) → wypłata/wpłata, nie koszt (przepływ zewnętrzny jest neutralny dla TWR/MWR, a saldo gotówki zostaje poprawne). `Currency conversion` → para nóg `fx_exchange` (kwoty z kolumn, fallback z `Notes`). `Stock split open`+`close` → `stock_splits` (ratio z ilorazu nóg). `Transfer out` → syntetyczna S po cenie z pliku + RÓWNOWAŻĄCA wypłata
+   - **Wybór ścieżki importu idzie po TREŚCI, nie po rozszerzeniu** — `.csv` dzielą T212 i parsery jednorolowe, więc `classifyFile` najpierw próbuje `detectCombinedBroker`, a przy braku dopasowania spada do ścieżki tekstowej
 - Auto-detekcja formatu po nagłówkach CSV/XLSX — użytkownik nie musi wskazywać brokera
 - **Jak każdy parser identyfikuje papier** (co trafia do `isin`/`paperName`, pseudo-ISIN-y, waluty, którą gałęzią idzie resolver): `docs/parsery-identyfikacja-papieru.md`
 

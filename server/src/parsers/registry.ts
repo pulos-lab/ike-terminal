@@ -22,6 +22,7 @@ import {
 } from './degiro-operations.js';
 import { parseXtbFile, isXtbFormat } from './xtb-transactions.js';
 import { parseIbkrFile, isIbkrFormat } from './ibkr/index.js';
+import { parseT212File, isT212Format } from './trading212/index.js';
 import type { IbkrSplitMarker, IbkrIsinChangeMarker } from './ibkr/index.js';
 import type { OptionContract } from 'shared';
 
@@ -224,6 +225,19 @@ const COMBINED_PARSER_REGISTRY: CombinedBrokerParser[] = [
     },
     needsNameResolution: false,
     supportsMultipleFiles: true,
+  },
+  {
+    // Trading 212: JEDEN plik CSV z transakcjami, operacjami gotówkowymi i splitami.
+    // Rozszerzenie `.csv` dzieli z parserami z PARSER_REGISTRY, dlatego o wyborze
+    // ścieżki decyduje `detect` po TREŚCI (classifyFile próbuje combined jako pierwsze
+    // i przy braku dopasowania spada do ścieżki tekstowej) — patrz import-service.
+    id: 'trading212',
+    label: 'Trading 212',
+    extensions: ['.csv'],
+    detect: isT212Format,
+    parse: (buffer, importBatch, fileName) => parseT212File(buffer, importBatch, fileName),
+    needsNameResolution: false,
+    supportsMultipleFiles: false,
   },
 ];
 

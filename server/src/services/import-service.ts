@@ -86,14 +86,32 @@ export async function classifyFile(file: {
   buffer: Buffer;
   originalname: string;
 }): Promise<ClassifiedFile> {
-  // Pliki "combined" (XTB XLSX, IBKR HTML) zawierają transakcje + operacje w jednym pliku
-  const isBinary = isCombinedExtension(file.originalname);
-
-  if (isBinary) {
-    const combined = await detectCombinedBroker(file.buffer, file.originalname);
+  // Pliki "combined" (XTB XLSX, IBKR HTML, Trading 212 CSV) zawierają transakcje
+  // + operacje w jednym pliku.
+  //
+  // O wyborze tej ścieżki decyduje DETEKCJA PO TREŚCI, nie rozszerzenie:
+  // rozszerzenie `.csv` dzielą Trading 212 i parsery jednorolowe (DEGIRO, mBank,
+  // Bossa), więc rozstrzygnąć może dopiero zawartość. `detectCombinedBroker` sam
+  // zawęża kandydatów po rozszerzeniu, a brak dopasowania spada niżej, do
+  // dotychczasowej ścieżki tekstowej — zachowanie dla plików CSV innych brokerów
+  // pozostaje bit w bit takie jak wcześniej.
+  const combined = await detectCombinedBroker(file.buffer, file.originalname);
+  if (combined) {
     return {
-      role: combined ? 'transactions' : 'unknown', // combined zawiera oba typy — traktujemy jako "transactions" z bonusem operacji
-      broker: combined?.id ?? null,
+      role: 'transactions', // combined zawiera oba typy — traktujemy jako "transactions" z bonusem operacji
+      broker: combined.id,
+      isBinary: true, // flaga znaczy „obsługiwany przez parser combined", niekoniecznie binarny
+      buffer: file.buffer,
+      originalName: file.originalname,
+    };
+  }
+
+  // Rozszerzenie zarezerwowane dla parsera combined, ale treść nie pasuje —
+  // nie ma sensu próbować dekodowania jako CSV (XLSX/HTML nie są tekstem).
+  if (isCombinedExtension(file.originalname) && !file.originalname.toLowerCase().endsWith('.csv')) {
+    return {
+      role: 'unknown',
+      broker: null,
       isBinary: true,
       buffer: file.buffer,
       originalName: file.originalname,
