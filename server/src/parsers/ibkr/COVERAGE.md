@@ -27,20 +27,43 @@ nowym formacie, identycznym jak realne wyciągi 2021-2025.
 
 ## Zdarzenia korporacyjne (Reorg)
 
-| Typ | Kod | Status | Uwagi |
-|---|---|---|---|
-| Forward Split | FS/FI | ✅ handled | marker splitu |
-| Reverse Split | RS | ✅ handled | ratio ułamkowe |
-| CUSIP/ISIN Change | IC | ✅ handled | marker zmiany ISIN |
-| Merger / przejęcie | TC | ❌ dropped | wymiana akcji/gotówki ginie |
-| Spinoff | SO/CO | ❌ dropped | brak nowej pozycji |
-| Stock Dividend / bonus | SD | ❌ dropped | zaniżona liczba akcji |
-| Rights / Subscription | RI/SR/DI | ❌ dropped | brak praw poboru |
-| Tender / wezwanie | TO/TI | ❌ dropped | pozycja wisi jako otwarta |
-| Delist / worthless | DW | ❌ dropped | strata nie zaksięgowana |
-| Bond / T-Bill Maturity | BM/TM | ❌ dropped | kupon łapany osobno, nominał nie |
+Kolumna „w próbkach" to liczba wystąpień w 37 realnych plikach Flex Query czterech
+niezależnych projektów (`import/public-samples/ibkr/`). Flex i HTML niosą **ten sam
+tekst opisu**, więc to reprezentatywna miara tego, co realnie dzieje się na rachunkach
+IBKR — i jedyna, jaką mamy, bo nasze własne wyciągi zawierają wyłącznie splity i zmiany ISIN.
 
-`dropped` = warning „nieobsłużone zdarzenie korporacyjne …", wiersz pominięty.
+| Typ | Kod | w próbkach | Status | Uwagi |
+|---|---|---|---|---|
+| Reverse Split | RS | 16 | ✅ handled | ratio ułamkowe |
+| CUSIP/ISIN Change | IC | 12 | ✅ handled | marker zmiany ISIN |
+| Forward Split | FS/FI | 5 | ✅ handled | marker splitu |
+| **Stock Dividend / bonus** | **HI** | **4** | ✅ handled | syntetyczny zakup po cenie 0 |
+| Stock Dividend / bonus | SD | 1 | ✅ handled | ten sam wzorzec co `HI` |
+| Delist / worthless | DW | 3 | ✅ handled | syntetyczna sprzedaż po 0 — cała wartość jako strata |
+| **Merger / przejęcie** | TC | **23** | ❌ dropped | wymiana akcji/gotówki ginie |
+| Tender / wezwanie | TO/TI | 6 | ❌ dropped | pozycja wisi jako otwarta |
+| Spinoff | SO/CO | 4 | ❌ dropped | brak nowej pozycji |
+| Bond / T-Bill Maturity | BM/TM | 3 | ❌ dropped | kupon łapany osobno, nominał nie |
+| Rights / Subscription | RI/SR/DI | 2 | ❌ dropped | brak praw poboru |
+
+`dropped` = warning nazywający KONKRETNY skutek dla portfela („pozycja spółki
+przejmowanej zostaje otwarta…"), wiersz pominięty.
+
+**Dwie rzeczy warte zapamiętania z porównania z Flex:**
+
+1. **`HI` nie było w tej tabeli**, a jest częstszym kodem stock dividendu niż udokumentowany
+   `SD` (4 vs 1). Kto implementowałby wyłącznie z tej listy, przegapiłby większość przypadków.
+2. **Merger jest najczęstszą akcją korporacyjną w realnych danych — częstszą niż wszystkie
+   splity razem** (23 vs 21). To nie egzotyka. `TC` ma przy tym co najmniej trzy warianty:
+   `MERGED(Liquidation) FOR USD 0.10 PER SHARE`, `CASH and STOCK MERGER (Acquisition) BAM
+   9133631 FOR 100000000`, `MERGED(Voluntary Offer Allocation) FOR USD 20.75 PER SHARE` —
+   więc jedna reguła nie wystarczy.
+
+**Dlaczego wykup obligacji (BM/TM) świadomie został pominięty:** opis podaje cenę
+„PER BOND" (np. `FOR USD 1.03125 PER BOND`), a my trzymamy kurs obligacji w PROCENTACH
+nominału. Przeliczenia nie ma jak zweryfikować — nie mamy ani realnego wyciągu HTML
+z wykupem, ani takiego przypadku na produkcji. Zgadywanie jednostki przy obligacjach
+raz już kosztowało błąd ceny ×10 (review PR #143).
 
 **Uwaga o osobnych silnikach:** `Spinoff` i `Tender` są „dropped" w tym parserze, ale
 aplikacja obsługuje je na INNEJ warstwie — compute-time: spin-offy przez `spin-off-transform`
