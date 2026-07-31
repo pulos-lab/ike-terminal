@@ -240,8 +240,19 @@ export function mapIbkrStatement(
     });
   }
 
-  // ── Corporate actions → markery (wiersze NIE stają się transakcjami) ──
-  const { splits, isinChanges } = mapCorporateActions(statement, warnings);
+  // ── Corporate actions → markery + syntetyczne transakcje ──
+  // Split i zmiana ISIN to markery (przeliczają istniejące wiersze). Akcje
+  // gratisowe i delisting zmieniają STAN POSIADANIA, więc muszą być transakcjami.
+  const {
+    splits,
+    isinChanges,
+    transactions: caTransactions,
+  } = mapCorporateActions(statement, warnings);
+  // UWAGA: pętla nadająca `importBatch` transakcjom z Trades biegnie WYŻEJ, więc
+  // te wiersze muszą dostać batch tutaj. Bez tego wyglądałyby na wpisy ręczne:
+  // `clearImportedTransactions` by ich nie usunął, a ponowny import zdublował.
+  for (const tx of caTransactions) tx.importBatch = importBatch;
+  transactions.push(...caTransactions);
 
   // ── Transfery Inter-Company → tylko warning ──
   if (statement.transfers.length > 0) {
@@ -642,13 +653,62 @@ function classifyInterestRow(
     : { ...base, operationType: 'fee', description: d };
 }
 
-/** Corporate Actions → markery splitów i zmian ISIN. */
+/**
+ * Kody zdarzeń korporacyjnych IBKR, których NIE potrafimy jeszcze zaksięgować.
+ *
+ * Lista i częstości pochodzą z 37 realnych plików Flex Query czterech niezależnych
+ * projektów (`import/public-samples/ibkr/`) — Flex i HTML niosą ten sam tekst opisu,
+ * więc to reprezentatywna próbka tego, co dzieje się na rachunkach IBKR. Komunikat
+ * mówi wprost, co konkretnie jest nie tak z portfelem, zamiast ogólnego „nieobsłużone".
+ */
+const UNHANDLED_CA_PATTERNS: Array<{ re: RegExp; consequence: string }> = [
+  {
+    // 23 wystąpienia — NAJCZĘSTSZA akcja korporacyjna w realnych danych,
+    // częstsza niż wszystkie splity razem. Trzy warianty: likwidacja za gotówkę,
+    // wymiana na akcje przejmującego, oferta dobrowolna.
+    re: /\bMERGER\b|\bMERGED\b/i,
+    consequence:
+      'pozycja spółki przejmowanej zostaje otwarta, a gotówka lub akcje z wymiany nie są zaksięgowane',
+  },
+  {
+    re: /\bTENDER(ED)?\b|\bTENDER OFFER\b/i,
+    consequence: 'pozycja objęta wezwaniem zostaje otwarta mimo umorzenia',
+  },
+  {
+    re: /\bSPINOFF\b|\bSPIN-?OFF\b/i,
+    consequence:
+      'pozycja spółki wydzielonej nie powstaje (aplikacja ma silnik spin-offów, ale nie jest zasilany z wyciągu)',
+  },
+  {
+    re: /\bSUBSCRIBABLE RIGHTS\b|\bRIGHTS ISSUE\b|\bSUBSCRIPTION\b/i,
+    consequence: 'prawa poboru nie trafiają do portfela',
+  },
+  {
+    // Świadomie NIE księgujemy: opis podaje cenę „PER BOND" (np. 1.03125),
+    // a my trzymamy kurs obligacji w PROCENTACH nominału. Przeliczenia nie da
+    // się zweryfikować — nie mamy ani realnego wyciągu HTML z wykupem, ani
+    // takiego przypadku na produkcji. Zgadywanie jednostki przy obligacjach
+    // już raz kosztowało błąd ceny ×10 (patrz review PR #143).
+    re: /\bBOND MATURITY\b|\bTBILL MATURITY\b|\bFULL CALL\b|\bEARLY REDEMPTION\b/i,
+    consequence: 'nominał z wykupu nie wraca na rachunek, a pozycja zostaje otwarta',
+  },
+];
+
+/**
+ * Corporate Actions → markery splitów/zmian ISIN oraz syntetyczne transakcje
+ * dla zdarzeń zmieniających stan posiadania.
+ */
 function mapCorporateActions(
   statement: IbkrStatement,
   warnings: string[],
-): { splits: IbkrSplitMarker[]; isinChanges: IbkrIsinChangeMarker[] } {
+): {
+  splits: IbkrSplitMarker[];
+  isinChanges: IbkrIsinChangeMarker[];
+  transactions: Transaction[];
+} {
   const splits: IbkrSplitMarker[] = [];
   const isinChanges: IbkrIsinChangeMarker[] = [];
+  const transactions: Transaction[] = [];
 
   // Grupujemy po prefiksie opisu (część przed trailing "(TICKER, NAZWA, ISIN)") — split
   // i zmiana ISIN generują 1-2 wiersze z tym samym prefiksem a różnym instrumentem wynikowym.
@@ -722,14 +782,89 @@ function mapCorporateActions(
         symbol: gained?.resultTicker ?? '',
         date: group[0].date,
       });
+    } else if (/STOCK DIVIDEND/i.test(prefix)) {
+      // Akcje gratisowe: dostajesz sztuki bez zapłaty, koszt pozycji się nie
+      // zmienia (średnia cena nabycia spada). IBKR podaje otrzymaną ilość
+      // wprost, więc ratio z opisu ("5 FOR 100") nie jest do niczego potrzebne.
+      // UWAGA: kod bywa `SD`, ale CZĘŚCIEJ `HI` — patrz COVERAGE.md.
+      for (const row of group.filter((r) => r.quantity > 0)) {
+        const isin = row.resultIsin ?? row.sourceIsin;
+        if (!isin) {
+          warnings.push(`IBKR: akcje gratisowe bez rozpoznanego ISIN ("${prefix}") — pominięto`);
+          continue;
+        }
+        transactions.push(
+          buildCaTransaction(row, isin, 'K', 0, `Akcje gratisowe: ${prefix}`.trim()),
+        );
+      }
+    } else if (/\bDELISTED\b/i.test(prefix)) {
+      // Wycofanie z obrotu bez wartości: pozycja znika, a cała jej wartość jest
+      // stratą. Bez tego papier wisiałby w portfelu w nieskończoność, zawyżając
+      // wycenę o instrument, którego nie da się już sprzedać.
+      for (const row of group.filter((r) => r.quantity < 0)) {
+        const isin = row.resultIsin ?? row.sourceIsin;
+        if (!isin) {
+          warnings.push(`IBKR: delisting bez rozpoznanego ISIN ("${prefix}") — pominięto`);
+          continue;
+        }
+        transactions.push(
+          buildCaTransaction(row, isin, 'S', 0, `Wycofanie z obrotu: ${prefix}`.trim()),
+        );
+      }
     } else {
+      const known = UNHANDLED_CA_PATTERNS.find((p) => p.re.test(prefix));
       warnings.push(
-        `IBKR: nieobsłużone zdarzenie korporacyjne "${prefix}" — wiersze pominięte, zweryfikuj pozycję ręcznie`,
+        known
+          ? `IBKR: zdarzenie korporacyjne "${prefix}" nie jest jeszcze księgowane — ${known.consequence}. Skoryguj pozycję ręcznie.`
+          : `IBKR: nieobsłużone zdarzenie korporacyjne "${prefix}" — wiersze pominięte, zweryfikuj pozycję ręcznie`,
       );
     }
   }
 
-  return { splits, isinChanges };
+  return { splits, isinChanges, transactions };
+}
+
+/**
+ * Syntetyczna transakcja ze zdarzenia korporacyjnego.
+ *
+ * `paperName` bierzemy z nazwy w nawiasie na końcu opisu (IBKR podaje tam
+ * „TICKER, NAZWA, ISIN"), bo sekcja Corporate Actions nie ma osobnej kolumny
+ * z nazwą instrumentu.
+ */
+function buildCaTransaction(
+  row: {
+    date: string;
+    description: string;
+    quantity: number;
+    currency: string;
+    assetClass: string;
+  },
+  isin: string,
+  side: 'K' | 'S',
+  price: number,
+  description: string,
+): Transaction {
+  const nameMatch = row.description.match(
+    /\(([A-Z0-9.\s]+),\s*([^,]+),\s*[A-Z]{2}[A-Z0-9]{9}\d\)\s*$/,
+  );
+  const quantity = Math.abs(row.quantity);
+  const value = roundTo2(quantity * price);
+  return {
+    date: row.date,
+    paperName: nameMatch?.[2]?.trim() || nameMatch?.[1]?.trim() || isin,
+    isin,
+    quantity,
+    side,
+    price,
+    value,
+    commission: 0,
+    total: value,
+    currency: row.currency,
+    paymentCurrency: row.currency,
+    category: row.assetClass?.toUpperCase() === 'BOND' ? 'bond' : 'stock',
+    source: 'ibkr',
+    syntheticOrigin: description.slice(0, 120),
+  };
 }
 
 /**

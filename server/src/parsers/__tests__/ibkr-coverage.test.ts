@@ -154,62 +154,121 @@ describe('IBKR coverage — Corporate Actions (Reorg)', () => {
   });
 
   /**
-   * DROPPED — typy Reorg, których parser NIE obsługuje (pomijane z warningiem).
-   * Opisy wzorowane na konwencji IBKR `TICKER(ISIN) <Zdarzenie> … (RESULT, NAZWA, ISIN)`;
-   * dokładne brzmienie dla typów nie napotkanych na naszych kontach jest przybliżone,
-   * ale asercja (pominięcie) zależy tylko od BRAKU dopasowania do Split/ISIN Change.
+   * HANDLED — zdarzenia zmieniające STAN POSIADANIA, księgowane jako syntetyczne
+   * transakcje. Opisy są DOSŁOWNE, wzięte z realnych plików Flex Query
+   * (`import/public-samples/ibkr/`) — Flex i HTML niosą ten sam tekst.
    */
-  const DROPPED_REORG: Array<{ code: string; name: string; desc: string; qty: number }> = [
+  it('HANDLED: [HI] akcje gratisowe → zakup po cenie 0 (kod HI, nie tylko SD!)', () => {
+    // Realny opis. IBKR używa dla stock dividend DWÓCH kodów, a `HI` jest
+    // częstszy niż udokumentowany wcześniej `SD` (4 vs 1 w próbkach).
+    const out = parse(
+      corpSection([
+        {
+          desc: 'TEF (US8793822086) STOCK DIVIDEND US8793822086 5 FOR 100 (TEF, TELEFONICA SA-SPON ADR, US8793822086)',
+          qty: 25,
+        },
+      ]),
+    );
+    expect(out.warnings.some((w) => /nieobsłużone|nie jest jeszcze księgowane/.test(w))).toBe(
+      false,
+    );
+    const tx = out.transactions.filter((t) => t.isin === 'US8793822086');
+    expect(tx).toHaveLength(1);
+    expect(tx[0]).toMatchObject({ side: 'K', quantity: 25, price: 0, total: 0 });
+    expect(tx[0].paperName).toBe('TELEFONICA SA-SPON ADR');
+    // Bez batcha wiersz udawałby wpis ręczny: przetrwałby czyszczenie importu
+    // i zdublował się przy ponownym wgraniu wyciągu.
+    expect(tx[0].importBatch).toBe('test-batch');
+  });
+
+  it('HANDLED: [SD] akcje gratisowe zapisane małymi literami', () => {
+    const out = parse(
+      corpSection([
+        {
+          desc: 'VUG (US9229087369) Stock Dividend US9229087369 196232339 for 10000000000 (VUG, VANGUARD GROWTH ETF, US9229087369)',
+          qty: 3,
+        },
+      ]),
+    );
+    expect(out.transactions.filter((t) => t.isin === 'US9229087369')).toHaveLength(1);
+  });
+
+  it('HANDLED: [DW] delisting → sprzedaż po 0, pozycja przestaje wisieć', () => {
+    const out = parse(
+      corpSection([
+        { desc: '(CA6295231014) DELISTED (NABIF, NABIS HOLDINGS INC, CA6295231014)', qty: -100 },
+      ]),
+    );
+    expect(out.warnings.some((w) => /nieobsłużone|nie jest jeszcze księgowane/.test(w))).toBe(
+      false,
+    );
+    const tx = out.transactions.filter((t) => t.isin === 'CA6295231014');
+    expect(tx).toHaveLength(1);
+    // Cała wartość pozycji staje się stratą — bez tego papier wisiałby wiecznie.
+    expect(tx[0]).toMatchObject({ side: 'S', quantity: 100, price: 0, total: 0 });
+    expect(tx[0].paperName).toBe('NABIS HOLDINGS INC');
+  });
+
+  /**
+   * DROPPED — typy, których wciąż nie księgujemy. Opisy DOSŁOWNE z plików Flex.
+   * Asercja pilnuje, że komunikat mówi KONKRETNIE co jest nie tak z portfelem,
+   * a nie tylko „nieobsłużone".
+   */
+  const DROPPED_REORG: Array<{
+    code: string;
+    name: string;
+    desc: string;
+    qty: number;
+    skutek: RegExp;
+  }> = [
     {
       code: 'TC',
       name: 'Merger / przejęcie',
-      desc: 'ABCD(US1111111111) Merged(Acquisition) 1 for 1 (WXYZ, ACQUIRER INC, US2222222222)',
+      desc: 'BPYU(US11282X1037) CASH and STOCK MERGER (Acquisition) BAM 9133631 FOR 100000000 (BAM, BROOKFIELD ASSET MGMT, CA11271J1076)',
       qty: -100,
+      skutek: /przejmowanej zostaje otwarta/,
     },
     {
       code: 'SO',
       name: 'Spinoff',
-      desc: 'ABCD(US1111111111) Spinoff  1 for 5 (SPIN, SPINCO INC, US3333333333)',
+      desc: 'ABCD(US1111111111) SPINOFF  1 for 5 (SPIN, SPINCO INC, US3333333333)',
       qty: 20,
-    },
-    {
-      code: 'SD',
-      name: 'Stock Dividend',
-      desc: 'ABCD(US1111111111) Stock Dividend 1 for 10 (ABCD, SOME CORP, US1111111111)',
-      qty: 10,
+      skutek: /wydzielonej nie powstaje/,
     },
     {
       code: 'RI',
       name: 'Rights Issue',
-      desc: 'ABCD(US1111111111) Subscribable Rights Issue 1 for 4 (ABCD.RTS, SOME CORP RIGHTS, US4444444444)',
+      desc: 'ABCD(US1111111111) SUBSCRIBABLE RIGHTS 1 for 4 (ABCD.RTS, SOME CORP RIGHTS, US4444444444)',
       qty: 25,
+      skutek: /prawa poboru/,
     },
     {
       code: 'TO',
       name: 'Tender / wezwanie',
-      desc: 'ABCD(US1111111111) Tendered to (US5555555555) 1 for 1 (CASH, TENDER OFFER, US5555555555)',
+      desc: 'ABCD(US1111111111) TENDERED to (US5555555555) 1 for 1 (CASH, TENDER OFFER, US5555555555)',
       qty: -100,
-    },
-    {
-      code: 'DW',
-      name: 'Delist / worthless',
-      desc: 'ABCD(US1111111111) Delisted (Worthless) (ABCD, SOME CORP, US1111111111)',
-      qty: -100,
+      skutek: /wezwaniem zostaje otwarta/,
     },
     {
       code: 'BM',
       name: 'Bond Maturity / wykup',
-      desc: 'T 2 7/8 05/15/32(US91282CEF10) Bond Maturity for (US91282CEF10) 1000 (T, US TREASURY, US91282CEF10)',
+      desc: '(US912CALAN84) BOND MATURITY FOR USD 1.03125 PER BOND (X 6 1/4 03/15/26, X 6 1/4, US912CALAN84)',
       qty: -1000,
+      skutek: /nominał z wykupu/,
     },
   ];
 
-  it.each(DROPPED_REORG)('DROPPED: [$code] $name → warning + brak markera', ({ desc, qty }) => {
-    const out = parse(corpSection([{ desc, qty }]));
-    expect(out.splits).toHaveLength(0);
-    expect(out.isinChanges).toHaveLength(0);
-    expect(out.warnings.some((w) => /nieobsłużone zdarzenie korporacyjne/.test(w))).toBe(true);
-  });
+  it.each(DROPPED_REORG)(
+    'DROPPED: [$code] $name → warning nazywający SKUTEK, brak markera',
+    ({ desc, qty, skutek }) => {
+      const out = parse(corpSection([{ desc, qty }]));
+      expect(out.splits).toHaveLength(0);
+      expect(out.isinChanges).toHaveLength(0);
+      expect(out.transactions).toHaveLength(0);
+      const warn = out.warnings.find((w) => skutek.test(w));
+      expect(warn, `brak komunikatu o skutku dla ${desc}`).toBeDefined();
+    },
+  );
 });
 
 // ── Operacje gotówkowe (CashAction / CombInt) ──────────────────────────────────
