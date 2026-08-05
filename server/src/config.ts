@@ -32,10 +32,18 @@ export const config = {
      * ekranie miała do 75 min poślizgu (TTL + ~15 min opóźnienia darmowego
      * Yahoo), a po zamknięciu co godzinę leciała fala requestów po kurs, który
      * nie może się już zmienić.
+     *
+     * UWAGA co do pre/post-market: wyceniamy po `regularMarketPrice`, więc kurs
+     * z handlu po godzinach NIE trafia do wartości portfela (Yahoo podaje go
+     * osobno w `preMarketPrice`/`postMarketPrice`, których świadomie nie
+     * czytamy — cienka płynność AH mieszałaby się z historią liczoną z zamknięć).
      */
     quoteTtl: {
       regular: 15 * 60, // sesja — podłoga wynika z opóźnienia Yahoo, niżej to sam koszt
-      prePost: 30 * 60, // pre/post-market — handel cienki
+      // Pre/post NIE służy śledzeniu handlu po godzinach (patrz wyżej — ceny AH
+      // nie pokazujemy). Krótki TTL jest po to, żeby szybko złapać przejście
+      // w REGULAR: przy długim wpisie cena wisiałaby jeszcze po starcie sesji.
+      prePost: 30 * 60,
       closed: 6 * 60 * 60, // po sesji kurs się nie zmienia
       cap: 12 * 60 * 60, // twardy sufit — weekend nie może zamrozić danych na dobę+
       unknown: 60 * 60, // brak marketState (fallback v8) — zachowawczo jak dotąd

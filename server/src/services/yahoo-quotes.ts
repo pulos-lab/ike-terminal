@@ -45,6 +45,13 @@ const CHUNK_SIZE = 50;
 export type YahooMarketState = 'PREPRE' | 'PRE' | 'REGULAR' | 'POST' | 'POSTPOST' | 'CLOSED';
 
 export interface YahooQuote {
+  /**
+   * `regularMarketPrice` — kurs sesji REGULARNEJ (po jej zamknięciu: kurs
+   * zamknięcia). Handel po godzinach jest w odpowiedzi osobno
+   * (`preMarketPrice`/`postMarketPrice`) i świadomie go NIE bierzemy: ma cienką
+   * płynność i szerokie spready, a wartość portfela musi zgadzać się z historią
+   * TWR liczoną z zamknięć. Tak samo działała ścieżka v8 przed batchem.
+   */
   price: number;
   /** Surowa waluta Yahoo — 'GBp' dla Londynu zostaje, silnik już to normalizuje. */
   currency: string;
