@@ -45,6 +45,13 @@ const CHUNK_SIZE = 50;
 export type YahooMarketState = 'PREPRE' | 'PRE' | 'REGULAR' | 'POST' | 'POSTPOST' | 'CLOSED';
 
 export interface YahooQuote {
+  /**
+   * `regularMarketPrice` — kurs sesji REGULARNEJ (po jej zamknięciu: kurs
+   * zamknięcia). Handel po godzinach jest w odpowiedzi osobno
+   * (`preMarketPrice`/`postMarketPrice`) i świadomie go NIE bierzemy: ma cienką
+   * płynność i szerokie spready, a wartość portfela musi zgadzać się z historią
+   * TWR liczoną z zamknięć. Tak samo działała ścieżka v8 przed batchem.
+   */
   price: number;
   /** Surowa waluta Yahoo — 'GBp' dla Londynu zostaje, silnik już to normalizuje. */
   currency: string;
@@ -79,66 +86,80 @@ export function normalizeMarketState(raw: unknown): YahooMarketState | null {
 }
 
 /**
- * Godzina (czas warszawski), przed którą nie wolno zamrozić ceny na długo:
- * najwcześniejsze otwarcie z obsługiwanych rynków to GPW o 9:00 (fixing od 8:30).
+ * Otwarcia rynków, o które klamrujemy TTL — KAŻDE w swojej własnej strefie.
+ *
+ * Nie hardkodujemy przesunięć: `Intl` liczy godzinę lokalną rynku, więc DST
+ * wychodzi poprawnie samo. To istotne, bo zmiany czasu w USA i Europie NIE
+ * pokrywają się (marzec: USA 2 tygodnie wcześniej, listopad: Europa tydzień
+ * wcześniej) — stały offset mylił się w tych oknach o godzinę.
+ *
+ * Świąt świadomie nie znamy: w święto rynek i tak raportuje CLOSED, więc klamra
+ * powoduje najwyżej jedno dodatkowe odpytanie, bez szkody dla danych.
  */
-const EARLIEST_OPEN_HOUR_WARSAW = 9;
+const MARKET_OPENS: Array<{ timeZone: string; hour: number; minute: number }> = [
+  { timeZone: 'Europe/Warsaw', hour: 9, minute: 0 }, // GPW/NC (a przy okazji XETRA, Paryż)
+  { timeZone: 'America/New_York', hour: 9, minute: 30 }, // NYSE/NASDAQ
+];
 
 /** Podłoga TTL — nawet tuż przed otwarciem nie odpytujemy częściej niż co 5 min. */
 const MIN_CLOSED_TTL_SECONDS = 5 * 60;
 
-/**
- * Ile sekund zostało do najbliższego otwarcia GPW (czas warszawski, z DST).
- *
- * Strefę bierzemy z Intl, nie z offsetu serwera — prod stoi w UTC, a użytkownicy
- * i GPW żyją w Europe/Warsaw; liczenie „od północy serwera" myliłoby się o 2 h
- * latem i o 1 h zimą.
- */
-function secondsUntilWarsawOpen(nowMs: number): number {
+/** Sekundy od północy w danej strefie (Intl zamiast offsetu serwera — prod stoi w UTC). */
+function secondsOfDayIn(timeZone: string, nowMs: number): number {
   const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/Warsaw',
+    timeZone,
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hourCycle: 'h23',
   }).formatToParts(new Date(nowMs));
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
-  const secondsOfDay = get('hour') * 3600 + get('minute') * 60 + get('second');
-  const openAt = EARLIEST_OPEN_HOUR_WARSAW * 3600;
-  // Po otwarciu celujemy w otwarcie NASTĘPNEGO dnia.
-  return secondsOfDay < openAt ? openAt - secondsOfDay : 24 * 3600 - secondsOfDay + openAt;
+  return get('hour') * 3600 + get('minute') * 60 + get('second');
+}
+
+/**
+ * Ile sekund do najbliższego otwarcia któregokolwiek z obsługiwanych rynków.
+ *
+ * Bierzemy MINIMUM, bo portfel bywa mieszany, a jedno zbędne odpytanie (np.
+ * portfel czysto amerykański budzony o 9:00 przez otwarcie GPW) kosztuje jeden
+ * batch — dużo mniej niż pokazywanie wczorajszego zamknięcia po starcie sesji.
+ */
+function secondsUntilNextMarketOpen(nowMs: number): number {
+  const candidates = MARKET_OPENS.map(({ timeZone, hour, minute }) => {
+    const nowSec = secondsOfDayIn(timeZone, nowMs);
+    const openSec = hour * 3600 + minute * 60;
+    // Po otwarciu celujemy w otwarcie NASTĘPNEGO dnia.
+    return nowSec < openSec ? openSec - nowSec : 24 * 3600 - nowSec + openSec;
+  });
+  return Math.min(...candidates);
 }
 
 /**
  * TTL ceny wg stanu rynku (sekundy). Czysta funkcja (zegar wstrzykiwany) —
  * sedno decyzji „jak długo cena może leżeć w cache'u".
  *
- * Dla rynków zamkniętych TTL jest dodatkowo KLAMROWANY do najbliższego otwarcia
- * GPW. Bez tego cena zapisana o 8:50 ze stanem CLOSED wisiałaby 6 h — czyli
- * przez pierwsze godziny realnej sesji użytkownik patrzyłby na wczorajsze
- * zamknięcie. To byłaby regresja względem dotychczasowej stałej godziny.
+ * Poza sesją TTL jest dodatkowo KLAMROWANY do najbliższego otwarcia rynku.
+ * Bez tego cena zapisana o 8:50 ze stanem CLOSED wisiałaby 6 h — przez pierwsze
+ * godziny realnej sesji użytkownik patrzyłby na wczorajsze zamknięcie, czyli
+ * gorzej niż przy dotychczasowej stałej godzinie.
+ *
+ * Klamra obejmuje też PRE/POST: `PRE` z definicji poprzedza otwarcie, więc wpis
+ * powstały o 15:29 CEST żyłby do 15:59 — 29 min po starcie sesji w USA.
  */
 export function quoteTtlSeconds(
   state: YahooMarketState | null,
   nowMs: number = Date.now(),
 ): number {
   const { quoteTtl } = config.cache;
-  switch (state) {
-    case 'REGULAR':
-      return quoteTtl.regular;
-    case 'PRE':
-    case 'POST':
-      return quoteTtl.prePost;
-    case 'PREPRE':
-    case 'POSTPOST':
-    case 'CLOSED':
-      return Math.max(
-        MIN_CLOSED_TTL_SECONDS,
-        Math.min(quoteTtl.closed, quoteTtl.cap, secondsUntilWarsawOpen(nowMs)),
-      );
-    default:
-      return quoteTtl.unknown;
-  }
+  // Sesja trwa — otwarcie jest już za nami, klamra nie ma tu nic do roboty.
+  if (state === 'REGULAR') return quoteTtl.regular;
+  if (state === null) return quoteTtl.unknown;
+
+  const base = state === 'PRE' || state === 'POST' ? quoteTtl.prePost : quoteTtl.closed;
+  return Math.max(
+    MIN_CLOSED_TTL_SECONDS,
+    Math.min(base, quoteTtl.cap, secondsUntilNextMarketOpen(nowMs)),
+  );
 }
 
 /**
