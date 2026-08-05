@@ -9,7 +9,6 @@ import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { PriceMarkerChart, snapToSession } from '@/components/shared/PriceMarkerChart';
 import { formatNumber, formatDate } from '@/lib/formatters';
 import {
-  FX_CHART_PAIRS,
   FX_PAIR_META,
   aggregateByDay,
   buildAvgRateLedger,
@@ -25,10 +24,13 @@ import {
  * kroczący kurs nabycia (tylko z wymian tej pary). Wymiany z jednego dnia
  * i kierunku są sklejane w jeden marker (resztówki IBKR), tooltip pokazuje
  * pojedyncze wymiany.
+ *
+ * Para jest sterowana z zewnątrz (kafle kursów na stronie Walut) — komponent
+ * montuje się dopiero po wyborze pary, więc historia nie jest pobierana,
+ * dopóki użytkownik nie poprosi o wykres.
  */
-export function FxRateChart({ height = 320 }: { height?: number }) {
+export function FxRateChart({ pair, height = 320 }: { pair: FxChartPair; height?: number }) {
   const { isDark } = useTheme();
-  const [pair, setPair] = useState<FxChartPair>('USDPLN');
   // Pełna historia kursu — dociągana po presecie sięgającym przed załadowane dane
   const [fullHistory, setFullHistory] = useState(false);
 
@@ -140,32 +142,10 @@ export function FxRateChart({ height = 320 }: { height?: number }) {
       : undefined;
   }, [points, aggregates, pair]);
 
-  const handlePairChange = (next: FxChartPair) => {
-    setPair(next);
-    setFullHistory(false); // zakres nowej pary znów od jej wymian
-  };
-
   const handleNeedFullHistory = useCallback(() => setFullHistory(true), []);
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex w-fit items-center gap-0.5 rounded-md bg-muted p-0.5">
-          {FX_CHART_PAIRS.map((p) => (
-            <button
-              key={p}
-              className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-medium transition-colors ${
-                pair === p
-                  ? 'bg-primary/15 text-primary'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-              onClick={() => handlePairChange(p)}
-            >
-              {FX_PAIR_META[p].label}
-            </button>
-          ))}
-        </div>
-      </div>
       {historyLoading ? (
         <div style={{ height }} className="flex items-center justify-center">
           <LoadingSpinner />
