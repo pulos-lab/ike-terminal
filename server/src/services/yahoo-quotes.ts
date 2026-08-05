@@ -162,38 +162,224 @@ export function quoteTtlSeconds(
   );
 }
 
+// ── Parsowanie odpowiedzi v7 ─────────────────────────────────────────────────
+//
+// Trzy rzeczy, na których ten parser już raz się wyłożył (i dlatego jest tak
+// tolerancyjny):
+//
+//  1. KOPERTA. Historycznie `{quoteResponse:{result:[…]}}`, ale Yahoo oddaje
+//     tę samą treść także pod `{finance:{result:[…]}}`. Twarda ścieżka
+//     `quoteResponse.result` zamieniała taką zmianę w ciche zero notowań przy
+//     HTTP 200 — czyli dokładnie w alarm „podejrzenie zmiany markupu".
+//  2. BŁĄD Z KODEM 200. `{finance:{result:null,error:{code:'Unauthorized'}}}`
+//     przychodzi ze statusem 200, więc obsługa 401/403 go NIE łapała: crumb
+//     nigdy się nie odświeżał, a guard dostawał parse-miss zamiast retry.
+//     Rozpoznana koperta błędu jest teraz sygnałem „odśwież parę cookie+crumb",
+//     a nie „napraw parser".
+//  3. POLA. Liczby bywają gołe albo owinięte w `{raw, fmt}` (odpowiedzi
+//     `formatted=true`), a czas raz w sekundach, raz w ms, raz jako ISO.
+//
+// Rozróżnienie „kształt rozpoznany, ale zero notowań" (nieznane symbole) od
+// „kształtu nie rozpoznaję" (realna zmiana API) jest tu sednem: tylko to drugie
+// ma prawo podnieść alarm strukturalny.
+
+/** Klucz guarda dla całej powierzchni batcha (jedno żądanie = jedna strona). */
+export const V7_QUOTE_KEY = 'v7-quote';
+
+/** Klucze, pod którymi bywa lista notowań — sprawdzane w kolejności. */
+const ROW_KEYS = ['result', 'results', 'rows', 'quotes'];
+
+/** Koperty, w których Yahoo opakowuje wynik (`quoteResponse` = klasyk v7). */
+const ENVELOPE_KEYS = ['quoteResponse', 'finance', 'quotes'];
+
+/** Ile węzłów odwiedza awaryjny BFS — koperta nigdy nie jest głęboka. */
+const BFS_NODE_BUDGET = 200;
+
+export type QuoteEnvelopeStatus =
+  /** Rozpoznaliśmy listę notowań (może być pusta = nieznane symbole). */
+  | 'rows'
+  /** Yahoo zwrócił kopertę błędu (bywa z HTTP 200) — patrz `error`. */
+  | 'error'
+  /** Nic, co przypomina odpowiedź v7 — kandydat na realną zmianę API. */
+  | 'unrecognized';
+
+export interface QuoteEnvelopeError {
+  code: string | null;
+  description: string | null;
+}
+
+export interface ParsedQuoteEnvelope {
+  status: QuoteEnvelopeStatus;
+  quotes: Map<string, YahooQuote>;
+  error: QuoteEnvelopeError | null;
+}
+
+/** Liczba z pola, które Yahoo oddaje raz gołe, raz jako `{raw, fmt}`. */
+function numeric(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (value && typeof value === 'object') {
+    const raw = (value as { raw?: unknown }).raw;
+    if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  }
+  return null;
+}
+
+/** Pierwsza sensowna liczba z listy aliasów pola. */
+function firstNumeric(row: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = numeric(row[key]);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+/** Czas notowania → epoch ms. Sekundy (v7), ms albo ISO — wszystko widziane. */
+function quoteTimeMs(raw: unknown): number | null {
+  if (typeof raw === 'string') {
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const seconds = numeric(raw);
+  if (seconds === null) return null;
+  // Sekundy epoch mają 10 cyfr, milisekundy 13 — próg 1e11 rozdziela je na wiele
+  // lat w przód i w tył, więc nie musimy zgadywać jednostki z dokumentacji.
+  return seconds > 1e11 ? seconds : seconds * 1000;
+}
+
+/** Wiersz notowania rozpoznajemy po symbolu — to jedyne pole obecne ZAWSZE. */
+function isQuoteRow(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    typeof (value as { symbol?: unknown }).symbol === 'string'
+  );
+}
+
+/** Lista notowań wprost pod znanym kluczem danego węzła (pusta też się liczy). */
+function rowsFromNode(node: unknown): unknown[] | null {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return null;
+  for (const key of ROW_KEYS) {
+    const value = (node as Record<string, unknown>)[key];
+    if (Array.isArray(value) && (value.length === 0 || value.some(isQuoteRow))) return value;
+  }
+  return null;
+}
+
 /**
- * Parsuje odpowiedź v7 na mapę symbol → notowanie. Czysta funkcja (fixture
- * zamiast sieci w testach). Pozycje bez sensownej ceny są pomijane, żeby
- * wołający zobaczył je jako `missed` i spróbował starą ścieżką.
+ * Awaryjne szukanie listy notowań gdziekolwiek w odpowiedzi. Wymaga wiersza z
+ * symbolem (pusta tablica przypadkiem trafiona w środku koperty niczego nie
+ * dowodzi), więc nie da się tu wpaść na `error: []` czy inny śmieć.
  */
-export function parseQuoteResponse(json: unknown): Map<string, YahooQuote> {
+function bfsRows(root: unknown): unknown[] | null {
+  const queue: unknown[] = [root];
+  let visited = 0;
+  while (queue.length > 0 && visited < BFS_NODE_BUDGET) {
+    const node = queue.shift();
+    visited++;
+    if (!node || typeof node !== 'object') continue;
+    if (Array.isArray(node)) {
+      if (node.some(isQuoteRow)) return node;
+      for (const item of node.slice(0, 20)) queue.push(item);
+      continue;
+    }
+    for (const value of Object.values(node)) queue.push(value);
+  }
+  return null;
+}
+
+function findRows(json: unknown): unknown[] | null {
+  if (Array.isArray(json)) return json.some(isQuoteRow) ? json : null;
+  const direct = rowsFromNode(json);
+  if (direct) return direct;
+  for (const key of ENVELOPE_KEYS) {
+    const nested = rowsFromNode((json as Record<string, unknown> | null | undefined)?.[key]);
+    if (nested) return nested;
+  }
+  return bfsRows(json);
+}
+
+/** Koperta błędu — Yahoo trzyma ją obok wyniku, także przy HTTP 200. */
+function findError(json: unknown): QuoteEnvelopeError | null {
+  const root = (json ?? {}) as Record<string, any>;
+  const candidates = [root.finance?.error, root.quoteResponse?.error, root.error];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return { code: candidate, description: null };
+    }
+    if (candidate && typeof candidate === 'object') {
+      const code = typeof candidate.code === 'string' ? candidate.code : null;
+      const description =
+        typeof candidate.description === 'string'
+          ? candidate.description
+          : typeof candidate.message === 'string'
+            ? candidate.message
+            : null;
+      if (code || description) return { code, description };
+    }
+  }
+  return null;
+}
+
+function mapRows(rows: unknown[]): Map<string, YahooQuote> {
   const out = new Map<string, YahooQuote>();
-  const rows = (json as any)?.quoteResponse?.result;
-  if (!Array.isArray(rows)) return out;
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue;
+    const row = raw as Record<string, unknown>;
+    const symbol = typeof row.symbol === 'string' ? row.symbol : null;
+    // Świadomie TYLKO regularMarketPrice: kurs sesji regularnej. Podstawienie
+    // bid/ask/previousClose „żeby coś było" pokazywałoby nieprawdę jako cenę.
+    const price = numeric(row.regularMarketPrice);
+    if (!symbol || price === null || price <= 0) continue;
 
-  for (const row of rows) {
-    const symbol = typeof row?.symbol === 'string' ? row.symbol : null;
-    const price = row?.regularMarketPrice;
-    if (!symbol || typeof price !== 'number' || !Number.isFinite(price) || price <= 0) continue;
-
-    const prev = row?.regularMarketPreviousClose;
-    const time = row?.regularMarketTime;
+    const currency = row.currency ?? row.financialCurrency;
     out.set(symbol, {
       price,
-      currency: typeof row?.currency === 'string' && row.currency ? row.currency : 'USD',
-      previousClose: typeof prev === 'number' && Number.isFinite(prev) ? prev : null,
-      marketState: normalizeMarketState(row?.marketState),
-      // v7 podaje sekundy epoch; bywa też obiekt {raw}.
-      quoteTime:
-        typeof time === 'number' && Number.isFinite(time)
-          ? time * 1000
-          : typeof time?.raw === 'number'
-            ? time.raw * 1000
-            : null,
+      currency: typeof currency === 'string' && currency ? currency : 'USD',
+      previousClose: firstNumeric(row, [
+        'regularMarketPreviousClose',
+        'previousClose',
+        'chartPreviousClose',
+      ]),
+      marketState: normalizeMarketState(row.marketState),
+      quoteTime: quoteTimeMs(row.regularMarketTime),
     });
   }
   return out;
+}
+
+/**
+ * Rozbiera odpowiedź v7 na (status koperty, notowania, błąd). Czysta funkcja —
+ * w testach fixture zamiast sieci. To ona decyduje, czy pusty wynik znaczy
+ * „nieznane symbole", „odśwież crumb", czy „napraw parser".
+ */
+export function parseQuoteEnvelope(json: unknown): ParsedQuoteEnvelope {
+  const rows = findRows(json);
+  if (rows) return { status: 'rows', quotes: mapRows(rows), error: null };
+
+  const error = findError(json);
+  if (error) return { status: 'error', quotes: new Map(), error };
+
+  return { status: 'unrecognized', quotes: new Map(), error: null };
+}
+
+/**
+ * Parsuje odpowiedź v7 na mapę symbol → notowanie. Pozycje bez sensownej ceny
+ * są pomijane, żeby wołający zobaczył je jako `missed` i spróbował starą ścieżką.
+ */
+export function parseQuoteResponse(json: unknown): Map<string, YahooQuote> {
+  return parseQuoteEnvelope(json).quotes;
+}
+
+/** Błąd wołający o świeżą parę cookie+crumb (a nie o naprawę parsera). */
+export function isAuthQuoteError(error: QuoteEnvelopeError | null): boolean {
+  const text = `${error?.code ?? ''} ${error?.description ?? ''}`.toLowerCase();
+  return /unauthorized|invalid (crumb|cookie)|forbidden|consent|not authorized/.test(text);
+}
+
+/** Błąd, który jest w istocie odcięciem (limit ruchu) — otwiera bezpiecznik. */
+export function isBlockQuoteError(error: QuoteEnvelopeError | null): boolean {
+  const text = `${error?.code ?? ''} ${error?.description ?? ''}`.toLowerCase();
+  return /too many|rate ?limit|throttl|unusual traffic/.test(text);
 }
 
 /** Klucz cache'u ceny live — MUSI zgadzać się z fetchYahooPrice. */
@@ -268,51 +454,80 @@ function chunk<T>(items: T[], size: number): T[][] {
 /**
  * Jeden strzał v7 dla listy symboli. Zwraca null, gdy żądanie się nie udało
  * (wołający potraktuje cały chunk jako `missed`).
+ *
+ * Odmowa autoryzacji przychodzi DWOMA kanałami — statusem 401/403 albo kopertą
+ * błędu przy HTTP 200 — i oba prowadzą do tej samej reakcji: świeża para
+ * cookie+crumb i JEDNA powtórka. Dopiero druga odmowa jest odcięciem.
  */
 async function fetchQuoteChunk(symbols: string[]): Promise<Map<string, YahooQuote> | null> {
   const guard = getYahooGuard();
   if (guard.isBlocked()) return null;
 
-  const auth = await getYahooAuth();
-  if (!auth) return null;
-
-  async function attempt(crumb: string, cookies: string): Promise<Response> {
-    const params = new URLSearchParams({ symbols: symbols.join(','), crumb });
-    return withYahooLimit(() =>
-      fetch(`${YAHOO_V7_BASE}?${params}`, {
-        headers: { 'User-Agent': USER_AGENT, Cookie: cookies },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT),
-      }),
-    );
-  }
-
   try {
-    let resp = await attempt(auth.crumb, auth.cookies);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const auth = await getYahooAuth();
+      if (!auth) return null;
 
-    if (resp.status === 401 || resp.status === 403) {
-      // v7 wymaga pary cookie+crumb z jednego „słoika" — 401 to zwykle rotacja
-      // crumba, nie odcięcie. Jedna powtórka ze świeżą parą.
-      invalidateYahooAuth();
-      const auth2 = await getYahooAuth();
-      if (!auth2) return null;
-      resp = await attempt(auth2.crumb, auth2.cookies);
-      if (resp.status === 401 || resp.status === 403) {
-        // Świeży crumb i dalej odmowa → to już odcięcie.
-        guard.registerBlock();
-        return null;
+      const params = new URLSearchParams({ symbols: symbols.join(','), crumb: auth.crumb });
+      const resp = await withYahooLimit(() =>
+        fetch(`${YAHOO_V7_BASE}?${params}`, {
+          headers: { 'User-Agent': USER_AGENT, Cookie: auth.cookies },
+          signal: AbortSignal.timeout(FETCH_TIMEOUT),
+        }),
+      );
+
+      const rejected = resp.status === 401 || resp.status === 403;
+
+      if (!rejected) {
+        if (!resp.ok) {
+          const body = await resp.text().catch(() => '');
+          if (detectYahooBlock(resp.status, body)) guard.registerBlock();
+          return null;
+        }
+
+        const parsed = parseQuoteEnvelope(await resp.json().catch(() => null));
+
+        if (parsed.status === 'rows') {
+          // Kształt rozpoznany → API żyje, choćby wszystkie symbole były nieznane.
+          if (parsed.quotes.size > 0) guard.registerSuccess(V7_QUOTE_KEY);
+          // Pusta lista przy niepustym zapytaniu bywa niewinna (delisty, pseudo-
+          // tickery opcji), więc miss jest MIĘKKI: sam z siebie nie alarmuje,
+          // ale dokłada się do reguły „wiele różnych kluczy bez sukcesu".
+          else if (symbols.length > 0) guard.registerParseMiss(`${V7_QUOTE_KEY}:empty`);
+          return parsed.quotes;
+        }
+
+        if (parsed.status === 'unrecognized') {
+          // Ani wierszy, ani błędu — to jedyny przypadek, w którym naprawdę
+          // przestaliśmy rozumieć odpowiedź.
+          guard.registerParseMiss(V7_QUOTE_KEY, { structural: true });
+          return null;
+        }
+
+        if (isBlockQuoteError(parsed.error)) {
+          guard.registerBlock();
+          return null;
+        }
+        if (!isAuthQuoteError(parsed.error)) {
+          // Błąd rozpoznany, ale nie o autoryzację ani limit — powtórka nic nie
+          // da, a trwały nieznany kod to sygnał zmiany po stronie Yahoo.
+          console.warn(
+            `[yahoo-quotes] v7 zwrócił błąd: ${parsed.error?.code ?? '?'} — ${parsed.error?.description ?? ''}`,
+          );
+          guard.registerParseMiss(V7_QUOTE_KEY, { structural: true });
+          return null;
+        }
       }
-    }
 
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => '');
-      if (detectYahooBlock(resp.status, body)) guard.registerBlock();
+      if (attempt === 0) {
+        invalidateYahooAuth();
+        continue;
+      }
+      // Świeża para cookie+crumb i dalej odmowa → to już odcięcie.
+      guard.registerBlock();
       return null;
     }
-
-    const quotes = parseQuoteResponse(await resp.json());
-    if (quotes.size > 0) guard.registerSuccess('v7-quote');
-    else guard.registerParseMiss('v7-quote', { structural: true });
-    return quotes;
+    return null;
   } catch (err) {
     console.warn('[yahoo-quotes] batch quote nie powiódł się:', (err as Error).message);
     return null;

@@ -20,6 +20,7 @@ vi.mock('../yahoo-auth.js', () => ({
 
 import {
   parseQuoteResponse,
+  parseQuoteEnvelope,
   quoteTtlSeconds,
   primeYahooQuotes,
   summarizeQuoteFreshness,
@@ -81,6 +82,7 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 let fetchSpy: ReturnType<typeof vi.fn>;
+let guard: ReturnType<typeof createSourceGuard>;
 
 beforeEach(() => {
   testCache.clear();
@@ -89,7 +91,8 @@ beforeEach(() => {
   // Batch jest wyłączony globalnie w vitest.config (żeby testy silnika nie biły
   // do sieci) — ten plik testuje właśnie batch, więc włącza go u siebie.
   delete process.env.YAHOO_BATCH_QUOTES;
-  setYahooGuardForTests(createSourceGuard({ name: 'yahoo-test', store: createMemoryGuardStore() }));
+  guard = createSourceGuard({ name: 'yahoo-test', store: createMemoryGuardStore() });
+  setYahooGuardForTests(guard);
   setLiveQuoteStoreForTests({ upsert: () => {}, get: () => null, getMany: () => new Map() });
   fetchSpy = vi.fn();
   vi.stubGlobal('fetch', fetchSpy);
@@ -126,6 +129,85 @@ describe('parseQuoteResponse', () => {
   it('śmieciowa odpowiedź → pusta mapa (bez wyjątku)', () => {
     expect(parseQuoteResponse({ nope: true }).size).toBe(0);
     expect(parseQuoteResponse(null).size).toBe(0);
+  });
+
+  // ── Odporność koperty ──────────────────────────────────────────────────────
+  // Regresja: twarda ścieżka `quoteResponse.result` zamieniała każdą zmianę
+  // opakowania w ciche zero notowań przy HTTP 200 (alarm „zmiana markupu").
+
+  it('czyta ten sam wynik z koperty `finance` co z `quoteResponse`', () => {
+    const moved = { finance: { result: QUOTE_JSON.quoteResponse.result, error: null } };
+    expect(parseQuoteResponse(moved).get('AAPL')?.price).toBe(304.81);
+  });
+
+  it('znajduje listę notowań pod nieznaną kopertą (byle wiersze miały symbol)', () => {
+    const exotic = { data: { v7: { quoteList: QUOTE_JSON.quoteResponse.result } } };
+    expect(parseQuoteResponse(exotic).get('CDR.WA')?.price).toBe(253.8);
+  });
+
+  it('gołą tablicę wierszy też przyjmuje', () => {
+    expect(parseQuoteResponse(QUOTE_JSON.quoteResponse.result).size).toBe(4);
+  });
+
+  it('liczby owinięte w {raw, fmt} (formatted=true) czyta jak gołe', () => {
+    const formatted = {
+      quoteResponse: {
+        result: [
+          {
+            symbol: 'AAPL',
+            regularMarketPrice: { raw: 304.81, fmt: '304.81' },
+            regularMarketPreviousClose: { raw: 308.91, fmt: '308.91' },
+            currency: 'USD',
+            marketState: 'REGULAR',
+            regularMarketTime: { raw: 1_785_786_314, fmt: '4:00PM EDT' },
+          },
+        ],
+      },
+    };
+    expect(parseQuoteResponse(formatted).get('AAPL')).toEqual({
+      price: 304.81,
+      currency: 'USD',
+      previousClose: 308.91,
+      marketState: 'REGULAR',
+      quoteTime: 1_785_786_314_000,
+    });
+  });
+
+  it('czas w milisekundach i w ISO daje ten sam moment co sekundy epoch', () => {
+    const ms = 1_785_786_314_000;
+    const rows = [
+      { symbol: 'A', regularMarketPrice: 1, regularMarketTime: ms },
+      { symbol: 'B', regularMarketPrice: 1, regularMarketTime: new Date(ms).toISOString() },
+    ];
+    const quotes = parseQuoteResponse(rows);
+    expect(quotes.get('A')?.quoteTime).toBe(ms);
+    expect(quotes.get('B')?.quoteTime).toBe(ms);
+  });
+
+  it('bierze wyłącznie regularMarketPrice — bid/ask/previousClose nie udają ceny', () => {
+    const rows = [{ symbol: 'A', bid: 10, ask: 11, regularMarketPreviousClose: 9 }];
+    expect(parseQuoteResponse(rows).size).toBe(0);
+  });
+});
+
+describe('parseQuoteEnvelope — status koperty', () => {
+  it('rozpoznane wiersze to `rows`, nawet gdy lista jest pusta', () => {
+    expect(parseQuoteEnvelope(QUOTE_JSON).status).toBe('rows');
+    expect(parseQuoteEnvelope({ quoteResponse: { result: [] } }).status).toBe('rows');
+  });
+
+  it('błąd przy HTTP 200 to `error`, nie „popsuty parser”', () => {
+    // Tak Yahoo oddaje wygasłą parę cookie+crumb — ze statusem 200.
+    const parsed = parseQuoteEnvelope({
+      finance: { result: null, error: { code: 'Unauthorized', description: 'Invalid Crumb' } },
+    });
+    expect(parsed.status).toBe('error');
+    expect(parsed.error).toEqual({ code: 'Unauthorized', description: 'Invalid Crumb' });
+  });
+
+  it('odpowiedź bez wierszy i bez błędu to `unrecognized` — jedyny powód alarmu', () => {
+    expect(parseQuoteEnvelope({ somethingElse: { totally: 'new' } }).status).toBe('unrecognized');
+    expect(parseQuoteEnvelope(null).status).toBe('unrecognized');
   });
 });
 
@@ -258,6 +340,62 @@ describe('primeYahooQuotes', () => {
     const { missed } = await primeYahooQuotes(['T9']);
     expect(fetchSpy).toHaveBeenCalledTimes(3); // bez nowego strzału
     expect(missed).toEqual(['T9']);
+  });
+
+  // ── Sygnalizacja do guarda ────────────────────────────────────────────────
+  // Alarm „podejrzenie zmiany markupu" ma się zapalać WYŁĄCZNIE wtedy, gdy
+  // naprawdę nie rozumiemy odpowiedzi. Wygasły crumb i nieznane symbole to dwa
+  // najczęstsze źródła fałszywych alarmów — oba mają tu swój test.
+
+  it('koperta błędu przy HTTP 200 → odświeżenie crumba i powtórka, BEZ alarmu markupu', async () => {
+    // Regresja: obsługa 401/403 nie łapała tej odmowy, bo status był 200 —
+    // crumb nigdy się nie odświeżał, a guard dostawał parse-miss za parse-missem.
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        finance: { result: null, error: { code: 'Unauthorized', description: 'Invalid Crumb' } },
+      }),
+    );
+
+    const { primed, missed } = await primeYahooQuotes(['AAPL']);
+
+    expect(invalidateYahooAuth).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // pierwotny + jedna powtórka
+    expect(primed).toBe(0);
+    expect(missed).toEqual(['AAPL']);
+    expect(guard.getState().suspectedMarkupChange).toBe(false);
+  });
+
+  it('kształt rozpoznany, ale symbole nieznane → brak alarmu (delisty to nie awaria API)', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ quoteResponse: { result: [] } }));
+
+    for (let i = 0; i < 4; i++) await primeYahooQuotes([`DELISTED${i}`]);
+
+    expect(guard.getState().suspectedMarkupChange).toBe(false);
+  });
+
+  it('nierozpoznana koperta → alarm zmiany markupu (to jedyna droga do maila)', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ zupelnieNoweApi: { data: [] } }));
+
+    // Próg strukturalny to 2 kolejne missy — jeden wyskok nie budzi admina.
+    await primeYahooQuotes(['AAPL']);
+    expect(guard.getState().suspectedMarkupChange).toBe(false);
+    await primeYahooQuotes(['MSFT']);
+
+    const state = guard.getState();
+    expect(state.suspectedMarkupChange).toBe(true);
+    expect(state.parseMissKeys).toContain('v7-quote');
+  });
+
+  it('poprawna odpowiedź gasi wcześniejszy alarm markupu', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ zupelnieNoweApi: {} }));
+    await primeYahooQuotes(['AAPL']);
+    await primeYahooQuotes(['MSFT']);
+    expect(guard.getState().suspectedMarkupChange).toBe(true);
+
+    fetchSpy.mockResolvedValue(jsonResponse(QUOTE_JSON));
+    await primeYahooQuotes(['AAPL']);
+
+    expect(guard.getState().suspectedMarkupChange).toBe(false);
   });
 
   it('wyłącznik YAHOO_BATCH_QUOTES=off oddaje wszystko jako missed bez sieci', async () => {

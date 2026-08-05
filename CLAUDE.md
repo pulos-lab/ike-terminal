@@ -98,6 +98,7 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
 - **Zagraniczne (NYSE, NASDAQ, XETRA, TSX)**: Yahoo Finance
 - **CFD (surowce, indeksy, forex, krypto)**: Yahoo Finance (statyczna mapa instrument → ticker w `shared/src/cfd-ticker-map.ts`, np. GOLD → GC=F)
 - **FX (kursy walut)**: Yahoo Finance (USDPLN=X, EURPLN=X, CADPLN=X, GBPPLN=X)
+- **Batch cen Yahoo (`/v7/finance/quote`, klucz guarda `v7-quote`)**: parser koperty jest ODPORNY na jej zmianę — wynik szukany pod `quoteResponse.result`, `finance.result` i (awaryjnie) BFS-em po wierszach z `symbol`; liczby czytane też z `{raw, fmt}`, czas z sekund/ms/ISO. **Yahoo oddaje odmowę autoryzacji z HTTP 200** (`{finance:{error:{code:'Unauthorized'}}}`) — to sygnał „odśwież parę cookie+crumb i powtórz raz", NIE zmiana markupu. Alarm strukturalny podnosi wyłącznie koperta, której nie rozpoznajemy; pusta lista przy 200 (delisty, nieznane symbole) daje miss miękki. Crumb jest walidowany przy pobraniu (`isPlausibleCrumb`) — strona zgody zapisana jako crumb zatruwała v7 i v10 na 6 h
 
 ### Nadchodzące dywidendy
 - **GPW / NewConnect**: kalendarz z polskich źródeł (stockwatch.pl + biznesradar.pl) — `gpw-dividend-calendar.ts`, persystencja w price_history.db, odświeżanie ≤1×/24h (3 żądania stron/dobę), merge po skrócie spółki; fallback Yahoo dla GPW, NC bez fallbacku
@@ -162,5 +163,6 @@ Pole `country` w `ticker_map` (kanoniczna nazwa EN z Yahoo `assetProfile.country
 - `npm run scrape:gpw-sectors -w server` — regeneracja `gpw-sector-map.ts` ze stockwatch.pl
 - `npm run scrape:catalyst-bonds -w server` — regeneracja `bond-map-data.ts` z obligacje.pl (~6 min; gpwcatalyst.pl blokuje boty WAF-em)
 - `npm run check:spinoff-sources -w server` — żywa diagnostyka źródeł spin-offów (stockanalysis + SEC EDGAR; `--all` = ratio dla wszystkich zdarzeń)
+- `npm run check:yahoo -w server` — żywy smoke wszystkich powierzchni Yahoo (autoryzacja cookie+crumb / batch v7 / cena i historia v8 / quoteSummary v10; `--ticker=XYZ`, `--raw` = klucze koperty). Skrypt z maila guarda przy alercie „podejrzenie zmiany markupu" dla źródła `yahoo`; rozróżnia odcięcie, odmowę autoryzacji i nierozpoznaną kopertę
 - `npm run check:biznesradar -w server` — żywy smoke wszystkich powierzchni biznesradar (live/historia/katalog/dywidendy; `--ticker=XYZ`); guard źródła (`source-guard.ts` + `biznesradar-guard.ts`) wykrywa odcięcie anti-bot i zmianę markupu, maile do admina przy przejściu stanu, stan w polu `sources` w `/api/health`
 - `start.command` — alternatywny skrypt startowy (kill portów + start + open browser)
