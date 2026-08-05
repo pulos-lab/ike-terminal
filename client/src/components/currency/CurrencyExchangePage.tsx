@@ -17,12 +17,14 @@ import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
 import { CcyChip } from '@/components/ui/ccy-chip';
 import { ConfirmDeleteDialog } from '@/components/ui/confirm-delete-dialog';
 import { AddFxExchangeDialog } from './AddFxExchangeDialog';
+import { FxRateChart } from './FxRateChart';
+import { FX_PAIR_META } from './fx-chart-data';
 import { formatNumber, formatDate } from '@/lib/formatters';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, LineChart, X } from 'lucide-react';
 import { ExpandableCard, ExpandableCardSubRow } from '@/components/ui/expandable-card';
 import { toast } from 'sonner';
 import { useToggleSet } from '@/hooks/useToggleSet';
-import type { FxExchangeRecord } from 'shared';
+import type { FxChartPair, FxExchangeRecord } from 'shared';
 
 export function CurrencyExchangePage() {
   const queryClient = useQueryClient();
@@ -41,9 +43,18 @@ export function CurrencyExchangePage() {
   const [addOpen, setAddOpen] = useState(false);
   const [deleting, setDeleting] = useState<FxExchangeRecord | null>(null);
   const [expandedFx, toggleFx] = useToggleSet<string>();
+  // Wykres kursu pokazujemy dopiero po kliknięciu kafla pary — bez wyboru
+  // nie montujemy komponentu, więc historia kursu nie jest pobierana.
+  const [chartPair, setChartPair] = useState<FxChartPair | null>(null);
 
   const fx = pricesData?.fx;
   const usdEur = fx?.USDPLN && fx?.EURPLN ? fx.USDPLN / fx.EURPLN : null;
+
+  const rateTiles: { pair: FxChartPair; value: number | null }[] = [
+    { pair: 'USDPLN', value: fx?.USDPLN ?? null },
+    { pair: 'EURPLN', value: fx?.EURPLN ?? null },
+    { pair: 'USDEUR', value: usdEur },
+  ];
 
   const deleteMutation = useMutation({
     mutationFn: ({ fromId, toId }: { fromId: number; toId: number }) =>
@@ -72,33 +83,58 @@ export function CurrencyExchangePage() {
         </Button>
       </div>
 
-      {fx && (
-        <div className="grid grid-cols-3 gap-2 md:gap-3">
-          <Card>
-            <CardContent className="px-3 py-2.5 md:pt-4 md:pb-3 md:px-6">
-              <div className="text-[11px] md:text-sm text-muted-foreground">USD/PLN</div>
-              <div className="text-base md:text-2xl font-bold font-mono">
-                {formatNumber(fx.USDPLN, 4)}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="px-3 py-2.5 md:pt-4 md:pb-3 md:px-6">
-              <div className="text-[11px] md:text-sm text-muted-foreground">EUR/PLN</div>
-              <div className="text-base md:text-2xl font-bold font-mono">
-                {formatNumber(fx.EURPLN, 4)}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="px-3 py-2.5 md:pt-4 md:pb-3 md:px-6">
-              <div className="text-[11px] md:text-sm text-muted-foreground">USD/EUR</div>
-              <div className="text-base md:text-2xl font-bold font-mono">
-                {usdEur ? formatNumber(usdEur, 4) : '—'}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+      <div className="grid grid-cols-3 gap-2 md:gap-3">
+        {rateTiles.map(({ pair, value }) => {
+          const active = chartPair === pair;
+          return (
+            <Card
+              key={pair}
+              className={`cursor-pointer transition-colors hover:border-primary/40 ${
+                active ? 'border-primary/60 bg-primary/5' : ''
+              }`}
+            >
+              <button
+                type="button"
+                aria-pressed={active}
+                aria-label={`${FX_PAIR_META[pair].label} — ${active ? 'ukryj wykres kursu' : 'pokaż wykres kursu'}`}
+                onClick={() => setChartPair(active ? null : pair)}
+                className="w-full text-left"
+              >
+                <CardContent className="px-3 py-2.5 md:pt-4 md:pb-3 md:px-6">
+                  <div className="flex items-center gap-1 text-[11px] md:text-sm text-muted-foreground">
+                    {FX_PAIR_META[pair].label}
+                    <LineChart className="h-3 w-3 md:h-3.5 md:w-3.5 opacity-60" />
+                  </div>
+                  <div className="text-base md:text-2xl font-bold font-mono">
+                    {value !== null ? formatNumber(value, 4) : '—'}
+                  </div>
+                </CardContent>
+              </button>
+            </Card>
+          );
+        })}
+      </div>
+
+      {chartPair && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-base">
+              Wykres kursu {FX_PAIR_META[chartPair].label}
+            </CardTitle>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Zamknij wykres"
+              onClick={() => setChartPair(null)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {/* key = reset stanu „pełna historia" przy zmianie pary */}
+            <FxRateChart key={chartPair} pair={chartPair} />
+          </CardContent>
+        </Card>
       )}
 
       <Card>
