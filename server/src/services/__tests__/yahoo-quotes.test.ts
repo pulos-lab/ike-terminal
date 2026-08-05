@@ -130,31 +130,71 @@ describe('parseQuoteResponse', () => {
 });
 
 describe('quoteTtlSeconds', () => {
-  it('sesja krótko, po sesji długo, nieznany stan zachowawczo', () => {
+  /** Moment w czasie warszawskim (lato = CEST, UTC+2). */
+  function warsaw(hh: number, mm = 0): number {
+    return Date.parse(
+      `2026-08-05T${String(hh - 2).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00Z`,
+    );
+  }
+
+  it('sesja krótko, pre/post średnio, nieznany stan zachowawczo', () => {
     expect(quoteTtlSeconds('REGULAR')).toBe(config.cache.quoteTtl.regular);
     expect(quoteTtlSeconds('PRE')).toBe(config.cache.quoteTtl.prePost);
     expect(quoteTtlSeconds('POST')).toBe(config.cache.quoteTtl.prePost);
     expect(quoteTtlSeconds(null)).toBe(config.cache.quoteTtl.unknown);
   });
 
+  it('PREPRE (spółki USA w europejskie przedpołudnie) liczy się jak zamknięty rynek', () => {
+    // Bez tego stanu na liście wpadał w gałąź „nieznany" = 1 h, czyli 6 zbędnych
+    // fal requestów na dobę dla portfeli amerykańskich.
+    const wieczorem = warsaw(23);
+    expect(quoteTtlSeconds('PREPRE', wieczorem)).toBe(quoteTtlSeconds('CLOSED', wieczorem));
+  });
+
+  it('po zamknięciu wieczorem trzyma długo, ale nie dłużej niż do otwarcia GPW', () => {
+    // 23:00 → do 9:00 zostało 10 h, więc ogranicza nas sufit 6 h.
+    expect(quoteTtlSeconds('CLOSED', warsaw(23))).toBe(config.cache.quoteTtl.closed);
+    // 5:00 → do otwarcia 4 h; 6-godzinny TTL przeskoczyłby start sesji.
+    expect(quoteTtlSeconds('CLOSED', warsaw(5))).toBe(4 * 3600);
+  });
+
+  it('tuż przed otwarciem NIE zamraża ceny na godziny (regresja: cena z 8:50 na 6 h)', () => {
+    const ttl = quoteTtlSeconds('CLOSED', warsaw(8, 50));
+    expect(ttl).toBe(10 * 60); // dokładnie do 9:00
+    expect(ttl).toBeLessThan(config.cache.quoteTtl.closed);
+  });
+
+  it('ma podłogę — nawet minutę przed otwarciem nie odpytujemy w kółko', () => {
+    expect(quoteTtlSeconds('CLOSED', warsaw(8, 59))).toBe(5 * 60);
+  });
+
   it('stan zamknięty nigdy nie przekracza twardego sufitu', () => {
-    expect(quoteTtlSeconds('CLOSED')).toBeLessThanOrEqual(config.cache.quoteTtl.cap);
-    expect(quoteTtlSeconds('POSTPOST')).toBeLessThanOrEqual(config.cache.quoteTtl.cap);
+    expect(quoteTtlSeconds('CLOSED', warsaw(23))).toBeLessThanOrEqual(config.cache.quoteTtl.cap);
+    expect(quoteTtlSeconds('POSTPOST', warsaw(23))).toBeLessThanOrEqual(config.cache.quoteTtl.cap);
   });
 });
 
 describe('primeYahooQuotes', () => {
   it('zapisuje ceny pod kluczem fetchYahooPrice z TTL wg stanu rynku', async () => {
-    fetchSpy.mockResolvedValue(jsonResponse(QUOTE_JSON));
+    // Zegar zamrożony na 23:00 CEST: TTL zamkniętego rynku jest klamrowany do
+    // najbliższego otwarcia GPW, więc bez tego asercja na 6 h byłaby czerwona
+    // przy nocnym przebiegu testów.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-08-05T21:00:00Z'));
+    try {
+      fetchSpy.mockResolvedValue(jsonResponse(QUOTE_JSON));
 
-    const { primed, missed } = await primeYahooQuotes(['AAPL', 'CDR.WA', 'GHOST']);
+      const { primed, missed } = await primeYahooQuotes(['AAPL', 'CDR.WA', 'GHOST']);
 
-    expect(primed).toBe(2);
-    expect(missed).toEqual(['GHOST']); // brak ceny w odpowiedzi = miss, nie błąd
-    expect(testCache.get('yahoo_live_AAPL')).toMatchObject({ price: 304.81, currency: 'USD' });
-    expect(ttlByKey.get('yahoo_live_AAPL')).toBe(config.cache.quoteTtl.regular);
-    // Ta sama odpowiedź, inny rynek → inny TTL. To sedno zmiany.
-    expect(ttlByKey.get('yahoo_live_CDR.WA')).toBe(config.cache.quoteTtl.closed);
+      expect(primed).toBe(2);
+      expect(missed).toEqual(['GHOST']); // brak ceny w odpowiedzi = miss, nie błąd
+      expect(testCache.get('yahoo_live_AAPL')).toMatchObject({ price: 304.81, currency: 'USD' });
+      expect(ttlByKey.get('yahoo_live_AAPL')).toBe(config.cache.quoteTtl.regular);
+      // Ta sama odpowiedź, inny rynek → inny TTL. To sedno zmiany.
+      expect(ttlByKey.get('yahoo_live_CDR.WA')).toBe(config.cache.quoteTtl.closed);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('parę walutową zapisuje też pod kluczem kursu (fetchFxRate nie strzela osobno)', async () => {

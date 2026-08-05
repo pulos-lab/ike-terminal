@@ -33,7 +33,16 @@ const FETCH_TIMEOUT = 10_000;
  */
 const CHUNK_SIZE = 50;
 
-export type YahooMarketState = 'PRE' | 'REGULAR' | 'POST' | 'POSTPOST' | 'CLOSED';
+/**
+ * Pełny cykl stanów Yahoo dla dnia handlowego (na przykładzie USA, czas ET):
+ * PREPRE (po północy do 4:00) → PRE (4:00–9:30) → REGULAR (9:30–16:00) →
+ * POST (16:00–20:00) → POSTPOST (20:00–północ) → CLOSED (weekend/święto).
+ *
+ * `PREPRE` bywa pomijany w dokumentacji, a to najczęstszy stan amerykańskich
+ * spółek w europejskie przedpołudnie — jego brak na tej liście oznaczał TTL
+ * „nieznany" (1 h) zamiast długiego, czyli 6 zbędnych fal requestów na dobę.
+ */
+export type YahooMarketState = 'PREPRE' | 'PRE' | 'REGULAR' | 'POST' | 'POSTPOST' | 'CLOSED';
 
 export interface YahooQuote {
   price: number;
@@ -54,7 +63,14 @@ export interface CachedLiveQuote {
   quoteTime?: number | null;
 }
 
-const MARKET_STATES: YahooMarketState[] = ['PRE', 'REGULAR', 'POST', 'POSTPOST', 'CLOSED'];
+const MARKET_STATES: YahooMarketState[] = [
+  'PREPRE',
+  'PRE',
+  'REGULAR',
+  'POST',
+  'POSTPOST',
+  'CLOSED',
+];
 
 export function normalizeMarketState(raw: unknown): YahooMarketState | null {
   if (typeof raw !== 'string') return null;
@@ -63,11 +79,49 @@ export function normalizeMarketState(raw: unknown): YahooMarketState | null {
 }
 
 /**
- * TTL ceny wg stanu rynku (sekundy). Czysta funkcja — sedno decyzji „jak długo
- * cena może leżeć w cache'u", trzymane osobno, żeby dało się je przetestować
- * bez sieci.
+ * Godzina (czas warszawski), przed którą nie wolno zamrozić ceny na długo:
+ * najwcześniejsze otwarcie z obsługiwanych rynków to GPW o 9:00 (fixing od 8:30).
  */
-export function quoteTtlSeconds(state: YahooMarketState | null): number {
+const EARLIEST_OPEN_HOUR_WARSAW = 9;
+
+/** Podłoga TTL — nawet tuż przed otwarciem nie odpytujemy częściej niż co 5 min. */
+const MIN_CLOSED_TTL_SECONDS = 5 * 60;
+
+/**
+ * Ile sekund zostało do najbliższego otwarcia GPW (czas warszawski, z DST).
+ *
+ * Strefę bierzemy z Intl, nie z offsetu serwera — prod stoi w UTC, a użytkownicy
+ * i GPW żyją w Europe/Warsaw; liczenie „od północy serwera" myliłoby się o 2 h
+ * latem i o 1 h zimą.
+ */
+function secondsUntilWarsawOpen(nowMs: number): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Warsaw',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(nowMs));
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  const secondsOfDay = get('hour') * 3600 + get('minute') * 60 + get('second');
+  const openAt = EARLIEST_OPEN_HOUR_WARSAW * 3600;
+  // Po otwarciu celujemy w otwarcie NASTĘPNEGO dnia.
+  return secondsOfDay < openAt ? openAt - secondsOfDay : 24 * 3600 - secondsOfDay + openAt;
+}
+
+/**
+ * TTL ceny wg stanu rynku (sekundy). Czysta funkcja (zegar wstrzykiwany) —
+ * sedno decyzji „jak długo cena może leżeć w cache'u".
+ *
+ * Dla rynków zamkniętych TTL jest dodatkowo KLAMROWANY do najbliższego otwarcia
+ * GPW. Bez tego cena zapisana o 8:50 ze stanem CLOSED wisiałaby 6 h — czyli
+ * przez pierwsze godziny realnej sesji użytkownik patrzyłby na wczorajsze
+ * zamknięcie. To byłaby regresja względem dotychczasowej stałej godziny.
+ */
+export function quoteTtlSeconds(
+  state: YahooMarketState | null,
+  nowMs: number = Date.now(),
+): number {
   const { quoteTtl } = config.cache;
   switch (state) {
     case 'REGULAR':
@@ -75,9 +129,13 @@ export function quoteTtlSeconds(state: YahooMarketState | null): number {
     case 'PRE':
     case 'POST':
       return quoteTtl.prePost;
+    case 'PREPRE':
     case 'POSTPOST':
     case 'CLOSED':
-      return Math.min(quoteTtl.closed, quoteTtl.cap);
+      return Math.max(
+        MIN_CLOSED_TTL_SECONDS,
+        Math.min(quoteTtl.closed, quoteTtl.cap, secondsUntilWarsawOpen(nowMs)),
+      );
     default:
       return quoteTtl.unknown;
   }
