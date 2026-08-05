@@ -138,10 +138,24 @@ describe('quoteTtlSeconds', () => {
   }
 
   it('sesja krótko, pre/post średnio, nieznany stan zachowawczo', () => {
-    expect(quoteTtlSeconds('REGULAR')).toBe(config.cache.quoteTtl.regular);
-    expect(quoteTtlSeconds('PRE')).toBe(config.cache.quoteTtl.prePost);
-    expect(quoteTtlSeconds('POST')).toBe(config.cache.quoteTtl.prePost);
-    expect(quoteTtlSeconds(null)).toBe(config.cache.quoteTtl.unknown);
+    // 12:00 CEST: do najbliższego otwarcia (15:30 = NYSE) daleko, więc klamra
+    // nie ogranicza i widać wartości bazowe.
+    expect(quoteTtlSeconds('REGULAR', warsaw(12))).toBe(config.cache.quoteTtl.regular);
+    expect(quoteTtlSeconds('PRE', warsaw(12))).toBe(config.cache.quoteTtl.prePost);
+    expect(quoteTtlSeconds('POST', warsaw(12))).toBe(config.cache.quoteTtl.prePost);
+    expect(quoteTtlSeconds(null, warsaw(12))).toBe(config.cache.quoteTtl.unknown);
+  });
+
+  it('PRE tuż przed otwarciem USA nie przeciąga się na sesję (było: 15:29 → 15:59)', () => {
+    // Bez klamry na PRE akcje amerykańskie pokazywały wczorajsze zamknięcie
+    // jeszcze ~29 min po starcie sesji.
+    expect(quoteTtlSeconds('PRE', warsaw(15, 10))).toBe(20 * 60); // dokładnie do 15:30
+    expect(quoteTtlSeconds('PRE', warsaw(15, 29))).toBe(5 * 60); // podłoga
+  });
+
+  it('otwarcie GPW nie jest jedynym punktem odniesienia — liczy się najbliższy rynek', () => {
+    // 14:00 CEST: GPW dawno otwarte, ale NYSE startuje o 15:30 — klamra celuje tam.
+    expect(quoteTtlSeconds('CLOSED', warsaw(14))).toBe(90 * 60);
   });
 
   it('PREPRE (spółki USA w europejskie przedpołudnie) liczy się jak zamknięty rynek', () => {
@@ -151,10 +165,10 @@ describe('quoteTtlSeconds', () => {
     expect(quoteTtlSeconds('PREPRE', wieczorem)).toBe(quoteTtlSeconds('CLOSED', wieczorem));
   });
 
-  it('po zamknięciu wieczorem trzyma długo, ale nie dłużej niż do otwarcia GPW', () => {
+  it('po zamknięciu wieczorem trzyma długo, ale nie dłużej niż do otwarcia', () => {
     // 23:00 → do 9:00 zostało 10 h, więc ogranicza nas sufit 6 h.
     expect(quoteTtlSeconds('CLOSED', warsaw(23))).toBe(config.cache.quoteTtl.closed);
-    // 5:00 → do otwarcia 4 h; 6-godzinny TTL przeskoczyłby start sesji.
+    // 5:00 → do otwarcia GPW 4 h; 6-godzinny TTL przeskoczyłby start sesji.
     expect(quoteTtlSeconds('CLOSED', warsaw(5))).toBe(4 * 3600);
   });
 
