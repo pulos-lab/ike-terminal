@@ -157,13 +157,13 @@ describe('GET /prices/fx-pair-history', () => {
     );
   });
 
-  it('USDEUR: iloraz USDPLN/EURPLN per data, tylko przecięcie dat', async () => {
+  it('USDEUR: iloraz USDPLN/EURPLN, brakująca noga przeciągana forward fillem', async () => {
     fetchYahooHistory.mockImplementation((ticker: string) => {
       if (ticker === 'USDPLN=X') {
         return Promise.resolve([
           point('2026-04-01', 4.0),
           point('2026-04-02', 4.2),
-          point('2026-04-03', 4.1), // brak EURPLN tego dnia → punkt wypada
+          point('2026-04-03', 4.2), // EURPLN nie ma tego dnia → kurs z 04-02
         ]);
       }
       if (ticker === 'EURPLN=X') {
@@ -176,7 +176,11 @@ describe('GET /prices/fx-pair-history', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as FxPairHistoryResponse;
     expect(body.currency).toBe('EUR');
-    expect(body.points).toEqual([point('2026-04-01', 0.8), point('2026-04-02', 1)]);
+    expect(body.points).toEqual([
+      point('2026-04-01', 0.8),
+      point('2026-04-02', 1),
+      point('2026-04-03', 1),
+    ]);
     // Zakres od wymiany EUR→USD IBKR: 2026-04-20 − 30 dni = 2026-03-21
     expect(fetchYahooHistory).toHaveBeenCalledWith('USDPLN=X', '2026-03-21');
     expect(fetchYahooHistory).toHaveBeenCalledWith('EURPLN=X', '2026-03-21');

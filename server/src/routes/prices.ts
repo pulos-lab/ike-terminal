@@ -15,6 +15,7 @@ import { getAllTickers, getTickerByIsin } from '../db/ticker-map-repo.js';
 import { getTransactionsByIsin } from '../db/transactions-repo.js';
 import { getAllOperations } from '../db/operations-repo.js';
 import { extractFxExchanges } from '../services/portfolio-engine.js';
+import { crossRateSeries } from '../services/fx-cross-rate.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { mapWithConcurrency } from '../services/concurrency.js';
 
@@ -145,9 +146,10 @@ const FX_CHART_PAIRS: Record<FxChartPair, { currencies: [string, string]; quoteI
 // GET /api/prices/fx-pair-history?pair=USDPLN|EURPLN|USDEUR[&full=1] — historia
 // kursu pary walutowej (wykres w zakładce Waluty z markerami wymian). Zakres: od
 // najwcześniejszej wymiany danej pary minus 30 dni bufora; bez wymian — 1 rok;
-// full=1 — pełna dostępna historia. USDEUR = iloraz USDPLN/EURPLN per data
-// (Yahoo ma parę USDEUR=X, ale liczymy z par PLN-owych: spójność z kaflem
-// USD/EUR na stronie + obie serie i tak siedzą w cache).
+// full=1 — pełna dostępna historia. USDEUR = iloraz USDPLN/EURPLN (Yahoo ma parę
+// USDEUR=X, ale liczymy z par PLN-owych: spójność z kaflem USD/EUR na stronie +
+// obie serie i tak siedzą w cache) — składanie z forward fillem w
+// `crossRateSeries`, bo nogi cache'ują się niezależnie.
 router.get(
   '/fx-pair-history',
   asyncHandler(async (req, res) => {
@@ -186,14 +188,7 @@ router.get(
         fetchYahooHistory('USDPLN=X', startDate),
         fetchYahooHistory('EURPLN=X', startDate),
       ]);
-      const eurByDate = new Map(eurPln.map((p) => [p.date, p.close]));
-      points = [];
-      for (const p of usdPln) {
-        const eur = eurByDate.get(p.date);
-        if (eur && eur > 0 && p.close > 0) {
-          points.push({ date: p.date, close: p.close / eur });
-        }
-      }
+      points = crossRateSeries(usdPln, eurPln);
     } else {
       points = await fetchYahooHistory(`${pair}=X`, startDate);
     }
