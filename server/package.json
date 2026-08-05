@@ -13,6 +13,7 @@
     "compare:generic": "tsx scripts/compare-generic-import.ts",
     "check:spinoff-sources": "tsx scripts/check-spinoff-sources.ts",
     "check:biznesradar": "tsx scripts/check-biznesradar.ts",
+    "check:batch-quotes": "tsx scripts/check-batch-quotes.ts",
     "fix:nc": "tsx src/scripts/fix-nc-misidentification.ts",
     "fix:auto-dividend-tax": "tsx src/scripts/fix-auto-dividend-tax.ts",
     "fix:xtb-interest-subkind": "tsx src/scripts/fix-xtb-interest-subkind.ts",

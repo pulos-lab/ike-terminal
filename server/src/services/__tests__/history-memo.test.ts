@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { computePortfolioHistoryMemoized, clearHistoryMemo } from '../history-memo.js';
+import {
+  computePortfolioHistoryMemoized,
+  clearHistoryMemo,
+  getHistoryMemoSize,
+} from '../history-memo.js';
 import { bumpPortfolioDataVersion } from '../../db/data-version.js';
 import type { computePortfolioHistory } from '../portfolio-engine.js';
 import type { TickerMapEntry } from 'shared';
@@ -134,16 +138,37 @@ describe('computePortfolioHistoryMemoized', () => {
     const pid = freshPid();
     const compute = makeComputeSpy();
 
-    // Wypchnij pierwszy wpis poza limit (MAX_MEMO_ENTRIES = 8)
-    for (let i = 0; i < 9; i++) {
+    // Wypchnij pierwszy wpis poza limit (MAX_MEMO_ENTRIES = 24)
+    for (let i = 0; i < 25; i++) {
       await call(pid, compute, `BENCH_${i}`);
     }
-    expect(compute).toHaveBeenCalledTimes(9);
+    expect(compute).toHaveBeenCalledTimes(25);
 
-    // BENCH_0 wyleciał z cache → recompute; BENCH_8 wciąż jest → hit
+    // BENCH_0 wyleciał z cache → recompute; BENCH_24 wciąż jest → hit
     await call(pid, compute, 'BENCH_0');
-    expect(compute).toHaveBeenCalledTimes(10);
-    await call(pid, compute, 'BENCH_8');
-    expect(compute).toHaveBeenCalledTimes(10);
+    expect(compute).toHaveBeenCalledTimes(26);
+    await call(pid, compute, 'BENCH_24');
+    expect(compute).toHaveBeenCalledTimes(26);
+  });
+
+  it('wpisy z poprzedniego dnia są usuwane, a nie zajmują slotów LRU', async () => {
+    const pid = freshPid();
+    const compute = makeComputeSpy();
+
+    // Wpisy „wczorajsze": klucz zawiera dzień kalendarzowy, więc podmiana zegara
+    // na wczoraj tworzy wpisy, których nikt już nie odczyta.
+    const realNow = Date.now;
+    const yesterday = realNow() - 86_400_000;
+    Date.now = () => yesterday;
+    vi.setSystemTime(new Date(yesterday));
+    for (let i = 0; i < 5; i++) await call(pid, compute, `OLD_${i}`);
+    expect(compute).toHaveBeenCalledTimes(5);
+
+    // Powrót do dziś — pierwszy zapis czyści wczorajszy balast.
+    vi.useRealTimers();
+    Date.now = realNow;
+    await call(pid, compute, 'TODAY');
+    expect(compute).toHaveBeenCalledTimes(6);
+    expect(getHistoryMemoSize()).toBe(1);
   });
 });

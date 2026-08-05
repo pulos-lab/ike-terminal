@@ -3,7 +3,8 @@ import type { BenchmarkKey, PortfolioShare } from 'shared';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { getShareByToken, deleteShareForPortfolio } from '../db/share-repo.js';
 import { getPortfolio } from '../db/portfolio-registry.js';
-import { buildHistoryView, buildPositionsView } from '../services/portfolio-views.js';
+import { buildHistoryView } from '../services/portfolio-views.js';
+import { buildPositionsViewMemoized } from '../services/positions-memo.js';
 import { toPublicHistory, toPublicPositions } from '../services/share-redaction.js';
 
 /**
@@ -74,7 +75,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const { share } = res.locals as unknown as ShareLocals;
     if (share.scope !== 'chart_positions') return res.status(404).json(NOT_FOUND);
-    const view = await buildPositionsView(share.portfolioId);
+    const view = await buildPositionsViewMemoized(share.portfolioId);
     res.json(toPublicPositions(view, share.showAmounts));
   }),
 );

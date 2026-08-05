@@ -3,6 +3,7 @@ import { getAllTickers } from '../db/ticker-map-repo.js';
 import type { TickerSearchResult } from 'shared';
 import { stripTickerSuffix } from './stooq-utils.js';
 import { getYahooAuth } from './yahoo-auth.js';
+import { detectYahooBlock, getYahooGuard, withYahooLimit } from './yahoo-guard.js';
 import { getBrCatalogService } from './biznesradar-catalog.js';
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
@@ -22,13 +23,19 @@ export async function searchYahoo(query: string): Promise<TickerSearchResult[]> 
     });
     if (auth?.crumb) params.set('crumb', auth.crumb);
     const url = `https://query2.finance.yahoo.com/v1/finance/search?${params}`;
-    const resp = await fetch(url, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        ...(auth?.cookies ? { Cookie: auth.cookies } : {}),
-      },
-    });
-    if (!resp.ok) return [];
+    const resp = await withYahooLimit(() =>
+      fetch(url, {
+        headers: {
+          'User-Agent': USER_AGENT,
+          ...(auth?.cookies ? { Cookie: auth.cookies } : {}),
+        },
+      }),
+    );
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      if (detectYahooBlock(resp.status, body)) getYahooGuard().registerBlock();
+      return [];
+    }
     const json = await resp.json();
     const quotes: any[] = json?.quotes || [];
     return quotes
@@ -274,13 +281,19 @@ export async function fetchYahooTickerName(symbol: string): Promise<string | nul
     });
     if (auth?.crumb) params.set('crumb', auth.crumb);
     const url = `https://query2.finance.yahoo.com/v1/finance/search?${params}`;
-    const resp = await fetch(url, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        ...(auth?.cookies ? { Cookie: auth.cookies } : {}),
-      },
-    });
-    if (!resp.ok) return null;
+    const resp = await withYahooLimit(() =>
+      fetch(url, {
+        headers: {
+          'User-Agent': USER_AGENT,
+          ...(auth?.cookies ? { Cookie: auth.cookies } : {}),
+        },
+      }),
+    );
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      if (detectYahooBlock(resp.status, body)) getYahooGuard().registerBlock();
+      return null;
+    }
     const json = await resp.json();
     const quotes: any[] = json?.quotes || [];
     const upper = symbol.toUpperCase();

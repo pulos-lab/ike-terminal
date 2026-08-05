@@ -26,6 +26,7 @@ import {
 } from './history-cache.js';
 import { parseNumber } from '../parsers/utils.js';
 import { detectBiznesradarBlock, getBiznesradarGuard } from './biznesradar-guard.js';
+import { getLiveQuoteStore } from './live-quote-store.js';
 
 // Re-export dla zastanych importów (testy, skrypty) — definicja przeniesiona
 // do lekkiego biznesradar-guard.ts, żeby katalog/kalendarz nie ciągnęły tego modułu.
@@ -111,6 +112,10 @@ export async function fetchBiznesradarPrice(ticker: string): Promise<number | nu
       const price = parseBiznesradarPrice(html);
       if (price != null) {
         guard.registerSuccess(`live:${symbol}`); // realna cena = źródło żyje
+        // Write-through: NC też ma przetrwać restart procesu i odcięcie źródła.
+        // Kurs zapisujemy w konwencji notowania (Catalyst: % nominału) — mnożnik
+        // nakłada dopiero silnik, tak samo jak przy odczycie z cache'u.
+        getLiveQuoteStore().upsert([{ ticker, price, currency: 'PLN', source: 'biznesradar' }]);
       } else {
         // 200 OK bez kursu = kandydat na zmianę markupu (np. przemianowana klasa
         // q_ch_act); pojedynczy ticker nie alarmuje — dopiero seria różnych.

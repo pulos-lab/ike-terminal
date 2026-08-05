@@ -22,6 +22,7 @@ import { getSpinOffs } from '../db/spin-offs-repo.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { invalidateCachedPrices } from './history-cache.js';
 import { fetchFxRate } from './yahoo-finance.js';
+import { summarizeQuoteFreshness } from './yahoo-quotes.js';
 import { riskFreeRate } from './risk-free-rate.js';
 import { resolveSector } from './sector-resolver.js';
 import {
@@ -423,6 +424,11 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
 
   const baseCurrency = detectBaseCurrency(operations);
 
+  // Świeżość notowań, na których policzono ten widok — czysty odczyt z cache'u
+  // (wszystko, co miało być pobrane, jest już na miejscu). Stąd klient bierze
+  // tempo odpytywania, zamiast pytać co 15 min niezależnie od stanu rynku.
+  const freshness = summarizeQuoteFreshness(positions.map((p) => p.ticker));
+
   return {
     positions,
     cashPositions,
@@ -439,5 +445,10 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     // odświeżanie źródeł chodzi z timerów w index.ts.
     upcomingEarnings: getEarningsCalendarService().getUpcomingForPositions(positions),
     baseCurrency,
+    quotes: {
+      asOf: freshness.asOf,
+      nextRefreshAt: new Date(Date.now() + freshness.ttlSeconds * 1000).toISOString(),
+      marketOpen: freshness.marketOpen,
+    },
   };
 }

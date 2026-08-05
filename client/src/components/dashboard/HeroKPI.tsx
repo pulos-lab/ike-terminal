@@ -1,6 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api-client';
-import { QUERY_KEYS } from '@/lib/query-keys';
+import { useMetricsQuery } from '@/lib/use-metrics-query';
 import { formatCurrency, formatPercent, formatNumber } from '@/lib/formatters';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -10,10 +8,7 @@ interface HeroKPIProps {
 }
 
 export function HeroKPI({ history }: HeroKPIProps) {
-  const { data } = useQuery({
-    queryKey: QUERY_KEYS.metrics,
-    queryFn: api.getMetrics,
-  });
+  const { data } = useMetricsQuery();
 
   if (!data) {
     return (

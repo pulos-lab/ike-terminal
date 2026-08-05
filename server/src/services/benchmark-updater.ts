@@ -8,6 +8,7 @@
  */
 import { getLastCachedDate, storeHistoricalPrices } from './history-cache.js';
 import { STOOQ_USER_AGENT, BENCHMARK_YAHOO_FALLBACK, parseStooqLiveCsv } from './stooq-utils.js';
+import { detectYahooBlock, getYahooGuard, withYahooLimit } from './yahoo-guard.js';
 
 const BENCHMARK_TICKERS = ['wig', 'wig20', 'mwig40', 'swig80'];
 const FETCH_TIMEOUT = 10_000;
@@ -36,11 +37,21 @@ async function fetchYahooLiveClose(
   yahooTicker: string,
 ): Promise<{ date: string; close: number } | null> {
   try {
+    // Ten sam limiter/bezpiecznik co reszta ścieżek Yahoo — limit jest per IP,
+    // nie per moduł, więc benchmarki nie mogą go omijać bokiem.
+    if (getYahooGuard().isBlocked()) return null;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1d&range=1d`;
-    const response = await fetch(url, {
-      headers: { 'User-Agent': STOOQ_USER_AGENT },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT),
-    });
+    const response = await withYahooLimit(() =>
+      fetch(url, {
+        headers: { 'User-Agent': STOOQ_USER_AGENT },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
+      }),
+    );
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      if (detectYahooBlock(response.status, body)) getYahooGuard().registerBlock();
+      return null;
+    }
     const json = (await response.json()) as any;
 
     const result = json.chart?.result?.[0];

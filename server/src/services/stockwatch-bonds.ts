@@ -18,6 +18,7 @@
 import * as cheerio from 'cheerio';
 import { getCached, setCached } from './price-cache.js';
 import { config } from '../config.js';
+import { getLiveQuoteStore } from './live-quote-store.js';
 
 const FETCH_TIMEOUT = 15_000;
 const USER_AGENT =
@@ -170,7 +171,22 @@ export async function fetchStockwatchBondPrice(
   const symbol = ticker.split('.')[0].toUpperCase().trim();
   if (!symbol) return null;
   const quotes = await fetchStockwatchBondQuotes();
-  return quotes.get(symbol) ?? null;
+  const quote = quotes.get(symbol) ?? null;
+  // Seria bez transakcji ma price=null — nie ma czego zapisywać.
+  if (quote?.price != null) {
+    // Write-through pod tickerem, jakim woła silnik (z sufiksem) — żeby odczyt
+    // fallbackowy trafiał tym samym kluczem. Kurs w % nominału, jak w cache'u.
+    getLiveQuoteStore().upsert([
+      {
+        ticker,
+        price: quote.price,
+        currency: 'PLN',
+        previousClose: quote.referencePrice ?? null,
+        source: 'stockwatch',
+      },
+    ]);
+  }
+  return quote;
 }
 
 /** Reset stanu bezpiecznika i in-flight — wyłącznie dla testów. */

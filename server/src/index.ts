@@ -31,6 +31,10 @@ import { backfillTickerNamesForPortfolio } from './services/ticker-name-backfill
 import { scanAllPortfolios } from './services/dividend-scanner.js';
 import { scanAllInterest } from './services/interest-scanner.js';
 import { getBiznesradarGuard } from './services/biznesradar-guard.js';
+import { getYahooGuard } from './services/yahoo-guard.js';
+import { getCacheStats } from './services/price-cache.js';
+import { getHistoryMemoSize } from './services/history-memo.js';
+import { getPositionsMemoSize } from './services/positions-memo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -158,7 +162,12 @@ app.get('/api/health', (_req, res) => {
   // `curl -sf` i nie może oblewać przez awarię zewnętrznego serwisu).
   let sources: Record<string, unknown>;
   try {
-    sources = { biznesradar: getBiznesradarGuard().getState() };
+    sources = {
+      biznesradar: getBiznesradarGuard().getState(),
+      // Yahoo dostał guard razem z batchem cen — do tej pory było to jedyne
+      // źródło bez bezpiecznika, więc jego odcięcie nie było nigdzie widoczne.
+      yahoo: getYahooGuard().getState(),
+    };
   } catch (err) {
     console.error('[health] odczyt stanu guarda źródeł nie powiódł się:', err);
     sources = { biznesradar: { error: 'unavailable' } };
@@ -176,7 +185,9 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/benchmark-diag', async (_req, res) => {
   const { loadHistoricalPrices, getLastCachedDate } = await import('./services/history-cache.js');
   const tickers = ['wig', 'wig20', 'mwig40', 'swig80'];
-  const result: Record<string, any> = { dataDir: config.dataDir };
+  // Bez `dataDir` — endpoint jest publiczny, a ścieżka na dysku serwera nie ma
+  // nic wspólnego z diagnostyką pokrycia benchmarków.
+  const result: Record<string, any> = {};
   for (const t of tickers) {
     const last = getLastCachedDate(t);
     const data = loadHistoricalPrices(t);
@@ -230,6 +241,18 @@ app.use(
   importRouter,
 );
 app.use('/api/bug-reports', requireAuth, bugReportsRouter);
+// Diagnostyka cache'u — ADMIN, nie publicznie: rozmiar cache'u i memo to
+// informacja o obciążeniu instancji, a nie o stanie usługi dla użytkownika.
+// Świadomie BEZ `maxKeys` w NodeCache (rzuca ECACHEFULL z set()); najpierw
+// pomiar tutaj, decyzja o limicie po zobaczeniu realnej kardynalności.
+app.get('/api/admin/cache-stats', requireAuth, requireAdmin, (_req, res) => {
+  res.json({
+    priceCache: getCacheStats(),
+    historyMemoEntries: getHistoryMemoSize(),
+    positionsMemoEntries: getPositionsMemoSize(),
+  });
+});
+
 app.use('/api/admin/import-profiles', requireAuth, requireAdmin, adminImportProfilesRouter);
 app.use('/api/admin/type-aliases', requireAuth, requireAdmin, adminTypeAliasesRouter);
 app.use('/api/share', requireAuth, portfolioMiddleware, shareRouter);

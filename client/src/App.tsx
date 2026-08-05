@@ -31,7 +31,14 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 15 * 60 * 1000,
-      refetchInterval: 15 * 60 * 1000,
+      // Globalnego `refetchInterval` tu NIE ma świadomie. Odpalał się co 15 min
+      // dla KAŻDEGO query — także tych bez związku z cenami (transakcje,
+      // prowizje, aliasy typów) — i to niezależnie od `staleTime`, więc
+      // `staleTime: 1h` na dashboardzie faktycznie nic nie spowalniało.
+      // Serwer trzymał ceny 1h, więc 3 z 4 odpytań zwracały to samo, płacąc
+      // pełnym przeliczeniem. Polling jest teraz opt-in per widok i podąża za
+      // `quotes.nextRefreshAt` z serwera (patrz PortfolioPage).
+      refetchOnWindowFocus: true,
       retry: 2,
     },
   },
