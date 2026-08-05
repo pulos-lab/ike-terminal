@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { DEFAULT_FX_PLN } from 'shared';
 import type { InstrumentHistoryResponse, LivePrice, LivePricesResponse } from 'shared';
 import { fetchYahooPrice, fetchFxRate, fetchYahooHistory } from '../services/yahoo-finance.js';
+import { primeYahooQuotes } from '../services/yahoo-quotes.js';
 import { fetchStooqPrice, fetchStooqHistory } from '../services/stooq.js';
 import { fetchBiznesradarPrice, fetchBiznesradarHistory } from '../services/biznesradar.js';
 import { fetchStockwatchBondPrice } from '../services/stockwatch-bonds.js';
@@ -18,6 +19,19 @@ router.get(
   asyncHandler(async (req, res) => {
     const tickers = getAllTickers(req.portfolioId);
     const prices: Record<string, LivePrice> = {};
+
+    // Jedno żądanie zbiorcze zamiast N pojedynczych: wypełnia ten sam cache,
+    // z którego czytają fetchYahooPrice i fetchFxRate niżej. NC/CATALYST poza
+    // batchem — Yahoo ich nie kwotuje.
+    await primeYahooQuotes([
+      ...tickers
+        .filter((e) => e.exchange !== 'NC' && e.exchange !== 'CATALYST')
+        .map((e) => e.ticker),
+      'USDPLN=X',
+      'CADPLN=X',
+      'EURPLN=X',
+      'GBPPLN=X',
+    ]);
 
     await mapWithConcurrency(tickers, 5, async (entry) => {
       if (entry.exchange === 'NC') {

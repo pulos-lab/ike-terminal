@@ -96,6 +96,7 @@ import {
   loadSplitsForEngine,
   loadSpinOffsForEngine,
 } from '../services/portfolio-views.js';
+import { buildPositionsViewMemoized } from '../services/positions-memo.js';
 import { computePortfolioGreeks } from '../services/option-greeks.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { searchTickers, fetchYahooTickerName } from '../services/ticker-search.js';
@@ -112,7 +113,7 @@ const router = Router();
 router.get(
   '/positions',
   asyncHandler(async (req, res) => {
-    res.json(await buildPositionsView(req.portfolioId));
+    res.json(await buildPositionsViewMemoized(req.portfolioId));
   }),
 );
 

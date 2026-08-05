@@ -34,6 +34,7 @@ import {
 } from '@/lib/formatters';
 import { Eye, EyeOff, AlertTriangle, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { QuoteFreshnessLabel } from './QuoteFreshnessLabel';
 import { PortfolioDiversification } from './PortfolioDiversification';
 import { RiskReturnScatter } from './RiskReturnScatter';
 import { PortfolioOptionsCard } from './PortfolioOptionsCard';
@@ -89,10 +90,18 @@ export function PortfolioPage() {
 
   const allVisible = colVis.avgPrice && colVis.dailyChange && colVis.pl && colVis.plPct;
 
+  // Tempo odświeżania dyktuje serwer przez `quotes.nextRefreshAt` (TTL wg stanu
+  // rynku): co ~15 min w trakcie sesji, co kilka godzin po zamknięciu, praktycznie
+  // zero pollingu w weekend. Sztywne 15 min nie miało związku z tym, kiedy dane
+  // faktycznie się zmieniają.
   const { data, isLoading } = useQuery({
     queryKey: QUERY_KEYS.positions,
     queryFn: api.getPositions,
-    refetchInterval: 15 * 60 * 1000, // auto-refresh every 15 min
+    refetchInterval: (query) => {
+      const next = query.state.data?.quotes?.nextRefreshAt;
+      const ms = next ? Date.parse(next) - Date.now() : NaN;
+      return Number.isFinite(ms) ? Math.max(ms, 60_000) : 15 * 60 * 1000;
+    },
   });
 
   // Waluta bazowa portfela — PLN dla polskich/mixed, USD/EUR dla single-currency
@@ -215,6 +224,7 @@ export function PortfolioPage() {
                   )
                 </span>
               )}
+              {data?.quotes && <QuoteFreshnessLabel quotes={data.quotes} />}
             </CardTitle>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

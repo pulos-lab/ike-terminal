@@ -6,6 +6,9 @@ import {
   getFirstCachedDate,
 } from './history-cache.js';
 import { getYahooAuth, invalidateYahooAuth } from './yahoo-auth.js';
+import { detectYahooBlock, getYahooGuard, withYahooLimit } from './yahoo-guard.js';
+import { normalizeMarketState, quoteTtlSeconds, type CachedLiveQuote } from './yahoo-quotes.js';
+import { getLiveQuoteStore } from './live-quote-store.js';
 
 const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const YAHOO_V10_BASE = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary';
@@ -18,6 +21,9 @@ const FETCH_TIMEOUT = 10_000; // 10 seconds
 // ============ v10 quoteSummary ============
 
 async function yahooQuoteSummary(ticker: string, modules: string[]): Promise<any> {
+  const guard = getYahooGuard();
+  if (guard.isBlocked()) return null;
+
   const auth = await getYahooAuth();
   if (!auth) return null;
 
@@ -27,10 +33,12 @@ async function yahooQuoteSummary(ticker: string, modules: string[]): Promise<any
   });
   const url = `${YAHOO_V10_BASE}/${encodeURIComponent(ticker)}?${params}`;
 
-  const resp = await fetch(url, {
-    headers: { 'User-Agent': USER_AGENT, Cookie: auth.cookies },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT),
-  });
+  const resp = await withYahooLimit(() =>
+    fetch(url, {
+      headers: { 'User-Agent': USER_AGENT, Cookie: auth.cookies },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT),
+    }),
+  );
 
   if (resp.status === 401 || resp.status === 403) {
     // Crumb expired — refresh and retry once
@@ -43,17 +51,32 @@ async function yahooQuoteSummary(ticker: string, modules: string[]): Promise<any
       crumb: auth2.crumb,
     });
     const url2 = `${YAHOO_V10_BASE}/${encodeURIComponent(ticker)}?${params2}`;
-    const resp2 = await fetch(url2, {
-      headers: { 'User-Agent': USER_AGENT, Cookie: auth2.cookies },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT),
-    });
-    if (!resp2.ok) return null;
+    const resp2 = await withYahooLimit(() =>
+      fetch(url2, {
+        headers: { 'User-Agent': USER_AGENT, Cookie: auth2.cookies },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
+      }),
+    );
+    if (!resp2.ok) {
+      // Świeży crumb i dalej odmowa → to nie rotacja klucza, tylko odcięcie.
+      const body2 = await resp2.text().catch(() => '');
+      if (resp2.status === 401 || resp2.status === 403 || detectYahooBlock(resp2.status, body2)) {
+        guard.registerBlock();
+      }
+      return null;
+    }
     const json2 = await resp2.json();
+    guard.registerSuccess(ticker);
     return json2?.quoteSummary?.result?.[0] ?? null;
   }
 
-  if (!resp.ok) return null;
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    if (detectYahooBlock(resp.status, body)) guard.registerBlock();
+    return null;
+  }
   const json = await resp.json();
+  guard.registerSuccess(ticker);
   return json?.quoteSummary?.result?.[0] ?? null;
 }
 
@@ -207,26 +230,49 @@ export async function fetchAssetProfile(ticker: string): Promise<AssetProfile | 
 // ============ v8 Chart API ============
 
 async function yahooChart(ticker: string, params: Record<string, string>): Promise<any> {
+  const guard = getYahooGuard();
+  // Bezpiecznik otwarty → nie dobijamy Yahoo. `null` jest tu poprawnym wynikiem:
+  // to ten sam kształt, co „brak danych dla symbolu", więc wszyscy wołający już
+  // go obsługują (ceny → fallback, historia → cache/pusta seria).
+  if (guard.isBlocked()) return null;
+
   const qs = new URLSearchParams(params).toString();
   const url = `${YAHOO_BASE}/${encodeURIComponent(ticker)}?${qs}`;
-  const resp = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT) });
-  if (!resp.ok) throw new Error(`Yahoo HTTP ${resp.status}`);
+  const resp = await withYahooLimit(() =>
+    fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT) }),
+  );
+  if (!resp.ok) {
+    // Ciało czytamy TYLKO dla nie-2xx (kilkaset bajtów) — detektor odróżnia
+    // odcięcie (429/999) od zwykłego 404 nieznanego tickera.
+    const body = await resp.text().catch(() => '');
+    if (detectYahooBlock(resp.status, body)) guard.registerBlock();
+    throw new Error(`Yahoo HTTP ${resp.status}`);
+  }
   const json = await resp.json();
-  return json?.chart?.result?.[0] ?? null;
+  const result = json?.chart?.result?.[0] ?? null;
+  // 200 OK bez wyniku to zwykle nieznany/delisted symbol — dopiero wiele RÓŻNYCH
+  // tickerów bez świeżego sukcesu podnosi podejrzenie zmiany kształtu API
+  // (regułę liczy sam guard).
+  if (result) guard.registerSuccess(ticker);
+  else guard.registerParseMiss(ticker);
+  return result;
 }
 
 // In-flight request deduplication — prevents duplicate Yahoo API calls for the same ticker
-type YahooPriceResult = { price: number; currency: string; previousClose: number | null } | null;
+type YahooPriceResult = CachedLiveQuote | null;
 const inFlightPrices = new Map<string, Promise<YahooPriceResult>>();
 
 /**
- * Fetch current price from Yahoo Finance (v8 chart API)
+ * Fetch current price from Yahoo Finance (v8 chart API).
+ *
+ * Ścieżka pojedynczego tickera — po wprowadzeniu batcha (`primeYahooQuotes`)
+ * służy głównie jako FALLBACK dla symboli, których v7 nie pokrył, oraz dla
+ * wołających spoza silnika. Klucz cache'u jest wspólny z batchem, więc po
+ * prime'ie ta funkcja trafia w cache i nie rusza sieci.
  */
 export async function fetchYahooPrice(ticker: string): Promise<YahooPriceResult> {
   const cacheKey = `yahoo_live_${ticker}`;
-  const cached = getCached<{ price: number; currency: string; previousClose: number | null }>(
-    cacheKey,
-  );
+  const cached = getCached<CachedLiveQuote>(cacheKey);
   if (cached) return cached;
 
   const existing = inFlightPrices.get(ticker);
@@ -237,12 +283,19 @@ export async function fetchYahooPrice(ticker: string): Promise<YahooPriceResult>
       const result = await yahooChart(ticker, { interval: '1d', range: '1d' });
       if (!result?.meta?.regularMarketPrice) return null;
 
-      const data = {
+      // v8 chart bywa bez `marketState` — wtedy TTL spada do zachowawczej
+      // godziny (quoteTtl.unknown), czyli dotychczasowego zachowania.
+      const marketState = normalizeMarketState(result.meta.marketState);
+      const rawTime = result.meta.regularMarketTime;
+      const data: CachedLiveQuote = {
         price: result.meta.regularMarketPrice,
         currency: result.meta.currency || 'USD',
         previousClose: result.meta.chartPreviousClose ?? result.meta.previousClose ?? null,
+        marketState,
+        quoteTime: typeof rawTime === 'number' && Number.isFinite(rawTime) ? rawTime * 1000 : null,
       };
-      setCached(cacheKey, data);
+      setCached(cacheKey, data, quoteTtlSeconds(marketState));
+      getLiveQuoteStore().upsert([{ ticker, source: 'yahoo-v8', ...data }]);
       return data;
     } catch (error) {
       console.error(`Yahoo price fetch failed for ${ticker}:`, error);
@@ -354,6 +407,12 @@ async function fetchYahooHistoryUncached(
           close: closes[i],
         }))
         .filter((r): r is { date: string; close: number } => r.close != null)
+        // Słupek z DZISIAJ jest częściowy — sesja jeszcze trwa, więc `close` to
+        // cena śróddzienna, nie zamknięcie. Zapisany do price_history byłby przez
+        // regułę „ostatnia data ≤3 dni = cache świeży" serwowany jako oficjalne
+        // zamknięcie i wchodziłby w łańcuch TWR oraz na wykres. Historia bierze
+        // się z zamknięć; cena bieżąca ma własną ścieżkę (live_quotes).
+        .filter((r) => r.date < today)
         .sort((a, b) => a.date.localeCompare(b.date));
 
       if (freshData.length > 0) {

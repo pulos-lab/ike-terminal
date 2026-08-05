@@ -23,6 +23,8 @@ import {
   fetchYahooHistoryDirect,
   fetchYahooSplitEvents,
 } from './yahoo-finance.js';
+import { primeYahooQuotes } from './yahoo-quotes.js';
+import { getLiveQuoteStore } from './live-quote-store.js';
 import { fetchStooqPrice, fetchStooqHistory, fetchStooqPreviousClose } from './stooq.js';
 import { fetchBiznesradarPrice, fetchBiznesradarHistory } from './biznesradar.js';
 import { fetchStockwatchBondPrice } from './stockwatch-bonds.js';
@@ -525,6 +527,45 @@ export function computePositionMetrics(transactions: Transaction[]): PositionMet
 
 // ============ Open Positions ============
 
+/**
+ * Symbole do zbiorczego pobrania cen live (Yahoo v7) przed pętlą wyceny.
+ *
+ * Świadome wykluczenia:
+ *  - NC i CATALYST — Yahoo ich nie kwotuje (biznesradar / stockwatch); wysłanie
+ *    ich do batcha to tylko śmieci w odpowiedzi i szum w `missed`;
+ *  - ISIN-y z zerową pozycją netto — pętla i tak je pomija, a przy długiej
+ *    historii byłyby to setki zbędnych symboli.
+ *
+ * Instrumenty bazowe opcji dokładamy, bo przy braku notowania samej opcji
+ * (typowe dla Eurexu) wycena schodzi na wartość wewnętrzną z kursu bazowego.
+ * Netto-pozycja liczona jest tu zgrubnie (suma K−S), nie przez FIFO — to tylko
+ * heurystyka doboru symboli: nadmiar nic nie kosztuje (ten sam request),
+ * niedomiar spada na starą ścieżkę per-ticker.
+ */
+export function collectYahooLiveSymbols(
+  byIsin: Map<string, Transaction[]>,
+  tickerMap: Map<string, TickerMapEntry>,
+  optionContracts?: Map<string, OptionContract>,
+): string[] {
+  const symbols = new Set<string>();
+  for (const [isin, txs] of byIsin) {
+    const net = txs.reduce((sum, tx) => sum + (tx.side === 'K' ? tx.quantity : -tx.quantity), 0);
+    if (Math.abs(net) < EPSILON) continue;
+
+    const entry = tickerMap.get(isin);
+    if (!entry?.ticker) continue;
+    if (entry.exchange === 'NC' || entry.exchange === 'CATALYST') continue;
+    symbols.add(entry.ticker);
+
+    if (txs[0]?.category === 'option') {
+      const underlying =
+        optionContracts?.get(isin)?.underlying ?? parseOccTicker(entry.ticker)?.underlying;
+      if (underlying) symbols.add(underlying);
+    }
+  }
+  return [...symbols];
+}
+
 export async function computeOpenPositions(
   transactions: Transaction[],
   tickerMap: Map<string, TickerMapEntry>,
@@ -624,6 +665,7 @@ export async function computeOpenPositions(
 
   // Get FX rates — collect all currencies from ticker map and transactions
   const liveCurrencies = new Set<string>();
+  // (zbierane niżej; prime cen live czeka na komplet walut, patrz primeYahooQuotes)
   for (const entry of tickerMap.values()) {
     if (entry.currency) {
       const u = entry.currency.toUpperCase();
@@ -635,6 +677,22 @@ export async function computeOpenPositions(
     liveCurrencies.add(u === 'GBX' ? 'GBP' : u);
   }
   liveCurrencies.delete('PLN');
+
+  // ── Prime cen live jednym batchem (Yahoo v7) ──────────────────────────────
+  // Pętla wyceny poniżej jest sekwencyjna, więc na zimnym cache robiła N
+  // szeregowych round-tripów do Yahoo. Jedno żądanie zbiorcze wypełnia ten sam
+  // klucz cache'u, z którego czyta fetchYahooPrice — pętla trafia w cache i nie
+  // rusza sieci. Symbole nieobsłużone przez batch spadają na starą ścieżkę v8
+  // automatycznie (miss w cache), więc tutaj nie trzeba nic z nimi robić.
+  //
+  // Pary walutowe dokładamy do TEGO SAMEGO żądania (i tylko wtedy, gdy caller
+  // nie wstrzyknął gotowych kursów) — inaczej fetchFxRate poniżej zrobiłby
+  // osobny strzał po każdą walutę.
+  await primeYahooQuotes([
+    ...collectYahooLiveSymbols(byIsin, tickerMap, opts?.optionContracts),
+    ...(fxRatesOverride ? [] : [...liveCurrencies].map((cur) => `${cur}PLN=X`)),
+  ]);
+
   const fxRates: Record<string, number> = { PLN: 1 };
   const defaultFx = DEFAULT_FX_PLN;
   if (fxRatesOverride) {
@@ -761,6 +819,8 @@ export async function computeOpenPositions(
     let currentPrice: number | null = null;
     let previousClose: number | null = null;
     let priceManual = false;
+    /** Kiedy pobrano cenę, gdy pochodzi ze store'u — UI pokazuje „kurs z …". */
+    let priceAsOf: string | undefined;
     if (entry.exchange === 'NC') {
       // NC: biznesradar główne źródło (Stooq live CSV padł ~03.2026), Stooq zapas —
       // ta sama kolejność co /api/prices/live. Yahoo nie listuje NC.
@@ -805,6 +865,19 @@ export async function computeOpenPositions(
           currentPrice = optionIntrinsicValue(parsed.optionType, yp.price, parsed.strike);
           priceManual = true;
         }
+      }
+    }
+    // Przedostatnia deska: ostatnia cena, jaką realnie widzieliśmy z rynku
+    // (przeżywa restart procesu i odcięcie źródła). Znacznie bliżej prawdy niż
+    // cena sprzed miesięcy z transakcji — ale tylko dopóki jest świeża, patrz
+    // limit wieku w live-quote-store.
+    if (currentPrice === null) {
+      const stored = getLiveQuoteStore().get(entry.ticker);
+      if (stored) {
+        currentPrice = stored.price;
+        previousClose = stored.previousClose;
+        priceManual = true;
+        priceAsOf = stored.fetchedAt;
       }
     }
     if (currentPrice === null) {
@@ -905,6 +978,7 @@ export async function computeOpenPositions(
       dailyChangePct,
       category,
       priceManual: priceManual || undefined,
+      priceAsOf,
       maturityPassed,
       optionMeta: optionContract
         ? {

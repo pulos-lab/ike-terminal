@@ -1,6 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api-client';
-import { QUERY_KEYS } from '@/lib/query-keys';
+import { useMetricsQuery } from '@/lib/use-metrics-query';
 import { plColor } from '@/components/ui/pl-badge';
 import { formatCurrency, formatNumber, formatPercent, formatPLN } from '@/lib/formatters';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -8,10 +6,7 @@ import { TrendingUp, TrendingDown, DollarSign, Target, ArrowLeftRight, Gauge } f
 import type { FxImpact, LeverageInfo } from 'shared';
 
 export function MetricsBar() {
-  const { data } = useQuery({
-    queryKey: QUERY_KEYS.metrics,
-    queryFn: api.getMetrics,
-  });
+  const { data } = useMetricsQuery();
 
   if (!data)
     return (

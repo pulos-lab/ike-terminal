@@ -249,6 +249,12 @@ export interface Position {
   /** true when price comes from last transaction, not live market data */
   priceManual?: boolean;
   /**
+   * ISO — moment pobrania ceny, gdy pochodzi z zapisanego notowania (ostatnia
+   * cena widziana z rynku, użyta bo źródło milczy). Pozwala UI powiedzieć
+   * „kurs z 01.08 17:05" zamiast samego „ręczna". Brak pola = cena live.
+   */
+  priceAsOf?: string;
+  /**
    * Obligacja po terminie wykupu (maturityDate z bond-map < dziś) a pozycja wciąż otwarta —
    * najpewniej brakuje operacji wykupu w zaimportowanych plikach. UI pokazuje ostrzeżenie.
    */
@@ -1049,6 +1055,20 @@ export interface PortfolioPositionsResponse {
   upcomingEarnings: UpcomingEarnings[];
   /** Waluta bazowa portfela (np. 'PLN' dla Bossa, 'USD' dla XTB USD sub-account). */
   baseCurrency: string;
+  /**
+   * Świeżość notowań, na których policzono ten widok. Klient używa
+   * `nextRefreshAt` jako tempa odpytywania (zamiast sztywnego interwału, który
+   * nie miał związku z TTL serwera), a `asOf`/`marketOpen` do nagłówka
+   * „Kursy z 17:32 · rynek zamknięty".
+   */
+  quotes?: {
+    /** ISO najświeższego notowania w zestawie; null gdy źródła nie podały czasu. */
+    asOf: string | null;
+    /** ISO — najwcześniejszy moment, w którym cokolwiek może się zmienić. */
+    nextRefreshAt: string;
+    /** Czy którykolwiek rynek portfela jest w trakcie sesji. */
+    marketOpen: boolean;
+  };
 }
 
 // ============ Option Greeks ============

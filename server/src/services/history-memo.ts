@@ -20,7 +20,9 @@
  * - cache trzyma Promise (nie wynik) — równoległe requesty dashboardu
  *   współdzielą jedno przeliczenie w locie; odrzucony Promise jest usuwany.
  * - pojemność: MAX_MEMO_ENTRIES wpisów LRU-ish per proces (każdy benchmark /
- *   portfel to osobny wpis).
+ *   portfel to osobny wpis). Wpisy z poprzednich dni są usuwane aktywnie
+ *   (evictStaleDays) — inaczej wczorajszy balast zajmuje sloty LRU i wypycha
+ *   żywe portfele przy kilku najemcach naraz.
  *
  * Memo obsługuje wyłącznie pełny zakres dat (startDate/endDate = undefined) —
  * dokładnie tak wołają je endpointy dashboardu (klient sam filtruje zakres).
@@ -39,7 +41,11 @@ import { getPortfolioDataVersion } from '../db/data-version.js';
 type ComputeHistoryFn = typeof computePortfolioHistory;
 type HistoryResult = Awaited<ReturnType<ComputeHistoryFn>>;
 
-const MAX_MEMO_ENTRIES = 8;
+// Klucz zawiera (portfolioId × benchmark), więc 8 wpisów starczało na ~4 portfele
+// przy dwóch benchmarkach — na produkcji multi-tenant memo thrashowało i każdy
+// dashboard liczył od zera. 24 wpisy + sweep starych dni mieszczą kilkunastu
+// aktywnych użytkowników bez istotnego kosztu pamięci.
+const MAX_MEMO_ENTRIES = 24;
 
 /**
  * Wersja logiki silnika w kluczu memo — podbij przy zmianie SPOSOBU liczenia historii
@@ -64,6 +70,25 @@ const memo = new Map<string, Promise<HistoryResult>>();
 /** Wyczyść cały cache memo (testy / diagnostyka). */
 export function clearHistoryMemo(): void {
   memo.clear();
+}
+
+/** Liczba wpisów w memo — do diagnostyki adminowej. */
+export function getHistoryMemoSize(): number {
+  return memo.size;
+}
+
+/**
+ * Usuń wpisy z innego dnia kalendarzowego niż `today`.
+ *
+ * Dzień jest ostatnim segmentem klucza, więc wpisy z wczoraj są jednoznacznie
+ * rozpoznawalne. Są bezużyteczne (nikt ich już nie odczyta — klucz nowego
+ * requestu zawiera dzisiejszą datę), a zajmują sloty LRU: bez tego sweepu
+ * podniesienie MAX_MEMO_ENTRIES tylko przedłuża życie balastu.
+ */
+function evictStaleDays(today: string): void {
+  for (const key of memo.keys()) {
+    if (!key.endsWith(`|${today}`)) memo.delete(key);
+  }
 }
 
 /**
@@ -127,6 +152,10 @@ export function computePortfolioHistoryMemoized(
   });
 
   memo.set(key, promise);
+
+  // Najpierw balast z poprzednich dni, dopiero potem LRU — inaczej wczorajsze
+  // wpisy wypychałyby świeże serie innych portfeli.
+  evictStaleDays(today);
 
   // Eviction najstarszych wpisów (pierwsze klucze w iteracji Mapy)
   while (memo.size > MAX_MEMO_ENTRIES) {

@@ -15,6 +15,7 @@ import {
   stripTickerSuffix,
 } from './stooq-utils.js';
 import { createConcurrencyLimiter } from './concurrency.js';
+import { detectYahooBlock, getYahooGuard, withYahooLimit } from './yahoo-guard.js';
 
 const withStooqLimit = createConcurrencyLimiter(3);
 const FETCH_TIMEOUT = 15_000; // 15 seconds (Stooq can be slow)
@@ -176,12 +177,20 @@ async function fetchLiveClose(
   if (!yahooTicker) return null;
 
   try {
+    // Wspólny limiter/bezpiecznik Yahoo — limit jest per IP, nie per moduł.
+    if (getYahooGuard().isBlocked()) return null;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1d&range=1d`;
-    const response = await fetch(url, {
-      headers: { 'User-Agent': STOOQ_USER_AGENT },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT),
-    });
-    if (!response.ok) return null;
+    const response = await withYahooLimit(() =>
+      fetch(url, {
+        headers: { 'User-Agent': STOOQ_USER_AGENT },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
+      }),
+    );
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      if (detectYahooBlock(response.status, body)) getYahooGuard().registerBlock();
+      return null;
+    }
     const json = (await response.json()) as any;
     const chartResult = json.chart?.result?.[0];
     if (!chartResult?.timestamp?.length) return null;
