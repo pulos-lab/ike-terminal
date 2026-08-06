@@ -6,6 +6,16 @@ let cachedCrumb: string | null = null;
 let cachedCookies: string | null = null;
 let crumbExpiresAt = 0;
 
+/**
+ * Crumb to krótki token bez białych znaków (np. `4rRSDBSpuMv`, bywa z `/`).
+ * Strona zgody, challenge albo pusta odpowiedź NIM NIE JEST — a zapisana jako
+ * crumb zatruwa wszystkie ścieżki z autoryzacją na 6 h.
+ */
+export function isPlausibleCrumb(value: string): boolean {
+  const token = value.trim();
+  return token.length > 0 && token.length <= 64 && !/[\s<>]/.test(token);
+}
+
 async function refreshYahooCrumb(): Promise<void> {
   try {
     const resp1 = await fetch('https://fc.yahoo.com/', {
@@ -29,7 +39,17 @@ async function refreshYahooCrumb(): Promise<void> {
       console.warn(`[yahoo-auth] Crumb fetch failed: HTTP ${resp2.status}`);
       return;
     }
-    cachedCrumb = await resp2.text();
+    const body = (await resp2.text()).trim();
+    if (!isPlausibleCrumb(body)) {
+      // Yahoo bywa oddaje 200 ze stroną zgody/challenge zamiast tokenu. Zapisany
+      // „crumb" w postaci HTML-a żyłby 6 h, a v7 odpowiadałby przez ten czas
+      // kopertą Unauthorized przy HTTP 200 — czyli cichą pustką w cenach.
+      console.warn(
+        `[yahoo-auth] Crumb endpoint zwrócił 200, ale treść nie wygląda na token (${body.length} znaków)`,
+      );
+      return;
+    }
+    cachedCrumb = body;
     crumbExpiresAt = Date.now() + CRUMB_TTL;
     console.log('[yahoo-auth] Crumb refreshed successfully');
   } catch (error) {
