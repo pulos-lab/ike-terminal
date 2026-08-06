@@ -31,6 +31,19 @@ import { createSourceGuard, createMemoryGuardStore } from '../source-guard.js';
 import { invalidateYahooAuth } from '../yahoo-auth.js';
 import { config } from '../../config.js';
 
+/**
+ * Moment w czasie warszawskim (lato = CEST, UTC+2) jako epoch ms.
+ *
+ * Każdy test dotykający TTL MUSI podać zegar jawnie: poza sesją TTL jest
+ * klamrowany do najbliższego otwarcia rynku, więc na realnym `Date.now()` wynik
+ * zależy od pory, o której odpalono zestaw (i przechodzi tylko w części doby).
+ */
+function warsaw(hh: number, mm = 0): number {
+  return Date.parse(
+    `2026-08-05T${String(hh - 2).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00Z`,
+  );
+}
+
 /** Odpowiedź v7 1:1 z kształtem Yahoo: mix stanów rynku, GBp, para FX. */
 const QUOTE_JSON = {
   quoteResponse: {
@@ -212,13 +225,6 @@ describe('parseQuoteEnvelope — status koperty', () => {
 });
 
 describe('quoteTtlSeconds', () => {
-  /** Moment w czasie warszawskim (lato = CEST, UTC+2). */
-  function warsaw(hh: number, mm = 0): number {
-    return Date.parse(
-      `2026-08-05T${String(hh - 2).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00Z`,
-    );
-  }
-
   it('sesja krótko, pre/post średnio, nieznany stan zachowawczo', () => {
     // 12:00 CEST: do najbliższego otwarcia (15:30 = NYSE) daleko, więc klamra
     // nie ogranicza i widać wartości bazowe.
@@ -410,6 +416,14 @@ describe('primeYahooQuotes', () => {
 describe('summarizeQuoteFreshness', () => {
   const HOUR = 3_600_000;
 
+  /**
+   * 23:00 CEST — po zamknięciu obu rynków i ponad 6 h przed najbliższym
+   * otwarciem, więc klamra nie ucina TTL i widać wartości bazowe. Zegar jest
+   * podawany jawnie: na `Date.now()` te asercje przechodziły tylko w części doby
+   * (poza oknem ~15:30–3:00 klamra do otwarcia NYSE/GPW zwracała mniej niż 6 h).
+   */
+  const NOW = warsaw(23);
+
   function seed(ticker: string, marketState: string | null, quoteTime: number | null) {
     testCache.set(`yahoo_live_${ticker}`, {
       price: 1,
@@ -421,35 +435,41 @@ describe('summarizeQuoteFreshness', () => {
   }
 
   it('asOf bierze NAJŚWIEŻSZE notowanie — instrument o rzadkim handlu nie postarza całości', () => {
-    const now = Date.now();
     // Opcja handlowana ostatnio kilka dni temu obok akcji z kursem sprzed minut.
     // Minimum pokazywałoby „Kursy z zeszłego tygodnia" mimo aktualnych danych —
     // to mierzyłoby płynność instrumentu, nie świeżość naszych cen.
-    seed('OKLO271217P00015000', 'REGULAR', now - 96 * HOUR);
-    seed('AAPL', 'REGULAR', now - 2 * 60_000);
+    seed('OKLO271217P00015000', 'REGULAR', NOW - 96 * HOUR);
+    seed('AAPL', 'REGULAR', NOW - 2 * 60_000);
 
-    const { asOf } = summarizeQuoteFreshness(['OKLO271217P00015000', 'AAPL']);
-    expect(Date.parse(asOf!)).toBe(now - 2 * 60_000);
+    const { asOf } = summarizeQuoteFreshness(['OKLO271217P00015000', 'AAPL'], NOW);
+    expect(Date.parse(asOf!)).toBe(NOW - 2 * 60_000);
   });
 
   it('TTL bierze MINIMUM — jedna pozycja w sesji dyktuje tempo całemu portfelowi', () => {
-    seed('CDR.WA', 'CLOSED', Date.now());
-    seed('AAPL', 'REGULAR', Date.now());
+    seed('CDR.WA', 'CLOSED', NOW);
+    seed('AAPL', 'REGULAR', NOW);
 
-    const summary = summarizeQuoteFreshness(['CDR.WA', 'AAPL']);
+    const summary = summarizeQuoteFreshness(['CDR.WA', 'AAPL'], NOW);
     expect(summary.ttlSeconds).toBe(config.cache.quoteTtl.regular);
     expect(summary.marketOpen).toBe(true);
   });
 
   it('same rynki zamknięte → długi TTL i marketOpen=false', () => {
-    seed('CDR.WA', 'CLOSED', Date.now());
-    const summary = summarizeQuoteFreshness(['CDR.WA']);
+    seed('CDR.WA', 'CLOSED', NOW);
+    const summary = summarizeQuoteFreshness(['CDR.WA'], NOW);
     expect(summary.ttlSeconds).toBe(config.cache.quoteTtl.closed);
     expect(summary.marketOpen).toBe(false);
   });
 
+  it('TTL liczy się na moment ODCZYTU — tuż przed otwarciem podsumowanie też jest klamrowane', () => {
+    // Ten sam wpis „CLOSED" widziany o 8:50 nie może obiecywać 6 h: klient bierze
+    // stąd tempo odpytywania, więc przespałby pierwsze godziny sesji GPW.
+    seed('CDR.WA', 'CLOSED', warsaw(8, 50) - HOUR);
+    expect(summarizeQuoteFreshness(['CDR.WA'], warsaw(8, 50)).ttlSeconds).toBe(10 * 60);
+  });
+
   it('brak notowań w cache (portfel NC/Catalyst) → zachowawcza godzina, bez asOf', () => {
-    const summary = summarizeQuoteFreshness(['NIEZNANY']);
+    const summary = summarizeQuoteFreshness(['NIEZNANY'], NOW);
     expect(summary.asOf).toBeNull();
     expect(summary.ttlSeconds).toBe(config.cache.quoteTtl.unknown);
     expect(summary.marketOpen).toBe(false);
