@@ -65,12 +65,62 @@ const NAME_CANDIDATES: Array<[string, string]> = [...NAME_TO_SLUG.entries()]
   .filter(([name]) => name.length >= 5)
   .sort((a, b) => b[0].length - a[0].length);
 
-/** Rynek, na którym szukamy terminarza; null = instrument poza zakresem funkcji. */
-export function resolveEarningsMarket(exchange: string | undefined): EarningsMarket | null {
-  if (!exchange) return null;
-  if (PL_EXCHANGES.has(exchange)) return 'PL';
-  if (US_EXCHANGES.has(exchange)) return 'US';
-  if (FOREIGN_EXCHANGES.has(exchange)) return 'FOREIGN';
+/** Wejście rozpoznania rynku — pola pochodzą wprost z `ticker_map`. */
+export interface EarningsMarketHints {
+  exchange: string | undefined;
+  /** Kanoniczna nazwa EN z `ticker_map.country` (np. „United States"). */
+  country?: string | null;
+  currency?: string | null;
+  ticker?: string | null;
+}
+
+/** Ticker w stylu Yahoo z sufiksem giełdy (`SAP.DE`, `NOVO-B.CO`, `2696.HK`). */
+function hasExchangeSuffix(ticker: string): boolean {
+  return /\.[A-Za-z]{1,4}$/.test(ticker);
+}
+
+/**
+ * Rynek, na którym szukamy terminarza; null = instrument poza zakresem funkcji.
+ *
+ * Sama giełda NIE wystarcza. Resolver ISIN-ów zostawia `exchange='OTHER'`, gdy nie
+ * umiał sklasyfikować papieru — dotyczy to zwłaszcza świeżych debiutów zapisanych pod
+ * pseudo-ISIN-em (`AUTO_FIG` dla Figmy) — a wtedy zwykła amerykańska akcja wypadała
+ * z kalendarza wyników razem z opcjami, dla których `OTHER` jest normą.
+ * Dlatego przy nierozpoznanej giełdzie schodzimy do kraju i waluty.
+ */
+export function resolveEarningsMarket(
+  hintsOrExchange: EarningsMarketHints | string | undefined,
+): EarningsMarket | null {
+  const hints: EarningsMarketHints =
+    typeof hintsOrExchange === 'string' || hintsOrExchange === undefined
+      ? { exchange: hintsOrExchange }
+      : hintsOrExchange;
+
+  const { exchange } = hints;
+  if (exchange) {
+    if (PL_EXCHANGES.has(exchange)) return 'PL';
+    if (US_EXCHANGES.has(exchange)) return 'US';
+    if (FOREIGN_EXCHANGES.has(exchange)) return 'FOREIGN';
+    // 'CATALYST' to obligacje — świadomie bez terminarza, nie schodzimy niżej.
+    if (exchange === 'CATALYST') return null;
+  }
+
+  const ticker = hints.ticker?.trim().toUpperCase() ?? '';
+  const country = hints.country?.trim() ?? '';
+  const currency = hints.currency?.trim().toUpperCase() ?? '';
+
+  // Polski papier rozpoznajemy po sufiksie notowania albo po kraju siedziby.
+  if (/\.(WA|NC)$/i.test(ticker) || country === 'Poland') return 'PL';
+
+  // Ticker z sufiksem giełdowym to notowanie spoza USA — kalendarz Nasdaq jest
+  // kluczowany czystymi symbolami, więc i tak by nie trafił. Idzie torem Yahoo.
+  if (ticker && hasExchangeSuffix(ticker)) return 'FOREIGN';
+
+  // Czysty symbol kwotowany w USD → rynek amerykański. Obejmuje ADR-y spółek
+  // zagranicznych (NVO), które kalendarz Nasdaq również pokrywa. Gdy symbol nie
+  // istnieje w kalendarzu, po prostu nic się nie pokaże — koszt pomyłki jest zerowy.
+  if (ticker && (currency === 'USD' || country === 'United States')) return 'US';
+
   return null;
 }
 

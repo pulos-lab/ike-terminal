@@ -15,10 +15,68 @@ describe('resolveEarningsMarket', () => {
     expect(resolveEarningsMarket('XETRA')).toBe('FOREIGN');
   });
 
-  it('odrzuca giełdy bez raportów okresowych i brak giełdy', () => {
+  it('odrzuca obligacje i całkowity brak przesłanek', () => {
     expect(resolveEarningsMarket('CATALYST')).toBeNull();
-    expect(resolveEarningsMarket('OTHER')).toBeNull();
+    expect(
+      resolveEarningsMarket({ exchange: 'CATALYST', currency: 'PLN', ticker: 'BST0728' }),
+    ).toBeNull();
     expect(resolveEarningsMarket(undefined)).toBeNull();
+    expect(resolveEarningsMarket({ exchange: 'OTHER' })).toBeNull();
+  });
+
+  it('REGRESJA: akcja z nierozpoznaną giełdą trafia na rynek po kraju i walucie', () => {
+    // Figma w „Moje IKE": resolver ISIN-ów nie sklasyfikował świeżego debiutu
+    // i zostawił pseudo-ISIN AUTO_FIG z exchange='OTHER'. Wcześniej taka pozycja
+    // wypadała z kalendarza wyników razem z opcjami i NIGDY nie dostawała ikony.
+    expect(
+      resolveEarningsMarket({
+        exchange: 'OTHER',
+        country: 'United States',
+        currency: 'USD',
+        ticker: 'FIG',
+      }),
+    ).toBe('US');
+    // To samo dotyczyło AAPL w tym samym portfelu.
+    expect(
+      resolveEarningsMarket({
+        exchange: 'OTHER',
+        country: 'United States',
+        currency: 'USD',
+        ticker: 'AAPL',
+      }),
+    ).toBe('US');
+  });
+
+  it('sama waluta USD wystarcza, gdy kraju brak (ADR-y i luki w backfillu)', () => {
+    expect(resolveEarningsMarket({ exchange: 'OTHER', currency: 'USD', ticker: 'PLTR' })).toBe(
+      'US',
+    );
+  });
+
+  it('ticker z sufiksem giełdowym idzie torem zagranicznym, nie do Nasdaqa', () => {
+    // Kalendarz Nasdaq jest kluczowany czystymi symbolami, więc „NOVO-B.CO" i tak
+    // by nie trafił; kierowanie go do Yahoo jest jedyną sensowną opcją.
+    for (const ticker of ['NOVO-B.CO', '2696.HK', 'ASML.AS', 'SPCE.MX']) {
+      expect(resolveEarningsMarket({ exchange: 'OTHER', ticker }), ticker).toBe('FOREIGN');
+    }
+  });
+
+  it('polski papier rozpoznaje po sufiksie notowania albo po kraju', () => {
+    expect(resolveEarningsMarket({ exchange: 'OTHER', ticker: 'CDR.WA' })).toBe('PL');
+    expect(resolveEarningsMarket({ exchange: 'OTHER', country: 'Poland', ticker: 'XYZ' })).toBe(
+      'PL',
+    );
+  });
+
+  it('giełda ma pierwszeństwo przed podpowiedziami', () => {
+    expect(
+      resolveEarningsMarket({
+        exchange: 'GPW',
+        country: 'United States',
+        currency: 'USD',
+        ticker: 'CDR.WA',
+      }),
+    ).toBe('PL');
   });
 });
 

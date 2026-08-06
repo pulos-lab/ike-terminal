@@ -13,8 +13,6 @@ export const EARNINGS_ALERT_DAYS = 7;
 /** Jak daleko w przód w ogóle zbieramy dane (zapas pod przyszłą kartę „Kalendarz wyników"). */
 export const EARNINGS_HORIZON_DAYS = 45;
 
-const EARNINGS_EXCHANGES = new Set(['GPW', 'NC', 'NYSE', 'NASDAQ', 'XETRA', 'TSX']);
-
 /** Pozycja zakwalifikowana do szukania terminarza. */
 export interface EarningsCandidate {
   /** ISIN pozycji — dla opcji pseudo-ISIN `OPT:{OCC}`. */
@@ -24,6 +22,9 @@ export interface EarningsCandidate {
   /** Nazwa papieru — wejście do mapowania po nazwie dla spółek PL. */
   name: string | null;
   exchange: string | undefined;
+  /** Kraj siedziby i waluta notowania — awaryjne rozpoznanie rynku, gdy giełda to `OTHER`. */
+  country: string | null;
+  currency: string | null;
   viaUnderlying: boolean;
 }
 
@@ -47,11 +48,18 @@ export function daysBetweenIso(fromIso: string, toIso: string): number {
  * więc filtrujemy tylko pozycje zerowe.
  */
 export function selectEarningsCandidates(positions: Position[]): EarningsCandidate[] {
-  // Giełda spółki bazowej dla opcji — bierzemy z pozycji akcyjnej o tym samym tickerze.
-  const exchangeByTicker = new Map<string, string>();
+  // Podpowiedzi rynku dla opcji — z pozycji akcyjnej o tym samym tickerze.
+  const hintsByTicker = new Map<
+    string,
+    { exchange?: string; country: string | null; currency: string | null }
+  >();
   for (const pos of positions) {
     if (pos.category === 'option') continue;
-    if (pos.exchange) exchangeByTicker.set(pos.ticker.toUpperCase(), pos.exchange);
+    hintsByTicker.set(pos.ticker.toUpperCase(), {
+      exchange: pos.exchange,
+      country: pos.country ?? null,
+      currency: pos.currency ?? null,
+    });
   }
 
   const out: EarningsCandidate[] = [];
@@ -63,13 +71,16 @@ export function selectEarningsCandidates(positions: Position[]): EarningsCandida
       const underlying = pos.optionMeta?.underlying ?? parseOccTicker(pos.ticker)?.underlying;
       if (!underlying) continue;
       const key = underlying.toUpperCase();
+      const hint = hintsByTicker.get(key);
       out.push({
         isin: pos.isin,
         ticker: key,
         name: null,
         // Kontrakty OCC są amerykańskie; nogi Eurex bez pozycji bazowej w portfelu
         // nie trafią w kalendarz Nasdaq i po prostu nie dostaną ikony.
-        exchange: exchangeByTicker.get(key) ?? 'NASDAQ',
+        exchange: hint?.exchange ?? 'NASDAQ',
+        country: hint?.country ?? null,
+        currency: hint?.currency ?? 'USD',
         viaUnderlying: true,
       });
       continue;
@@ -77,18 +88,19 @@ export function selectEarningsCandidates(positions: Position[]): EarningsCandida
 
     const category = pos.category;
     if (category && category !== 'stock') continue;
-    // `category` jest opcjonalne — dla starszych wpisów zawężamy po giełdzie
-    // i odrzucamy papiery rozpoznane jako obligacje.
-    if (!category) {
-      if (!pos.exchange || !EARNINGS_EXCHANGES.has(pos.exchange)) continue;
-      if (findBondByIsin(pos.isin)) continue;
-    }
+    // `category` jest opcjonalne (starsze wpisy) — odrzucamy tylko to, co umiemy
+    // rozpoznać jako obligację. Reszty NIE zawężamy po giełdzie: realnym filtrem
+    // jest rozpoznanie rynku (`resolveEarningsMarket`), a lista dozwolonych giełd
+    // gubiła zwykłe akcje z `exchange='OTHER'` — patrz komentarz tamże.
+    if (!category && findBondByIsin(pos.isin)) continue;
 
     out.push({
       isin: pos.isin,
       ticker: pos.ticker.toUpperCase(),
       name: pos.paperName ?? null,
       exchange: pos.exchange,
+      country: pos.country ?? null,
+      currency: pos.currency ?? null,
       viaUnderlying: false,
     });
   }

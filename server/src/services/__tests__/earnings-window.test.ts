@@ -122,12 +122,60 @@ describe('selectEarningsCandidates', () => {
     expect(result[0]).toMatchObject({ ticker: 'PLTR', viaUnderlying: true });
   });
 
-  it('bez kategorii zawęża po giełdzie', () => {
+  it('bez kategorii przepuszcza papiery i zostawia filtr rozpoznaniu rynku', () => {
+    // Wcześniej ta ścieżka zawężała po liście dozwolonych giełd, przez co akcja
+    // z `exchange='OTHER'` przepadała. Kandydatów odsiewa teraz dopiero
+    // `resolveEarningsMarket` — nierozpoznany rynek i tak nie ma jak dopasować.
     const result = selectEarningsCandidates([
       position({ isin: 'F', ticker: 'CDR.WA', exchange: 'GPW', category: undefined }),
       position({ isin: 'G', ticker: 'XXX', exchange: 'OTHER', category: undefined }),
     ]);
-    expect(result.map((c) => c.ticker)).toEqual(['CDR.WA']);
+    expect(result.map((c) => c.ticker)).toEqual(['CDR.WA', 'XXX']);
+  });
+
+  it('przenosi kraj i walutę, żeby rynek dał się rozpoznać mimo giełdy OTHER', () => {
+    const result = selectEarningsCandidates([
+      position({
+        isin: 'AUTO_FIG',
+        ticker: 'FIG',
+        exchange: 'OTHER',
+        country: 'United States',
+        currency: 'USD',
+      }),
+    ]);
+    expect(result[0]).toMatchObject({
+      ticker: 'FIG',
+      exchange: 'OTHER',
+      country: 'United States',
+      currency: 'USD',
+    });
+  });
+
+  it('opcja dziedziczy podpowiedzi rynku po pozycji bazowej', () => {
+    const result = selectEarningsCandidates([
+      position({
+        isin: 'AUTO_FIG',
+        ticker: 'FIG',
+        exchange: 'OTHER',
+        country: 'United States',
+        currency: 'USD',
+      }),
+      position({
+        isin: 'OPT:FIG260220C00050000',
+        ticker: 'FIG260220C00050000',
+        exchange: 'OTHER',
+        category: 'option',
+        optionMeta: {
+          underlying: 'FIG',
+          expiry: '2026-02-20',
+          strike: 50,
+          optionType: 'C',
+          multiplier: 100,
+        },
+      }),
+    ]);
+    const option = result.find((c) => c.isin.startsWith('OPT:'));
+    expect(option).toMatchObject({ ticker: 'FIG', country: 'United States', currency: 'USD' });
   });
 });
 

@@ -123,6 +123,50 @@ describe('earnings-calendar — odświeżanie US', () => {
     }
   });
 
+  it('REGRESJA: bliskie okno odświeża się co 6 h, nie raz na dobę', async () => {
+    // Wcześniej wszystkie odświeżenia dzieliły próg świeżości 24 h, więc timer
+    // 6-godzinny odpalał się poprawnie, ale za każdym razem odbijał się od bramki.
+    const fetchFn = nasdaqFetchFor('2026-08-05', ['AAPL']);
+    let clock = NOW;
+    const service = makeService(fetchFn, () => clock);
+    try {
+      await service.refreshUs({ nearWindowOnly: true });
+      const poPierwszym = fetchFn.mock.calls.length;
+      expect(poPierwszym).toBeGreaterThan(0);
+
+      // Po godzinie jeszcze nie wolno.
+      clock = new Date(NOW.getTime() + 60 * 60 * 1000);
+      await service.refreshUs({ nearWindowOnly: true });
+      expect(fetchFn.mock.calls.length).toBe(poPierwszym);
+
+      // Po sześciu godzinach — tak.
+      clock = new Date(NOW.getTime() + 6 * 60 * 60 * 1000);
+      await service.refreshUs({ nearWindowOnly: true });
+      expect(fetchFn.mock.calls.length).toBeGreaterThan(poPierwszym);
+    } finally {
+      service.close();
+    }
+  });
+
+  it('REGRESJA: tik timera dokładnie na progu nie jest gubiony', async () => {
+    // `last_success` zapisuje się PO zamiataniu, więc tik po równo 24 h wypadał
+    // ułamek przed progiem i odświeżanie dryfowało do 48 h.
+    const fetchFn = nasdaqFetchFor('2026-08-05', ['AAPL']);
+    let clock = NOW;
+    const service = makeService(fetchFn, () => clock);
+    try {
+      await service.refreshUs();
+      const poPierwszym = fetchFn.mock.calls.length;
+
+      // Zamiatanie trwało chwilę, więc tik wypada 30 s PRZED nominalnym progiem.
+      clock = new Date(NOW.getTime() + 24 * 60 * 60 * 1000 - 30_000);
+      await service.refreshUs();
+      expect(fetchFn.mock.calls.length).toBeGreaterThan(poPierwszym);
+    } finally {
+      service.close();
+    }
+  });
+
   it('awaria źródła zostawia poprzedni terminarz', async () => {
     const okFetch = nasdaqFetchFor('2026-08-05', ['AAPL']);
     const service = makeService(okFetch);
@@ -149,6 +193,38 @@ describe('earnings-calendar — odświeżanie US', () => {
       expect(service2.getUpcomingForPositions([usPosition()], '2026-08-01')).toEqual([]);
     } finally {
       service2.close();
+    }
+  });
+
+  it('REGRESJA: akcja z nierozpoznaną giełdą dostaje termin (przypadek Figmy)', async () => {
+    // Pozycja odtworzona z produkcji: świeży debiut zapisany pod pseudo-ISIN-em,
+    // z exchange='OTHER'. Przechodziła whitelistę jako `stock`, ale ginęła
+    // w rozpoznaniu rynku i nigdy nie dostawała ikony.
+    const fetchFn = nasdaqFetchFor('2026-08-05', ['FIG']);
+    const service = makeService(fetchFn);
+    try {
+      await service.refreshUs();
+      const upcoming = service.getUpcomingForPositions(
+        [
+          usPosition({
+            isin: 'AUTO_FIG',
+            ticker: 'FIG',
+            paperName: 'Figma, Inc.',
+            exchange: 'OTHER',
+            country: 'United States',
+            currency: 'USD',
+          }),
+        ],
+        '2026-08-01',
+      );
+      expect(upcoming).toHaveLength(1);
+      expect(upcoming[0]).toMatchObject({
+        isin: 'AUTO_FIG',
+        ticker: 'FIG',
+        reportDate: '2026-08-05',
+      });
+    } finally {
+      service.close();
     }
   });
 
