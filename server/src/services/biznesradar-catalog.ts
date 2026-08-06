@@ -244,6 +244,24 @@ export interface BrCatalogService {
    * dokładny skrót lub prefiks nazwy/skrótu. Zwraca najlepsze trafienie.
    */
   findByName(name: string): Promise<TickerSearchResult | null>;
+  /**
+   * Czeka na PEŁNE załadowanie katalogu, bez limitu zimnego startu.
+   *
+   * DLACZEGO ISTNIEJE: `ensureIndex` przy pustym katalogu czeka najwyżej
+   * `COLD_START_WAIT_MS` (2,5 s) i zwraca to, co ma — także pustą listę. Dla
+   * interaktywnej wyszukiwarki to słuszny kompromis, ale dla rozpoznawania
+   * tickerów przy imporcie jest szkodliwy: pobranie ~1,2 MB z biznesradaru
+   * regularnie przekracza 2,5 s, a `findByTicker`/`findByName` NIE odróżniają
+   * „katalog jeszcze się nie wczytał" od „takiej spółki nie ma". Wynik: papier
+   * dostaje `null`, a w ścieżce importu plików binarnych (XTB/IBKR), która nie
+   * zapisuje prowizorycznego stuba, chwilowa zwłoka sieci zostaje utrwalona
+   * jako pozycja bez ceny — na zawsze.
+   *
+   * Wołający, który nie ma nad sobą użytkownika patrzącego na zegarek (import,
+   * lazy pass), powinien najpierw wywołać `warmUp`. Gdy katalog jest świeży lub
+   * używalny, to no-op — czekamy wyłącznie na start z pustki.
+   */
+  warmUp(): Promise<void>;
   close(): void;
 }
 
@@ -409,20 +427,18 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
    * refresh po TTL leci w tle (stale-while-revalidate). Pusta tablica =
    * katalog (jeszcze) niedostępny.
    */
+  /** Katalog, na którym NIE DA SIĘ odpowiedzieć: brak, pusty albo starsza wersja filtrów. */
+  function indexUnusable(): boolean {
+    return (
+      index === null || index.length === 0 || getState('schema_version') !== CATALOG_SCHEMA_VERSION
+    );
+  }
+
   async function ensureIndex(): Promise<BrCatalogEntry[]> {
     if (index === null) loadIndexFromDb();
     const refresh = refreshIfDue();
-    if (refresh) {
-      const unusable =
-        index === null ||
-        index.length === 0 ||
-        getState('schema_version') !== CATALOG_SCHEMA_VERSION;
-      if (unusable) {
-        await Promise.race([
-          refresh,
-          new Promise((resolve) => setTimeout(resolve, coldStartWaitMs)),
-        ]);
-      }
+    if (refresh && indexUnusable()) {
+      await Promise.race([refresh, new Promise((resolve) => setTimeout(resolve, coldStartWaitMs))]);
     }
     return index ?? [];
   }
@@ -480,6 +496,14 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
         console.warn('[biznesradar-catalog] findByTicker failed:', err);
         return null;
       }
+    },
+
+    async warmUp(): Promise<void> {
+      if (index === null) loadIndexFromDb();
+      const refresh = refreshIfDue();
+      // Czekamy TYLKO gdy nie ma czym odpowiedzieć. Katalog stary, ale kompletny,
+      // odświeża się w tle jak dotąd — import nie ma powodu na to czekać.
+      if (refresh && indexUnusable()) await refresh;
     },
 
     async findByName(name: string): Promise<TickerSearchResult | null> {

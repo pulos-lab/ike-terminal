@@ -6,8 +6,15 @@ vi.mock('../ticker-search.js', () => ({
 }));
 const findByTicker = vi.fn();
 const findByName = vi.fn();
+const warmUp = vi.fn().mockResolvedValue(undefined);
 vi.mock('../biznesradar-catalog.js', () => ({
-  getBrCatalogService: () => ({ findByTicker, findByName, search: vi.fn(), close: vi.fn() }),
+  getBrCatalogService: () => ({
+    warmUp,
+    findByTicker,
+    findByName,
+    search: vi.fn(),
+    close: vi.fn(),
+  }),
 }));
 vi.mock('../yahoo-finance.js', () => ({
   fetchYahooPrice: vi.fn(),

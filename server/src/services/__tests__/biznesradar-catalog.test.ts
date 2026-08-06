@@ -725,3 +725,84 @@ describe('createBrCatalogService — guard biznesradar', () => {
     svc.close();
   });
 });
+
+// ── warmUp ──────────────────────────────────────────────────────────────────
+
+/**
+ * GENEZA (produkcja, 2026-08-06): siedem pozycji z pierwszej ligi GPW — Allegro,
+ * PZU, JSW, LPP, Kruk, Cyfrowy Polsat, Modivo — nie miało ceny mimo poprawnych
+ * danych w katalogu. Import XTB trafił w ZIMNY katalog: `ensureIndex` czeka
+ * najwyżej `coldStartWaitMs` i zwraca pustą listę, a `findByTicker`/`findByName`
+ * nie odróżniają „jeszcze nie wczytane" od „nie ma takiej spółki". Ścieżka plików
+ * binarnych nie zapisuje stuba, więc chwilowa zwłoka sieci utrwalała się jako
+ * pozycja bez ceny. Ostatni import bez wpisu: 2026-08-05 (Allegro).
+ */
+describe('warmUp — czekanie na katalog poza ścieżką interaktywną', () => {
+  /** Fetch wolniejszy niż limit zimnego startu — jak realne 1,2 MB z biznesradaru. */
+  function makeSlowFetch(delayMs: number) {
+    const { fn } = makeFetch({ catalog: [makePayload()] });
+    return (async (url: string | URL, init?: RequestInit) => {
+      await new Promise((r) => setTimeout(r, delayMs));
+      return (fn as (u: string | URL, i?: RequestInit) => Promise<Response>)(url, init);
+    }) as unknown as typeof fetch;
+  }
+
+  it('BEZ warmUp zimny katalog daje null — to jest ten błąd', async () => {
+    const svc = createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: makeSlowFetch(60),
+      coldStartWaitMs: 5,
+      politenessDelayMs: 0,
+    });
+
+    expect(await svc.findByName('AITON')).toBeNull();
+    svc.close();
+  });
+
+  it('warmUp czeka na pełne załadowanie → to samo zapytanie trafia', async () => {
+    const svc = createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: makeSlowFetch(60),
+      coldStartWaitMs: 5,
+      politenessDelayMs: 0,
+    });
+
+    await svc.warmUp();
+
+    const hit = await svc.findByName('AITON');
+    expect(hit?.symbol).toBe('AIT.WA');
+    svc.close();
+  });
+
+  it('drugi warmUp nie pobiera ponownie (katalog używalny = no-op)', async () => {
+    const { fn } = makeFetch({ catalog: [makePayload()] });
+    const svc = createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: fn,
+      politenessDelayMs: 0,
+    });
+
+    await svc.warmUp();
+    await svc.warmUp();
+
+    expect((await svc.findByTicker('KGH'))?.symbol).toBe('KGH.WA');
+    svc.close();
+  });
+
+  it('awaria źródła nie wywraca warmUp — wołający leci dalej', async () => {
+    const { fn } = makeFetch({ catalog: [new Error('network down')] });
+    const svc = createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: fn,
+      politenessDelayMs: 0,
+    });
+
+    await expect(svc.warmUp()).resolves.toBeUndefined();
+    expect(await svc.findByName('AITON')).toBeNull();
+    svc.close();
+  });
+});

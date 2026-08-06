@@ -804,6 +804,19 @@ export async function resolveUnknownIsins(
 
   console.log(`ISIN resolver: ${unknowns.size} unknown ISINs to resolve`);
 
+  // Katalog BR musi być gotowy ZANIM zaczniemy rozpoznawać — inaczej polska gałąź
+  // pyta pustą listę i dostaje „nie ma takiej spółki" zamiast „jeszcze nie wiem".
+  // Ten sam wynik zapisuje się potem jako brak wpisu, a w ścieżce plików binarnych
+  // (XTB/IBKR) nic tego nie ponawia. Zmierzone na produkcji: Allegro, PZU, JSW, LPP,
+  // Kruk, Cyfrowy Polsat i Modivo bez ceny mimo poprawnych danych w katalogu.
+  // No-op gdy katalog jest używalny; czekamy wyłącznie na start z pustki.
+  await getBrCatalogService()
+    .warmUp()
+    .catch(() => {
+      // Katalog niedostępny (biznesradar padł) — lecimy dalej, polskie papiery
+      // zostaną nierozwiązane i zagoi je lazy pass przy kolejnym wejściu.
+    });
+
   const resolved: TickerMapEntry[] = [];
   const unresolved: UnresolvedIsin[] = [];
 

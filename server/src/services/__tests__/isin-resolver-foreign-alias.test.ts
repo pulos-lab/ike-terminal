@@ -6,6 +6,7 @@ vi.mock('../ticker-search.js', () => ({
 }));
 vi.mock('../biznesradar-catalog.js', () => ({
   getBrCatalogService: () => ({
+    warmUp: vi.fn().mockResolvedValue(undefined),
     findByTicker: vi.fn(),
     findByName: vi.fn(),
     search: vi.fn(),
