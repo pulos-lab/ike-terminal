@@ -33,6 +33,25 @@ const US_NEAR_WINDOW_DAYS = 9;
 const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const RETRY_INTERVAL_MS = 60 * 60 * 1000;
 
+/**
+ * Jak często WOLNO odświeżyć dane źródło. Musi odpowiadać interwałowi timera
+ * w `index.ts` — wcześniej wszystko chodziło po wspólnym progu 24 h, przez co
+ * timer bliskiego okna (6 h) odpalał się co 6 h, ale za każdym razem odbijał się
+ * od bramki świeżości i realnie działał raz na dobę.
+ */
+const REFRESH_INTERVAL_BY_PREFIX: Record<string, number> = {
+  us: REFRESH_INTERVAL_MS,
+  'us-near': 6 * 60 * 60 * 1000,
+};
+
+/**
+ * Tolerancja przy porównaniu ze świeżością. Timer odpala się co DOKŁADNIE tyle,
+ * ile wynosi próg, a `last_success` zapisuje się po zakończeniu zamiatania —
+ * czyli kilkanaście sekund PÓŹNIEJ. Bez marginesu każdy tik wypada tuż przed
+ * progiem, jest odrzucany i odświeżanie dryfuje do dwukrotności interwału.
+ */
+const REFRESH_TOLERANCE_MS = 5 * 60 * 1000;
+
 /** Grzeczność wobec bankiera: 1 s przerwy i twardy limit spółek na jeden przebieg. */
 const PL_POLITENESS_DELAY_MS = 1000;
 const PL_MAX_SLUGS_PER_RUN = 40;
@@ -119,10 +138,14 @@ export function createEarningsCalendarService(
   function shouldAttempt(prefix: string): boolean {
     const s = getStore();
     const nowMs = now().getTime();
+    const interval = REFRESH_INTERVAL_BY_PREFIX[prefix] ?? REFRESH_INTERVAL_MS;
     const lastSuccess = s.getStateMs(`${prefix}:last_success`);
     const lastAttempt = s.getStateMs(`${prefix}:last_attempt`);
-    const isStale = lastSuccess === null || nowMs - lastSuccess > REFRESH_INTERVAL_MS;
-    const canAttempt = lastAttempt === null || nowMs - lastAttempt > RETRY_INTERVAL_MS;
+    const isStale = lastSuccess === null || nowMs - lastSuccess >= interval - REFRESH_TOLERANCE_MS;
+    // Backoff po nieudanej próbie nie może być dłuższy niż sam interwał odświeżania,
+    // inaczej dla źródeł częstszych niż 1 h zjadłby wszystkie tiki.
+    const retry = Math.min(RETRY_INTERVAL_MS, interval);
+    const canAttempt = lastAttempt === null || nowMs - lastAttempt >= retry - REFRESH_TOLERANCE_MS;
     return isStale && canAttempt;
   }
 
@@ -298,7 +321,12 @@ export function createEarningsCalendarService(
     const verifiedAt = now().toISOString();
 
     for (const candidate of candidates) {
-      const market = resolveEarningsMarket(candidate.exchange);
+      const market = resolveEarningsMarket({
+        exchange: candidate.exchange,
+        country: candidate.country,
+        currency: candidate.currency,
+        ticker: candidate.ticker,
+      });
       if (!market) continue;
 
       if (market !== 'PL') {
