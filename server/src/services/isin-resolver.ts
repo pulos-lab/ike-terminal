@@ -174,6 +174,12 @@ export const BROKER_TICKER_ALIASES: Record<string, string> = {
   BRKA: 'BRK-A', // XTB Berkshire Hathaway klasa A
   BRKB: 'BRK-B', // XTB Berkshire Hathaway klasa B
   BFB: 'BF-B', // XTB Brown-Forman klasa B
+  // Novo Nordisk B z Kopenhagi. XTB `NOVOB.DK` → nasza mapa sufiksów daje `NOVOB.CO`,
+  // a Yahoo trzyma tę akcję pod `NOVO-B.CO`. Symbol `NOVOB.CO` u Yahoo ISTNIEJE, ale
+  // oddaje pustą cenę — czyli `chart` nie odsiewa go tak, jak odsiewa symbol nieznany.
+  // Zmierzone na prodzie: 7 portfeli bez ceny, wszystkie z cenami transakcji 232–600,
+  // czyli notowanie kopenhaskie w DKK (amerykański ADR `NVO` chodzi ~40 USD).
+  NOVOB: 'NOVO-B.CO',
 };
 
 /** GBX/GBp (pensy) i GBP to ta sama waluta w innej jednostce — nie mylić z niezgodnością. */

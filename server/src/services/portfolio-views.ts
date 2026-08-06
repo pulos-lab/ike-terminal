@@ -14,7 +14,7 @@ import {
   getAllTickers,
   updateTickerSectors,
   updateTickerCountry,
-  isProvisionalStub,
+  getUnresolvedTickerIsins,
 } from '../db/ticker-map-repo.js';
 import { getSplits, upsertSplits } from '../db/splits-repo.js';
 import { getOptionContractsMap } from '../db/option-contracts-repo.js';
@@ -183,14 +183,19 @@ async function lazyBackfillSectors(pid: string): Promise<void> {
   }
 }
 
-/** Lazy re-resolucja debiutowych stubów w tle.
+/** Lazy re-resolucja nierozpoznanych tickerów w tle.
  *
- * Gdy import nie mógł jeszcze rozpoznać ISIN-u świeżo zadebiutowanej spółki
- * (brak w Yahoo/BiznesRadar/Stooq), zapisuje prowizoryczny stub (patrz
- * `isProvisionalStub`). Ten pass ponawia rozpoznanie w tle przy ładowaniu
- * pozycji — bez ręcznego re-importu — więc debiut sam się goi, gdy źródło
- * zacznie go listować. `resolveUnknownIsins` traktuje stuby jak nierozwiązane i
- * nadpisuje je prawdziwym tickerem przy sukcesie (kotwica ich nie chroni).
+ * Gdy import nie mógł rozpoznać ISIN-u (świeży debiut, nieznana notacja symbolu),
+ * papier zostaje bez ceny. Ten pass ponawia rozpoznanie w tle przy ładowaniu
+ * pozycji — bez ręcznego re-importu — więc pozycja sama się goi, gdy źródło
+ * zacznie ją listować albo gdy dołożymy alias symbolu. `resolveUnknownIsins`
+ * traktuje brak wpisu i stuby jak nierozwiązane i nadpisuje je prawdziwym
+ * tickerem przy sukcesie (kotwica stubów nie chroni).
+ *
+ * ZAKRES: `getUnresolvedTickerIsins` bierze OBIE klasy — brak wpisu ORAZ stub.
+ * Wcześniej pass patrzył wyłącznie na stuby, a te zapisuje tylko ścieżka CSV;
+ * import XTB/IBKR (`importCombinedFiles`) nie zostawia po nierozpoznanym papierze
+ * żadnego wpisu, więc pozycje z tych brokerów nie goiły się nigdy.
  *
  * Rate-limit: max raz na `STUB_RESOLVE_RETRY_MS` per portfel, z guardem in-flight
  * przeciw równoległym przebiegom. W przeciwieństwie do backfillu sektorów jest
@@ -212,10 +217,14 @@ export function shouldResolveStubs(
 }
 
 async function lazyResolveProvisionalStubs(pid: string): Promise<void> {
-  const stubs = getAllTickers(pid).filter((e) => isProvisionalStub(e));
+  // Nie tylko stuby: także ISIN-y BEZ wpisu w ticker_map. Stub zapisuje wyłącznie
+  // ścieżka CSV, więc papier z XTB/IBKR nierozpoznany przy imporcie nie zostawiał
+  // żadnej kotwicy i nie leczył się NIGDY (zgłoszenie GOOGC.US — 7,5 szt. bez ceny
+  // od lutego 2025). Zbiór liczony jednym zapytaniem, bez wczytywania transakcji.
+  const pendingIsins = getUnresolvedTickerIsins(pid);
   if (
     !shouldResolveStubs(
-      stubs.length > 0,
+      pendingIsins.size > 0,
       stubResolveAttemptAt.get(pid),
       stubResolveInFlight.has(pid),
       Date.now(),
@@ -226,14 +235,13 @@ async function lazyResolveProvisionalStubs(pid: string): Promise<void> {
   stubResolveAttemptAt.set(pid, Date.now());
   stubResolveInFlight.add(pid);
   try {
-    const stubIsins = new Set(stubs.map((s) => s.isin));
     // Rozpoznajemy na podstawie PRAWDZIWYCH transakcji (poprawny paperName /
     // waluta / kategoria), nie pól stuba (te mają zaszyte GPW/PLN).
-    const stubTxs = getAllTransactions(pid).filter((t) => stubIsins.has(t.isin));
-    if (stubTxs.length > 0) {
-      const { resolved } = await resolveUnknownIsins(stubTxs, pid);
+    const pendingTxs = getAllTransactions(pid).filter((t) => pendingIsins.has(t.isin));
+    if (pendingTxs.length > 0) {
+      const { resolved } = await resolveUnknownIsins(pendingTxs, pid);
       if (resolved.length > 0) {
-        console.log(`Lazy stub resolve: zagojono ${resolved.length} debiutowych tickerów (${pid})`);
+        console.log(`Lazy resolve: zagojono ${resolved.length} nierozpoznanych tickerów (${pid})`);
       }
     }
   } catch {

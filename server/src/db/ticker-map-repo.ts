@@ -180,6 +180,34 @@ export function isProvisionalStub(
   return !!entry && !!entry.name && entry.ticker === entry.name && !entry.ticker.includes('.');
 }
 
+/**
+ * ISIN-y z transakcji, które czekają na rozpoznanie: BRAK wpisu w `ticker_map`
+ * albo wpis będący prowizorycznym stubem. Dokładnie ten sam zbiór, który bierze
+ * `resolveUnknownIsins` — tu liczony jednym zapytaniem, żeby lazy pass mógł tanio
+ * sprawdzić „czy jest co robić" bez wczytywania wszystkich transakcji.
+ *
+ * DLACZEGO OBIE KLASY: stub powstaje wyłącznie w ścieżce CSV (Bossa/mBank/DEGIRO).
+ * Import plików binarnych — XTB XLSX i IBKR HTML — idzie przez `importCombinedFiles`,
+ * który stuba NIE zapisuje, więc nierozpoznany papier nie zostawia po sobie ŻADNEGO
+ * wpisu. Pass oparty tylko na stubach nigdy takiego papieru nie zobaczy i XTB-owe
+ * pozycje zostawały bez ceny na zawsze (zgłoszenie GOOGC.US, 2026-08-06).
+ *
+ * Warunek stuba musi być lustrem `isProvisionalStub`: ticker === name ORAZ ticker
+ * bez kropki (symbol z sufiksem giełdy nie jest placeholderem).
+ */
+export function getUnresolvedTickerIsins(portfolioId: string = 'default'): Set<string> {
+  const db = getDb(portfolioId);
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT t.isin FROM transactions t
+       LEFT JOIN ticker_map m ON m.isin = t.isin
+       WHERE m.isin IS NULL
+          OR (m.name IS NOT NULL AND m.name <> '' AND m.ticker = m.name AND m.ticker NOT LIKE '%.%')`,
+    )
+    .all() as Array<{ isin: string }>;
+  return new Set(rows.map((r) => r.isin));
+}
+
 /** Insert or update a ticker_map entry.
  *
  * Anchor behavior (default `force = false`): if a REAL entry already exists for

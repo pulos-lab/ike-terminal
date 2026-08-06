@@ -46,6 +46,13 @@ describe('lookupForeignAlias — notacja klasy akcji u brokera', () => {
     expect(lookupForeignAlias('BRKA')).toBe('BRK-A');
   });
 
+  it('NOVOB.CO → NOVO-B.CO (7 portfeli na prodzie bez ceny)', () => {
+    // Sufiks XTB .DK mapujemy na .CO, ale Yahoo trzyma tę akcję pod NOVO-B.CO.
+    // Klucz działa i na sam symbol, i na wersję z sufiksem — bazę sprawdzamy osobno.
+    expect(lookupForeignAlias('NOVOB')).toBe('NOVO-B.CO');
+    expect(lookupForeignAlias('NOVOB.CO')).toBe('NOVO-B.CO');
+  });
+
   it('nie rusza rebrandingu z FOREIGN_TICKER_ALIASES (RELI → EZRA)', () => {
     expect(lookupForeignAlias('RELI')).toBe('EZRA');
   });
