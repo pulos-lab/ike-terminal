@@ -203,6 +203,203 @@ export function detectSplits(
   return splits;
 }
 
+// ── Splity z NIESKORYGOWANEJ serii providera ────────────────────────────────
+//
+// GENEZA (zgłoszenie użytkownika 2026-08-06): Invesco S&P 500 UCITS ETF (P500.DE)
+// zrobił split 100:1 dnia 2025-12-15. Yahoo tego splitu NIE MA — ani jako zdarzenia
+// (`events` puste na całym oknie), ani w postaci korekty historii (`adjclose == close`,
+// w serii siedzi surowy skok 1157,40 → 11,57). Cała dotychczasowa detekcja zakłada
+// serię SKORYGOWANĄ: porównuje cenę transakcji z ceną providera z DNIA transakcji.
+// Przy serii surowej obie strony są w tej samej (starej) skali, więc ratio ≈ 1 i nic
+// się nie wykrywa — a pozycja jest wyceniana 100× za nisko.
+//
+// Detekcja idzie więc z samej serii: split zostawia w niej skok z dnia na dzień.
+// Progi są ostrzejsze niż w detekcji transakcyjnej, bo tu NIE MA czym potwierdzić
+// wykrycia — Yahoo nie zna zdarzenia z definicji (gdyby znał, seria byłaby skorygowana).
+
+/** Minimalna skala skoku w serii. 10× w jedną sesję to nie jest ruch rynku — a przy
+ *  progu 2× (jak w detekcji transakcyjnej) każdy krach −50% stałby się „splitem 2:1". */
+const SERIES_MIN_RATIO = 10;
+
+/** Snap do znanego ratio musi być ciasny (2% zamiast 5%): realny split daje niemal
+ *  dokładną wielokrotność (100,03 dla P500.DE), krach — dowolną liczbę. */
+const SERIES_SNAP_TOLERANCE = 0.02;
+
+/** Maksymalna przerwa między sąsiednimi punktami serii. Skok przez trzymiesięczną
+ *  dziurę w danych to nie jest zdarzenie jednodniowe i nie wolno go tak czytać. */
+const SERIES_MAX_GAP_DAYS = 7;
+
+/** Ile punktów PO KAŻDEJ STRONIE skoku musi trzymać swój poziom, żeby wykluczyć
+ *  błędny print. Symetria jest konieczna: przy sprawdzaniu tylko „w przód" zła cena
+ *  10,1 wstawiona w serię ~1000 daje wprawdzie odrzucenie skoku w dół (poziom się nie
+ *  utrzymuje), ale POWRÓT do 1000 wygląda jak stabilny reverse split 1:100. */
+const SERIES_PERSISTENCE_POINTS = 2;
+
+/** Ile razy cena po skoku może się różnić od poziomu tuż po nim, żeby uznać poziom
+ *  za utrzymany. Luźno (2×), bo chodzi o wykluczenie powrotu do STAREJ skali (10×+). */
+const SERIES_PERSISTENCE_FACTOR = 2;
+
+/** Skok w serii wyglądający na split: `date` = pierwszy dzień w nowej skali (ex-date). */
+export interface SeriesSplitJump {
+  date: string;
+  ratio: number;
+  /** Surowy iloraz przed zaokrągleniem do znanego ratio — do diagnostyki. */
+  rawRatio: number;
+  priceBefore: number;
+  priceAfter: number;
+}
+
+/** Czy wszystkie punkty trzymają się poziomu `level` (z luzem SERIES_PERSISTENCE_FACTOR)? */
+function levelHolds(points: Array<[string, number]>, level: number): boolean {
+  return points.every(
+    ([, p]) => p <= level * SERIES_PERSISTENCE_FACTOR && p >= level / SERIES_PERSISTENCE_FACTOR,
+  );
+}
+
+function daysBetweenIso(a: string, b: string): number {
+  const ms = Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`);
+  return Math.round(ms / 86_400_000);
+}
+
+/**
+ * Znajdź w serii skoki, które wyglądają na split (a nie na ruch rynku).
+ *
+ * Seria SKORYGOWANA przez providera takich skoków nie ma z definicji — więc ta
+ * funkcja z natury odpala się tylko na danych, których provider nie poprawił.
+ */
+export function findSeriesSplitJumps(priceMap: Map<string, number>): SeriesSplitJump[] {
+  const points = [...priceMap.entries()]
+    .filter(([, price]) => Number.isFinite(price) && price > 0)
+    .sort((a, b) => a[0].localeCompare(b[0]));
+
+  const jumps: SeriesSplitJump[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const [prevDate, prevPrice] = points[i - 1];
+    const [date, price] = points[i];
+
+    if (daysBetweenIso(prevDate, date) > SERIES_MAX_GAP_DAYS) continue;
+
+    const rawRatio = prevPrice / price;
+    if (rawRatio < SERIES_MIN_RATIO && rawRatio > 1 / SERIES_MIN_RATIO) continue;
+
+    const ratio = snapToKnownRatio(rawRatio);
+    if (Math.abs(rawRatio / ratio - 1) >= SERIES_SNAP_TOLERANCE) continue;
+
+    // Oba poziomy — stary i nowy — muszą się utrzymać. Inaczej to był błędny print.
+    const before = points.slice(Math.max(0, i - 1 - SERIES_PERSISTENCE_POINTS), i);
+    const after = points.slice(i, i + 1 + SERIES_PERSISTENCE_POINTS);
+    if (before.length < 1 + SERIES_PERSISTENCE_POINTS) continue;
+    if (after.length < 1 + SERIES_PERSISTENCE_POINTS) continue;
+    if (!levelHolds(before, prevPrice) || !levelHolds(after, price)) continue;
+
+    jumps.push({ date, ratio, rawRatio, priceBefore: prevPrice, priceAfter: price });
+  }
+  return jumps;
+}
+
+/**
+ * Wykryj splity ze skoków w serii providera — uzupełnienie `detectSplits` dla danych,
+ * których provider nie skorygował (patrz nagłówek sekcji, przypadek P500.DE).
+ *
+ * WAŻNE: zwróconych splitów NIE WOLNO przepuszczać przez `resolveSplitEventDates`.
+ * Tamten fallback („brak zdarzenia w Yahoo → data transakcji +1 dzień") istnieje dla
+ * detekcji, która zna tylko dolne ograniczenie daty. Tu data jest DOKŁADNA — to
+ * pierwszy dzień notowań w nowej skali, odczytany wprost z serii.
+ */
+export function detectSplitsFromPriceSeries(
+  transactions: Transaction[],
+  historicalPrices: Map<string, Map<string, number>>,
+  tickerMap: Map<string, TickerMapEntry>,
+): DetectedSplit[] {
+  const splits: DetectedSplit[] = [];
+  const seenIsins = new Set<string>();
+
+  for (const tx of transactions) {
+    if (seenIsins.has(tx.isin)) continue;
+    // Te same wykluczenia co w detekcji cenowej: obligacje kwotowane w % nominału
+    // i opcje wyceniane wartością wewnętrzną potrafią skakać bez żadnego splitu.
+    if (tx.category === 'bond' || tx.category === 'option') continue;
+    seenIsins.add(tx.isin);
+
+    const entry = tickerMap.get(tx.isin);
+    if (!entry) continue;
+    const priceMap = historicalPrices.get(entry.ticker);
+    if (!priceMap) continue;
+
+    for (const jump of findSeriesSplitJumps(priceMap)) {
+      splits.push({
+        ticker: entry.ticker,
+        isin: tx.isin,
+        date: jump.date,
+        ratio: jump.ratio,
+        txPrice: jump.priceBefore,
+        providerPrice: jump.priceAfter,
+        source: 'auto',
+      });
+    }
+  }
+
+  return splits;
+}
+
+/**
+ * Dokończ za providera korektę serii, w której split nie został uwzględniony.
+ *
+ * Dlaczego to jest potrzebne mimo `adjustTransactionsForSplits`: tamta funkcja
+ * sprowadza transakcje sprzed splitu do skali PO splicie (ilość ×ratio, cena /ratio).
+ * Przy serii skorygowanej to wystarcza — obie strony są wtedy w tej samej skali.
+ * Przy serii SUROWEJ odcinek sprzed ex-date zostaje w starej skali, więc wycena
+ * historyczna rozjechałaby się o `ratio` w drugą stronę (dla P500.DE: 100× za wysoko).
+ *
+ * Rozpoznanie „seria jest surowa" liczymy NA ŻYWO z danych, zamiast utrwalać flagę
+ * przy splicie: dowodem jest obecność skoku w serii. Gdy provider kiedyś poprawi swoje
+ * dane, skok zniknie i normalizacja sama przestanie się stosować — bez migracji.
+ *
+ * Mutuje mapy w miejsce (jak `rescaleHistoricalPrices`); w silniku są to świeże mapy
+ * budowane per wywołanie, więc cache cen nie jest tym dotykany.
+ *
+ * @returns splity, dla których faktycznie znormalizowano serię (diagnostyka/log)
+ */
+export function normalizeUnadjustedProviderSeries(
+  historicalPrices: Map<string, Map<string, number>>,
+  splits: DetectedSplit[],
+): DetectedSplit[] {
+  const applied: DetectedSplit[] = [];
+
+  const byTicker = new Map<string, DetectedSplit[]>();
+  for (const split of splits) {
+    const arr = byTicker.get(split.ticker) || [];
+    arr.push(split);
+    byTicker.set(split.ticker, arr);
+  }
+
+  for (const [ticker, tickerSplits] of byTicker) {
+    const priceMap = historicalPrices.get(ticker);
+    if (!priceMap) continue;
+
+    // Werdykty liczymy PRZED jakąkolwiek mutacją — inaczej normalizacja pierwszego
+    // splitu zmieniałaby dane, na których badamy kolejny.
+    const jumps = findSeriesSplitJumps(priceMap);
+    const unadjusted = tickerSplits.filter((split) =>
+      jumps.some(
+        (j) => j.date === split.date && Math.abs(j.ratio / split.ratio - 1) < SERIES_SNAP_TOLERANCE,
+      ),
+    );
+    if (unadjusted.length === 0) continue;
+
+    for (const split of unadjusted) {
+      for (const [date, price] of priceMap) {
+        // Ostre `<` — ex-date to pierwszy dzień w NOWEJ skali, więc jego cena
+        // jest już poprawna. Ta sama granica co w `adjustTransactionsForSplits`.
+        if (date < split.date) priceMap.set(date, price / split.ratio);
+      }
+      applied.push(split);
+    }
+  }
+
+  return applied;
+}
+
 /**
  * Rescale all historical provider prices to match the actual transaction price scale.
  *

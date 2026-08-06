@@ -30,7 +30,8 @@ import { fetchBiznesradarPrice, fetchBiznesradarHistory } from './biznesradar.js
 import { fetchStockwatchBondPrice } from './stockwatch-bonds.js';
 import {
   detectSplits,
-  rescaleHistoricalPrices,
+  detectSplitsFromPriceSeries,
+  normalizeUnadjustedProviderSeries,
   adjustTransactionsForSplits,
   detectSplitFromQuantityMismatch,
   isPlausibleSplitRatio,
@@ -2314,7 +2315,37 @@ export async function computePortfolioHistory(
     historySpinOffGuard,
     'price',
   );
-  const allSplits = mergeDetectedSplits(splits, [...newlyDetected, ...preWindowSplits]);
+  // Trzecie źródło: skok w SAMEJ serii providera. Łapie splity, których provider nie
+  // zna i o które nie skorygował historii (P500.DE 100:1 z 2025-12-15 — Yahoo bez
+  // zdarzenia i z surowym skokiem 1157,40 → 11,57). Detekcja transakcyjna jest tu
+  // ślepa: obie strony porównania są w tej samej, starej skali.
+  // Świadomie POMIJA resolveSplitEventDates — data ze skoku jest dokładną ex-datą,
+  // a tamten fallback (data tx +1) tylko by ją zepsuł.
+  const seriesSplits = filterDetectedSplitsForSpinOffs(
+    detectSplitsFromPriceSeries(transactions, historicalPrices, tickerMap).filter(
+      (s) => !savedSplitIsins.has(s.isin),
+    ),
+    historySpinOffGuard,
+    'price',
+  );
+
+  const allSplits = mergeDetectedSplits(splits, [
+    ...newlyDetected,
+    ...preWindowSplits,
+    ...seriesSplits,
+  ]);
+
+  // Dokończenie korekty za providera: jeśli seria wciąż zawiera surowy skok w dacie
+  // splitu, sprowadzamy jej odcinek sprzed ex-date do skali po splicie. Bez tego
+  // adjustTransactionsForSplits (ilość ×ratio) mnożyłoby się z ceną w starej skali
+  // i wycena historyczna byłaby `ratio` razy za wysoka. Liczone z merged listy, więc
+  // działa też dla splitów już utrwalonych w bazie.
+  const normalized = normalizeUnadjustedProviderSeries(historicalPrices, allSplits);
+  for (const s of normalized) {
+    console.log(
+      `Split ${s.ticker} ${s.ratio}:1 z ${s.date} — seria providera nieskorygowana, znormalizowano lokalnie`,
+    );
+  }
 
   // Adjust transactions for splits: convert pre-split transactions to post-split scale
   // (quantity * ratio, price / ratio). Provider prices are already split-adjusted, so
