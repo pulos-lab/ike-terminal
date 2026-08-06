@@ -15,6 +15,7 @@
     "check:biznesradar": "tsx scripts/check-biznesradar.ts",
     "check:yahoo": "tsx scripts/check-yahoo.ts",
     "check:batch-quotes": "tsx scripts/check-batch-quotes.ts",
+    "backfill:exchange": "tsx scripts/backfill-ticker-exchange.ts",
     "fix:nc": "tsx src/scripts/fix-nc-misidentification.ts",
     "fix:auto-dividend-tax": "tsx src/scripts/fix-auto-dividend-tax.ts",
     "fix:xtb-interest-subkind": "tsx src/scripts/fix-xtb-interest-subkind.ts",

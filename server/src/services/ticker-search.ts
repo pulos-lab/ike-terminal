@@ -261,16 +261,23 @@ export async function searchTickers(
   return results.slice(0, 15);
 }
 
+/** Nazwa i kod giełdy dla dokładnego symbolu — z jednej odpowiedzi wyszukiwarki. */
+export interface YahooSymbolInfo {
+  name: string | null;
+  /** Kod giełdy Yahoo ('NMS', 'NYQ', 'GER', 'WSE'…); null gdy Yahoo go nie podał. */
+  exchange: string | null;
+}
+
 /**
- * Lookup display name (longname/shortname) for a single ticker symbol via Yahoo
- * search. Returns null if not found OR if Yahoo doesn't return an exact symbol
- * match — strict matching protects CFD/certificate entries (e.g. `OIL`) from
- * being overwritten by an arbitrary first-quote like "Marathon Oil Corporation".
+ * Lookup display name (longname/shortname) and exchange code for a single ticker
+ * symbol via Yahoo search. Returns null if not found OR if Yahoo doesn't return an
+ * exact symbol match — strict matching protects CFD/certificate entries (e.g. `OIL`)
+ * from being overwritten by an arbitrary first-quote like "Marathon Oil Corporation".
  *
  * Uses the same crumb+cookies auth as `searchYahoo` — without it Yahoo returns
  * HTTP 500 for /v1/finance/search calls in production (PR #46).
  */
-export async function fetchYahooTickerName(symbol: string): Promise<string | null> {
+export async function fetchYahooSymbolInfo(symbol: string): Promise<YahooSymbolInfo | null> {
   try {
     const auth = await getYahooAuth();
     const params = new URLSearchParams({
@@ -302,8 +309,20 @@ export async function fetchYahooTickerName(symbol: string): Promise<string | nul
     // as quotes[0] and clobbers the legit CFD name. No fallback to quotes[0].
     const match = quotes.find((q) => (q.symbol || '').toUpperCase() === upper);
     if (!match) return null;
-    return match.longname || match.shortname || null;
+    return {
+      name: match.longname || match.shortname || null,
+      // Kod giełdy Yahoo ('NMS', 'NYQ', 'GER'…) — wejście dla `inferExchange`.
+      exchange: typeof match.exchange === 'string' ? match.exchange : null,
+    };
   } catch {
     return null;
   }
+}
+
+/**
+ * Sama nazwa — cienki wrapper zachowany dla zastanych wywołań.
+ * Nie generuje dodatkowego żądania: `fetchYahooSymbolInfo` pobiera oba pola naraz.
+ */
+export async function fetchYahooTickerName(symbol: string): Promise<string | null> {
+  return (await fetchYahooSymbolInfo(symbol))?.name ?? null;
 }

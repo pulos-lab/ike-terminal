@@ -30,7 +30,12 @@ export interface ResolveResult {
 /**
  * Infer exchange type from ticker symbol and Yahoo exchange string.
  */
-function inferExchange(ticker: string, yahooExchange?: string): TickerMapEntry['exchange'] {
+/**
+ * Giełda z sufiksu tickera albo kodu giełdy Yahoo. `OTHER` oznacza „nie wiem" —
+ * i jest to stan REALNY na produkcji dla ręcznie dodanych tickerów, więc konsumenci
+ * nie mogą traktować go jak zamkniętej listy (patrz `resolveEarningsMarket`).
+ */
+export function inferExchange(ticker: string, yahooExchange?: string): TickerMapEntry['exchange'] {
   if (ticker.endsWith('.WA')) return 'GPW';
   if (ticker.endsWith('.DE')) return 'XETRA';
   if (ticker.endsWith('.TO')) return 'TSX';

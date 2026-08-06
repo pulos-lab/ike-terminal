@@ -99,7 +99,12 @@ import {
 import { buildPositionsViewMemoized } from '../services/positions-memo.js';
 import { computePortfolioGreeks } from '../services/option-greeks.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
-import { searchTickers, fetchYahooTickerName } from '../services/ticker-search.js';
+import { inferExchange } from '../services/isin-resolver.js';
+import {
+  searchTickers,
+  fetchYahooTickerName,
+  fetchYahooSymbolInfo,
+} from '../services/ticker-search.js';
 import { scanDividends } from '../services/dividend-scanner.js';
 import {
   getGpwDividendCalendarService,
@@ -1656,9 +1661,9 @@ router.post(
     // so the new ticker_map entry doesn't fall back to the bare symbol (Yahoo chart API
     // doesn't return name, only currency — so we hit Yahoo search separately for longname).
     if (!entry) {
-      const [yahooData, yahooName] = await Promise.all([
+      const [yahooData, yahooInfo] = await Promise.all([
         fetchYahooPrice(ticker),
-        fetchYahooTickerName(ticker),
+        fetchYahooSymbolInfo(ticker),
       ]);
       if (!yahooData) {
         return res
@@ -1670,8 +1675,12 @@ router.post(
       const newEntry: TickerMapEntry = {
         isin: `AUTO_${upperTicker}`,
         ticker: upperTicker,
-        name: yahooName || upperTicker,
-        exchange: 'OTHER',
+        name: yahooInfo?.name || upperTicker,
+        // Giełda z kodu Yahoo (przychodzi tą samą odpowiedzią co nazwa) zamiast
+        // zahardkodowanego 'OTHER'. Wpis z AUTO_-ISIN-em przestaje wyglądać na
+        // prowizoryczny stub, gdy backfill nazw dopisze mu nazwę, więc później nic
+        // go już nie naprawi — giełdę trzeba ustawić TERAZ albo nigdy.
+        exchange: inferExchange(upperTicker, yahooInfo?.exchange ?? undefined),
         currency: overrideCurrency || yahooData.currency || 'USD',
         priceSource: 'yahoo',
       };
@@ -1803,9 +1812,9 @@ router.put(
     if (ticker && ticker.toUpperCase() !== currentTicker) {
       let entry = getTickerBySymbol(ticker, pid);
       if (!entry) {
-        const [yahooData, yahooName] = await Promise.all([
+        const [yahooData, yahooInfo] = await Promise.all([
           fetchYahooPrice(ticker),
-          fetchYahooTickerName(ticker),
+          fetchYahooSymbolInfo(ticker),
         ]);
         if (!yahooData) {
           return res.status(400).json({ error: `Nie znaleziono tickera: ${ticker}` });
@@ -1814,8 +1823,8 @@ router.put(
         const newEntry: TickerMapEntry = {
           isin: `AUTO_${upperTicker}`,
           ticker: upperTicker,
-          name: yahooName || upperTicker,
-          exchange: 'OTHER',
+          name: yahooInfo?.name || upperTicker,
+          exchange: inferExchange(upperTicker, yahooInfo?.exchange ?? undefined),
           currency: yahooData.currency || 'USD',
           priceSource: 'yahoo',
         };
