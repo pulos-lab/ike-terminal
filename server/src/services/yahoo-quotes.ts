@@ -411,8 +411,16 @@ export interface QuoteFreshness {
  *    a nie moment pobrania danych — branie minimum pokazywałoby „Kursy z 31.07"
  *    dla portfela z aktualnymi kursami akcji, czyli mierzyłoby płynność
  *    instrumentu zamiast świeżości naszych danych.
+ *
+ * TTL liczymy NA MOMENT ODCZYTU, nie na moment zapisu do cache'u: klient dostaje
+ * stąd tempo odpytywania, więc interesuje go „ile jeszcze", a nie „ile było".
+ * Zegar jest wstrzykiwany (jak w `quoteTtlSeconds`) — inaczej wynik zależy od
+ * pory doby przez klamrę do otwarcia rynku i nie da się go zbadać testem.
  */
-export function summarizeQuoteFreshness(tickers: string[]): QuoteFreshness {
+export function summarizeQuoteFreshness(
+  tickers: string[],
+  nowMs: number = Date.now(),
+): QuoteFreshness {
   let newest: number | null = null;
   let ttl = config.cache.quoteTtl.closed;
   let marketOpen = false;
@@ -423,7 +431,7 @@ export function summarizeQuoteFreshness(tickers: string[]): QuoteFreshness {
     if (!quote) continue;
     seen = true;
     const state = quote.marketState ?? null;
-    ttl = Math.min(ttl, quoteTtlSeconds(state));
+    ttl = Math.min(ttl, quoteTtlSeconds(state, nowMs));
     if (state === 'REGULAR') marketOpen = true;
     if (quote.quoteTime && (newest === null || quote.quoteTime > newest)) newest = quote.quoteTime;
   }
