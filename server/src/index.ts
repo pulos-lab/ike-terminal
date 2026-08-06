@@ -30,6 +30,7 @@ import { getBondCatalog } from './services/bond-catalog.js';
 import { backfillTickerNamesForPortfolio } from './services/ticker-name-backfill.js';
 import { scanAllPortfolios } from './services/dividend-scanner.js';
 import { scanAllInterest } from './services/interest-scanner.js';
+import { getBrCatalogService } from './services/biznesradar-catalog.js';
 import { getBiznesradarGuard } from './services/biznesradar-guard.js';
 import { getYahooGuard } from './services/yahoo-guard.js';
 import { getCacheStats } from './services/price-cache.js';
@@ -315,6 +316,28 @@ setTimeout(() => {
     console.error('Czyszczenie surowych plików importu nie powiodło się:', (err as Error).message);
   }
 }, 5_000);
+
+// ── Rozgrzewka katalogu BR (start + co 12h) ────────────────────────────────
+// Katalog polskich spółek ładuje się leniwie, a przy pustym/nieaktualnym czeka
+// najwyżej COLD_START_WAIT_MS i oddaje pustą listę. Kto trafi w to okno, dostaje
+// „nie ma takiej spółki" zamiast „jeszcze nie wiem" — i w ścieżce plików binarnych
+// (XTB/IBKR), która nie zapisuje stuba, utrwala się to jako pozycja bez ceny.
+// `resolveUnknownIsins` woła już `warmUp()` przed rozpoznawaniem, ale okno istnieje
+// też dla wyszukiwarki tickerów; rozgrzewka na starcie zamyka je dla WSZYSTKICH
+// ścieżek — po deployu (podbicie schema_version unieważnia katalog) pierwszy
+// użytkownik nie płaci za pobranie ~1,2 MB.
+//
+// Cykl 12h: `warmUp` jest no-opem, gdy katalog jest używalny, ale wywołanie i tak
+// odpala `refreshIfDue` w tle, więc katalog nie starzeje się w oczekiwaniu na ruch.
+// Fire-and-forget — start serwera nie czeka na sieć.
+const warmBrCatalog = () =>
+  getBrCatalogService()
+    .warmUp()
+    .then(() => console.log('[br-catalog] rozgrzany'))
+    .catch((err) => console.error('[br-catalog] rozgrzewka nieudana:', (err as Error).message));
+
+setTimeout(warmBrCatalog, 3_000);
+setInterval(warmBrCatalog, 12 * 60 * 60 * 1000);
 
 // ── Ticker name backfill (one-shot per startup, idempotent) ────────────────
 // Naprawia ticker_map.name dla wpisów gdzie `name = ticker` — pozostałość po
