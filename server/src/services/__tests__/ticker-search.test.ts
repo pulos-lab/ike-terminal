@@ -5,7 +5,11 @@ import type { TickerSearchResult } from 'shared';
 
 const brSearchMock = vi.fn<(q: string) => Promise<TickerSearchResult[]>>();
 vi.mock('../biznesradar-catalog.js', () => ({
-  getBrCatalogService: () => ({ search: brSearchMock, close: () => {} }),
+  getBrCatalogService: () => ({
+    warmUp: async () => {},
+    search: brSearchMock,
+    close: () => {},
+  }),
 }));
 
 const getAllTickersMock = vi.fn<(portfolioId?: string) => unknown[]>();
