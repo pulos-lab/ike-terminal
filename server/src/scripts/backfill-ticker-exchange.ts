@@ -49,13 +49,28 @@ interface Row {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Symbole, pod którymi CFD-y są ZAPISANE w `ticker_map` — czyli wartości
+ * `yahooTicker` z mapy CFD (`W20` → `WIG20.WA`, `DE40` → `^GDAXI`, `GOLD` → `GC=F`).
+ * Sama mapa jest kluczowana nazwą instrumentu XTB, a w `ticker_map` siedzi już
+ * rozwiązany symbol Yahoo — sprawdzanie tylko kluczy przepuszczało indeksy.
+ */
+const CFD_RESOLVED_SYMBOLS: Set<string> = new Set(
+  Object.values(CFD_TICKER_MAP).map((e) => e.yahooTicker.toUpperCase()),
+);
+
+/**
  * Instrument syntetyczny (CFD/surowiec/indeks/para FX) — NIE ma giełdy akcji.
- * Jego ticker koliduje z realnymi symbolami: wyszukiwarka Yahoo na „GOLD" zwraca
- * Barrick Gold z NYSE, a na „OIL" Marathon Oil. Ten sam guard co w
- * `ticker-name-backfill.ts`; wykryte na realnych danych podczas dry-runu.
+ *
+ * Trzy reguły, każda dopisana po tym, jak dry-run na realnych danych pokazał błąd:
+ *  - klucz mapy CFD: wyszukiwarka Yahoo na „GOLD" zwraca Barrick Gold z NYSE,
+ *    a na „OIL" Marathon Oil (ten sam guard co w `ticker-name-backfill.ts`),
+ *  - rozwiązany symbol Yahoo: `WIG20.WA` dostawał GPW, a `^GDAXI` XETRA,
+ *  - prefiks `^`: konwencja Yahoo dla indeksów, żeby złapać też te spoza mapy.
  */
 export function shouldSkipTicker(ticker: string): boolean {
-  return !!CFD_TICKER_MAP[ticker.toUpperCase()];
+  const upper = ticker.toUpperCase();
+  if (upper.startsWith('^')) return true;
+  return !!CFD_TICKER_MAP[upper] || CFD_RESOLVED_SYMBOLS.has(upper);
 }
 
 /**
