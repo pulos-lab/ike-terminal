@@ -134,6 +134,9 @@ Ikona `CalendarClock` z tooltipem przy tickerze w Portfelu, zapalana na 7 dni pr
 - **NewConnect**: statyczna mapa offline (`shared/src/nc-ticker-map.ts`, 374 spółki) jako fallback gdy Stooq rate-limited
 - **CFD**: statyczna mapa (`shared/src/cfd-ticker-map.ts`) → Yahoo ticker (np. GOLD → GC=F)
 - **Zagraniczne ISINy**: Yahoo by ISIN → Yahoo by name
+- **`exchange='OTHER'` to REALNY stan, nie błąd danych** — ręczne dodanie tickera (`POST /transactions`) tworzy wpis `AUTO_<TICKER>`, a Yahoo chart API nie zwraca giełdy. Giełdę bierzemy z kodu Yahoo w odpowiedzi wyszukiwarki (`fetchYahooSymbolInfo` → `inferExchange`), ale gdy jej brak, zostaje `OTHER`. **Konsumenci NIE MOGĄ traktować listy giełd jak zamkniętej** — patrz `resolveEarningsMarket`, gdzie takie założenie ukryło Figmę i Apple'a przed kalendarzem wyników
+- **PUŁAPKA samoleczenia**: `resolveUnknownIsins` ponawia rozpoznanie tylko dla wpisów wyglądających na prowizoryczny stub (`isProvisionalStub`: `ticker === name`). `backfillTickerNamesForPortfolio` dopisuje prawdziwą nazwę i tym samym **zamyka tę ścieżkę na zawsze** — wpis zostaje zakotwiczony z `OTHER`. Dlatego giełdę trzeba ustawić przy tworzeniu wpisu albo backfillem
+- Backfill zastanych wpisów: `npm run backfill:exchange -w server` (dry-run) / `-- --apply` (zapis). Zmienia WYŁĄCZNIE `exchange`; ticker/nazwa/ISIN kotwiczą historię cen. Pomija CFD-y przez `CFD_TICKER_MAP` — wyszukiwarka Yahoo na `GOLD` zwraca Barrick Gold z NYSE (ten sam guard co w backfillu nazw)
 
 ### Klasyfikacja sektorowa (stockwatch taxonomy)
 Zunifikowana taksonomia: 8 nadsektorów × 40 podsektorów ze stockwatch.pl/gpw/sektory (pola `supersector` + `sector` w `ticker_map`).
