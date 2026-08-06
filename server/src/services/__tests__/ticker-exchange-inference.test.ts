@@ -1,10 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { CFD_TICKER_MAP } from 'shared';
 import { inferExchange } from '../isin-resolver.js';
-import {
-  offlineExchangeGuess,
-  shouldSkipTicker,
-} from '../../../scripts/backfill-ticker-exchange.js';
+import { offlineExchangeGuess, shouldSkipTicker } from '../../scripts/backfill-ticker-exchange.js';
 
 describe('inferExchange', () => {
   it('rozpoznaje giełdę po sufiksie tickera', () => {

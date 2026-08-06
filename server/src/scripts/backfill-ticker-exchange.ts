@@ -16,9 +16,14 @@
  * Skrypt zmienia WYŁĄCZNIE kolumnę `exchange`. Nie rusza tickera, nazwy ani ISIN-u,
  * bo to one kotwiczą historię cen (patrz `upsertTickerMapEntry`).
  *
+ * Skrypt MUSI leżeć w `src/scripts/` (nie `scripts/`) — `server/tsconfig.json` ma
+ * `include: ["src"]`, więc tylko stamtąd trafia do `dist` i da się go uruchomić
+ * na produkcji.
+ *
  * Run (dry-run, tylko raport):  npm run backfill:exchange -w server
  * Run (zapis):                  npm run backfill:exchange -w server -- --apply
- * Prod:                         DATA_DIR=/opt/ike-terminal/data node dist/scripts/backfill-ticker-exchange.js --apply
+ * Prod (dry-run):  cd /opt/ike-terminal/app/server && sudo -u ike-terminal DATA_DIR=/opt/ike-terminal/data node dist/scripts/backfill-ticker-exchange.js
+ * Prod (zapis):    ta sama komenda z --apply
  */
 
 import { CFD_TICKER_MAP } from 'shared';
@@ -26,9 +31,9 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { config } from '../src/config.js';
-import { inferExchange } from '../src/services/isin-resolver.js';
-import { fetchYahooSymbolInfo } from '../src/services/ticker-search.js';
+import { config } from '../config.js';
+import { inferExchange } from '../services/isin-resolver.js';
+import { fetchYahooSymbolInfo } from '../services/ticker-search.js';
 
 const APPLY = process.argv.includes('--apply');
 const POLITENESS_MS = 250;
