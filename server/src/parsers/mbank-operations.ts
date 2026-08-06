@@ -322,6 +322,11 @@ export function parseMbankOperations(
     }
 
     // ── Unknown operation type ──
+    // Wzorzec Bossy: wiersz KSIĘGUJEMY jako 'other' (saldo się zgadza), a w
+    // `skipped` zostawiamy sygnał BEZ `raw` — celowo nie robimy ticketu
+    // kwarantanny, bo jej flow (rozwiąż = dodaj wpis ręcznie) zdublowałby
+    // zaksięgowaną operację. Wcześniej: zero sygnału, klasyfikacja po cichu.
+    skipped.push({ row: rowNum, reason: 'unknown_operation_type', paperName: description });
     operations.push({
       date: isoDate,
       operationType: 'other',

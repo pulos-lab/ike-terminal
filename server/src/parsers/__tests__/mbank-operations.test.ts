@@ -176,10 +176,26 @@ describe('parseMbankOperations', () => {
 
     const result = parseMbankOperations(csv, 'batch-test');
 
-    expect(result.skipped).toHaveLength(0);
+    // Sygnał „nieznany opis" w skipped jest celowy — wiersz i tak jest
+    // zaksięgowany jako 'other', nic nie ginie.
+    expect(result.skipped.map((s) => s.reason)).toEqual(['unknown_operation_type']);
     expect(result.data).toHaveLength(1);
     expect(result.data[0].amount).toBe(21);
     expect(result.warnings?.join(' ')).toContain('dalszej kolumnie');
+  });
+
+  it('nieznany opis: zaksięgowany jako other + sygnał w skipped BEZ raw', () => {
+    const csv = buildCsv(['15.12.2021 11:00:00,Zupełnie nowy tytuł operacji,"50,00"']);
+
+    const result = parseMbankOperations(csv, 'batch-test');
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].operationType).toBe('other');
+    const signal = result.skipped.find((s) => s.reason === 'unknown_operation_type');
+    expect(signal?.paperName).toBe('Zupełnie nowy tytuł operacji');
+    // Brak `raw` = brak ticketu kwarantanny — celowo: wiersz JEST zaksięgowany,
+    // a flow resolve (dodaj wpis ręcznie) zdublowałby operację.
+    expect(signal?.raw).toBeUndefined();
   });
 
   it('nie bierze za kwotę czegoś, co liczbą nie jest', () => {

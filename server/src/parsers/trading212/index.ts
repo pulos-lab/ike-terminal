@@ -92,10 +92,24 @@ export function parseT212File(
     if (!action) {
       // Nieznany typ → kwarantanna. NIE zgadujemy po prefiksie: "Market look"
       // wygląda jak "Market buy", a nim nie jest.
+      const hintDate = parseT212Time(at(cols.time));
+      const hintAmount = parseNumber(at(cols.total) ?? '');
       opsSkipped.push({
         row: rowNum,
         reason: 'unknown_operation_type',
         paperName: rawAction || name,
+        raw: {
+          rawType: rawAction ? rawAction.toLowerCase() : undefined,
+          headers: rows[0],
+          cells: row,
+          hint: {
+            date: hintDate ? hintDate.slice(0, 10) : undefined,
+            amount: hintAmount !== 0 ? hintAmount : undefined,
+            currency: at(cols.totalCurrency)?.trim() || undefined,
+            symbol: at(cols.ticker)?.trim() || undefined,
+            description: rawAction || name,
+          },
+        },
       });
       continue;
     }

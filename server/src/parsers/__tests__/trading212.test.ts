@@ -123,7 +123,16 @@ describe('Trading 212 — konwencje kwot', () => {
     const r = await parseT212File(csv('Nowy typ,2025-01-01 10:00:00,,,,,,,,1.00,EUR,,,,x-1'), 'b');
     expect(r.transactions.data).toHaveLength(0);
     expect(r.operations.data).toHaveLength(0);
-    expect(r.operations.skipped[0].reason).toBe('unknown_operation_type');
+    const s = r.operations.skipped[0];
+    expect(s.reason).toBe('unknown_operation_type');
+    // Kwalifikacja do skrzynki jest podwójna (reason + raw) — bez `raw`
+    // isQuarantineEligible odrzuca wiersz i ticket nigdy nie powstaje.
+    expect(s.raw?.rawType).toBe('nowy typ');
+    expect(s.raw?.headers?.[0]).toBe('Action');
+    expect(s.raw?.cells[0]).toBe('Nowy typ');
+    expect(s.raw?.hint?.date).toBe('2025-01-01');
+    expect(s.raw?.hint?.amount).toBe(1);
+    expect(s.raw?.hint?.currency).toBe('EUR');
   });
 
   it('transfer papierów: sprzedaż po cenie z pliku + równoważąca wypłata', async () => {
