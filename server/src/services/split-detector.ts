@@ -294,7 +294,36 @@ export function findSeriesSplitJumps(priceMap: Map<string, number>): SeriesSplit
 
     jumps.push({ date, ratio, rawRatio, priceBefore: prevPrice, priceAfter: price });
   }
-  return jumps;
+
+  // Split jest TRWAŁY: po nim stary poziom cen już nie wraca. Jeśli gdziekolwiek
+  // dalej w serii cena wraca do skali sprzed skoku, to nie był split, tylko rozjazd
+  // JEDNOSTKI w danych providera — pensy vs funty na listingu londyńskim.
+  //
+  // ZMIERZONE (produkcja, cała historia cen: 910 serii, 990 tys. punktów): jedyne
+  // wykrycia poza P500.DE to `LTSV.L` skaczący 2564 → 25,70 i z powrotem 26,11 → 2628,
+  // i tak cztery razy. Bez tego filtru pierwszy użytkownik z takim papierem dostałby
+  // zmyślony split 100:1 i ilości pomnożone przez 100.
+  //
+  // Sprawdzamy POWRÓT POZIOMU, nie parę skoków: skok powrotny bywa niewykryty
+  // (np. odpada na progu stabilności), a poziom widać zawsze.
+  //
+  // Świadomy koszt: papier, który po realnym splicie wróci do dawnego poziomu cen
+  // (dla splitu 100:1 to wzrost stukrotny), zostanie pominięty. Nieporównywalnie
+  // rzadsze niż rozjazd jednostek, a pominięcie jest bezpieczniejsze niż wymyślenie
+  // splitu i pomnożenie komuś ilości.
+  // Sprawdzenie jest SYMETRYCZNE, bo skok powrotny bywa niewykryty (odpada np.
+  // na progu stabilności) i wtedy widać tylko jedną stronę rozjazdu:
+  //  - stary poziom wraca PÓŹNIEJ  → to nie był trwały split,
+  //  - nowy poziom istniał WCZEŚNIEJ → to powrót do skali, nie nowa skala.
+  const RETURN_TOLERANCE = 0.4;
+  const atLevel = (price: number, level: number) => Math.abs(price / level - 1) < RETURN_TOLERANCE;
+  return jumps.filter((j) => {
+    const oldLevelReturns = points.some(([date, p]) => date > j.date && atLevel(p, j.priceBefore));
+    const newLevelExistedBefore = points.some(
+      ([date, p]) => date < j.date && atLevel(p, j.priceAfter),
+    );
+    return !oldLevelReturns && !newLevelExistedBefore;
+  });
 }
 
 /**

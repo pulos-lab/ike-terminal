@@ -98,6 +98,21 @@ describe('findSeriesSplitJumps — skok w nieskorygowanej serii providera', () =
     expect(jumps[0].ratio).toBeCloseTo(1 / 20);
   });
 
+  it('odwracający się skok to rozjazd JEDNOSTKI (pensy/funty), nie split', () => {
+    // Realne dane LTSV.L z produkcji: seria skacze 2564 → 25,70, potem wraca
+    // 26,11 → 2628 i tak kilka razy. Split jest trwały; to jest zmiana jednostki.
+    const prices = series(
+      '2025-07-07',
+      [2550, 2564, 25.7, 25.9, 26.11, 2628, 2650, 2640, 2655, 2660],
+    );
+    expect(findSeriesSplitJumps(prices)).toEqual([]);
+  });
+
+  it('pojedynczy, nieodwrócony skok nadal jest splitem (P500.DE się broni)', () => {
+    const prices = series('2025-12-08', [1160, 1155, 1158, 1157.4, 11.5705, 11.6, 11.55, 11.7]);
+    expect(findSeriesSplitJumps(prices)).toHaveLength(1);
+  });
+
   it('seria SKORYGOWANA przez providera nie daje żadnych skoków', () => {
     const prices = series('2025-12-08', [11.6, 11.55, 11.58, 11.574, 11.5705, 11.6, 11.55]);
     expect(findSeriesSplitJumps(prices)).toEqual([]);
