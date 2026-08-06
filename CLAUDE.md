@@ -159,6 +159,9 @@ Pole `country` w `ticker_map` (kanoniczna nazwa EN z Yahoo `assetProfile.country
 - Po testach przywróć portfel do stanu pierwotnego (usunięcie nadmiarowych i niepotrzebnych danych)
 - Upewniej się za każdym razem, że logika importu działa tak samo w przypadku wszystkich parserów
 - Testy jednostkowe parserów i serwisów: `server/src/parsers/__tests__/` i `server/src/services/__tests__/`
+- `npm test` (root) = build shared + zestaw serwera i klienta. **CI odpala to na każdym PR i bramkuje deploy** — czerwony test blokuje rollout na produkcję
+- **Testy klienta wymagają `shared/dist`** (idą przez pakiet workspace'owy, jak produkcyjny build), testy serwera NIE (aliasują `shared` na źródła). Stąd build shared przed zestawem. Pułapka: lokalnie tego nie widać, bo dist leży po poprzednim buildzie — a `tsc` jest przyrostowy, więc po ręcznym usunięciu `dist` trzeba skasować też `shared/tsconfig.tsbuildinfo`, inaczej build nic nie wyemituje
+- **Test nie może czytać realnego zegara.** Wszystko, co zależy od czasu, przyjmuje wstrzykiwany moment (`nowMs` w `quoteTtlSeconds`/`summarizeQuoteFreshness`, `options.now` w kalendarzach dywidend i wyników). Inaczej powstaje test przechodzący tylko o części doby — a runner GitHuba stoi w UTC i odpala się o dowolnej porze
 - W razie wątpliwości — zadawaj pytania i weryfikuj
 
 ## Uruchomienie

@@ -13,6 +13,7 @@
     "dev": "concurrently -n server,client -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"",
     "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
     "seed": "npm run seed -w server",
+    "test": "npm run build -w shared && npm run test -w server && npm run test -w client",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,html}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,html}\"",
     "prepare": "husky || true"

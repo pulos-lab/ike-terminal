@@ -37,8 +37,43 @@ jobs:
       - name: Prettier check
         run: npm run format:check
 
+  # Bramka testowa. Do #234 CI odpalało wyłącznie format-check, więc czerwony
+  # test mógł leżeć na main niezauważony — i leżał: `summarizeQuoteFreshness`
+  # padał ~9 h na dobę od #231, bo TTL czytał realny zegar. Zestaw chodzi ~5 s,
+  # więc bramkowanie deployu kosztuje tu tyle, co samo `npm ci`.
+  #
+  # Osobny job (a nie krok w format-check), żeby przy czerwonym teście od razu
+  # było widać, czy poległo formatowanie, czy logika — i żeby oba szły równolegle.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Dwa workspace'y rozwiązują `shared` RÓŻNIE i tylko jeden obywa się bez
+      # builda: serwer aliasuje `shared` na ../shared/src (server/vitest.config.ts),
+      # a klient idzie przez pakiet workspace'owy → `shared/dist/index.js`
+      # (shared/package.json `main`), dokładnie jak produkcyjny build klienta.
+      # Bez tego kroku 9 z 22 plików klienta pada na „Failed to resolve entry
+      # for package shared" — lokalnie niewidoczne, bo dist leży po poprzednim buildzie.
+      - name: Build shared (wymagane przez testy klienta)
+        run: npm run build -w shared
+
+      - name: Server tests
+        run: npm run test -w server
+
+      - name: Client tests
+        run: npm run test -w client
+
   deploy:
-    needs: format-check
+    needs: [format-check, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
