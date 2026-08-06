@@ -128,6 +128,23 @@ export function isPlausibleMatch(
 }
 
 /**
+ * Czy symbol z Yahoo jest DOKŁADNIE tym, o co pytaliśmy (bez sufiksu giełdy)?
+ *
+ * `isPlausibleMatch` celowo dopuszcza różnicę sufiksu (`BRKB` → `BRKB.VI`), bo mapa
+ * XTB_TO_YAHOO jest niepełna. To jednak ta sama furtka, którą wchodzi CUDZY listing
+ * tej samej spółki: dla `BRKB.US` (USD) Yahoo oddaje wiedeński `BRKB.VI` za 449,15 EUR
+ * zamiast `BRK-B` za 518,85 USD. Wołający używa tego, żeby przy trafieniu nie-dokładnym
+ * dołożyć guard waluty — patrz `resolveIsin`.
+ */
+export function isExactSymbolMatch(
+  queries: Array<string | undefined | null>,
+  symbol: string,
+): boolean {
+  const sym = symbol.toUpperCase();
+  return queries.some((q) => !!q && q.trim().length > 0 && q.toUpperCase() === sym);
+}
+
+/**
  * Pierwsze trafienie z listy, które przechodzi walidację. `null`, gdy żadne —
  * wtedy wołający MUSI zrezygnować, a nie sięgać po `[0]`.
  */

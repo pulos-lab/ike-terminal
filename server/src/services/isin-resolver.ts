@@ -14,7 +14,7 @@ import { fetchYahooPrice } from './yahoo-finance.js';
 import { resolveSector } from './sector-resolver.js';
 import { mapWithConcurrency } from './concurrency.js';
 import { normalizeBossaPaperName, isNewConnectPaperName } from './stooq-utils.js';
-import { pickPlausible } from './ticker-match.js';
+import { pickPlausible, isExactSymbolMatch } from './ticker-match.js';
 
 interface UnresolvedIsin {
   isin: string;
@@ -145,6 +145,94 @@ export const STOOQ_ALIASES: Record<string, string> = {
 export const FOREIGN_TICKER_ALIASES: Record<string, string> = {
   RELI: 'EZRA', // Reliance Global Group → EZRA International Group (2026-01-26)
 };
+
+/**
+ * Aliasy NOTACJI BROKERA → symbol Yahoo (papiery zagraniczne).
+ *
+ * Inny byt niż `FOREIGN_TICKER_ALIASES`: tam symbol był kiedyś poprawny i zmienił
+ * się w czasie (rebranding), tu nigdy poprawny nie był — broker po prostu zapisuje
+ * klasę akcji inną konwencją niż Yahoo. Yahoo używa MYŚLNIKA (`BRK-B`, `BF-B`),
+ * XTB skleja literę z tickerem (`BRKB.US`, `BFB.US`), a klasa C Alphabetu siedzi
+ * u Yahoo pod gołym `GOOG`.
+ *
+ * DLACZEGO MAPA, A NIE HEURYSTYKA (zmierzone na żywej wyszukiwarce 2026-08-06):
+ *  - `search('GOOGC')` → tylko `GOOGCL.SN` (Santiago, CLP) — poprawnego papieru
+ *    NIE MA w wynikach, więc żaden filtr waluty/giełdy go nie wyłowi,
+ *  - `search('ALPHABET INC C')` → 7 trafień, wszystkie cross-listingi (NEO, Santiago,
+ *    Wiedeń, Buenos Aires), zero z USA,
+ *  - `search('Alphabet')` → `GOOG` i `GOOGL` obok siebie, a informacja o klasie już
+ *    przepadła → wybór `[0]` byłby losowaniem między papierami po ~360 USD,
+ *  - `search('Berkshire Hathaway B')` → pierwsze trafienie to lewarowany ETP 2x.
+ * Wpisy tu są więc świadomie ręczne i każdy jest zweryfikowany kursem z Yahoo.
+ *
+ * Klucz = symbol BEZ sufiksu kraju (parser XTB obcina `.US` przed resolverem);
+ * `lookupForeignAlias` próbuje dodatkowo bazy symbolu, żeby złapać też ścieżki,
+ * które sufiks zachowują (import uniwersalny nie obcina niczego).
+ */
+export const BROKER_TICKER_ALIASES: Record<string, string> = {
+  GOOGC: 'GOOG', // XTB Alphabet klasa C → Yahoo GOOG (klasa A to GOOGL)
+  BRKA: 'BRK-A', // XTB Berkshire Hathaway klasa A
+  BRKB: 'BRK-B', // XTB Berkshire Hathaway klasa B
+  BFB: 'BF-B', // XTB Brown-Forman klasa B
+};
+
+/** GBX/GBp (pensy) i GBP to ta sama waluta w innej jednostce — nie mylić z niezgodnością. */
+function sameCurrency(a: string, b: string): boolean {
+  const norm = (c: string) => (c.toUpperCase() === 'GBX' ? 'GBP' : c.toUpperCase());
+  return norm(a) === norm(b);
+}
+
+/**
+ * `buildEntry` + guard waluty dla trafień NIE-dokładnych.
+ *
+ * GENEZA: `isPlausibleMatch` przepuszcza różnicę sufiksu giełdy (`BRKB` → `BRKB.VI`),
+ * więc XTB-owe `BRKB.US` rozwiązywało się na wiedeński listing w EUR. Gdy symbol nie
+ * jest dokładnym trafieniem, żądamy zgodności waluty notowania z walutą transakcji —
+ * inaczej odrzucamy i pozwalamy zadziałać kolejnej strategii (a finalnie zwrócić null,
+ * czyli provisional stub). Zasada niezmieniona: lepiej zero ceny niż cudza cena.
+ *
+ * Guard jest wołany WYŁĄCZNIE w gałęzi `shouldValidate` (pseudo-ISIN, niepolski,
+ * nie-CFD). To istotne: dla papieru kupionego w PLN `isPolishTicker` jest prawdziwe,
+ * więc guard nie ruszy tam, gdzie waluta transakcji to waluta konta, a nie notowania.
+ *
+ * Gdy `buildEntry` nie zdołał pobrać ceny, waluta wpisu spada do `txCurrency` —
+ * porównanie wypada wtedy trywialnie zgodne i wpis przechodzi. Świadomie: brak danych
+ * nie jest dowodem niezgodności.
+ */
+async function buildEntryGuarded(
+  isin: string,
+  hit: { symbol: string; name: string; exchange?: string },
+  paperName: string,
+  txCurrency: string,
+  matchQueries: Array<string | undefined>,
+): Promise<TickerMapEntry | null> {
+  const entry = await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
+  if (isExactSymbolMatch(matchQueries, hit.symbol)) return entry;
+  if (sameCurrency(entry.currency, txCurrency)) return entry;
+  console.log(
+    `  ✗ ${isin} → ${hit.symbol} odrzucone: notowanie w ${entry.currency}, transakcja w ${txCurrency}`,
+  );
+  return null;
+}
+
+/** Symbol bez sufiksu giełdy/kraju: „GOOGC.US" → „GOOGC". */
+function baseTickerSymbol(value: string): string {
+  const dot = value.indexOf('.');
+  return dot === -1 ? value : value.slice(0, dot);
+}
+
+/**
+ * Alias dla zagranicznego symbolu: najpierw rebranding, potem notacja brokera.
+ * Sprawdzamy symbol w całości i jego bazę — `GOOGC` i `GOOGC.US` mają trafić tak samo.
+ */
+export function lookupForeignAlias(symbol: string): string | undefined {
+  const keys = [symbol.toUpperCase(), baseTickerSymbol(symbol.toUpperCase())];
+  for (const key of keys) {
+    const hit = FOREIGN_TICKER_ALIASES[key] ?? BROKER_TICKER_ALIASES[key];
+    if (hit) return hit;
+  }
+  return undefined;
+}
 
 /**
  * Wczesny NC offline guard używany w resolverze przed jakimkolwiek requestem do
@@ -377,8 +465,12 @@ export async function resolveIsin(
 
   // === Non-Polish or real ISINs: Yahoo first ===
 
-  // Alias rebrandingowy: jeśli znamy nowy ticker, pytamy Yahoo od razu o niego.
-  const foreignAlias = isPseudoIsin ? FOREIGN_TICKER_ALIASES[isin.toUpperCase()] : undefined;
+  // Alias (rebranding LUB notacja klasy akcji u brokera): jeśli znamy właściwy
+  // symbol, pytamy Yahoo od razu o niego. Sprawdzamy też paperName, bo część
+  // ścieżek (import uniwersalny) trzyma symbol tam, z sufiksem kraju włącznie.
+  const foreignAlias = isPseudoIsin
+    ? (lookupForeignAlias(isin) ?? lookupForeignAlias(paperName))
+    : undefined;
 
   // Walidacja trafień Yahoo (patrz ticker-match.ts). GENEZA: zgłoszenie
   // 2026-07-20 — po zmianie tickera RELI→EZRA symbol zniknął z Yahoo, a
@@ -421,7 +513,12 @@ export async function resolveIsin(
     if (!isPolishTicker) {
       const hit = shouldValidate ? pickPlausible(byIsin, matchQueries) : byIsin[0];
       if (hit) {
-        return await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
+        const entry = shouldValidate
+          ? await buildEntryGuarded(isin, hit, paperName, txCurrency, matchQueries)
+          : await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
+        // Odrzucenie przez guard waluty NIE kończy resolwowania — Strategy 3
+        // (szukanie po nazwie) może jeszcze trafić właściwy listing.
+        if (entry) return entry;
       }
       // Żadne trafienie nie odpowiada temu, o co pytaliśmy → NIE sięgamy po [0].
       // Niżej Strategy 3 spróbuje po nazwie; gdy i to zawiedzie, resolver zwróci
@@ -519,14 +616,10 @@ export async function resolveIsin(
         } else {
           const hit = shouldValidate ? pickPlausible(byName, matchQueries) : byName[0];
           if (hit) {
-            return await buildEntry(
-              isin,
-              hit.symbol,
-              hit.name,
-              hit.exchange,
-              paperName,
-              txCurrency,
-            );
+            const entry = shouldValidate
+              ? await buildEntryGuarded(isin, hit, paperName, txCurrency, matchQueries)
+              : await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
+            if (entry) return entry;
           }
           // Brak wiarygodnego trafienia — próbujemy kolejnego wariantu nazwy,
           // a ostatecznie zwracamy null zamiast cudzej spółki.
