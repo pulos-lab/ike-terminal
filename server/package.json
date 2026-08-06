@@ -20,6 +20,7 @@
     "fix:auto-dividend-tax": "tsx src/scripts/fix-auto-dividend-tax.ts",
     "fix:xtb-interest-subkind": "tsx src/scripts/fix-xtb-interest-subkind.ts",
     "fix:tickers": "tsx src/scripts/fix-tickers.ts",
+    "fix:ticker-price-mismatch": "tsx src/scripts/fix-ticker-price-mismatch.ts",
     "audit:tickers": "tsx src/scripts/audit-ticker-map.ts",
     "diagnose:isin": "tsx src/scripts/diagnose-isin.ts",
     "backfill:assignments": "tsx src/scripts/backfill-assignments.ts",
