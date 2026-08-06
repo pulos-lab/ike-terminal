@@ -1,10 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { CFD_TICKER_MAP } from 'shared';
 import { inferExchange } from '../isin-resolver.js';
-import {
-  offlineExchangeGuess,
-  shouldSkipTicker,
-} from '../../../scripts/backfill-ticker-exchange.js';
+import { offlineExchangeGuess, shouldSkipTicker } from '../../scripts/backfill-ticker-exchange.js';
 
 describe('inferExchange', () => {
   it('rozpoznaje giełdę po sufiksie tickera', () => {
@@ -37,6 +34,20 @@ describe('backfill giełdy — guard instrumentów syntetycznych', () => {
     // Kontrola: prawdziwa akcja nie jest pomijana.
     expect(shouldSkipTicker('AAPL')).toBe(false);
     expect(shouldSkipTicker('FIG')).toBe(false);
+  });
+
+  it('REGRESJA: indeks zapisany pod symbolem Yahoo też jest pomijany', () => {
+    // Mapa CFD jest kluczowana NAZWĄ instrumentu XTB (`W20`, `DE40`), a w ticker_map
+    // siedzi już rozwiązany symbol Yahoo. Sprawdzanie samych kluczy przepuszczało
+    // indeksy: `WIG20.WA` dostawał GPW, a `^GDAXI` XETRA — wykryte na realnych danych.
+    expect(shouldSkipTicker('WIG20.WA')).toBe(true);
+    expect(shouldSkipTicker('^GDAXI')).toBe(true);
+    expect(shouldSkipTicker('GC=F')).toBe(true);
+  });
+
+  it('prefiks ^ łapie indeksy spoza mapy CFD', () => {
+    expect(shouldSkipTicker('^SPX')).toBe(true);
+    expect(shouldSkipTicker('^N225')).toBe(true);
   });
 
   it('guard opiera się na tej samej mapie co backfill nazw', () => {

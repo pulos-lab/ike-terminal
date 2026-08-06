@@ -16,9 +16,14 @@
  * Skrypt zmienia WYŁĄCZNIE kolumnę `exchange`. Nie rusza tickera, nazwy ani ISIN-u,
  * bo to one kotwiczą historię cen (patrz `upsertTickerMapEntry`).
  *
+ * Skrypt MUSI leżeć w `src/scripts/` (nie `scripts/`) — `server/tsconfig.json` ma
+ * `include: ["src"]`, więc tylko stamtąd trafia do `dist` i da się go uruchomić
+ * na produkcji.
+ *
  * Run (dry-run, tylko raport):  npm run backfill:exchange -w server
  * Run (zapis):                  npm run backfill:exchange -w server -- --apply
- * Prod:                         DATA_DIR=/opt/ike-terminal/data node dist/scripts/backfill-ticker-exchange.js --apply
+ * Prod (dry-run):  cd /opt/ike-terminal/app/server && sudo -u ike-terminal DATA_DIR=/opt/ike-terminal/data node dist/scripts/backfill-ticker-exchange.js
+ * Prod (zapis):    ta sama komenda z --apply
  */
 
 import { CFD_TICKER_MAP } from 'shared';
@@ -26,9 +31,9 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { config } from '../src/config.js';
-import { inferExchange } from '../src/services/isin-resolver.js';
-import { fetchYahooSymbolInfo } from '../src/services/ticker-search.js';
+import { config } from '../config.js';
+import { inferExchange } from '../services/isin-resolver.js';
+import { fetchYahooSymbolInfo } from '../services/ticker-search.js';
 
 const APPLY = process.argv.includes('--apply');
 const POLITENESS_MS = 250;
@@ -44,13 +49,28 @@ interface Row {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Symbole, pod którymi CFD-y są ZAPISANE w `ticker_map` — czyli wartości
+ * `yahooTicker` z mapy CFD (`W20` → `WIG20.WA`, `DE40` → `^GDAXI`, `GOLD` → `GC=F`).
+ * Sama mapa jest kluczowana nazwą instrumentu XTB, a w `ticker_map` siedzi już
+ * rozwiązany symbol Yahoo — sprawdzanie tylko kluczy przepuszczało indeksy.
+ */
+const CFD_RESOLVED_SYMBOLS: Set<string> = new Set(
+  Object.values(CFD_TICKER_MAP).map((e) => e.yahooTicker.toUpperCase()),
+);
+
+/**
  * Instrument syntetyczny (CFD/surowiec/indeks/para FX) — NIE ma giełdy akcji.
- * Jego ticker koliduje z realnymi symbolami: wyszukiwarka Yahoo na „GOLD" zwraca
- * Barrick Gold z NYSE, a na „OIL" Marathon Oil. Ten sam guard co w
- * `ticker-name-backfill.ts`; wykryte na realnych danych podczas dry-runu.
+ *
+ * Trzy reguły, każda dopisana po tym, jak dry-run na realnych danych pokazał błąd:
+ *  - klucz mapy CFD: wyszukiwarka Yahoo na „GOLD" zwraca Barrick Gold z NYSE,
+ *    a na „OIL" Marathon Oil (ten sam guard co w `ticker-name-backfill.ts`),
+ *  - rozwiązany symbol Yahoo: `WIG20.WA` dostawał GPW, a `^GDAXI` XETRA,
+ *  - prefiks `^`: konwencja Yahoo dla indeksów, żeby złapać też te spoza mapy.
  */
 export function shouldSkipTicker(ticker: string): boolean {
-  return !!CFD_TICKER_MAP[ticker.toUpperCase()];
+  const upper = ticker.toUpperCase();
+  if (upper.startsWith('^')) return true;
+  return !!CFD_TICKER_MAP[upper] || CFD_RESOLVED_SYMBOLS.has(upper);
 }
 
 /**
