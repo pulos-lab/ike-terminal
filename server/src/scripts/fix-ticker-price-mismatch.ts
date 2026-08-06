@@ -114,6 +114,25 @@ export function verdictLooksCorrect(v: PriceVerdict): boolean {
   return v === 'zgodna' || v === 'inna-waluta' || v === 'jednostka-gbx';
 }
 
+/**
+ * Czy ponowić rozpoznanie, udając walutę obcą?
+ *
+ * PRZYCZYNA ŹRÓDŁOWA CZĘŚCI TYCH BŁĘDÓW (zmierzona 2026-08-06): transakcja niesie
+ * walutę KONTA (PLN), a nie walutę notowania. Cena zgadza się co do grosza
+ * z notowaniem rodzimym — `INTU` 551,07 „PLN" vs Intuit 545,40 USD, `ABEA.DE`
+ * 270,25 vs 267,55 EUR, `NOVOB.CO` 282,80 vs 287,50 DKK. Zła etykieta wpycha
+ * zagraniczny papier w POLSKĄ gałąź resolvera (`isPseudoIsin && txCurrency==='PLN'`),
+ * gdzie akceptowane są tylko listingi `.WA` — i dopiero tam skracanie nazwy dorabia
+ * `INTU` → `INT` (Internity). Kolizja tickera jest SKUTKIEM, nie przyczyną.
+ *
+ * Ponowienie z walutą inną niż PLN kieruje resolver w gałąź zagraniczną. Wartość
+ * waluty jest tylko przełącznikiem gałęzi — `buildEntry` i tak nadpisze ją walutą
+ * zwróconą przez Yahoo. Wynik i tak musi przejść weryfikację cenową.
+ */
+export function shouldRetryAsForeign(txCurrency: string, firstAttemptFailed: boolean): boolean {
+  return firstAttemptFailed && (txCurrency || '').toUpperCase() === 'PLN';
+}
+
 interface TickerRow {
   isin: string;
   ticker: string;
@@ -139,6 +158,9 @@ interface Outcome {
   newDesc: string;
   status: 'fixed' | 'skipped';
   reason?: string;
+  /** Ustawiane, gdy waluta transakcji ≠ waluta notowania naprawionego papieru.
+   *  Skrypt tego NIE naprawia (osobna sprawa: reconcileQuoteCurrencies). */
+  currencyLabelNote?: string;
 }
 
 function listPortfolios(): string[] {
@@ -227,13 +249,38 @@ async function findCandidates(portfolioId: string): Promise<Candidate[]> {
   return out;
 }
 
+/** Jedna próba rozpoznania + weryfikacja cenowa nowego trafienia. */
+async function attempt(c: Candidate, currency: string) {
+  const entry = await resolveIsin(c.row.isin, c.paperName, currency);
+  if (!entry || entry.ticker === c.row.ticker)
+    return { entry, verdict: null as PriceVerdict | null };
+  const price = await providerPriceAt(entry.ticker, c.txDate, entry.currency);
+  const fx = await fxBetween(entry.currency, c.txCurrency);
+  return {
+    entry,
+    verdict: classifyPrice({ txPrice: c.txPrice, providerPrice: price, fxRate: fx }),
+  };
+}
+
 async function repair(c: Candidate, apply: boolean): Promise<Outcome> {
   const oldDesc = `${c.row.ticker} ${c.row.exchange}/${c.row.currency} (${c.row.name || '?'})`;
   const base = { portfolioId: c.portfolioId, isin: c.row.isin, oldDesc };
 
   let entry: TickerMapEntry | null = null;
+  let verdict: PriceVerdict | null = null;
   try {
-    entry = await resolveIsin(c.row.isin, c.paperName, c.txCurrency);
+    ({ entry, verdict } = await attempt(c, c.txCurrency));
+
+    // Druga próba dla papierów z etykietą PLN — patrz `shouldRetryAsForeign`.
+    // Bez niej zagraniczna spółka z błędną etykietą waluty wpada z powrotem
+    // w polską gałąź i „naprawa" kończy się tym samym błędem albo nullem.
+    if (shouldRetryAsForeign(c.txCurrency, !entry || !verdict || !verdictLooksCorrect(verdict))) {
+      const foreign = await attempt(c, 'USD');
+      if (foreign.verdict && verdictLooksCorrect(foreign.verdict)) {
+        entry = foreign.entry;
+        verdict = foreign.verdict;
+      }
+    }
   } catch (err: any) {
     return { ...base, newDesc: '—', status: 'skipped', reason: `resolveIsin: ${err.message}` };
   }
@@ -257,23 +304,27 @@ async function repair(c: Candidate, apply: boolean): Promise<Outcome> {
     };
   }
 
-  const newPrice = await providerPriceAt(entry.ticker, c.txDate, entry.currency);
-  const newFx = await fxBetween(entry.currency, c.txCurrency);
-  const newVerdict = classifyPrice({ txPrice: c.txPrice, providerPrice: newPrice, fxRate: newFx });
-  if (!verdictLooksCorrect(newVerdict)) {
+  if (!verdict || !verdictLooksCorrect(verdict)) {
     return {
       ...base,
       newDesc,
       status: 'skipped',
-      reason: `nowe trafienie też nie przechodzi weryfikacji ceny (${newVerdict})`,
+      reason: `nowe trafienie też nie przechodzi weryfikacji ceny (${verdict ?? 'brak-danych'})`,
     };
   }
+
+  // Etykieta waluty transakcji bywa walutą KONTA, nie notowania — to właśnie ona
+  // wepchnęła te papiery w polską gałąź. Sygnalizujemy, ale nie naprawiamy tutaj.
+  const labelMismatch =
+    normCur(c.txCurrency) !== normCur(entry.currency)
+      ? `waluta transakcji ${c.txCurrency} ≠ waluta notowania ${entry.currency} — etykieta do naprawy osobno`
+      : undefined;
 
   // force=true — kotwica w upsertTickerMapEntry celowo NIE puszcza nadpisania
   // istniejącego wpisu (chroni ciągłość historii cen przed cichą podmianą
   // tickera). Tu obchodzimy ją świadomie, po weryfikacji cenowej obu stron.
   if (apply) upsertTickerMapEntry(entry, c.portfolioId, true);
-  return { ...base, newDesc, status: 'fixed' };
+  return { ...base, newDesc, status: 'fixed', currencyLabelNote: labelMismatch };
 }
 
 function parseArgs() {
@@ -324,6 +375,7 @@ async function main() {
   for (const o of fixed) {
     console.log(`  ${pad(o.portfolioId.slice(0, 8), 8)} ${pad(o.isin, 14)} ${o.oldDesc}`);
     console.log(`  ${' '.repeat(23)}→ ${o.newDesc}`);
+    if (o.currencyLabelNote) console.log(`  ${' '.repeat(23)}  ⚠ ${o.currencyLabelNote}`);
   }
   console.log(`\n── Pominięte: ${skipped.length} ──`);
   for (const o of skipped) {

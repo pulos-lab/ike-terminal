@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { classifyPrice, verdictLooksCorrect } from '../fix-ticker-price-mismatch.js';
+import {
+  classifyPrice,
+  verdictLooksCorrect,
+  shouldRetryAsForeign,
+} from '../fix-ticker-price-mismatch.js';
 
 /**
  * Wszystkie liczby pochodzą z realnych wpisów `ticker_map` na produkcji
@@ -120,6 +124,23 @@ describe('classifyPrice — cena transakcji vs notowanie przypisanego papieru', 
       expect(verdictLooksCorrect('split')).toBe(false);
       expect(verdictLooksCorrect('niezgodna')).toBe(false);
       expect(verdictLooksCorrect('brak-danych')).toBe(false);
+    });
+  });
+
+  describe('shouldRetryAsForeign — zła etykieta waluty wpycha obcy papier w polską gałąź', () => {
+    it('etykieta PLN po nieudanej pierwszej próbie → ponów jako zagraniczny', () => {
+      // INTU 551,07 „PLN" to w rzeczywistości 545,40 USD (Intuit). Etykieta waluty
+      // konta sprawia, że resolver szuka wyłącznie listingów .WA i dorabia INT.WA.
+      expect(shouldRetryAsForeign('PLN', true)).toBe(true);
+    });
+
+    it('pierwsza próba się powiodła → bez ponawiania', () => {
+      expect(shouldRetryAsForeign('PLN', false)).toBe(false);
+    });
+
+    it('etykieta inna niż PLN → papier i tak idzie gałęzią zagraniczną', () => {
+      expect(shouldRetryAsForeign('USD', true)).toBe(false);
+      expect(shouldRetryAsForeign('EUR', true)).toBe(false);
     });
   });
 });
