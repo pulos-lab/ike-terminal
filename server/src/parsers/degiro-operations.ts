@@ -37,7 +37,42 @@ import {
  *   - Depozyt / Depozyt Trustly / Sofort → deposit
  *   - Wypłata → withdrawal
  *   - FX Credit + FX Withdrawal → paired into fx_exchange (all rows, including trade-linked)
+ *
+ * Wiersze spoza wszystkich list trafiają do skrzynki "Do wyjaśnienia"
+ * (unknown_operation_type + raw) — NIE są księgowane, bo Account.csv zawiera
+ * też wiersze czysto informacyjne, które zepsułyby saldo. Wyjątek: znana
+ * wewnętrzna księgowość DEGIRO (INTERNAL_ROW_PATTERNS) pomijana bez śladu.
  */
+
+/** Opisy podatków transakcyjnych — konsumuje je parseDegiroTransactionTaxes
+ * (doliczane do prowizji transakcji), więc pass operacji ma je uznać za
+ * obsłużone, a nie zgłaszać jako nieznane. */
+const TRANSACTION_TAX_DESCRIPTIONS = [
+  'Francuski podatek od transakcji',
+  'London/Dublin Stamp Duty',
+  'Hong Kong Stamp Duty',
+];
+
+/** Wiersze Account.csv celowo pomijane BEZ śladu — obsłużone gdzie indziej albo
+ * czysto wewnętrzna księgowość DEGIRO (zweryfikowane na realnych eksportach,
+ * ~400 wierszy na plik — jako tickety zalałyby skrzynkę, jako skipy listę
+ * ostrzeżeń):
+ *  - nogi gotówkowe transakcji („Kupno 4 11 Bit Studios SA@451 PLN (ISIN)") —
+ *    transakcje wchodzą z Transactions.csv, zaksięgowanie nogi = podwójny koszt;
+ *  - nogi FUZJI — para Kupno+Sprzedaż po tej samej cenie, netto 0;
+ *  - fundusz gotówkowy (konwersje jednostek, zmiana ceny) — informacyjne;
+ *  - „Degiro Cash Sweep Transfer" — przelew DEGIRO↔FLATEX BANKACCOUNT, obie
+ *    kieszenie to w aplikacji jedna pula gotówki;
+ *  - „Processed Flatex Withdrawal" — para rezerwacja+rewers (netto 0) obok
+ *    księgowanej „flatex Withdrawal". */
+const INTERNAL_ROW_PATTERNS: RegExp[] = [
+  /^(?:Kupno|Sprzedaż)\s+\d/,
+  /^FUZJA:/,
+  /^Konwersja funduszu gotówkowego/,
+  /^Zmiana ceny funduszu gotówkowego/,
+  /^Degiro Cash Sweep Transfer$/,
+  /^Processed Flatex Withdrawal$/,
+];
 
 interface AccountRow {
   rowNum: number;
@@ -72,6 +107,8 @@ export function parseDegiroOperations(
   const parsed: AccountRow[] = [];
   const skipped: SkippedRow[] = [];
   const warnings: string[] = [];
+  // Surowe komórki per wiersz — potrzebne dla skrzynki "Do wyjaśnienia".
+  const rawCells = new Map<number, string[]>();
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
@@ -119,6 +156,7 @@ export function parseDegiroOperations(
     }
 
     const normalizedCurrency = currency === 'NO' ? 'NOK' : currency;
+    rawCells.set(rowNum, row);
     parsed.push({
       rowNum,
       date: dateStr,
@@ -135,12 +173,21 @@ export function parseDegiroOperations(
 
   const operations: CashOperation[] = [];
 
+  // Wiersze pochłonięte przez którąkolwiek z list poniżej — reszta trafia do
+  // catch-alla na końcu (wcześniej znikała bez śladu: bez skipped, bez warningu).
+  const consumed = new Set<number>();
+  const take = (pred: (r: AccountRow) => boolean): AccountRow[] => {
+    const hits = parsed.filter(pred);
+    for (const r of hits) consumed.add(r.rowNum);
+    return hits;
+  };
+
   // ── Dividends: pair gross + tax by ISIN + date + time ──
   // Każdy wiersz podatku może być sparowany TYLKO RAZ — dwie dywidendy tego
   // samego ISIN-u o tym samym timestampie (np. częściowe księgowania) nie mogą
   // odjąć tego samego podatku dwukrotnie.
-  const dividendRows = parsed.filter((r) => r.description === 'Dywidenda');
-  const taxRows = parsed.filter((r) => r.description === 'Podatek Dywidendowy');
+  const dividendRows = take((r) => r.description === 'Dywidenda');
+  const taxRows = take((r) => r.description === 'Podatek Dywidendowy');
   const usedTaxRows = new Set<number>();
 
   for (const div of dividendRows) {
@@ -172,8 +219,33 @@ export function parseDegiroOperations(
     });
   }
 
+  // ── Unmatched dividend tax: standalone correction (wzorzec IBKR) ──
+  // Podatek bez dywidendy o tym samym ISIN+timestampie (np. korekta WHT
+  // z poprzedniego okresu) wcześniej znikał bez śladu i saldo dryfowało.
+  for (const tax of taxRows) {
+    if (usedTaxRows.has(tax.rowNum)) continue;
+    if (tax.amount === 0) {
+      skipped.push({ row: tax.rowNum, reason: 'zero_amount', paperName: tax.description });
+      continue;
+    }
+    warnings.push(
+      `DEGIRO: Podatek Dywidendowy ${tax.product} ${tax.date} bez pasującej dywidendy w pliku — ` +
+        `zaimportowano jako samodzielną korektę`,
+    );
+    operations.push({
+      date: parseDegiroDate(tax.date, tax.time),
+      operationType: 'dividend',
+      description: `${tax.product} — korekta podatku od dywidendy`,
+      amount: tax.amount, // ujemna kwota wprost z CSV
+      currency: tax.currency,
+      ticker: tax.product || undefined,
+      source: 'degiro',
+      importBatch,
+    });
+  }
+
   // ── Deposits ──
-  const depositRows = parsed.filter((r) => r.description.startsWith('Depozyt'));
+  const depositRows = take((r) => r.description.startsWith('Depozyt'));
   for (const dep of depositRows) {
     if (dep.amount === 0) {
       skipped.push({ row: dep.rowNum, reason: 'zero_amount', paperName: dep.description });
@@ -192,7 +264,7 @@ export function parseDegiroOperations(
   }
 
   // ── Withdrawals ──
-  const withdrawalRows = parsed.filter(
+  const withdrawalRows = take(
     (r) => r.description === 'Wypłata' || r.description === 'flatex Withdrawal',
   );
   for (const wd of withdrawalRows) {
@@ -215,8 +287,8 @@ export function parseDegiroOperations(
   // ── FX exchanges: ALL rows (with and without orderId) ──
   // Trade-related FX (with orderId) represent auto-conversions when buying/selling
   // foreign stocks — they are real cash movements and must be imported.
-  const allFxCredits = parsed.filter((r) => r.description === 'FX Credit');
-  const allFxWithdrawals = parsed.filter((r) => r.description === 'FX Withdrawal');
+  const allFxCredits = take((r) => r.description === 'FX Credit');
+  const allFxWithdrawals = take((r) => r.description === 'FX Withdrawal');
   const matchedWithdrawals = new Set<number>();
 
   for (const credit of allFxCredits) {
@@ -305,7 +377,7 @@ export function parseDegiroOperations(
     'DEGIRO Opłata Transakcyjna i/lub opłata stron trzecich',
     'ADR/GDR Pass-Through Fee',
   ];
-  const feeRows = parsed.filter(
+  const feeRows = take(
     (r) =>
       feeDescriptions.includes(r.description) ||
       r.description.startsWith('DEGIRO Exchange Connection Fee'),
@@ -324,6 +396,38 @@ export function parseDegiroOperations(
       currency: fee.currency || 'EUR',
       source: 'degiro',
       importBatch,
+    });
+  }
+
+  // Podatki transakcyjne obsługuje parseDegiroTransactionTaxes (dolicza je do
+  // prowizji transakcji) — dla passu operacji są "skonsumowane", nie nieznane.
+  take((r) => TRANSACTION_TAX_DESCRIPTIONS.includes(r.description));
+
+  // ── Catch-all: wiersze spoza wszystkich allowlist ──
+  // Wcześniej znikały bez śladu. NIE księgujemy ich na ślepo jako 'other'
+  // (wiersze informacyjne zepsułyby saldo) — nieznany opis z kwotą ≠ 0 dostaje
+  // ticket w skrzynce "Do wyjaśnienia": użytkownik klasyfikuje i dodaje wpis
+  // ręcznie (flow resolve) albo ignoruje.
+  for (const r of parsed) {
+    if (consumed.has(r.rowNum)) continue;
+    if (r.amount === 0) continue; // informacyjne (np. rezerwacje 0,00)
+    if (INTERNAL_ROW_PATTERNS.some((re) => re.test(r.description))) continue;
+    skipped.push({
+      row: r.rowNum,
+      reason: 'unknown_operation_type',
+      paperName: r.description,
+      raw: {
+        rawType: r.description.toLowerCase(),
+        headers: header,
+        cells: rawCells.get(r.rowNum) ?? [],
+        hint: {
+          date: parseDegiroDate(r.date, r.time).slice(0, 10),
+          amount: r.amount,
+          currency: r.currency || undefined,
+          symbol: r.product || undefined,
+          description: r.description,
+        },
+      },
     });
   }
 
@@ -355,11 +459,7 @@ export function parseDegiroTransactionTaxes(csvContent: string): TransactionTax[
   const header = rows[0];
   if (!isDegiroAccountHeader(header)) return [];
 
-  const taxDescriptions = [
-    'Francuski podatek od transakcji',
-    'London/Dublin Stamp Duty',
-    'Hong Kong Stamp Duty',
-  ];
+  const taxDescriptions = TRANSACTION_TAX_DESCRIPTIONS;
 
   const taxes: TransactionTax[] = [];
 

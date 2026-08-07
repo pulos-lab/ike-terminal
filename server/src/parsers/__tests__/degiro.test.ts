@@ -64,6 +64,78 @@ describe('parseDegiroOperations — dywidendy', () => {
 
 // ── parseDegiroTransactionTaxes ──
 
+describe('parseDegiroOperations — niesparowany podatek dywidendowy', () => {
+  it('podatek bez dywidendy → samodzielna ujemna korekta + warning', () => {
+    const csv = accountCsv([
+      '01-03-2024,09:00,01-03-2024,APPLE INC,US0378331005,Podatek Dywidendowy,,USD,"-15,00",,USD,',
+    ]);
+    const { data, warnings } = parseDegiroOperations(csv, 'batch-1');
+    expect(data).toHaveLength(1);
+    expect(data[0].operationType).toBe('dividend');
+    expect(data[0].amount).toBe(-15);
+    expect(warnings?.join(' ')).toContain('bez pasującej dywidendy');
+  });
+});
+
+describe('parseDegiroOperations — wiersze spoza allowlist (catch-all)', () => {
+  it('nieznany opis z kwotą ≠ 0: NIE księgowany, ticket kwarantanny z raw', () => {
+    const csv = accountCsv([
+      '05-03-2024,10:00,05-03-2024,,,Przeniesienie do funduszu gotówkowego,,EUR,"-123,45",,EUR,',
+    ]);
+    const { data, skipped } = parseDegiroOperations(csv, 'batch-1');
+    expect(data).toHaveLength(0);
+    expect(skipped).toHaveLength(1);
+    const s = skipped[0];
+    expect(s.reason).toBe('unknown_operation_type');
+    expect(s.raw?.rawType).toBe('przeniesienie do funduszu gotówkowego');
+    expect(s.raw?.headers?.[5]).toBe('Opis');
+    expect(s.raw?.cells[5]).toBe('Przeniesienie do funduszu gotówkowego');
+    expect(s.raw?.hint).toMatchObject({ date: '2024-03-05', amount: -123.45, currency: 'EUR' });
+  });
+
+  it('nieznany opis z kwotą 0 → pominięty bez śladu (wiersz informacyjny)', () => {
+    const csv = accountCsv(['05-03-2024,10:00,05-03-2024,,,Zupełnie nowy opis,,EUR,"0,00",,EUR,']);
+    const { data, skipped } = parseDegiroOperations(csv, 'batch-1');
+    expect(data).toHaveLength(0);
+    expect(skipped).toHaveLength(0);
+  });
+
+  it('znana wewnętrzna księgowość DEGIRO pomijana bez śladu (nie zalewa skrzynki)', () => {
+    // Realne pliki mają ~400 takich wierszy: nogi gotówkowe transakcji
+    // (Transactions.csv księguje koszt), fundusz gotówkowy, sweep, rewers wypłaty.
+    const csv = accountCsv([
+      '01-03-2024,09:05,01-03-2024,11 BIT STUDIOS,PL11BTS00015,"Kupno 4 11 Bit Studios SA@451 PLN (PL11BTS00015)",,PLN,"-1804,00",,PLN,abc',
+      '02-03-2024,10:00,02-03-2024,ROCKET LAB,US7731221062,"FUZJA: Sprzedaż 120 Vector Acquisition Corp@11,57 USD (KYG9442R1267)",,USD,"-1388,40",,USD,',
+      '03-03-2024,11:00,03-03-2024,MORGAN STANLEY EUR LIQUIDITY FUND,LU0904783973,"Konwersja funduszu gotówkowego: Zakup 2,8113 przy  0,9746 EUR",,EUR,"-2,74",,EUR,',
+      '04-03-2024,12:00,04-03-2024,FLATEX EURO BANKACCOUNT,NLFLATEXACNT,Degiro Cash Sweep Transfer,,EUR,"-38,15",,EUR,',
+      '05-03-2024,13:00,05-03-2024,,,Processed Flatex Withdrawal,,PLN,"3570,00",,PLN,',
+      '05-03-2024,14:00,05-03-2024,,,Zmiana ceny funduszu gotówkowego (EUR),,EUR,"0,01",,EUR,',
+    ]);
+    const { data, skipped } = parseDegiroOperations(csv, 'batch-1');
+    expect(data).toHaveLength(0);
+    expect(skipped).toHaveLength(0);
+  });
+
+  it('opisy podatków transakcyjnych nie są zgłaszane jako nieznane (konsumuje je parseDegiroTransactionTaxes)', () => {
+    const csv = accountCsv([
+      '01-03-2024,09:00,01-03-2024,SAP SE,DE0007164600,London/Dublin Stamp Duty,,EUR,"-2,50",,EUR,',
+    ]);
+    const { data, skipped } = parseDegiroOperations(csv, 'batch-1');
+    expect(data).toHaveLength(0);
+    expect(skipped).toHaveLength(0);
+  });
+
+  it('rozpoznane operacje nie generują ticketów', () => {
+    const csv = accountCsv([
+      '01-03-2024,09:00,01-03-2024,,,Depozyt,,PLN,"1000,00",,PLN,',
+      '02-03-2024,09:00,02-03-2024,,,Odsetki,,EUR,"-1,20",,EUR,',
+    ]);
+    const { data, skipped } = parseDegiroOperations(csv, 'batch-1');
+    expect(data).toHaveLength(2);
+    expect(skipped).toHaveLength(0);
+  });
+});
+
 describe('parseDegiroTransactionTaxes', () => {
   it('wyciąga stamp duty z ISIN-em, datą i kwotą bezwzględną', () => {
     const csv = accountCsv([
