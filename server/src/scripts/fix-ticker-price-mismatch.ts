@@ -57,13 +57,17 @@ import { getDb } from '../db/connection.js';
 import { upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { resolveIsin } from '../services/isin-resolver.js';
 import { isPlausibleMatch } from '../services/ticker-match.js';
-import { fetchYahooHistoryDirect, fetchFxRate } from '../services/yahoo-finance.js';
+import { fetchYahooHistoryDirect } from '../services/yahoo-finance.js';
 
 const EXCLUDED = new Set(['auth.db', 'price_history.db', 'bug-reports.db', 'import_profiles.db']);
 
 /** Tolerancja dopasowania ilorazu cen. Luźna, bo porównujemy cenę WYKONANIA
  *  transakcji z kursem zamknięcia — kilkanaście procent różnicy jest normalne. */
 const RATIO_TOLERANCE = 0.25;
+
+/** Tolerancja dla dopasowania do KURSU WALUTOWEGO — ciaśniejsza, bo kurs jest
+ *  liczbą precyzyjną, a nie widełkami jak cena wykonania vs kurs zamknięcia. */
+const FX_TOLERANCE = 0.1;
 
 export type PriceVerdict =
   | 'zgodna'
@@ -103,7 +107,10 @@ export function classifyPrice(opts: {
   const near = (a: number, b: number) => b > 0 && Math.abs(a / b - 1) < RATIO_TOLERANCE;
 
   if (near(ratio, 1)) return 'zgodna';
-  if (fxRate && near(ratio, fxRate)) return 'inna-waluta';
+  // Kurs walutowy jest liczbą PRECYZYJNĄ — przy 25% tolerancji zbyt łatwo o zbieg
+  // okoliczności (patrz TIM → TIMB). Realny przypadek trafia w kilka procent:
+  // IWDA 540,68/144,24 = 3,749 przy kursie 3,73.
+  if (fxRate && Math.abs(ratio / fxRate - 1) < FX_TOLERANCE) return 'inna-waluta';
   if (near(ratio, 100) || near(ratio, 0.01)) return 'jednostka-gbx';
   if (splitRatio !== 1 && near(ratio, splitRatio)) return 'split';
   return 'niezgodna';
@@ -183,11 +190,25 @@ async function providerPriceAt(ticker: string, date: string, mapCur: string) {
   return normCur(mapCur) === 'GBP' && ticker.endsWith('.L') ? raw / 100 : raw;
 }
 
-async function fxBetween(from: string, to: string): Promise<number | null> {
+/**
+ * Kurs waluty Z DNIA TRANSAKCJI, nie dzisiejszy.
+ *
+ * PUŁAPKA (dry-run na produkcji 2026-08-07): przy kursie bieżącym skrypt
+ * zaproponował `TIM` (polski, 50,69 PLN ze stycznia 2024) → `TIMB` na NYSE, czyli
+ * BRAZYLIJSKI telekom o identycznej nazwie prawnej „TIM S.A.". Iloraz 50,69/17,78
+ * = 2,85 nie pasuje do kursu USD/PLN z tamtej daty (~3,99), ale mieścił się
+ * w tolerancji względem kursu DZISIEJSZEGO (~3,5). Porównywanie ceny sprzed dwóch
+ * lat z dzisiejszym kursem to nie jest weryfikacja.
+ */
+async function fxBetween(from: string, to: string, date: string): Promise<number | null> {
   const f = normCur(from);
   const t = normCur(to);
   if (!f || !t || f === t) return 1;
-  return await fetchFxRate(`${f}${t}`);
+  const asOf = await fetchYahooHistoryDirect(`${f}${t}=X`, date);
+  if (asOf && asOf > 0) return asOf;
+  // Brak notowania pary na tę datę → NIE podstawiamy kursu bieżącego. Bez kursu
+  // gałąź „inna waluta" po prostu nie zadziała, a wynik trafi do SKIP-ów.
+  return null;
 }
 
 /** Kandydaci: trafienie nieprzekonujące dla walidatora ORAZ rozjechana cena. */
@@ -231,7 +252,7 @@ async function findCandidates(portfolioId: string): Promise<Candidate[]> {
     // (skrócone nazwy od brokerów: „AMPHASTAR PHARMACEUTICALS IN" → AMPH).
     const date = tx.date.slice(0, 10);
     const providerPrice = await providerPriceAt(row.ticker, date, row.currency);
-    const fxRate = await fxBetween(row.currency, tx.currency);
+    const fxRate = await fxBetween(row.currency, tx.currency, date);
     const splitRatio = splitRatioSince(row.isin, date);
     const verdict = classifyPrice({ txPrice: tx.price, providerPrice, fxRate, splitRatio });
     if (verdict !== 'niezgodna') continue;
@@ -255,7 +276,7 @@ async function attempt(c: Candidate, currency: string) {
   if (!entry || entry.ticker === c.row.ticker)
     return { entry, verdict: null as PriceVerdict | null };
   const price = await providerPriceAt(entry.ticker, c.txDate, entry.currency);
-  const fx = await fxBetween(entry.currency, c.txCurrency);
+  const fx = await fxBetween(entry.currency, c.txCurrency, c.txDate);
   return {
     entry,
     verdict: classifyPrice({ txPrice: c.txPrice, providerPrice: price, fxRate: fx }),

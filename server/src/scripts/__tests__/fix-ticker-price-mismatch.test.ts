@@ -92,6 +92,30 @@ describe('classifyPrice — cena transakcji vs notowanie przypisanego papieru', 
     });
   });
 
+  describe('kurs walutowy musi być Z DNIA TRANSAKCJI i pasować ciasno', () => {
+    it('TIM → TIMB (brazylijski telekom o tej samej nazwie) NIE przechodzi', () => {
+      // Dry-run na produkcji 2026-08-07 zaproponował podmianę polskiego TIM-u na
+      // TIMB z NYSE. Iloraz 50,69/17,78 = 2,85 vs kurs USD/PLN z tamtej daty 3,99
+      // → 29% obok. Przy kursie DZISIEJSZYM (~3,5) mieściło się w 25% i przechodziło.
+      expect(classifyPrice({ txPrice: 50.69, providerPrice: 17.78, fxRate: 3.99 })).toBe(
+        'niezgodna',
+      );
+    });
+
+    it('realne przewalutowanie trafia w kilka procent i przechodzi', () => {
+      // IWDA.L: 540,68 PLN / 144,24 USD = 3,749 przy kursie 3,73 → 0,5% różnicy.
+      expect(classifyPrice({ txPrice: 540.68, providerPrice: 144.24, fxRate: 3.73 })).toBe(
+        'inna-waluta',
+      );
+    });
+
+    it('luźne dopasowanie do kursu (18% obok) już NIE wystarcza', () => {
+      expect(classifyPrice({ txPrice: 50.69, providerPrice: 17.78, fxRate: 3.5 })).toBe(
+        'niezgodna',
+      );
+    });
+  });
+
   describe('brak danych nie jest dowodem błędu', () => {
     it('provider bez notowania → brak-danych', () => {
       expect(classifyPrice({ txPrice: 100, providerPrice: null, fxRate: 1 })).toBe('brak-danych');
