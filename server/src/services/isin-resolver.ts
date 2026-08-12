@@ -517,7 +517,11 @@ export async function resolveIsin(
     // Polish ticker z pseudoISIN/realPL bez .WA hita → NIE akceptujemy zagranicznego listingu,
     // niżej Strategy 2 (Stooq) spróbuje znaleźć .WA po nazwie.
     if (!isPolishTicker) {
-      const hit = shouldValidate ? pickPlausible(byIsin, matchQueries) : byIsin[0];
+      // Ścieżka niewalidowana (realne ISIN-y, CFD) też WOLI wiarygodne trafienie:
+      // gdy [0] nie pasuje ani symbolem, ani nazwą, a dalszy kandydat pasuje —
+      // bierzemy kandydata. Fallback do [0] zachowuje dotychczasowe pokrycie
+      // (zero utraconych rozpoznań), zmienia się wyłącznie WYBÓR spośród wyników.
+      const hit = pickPlausible(byIsin, matchQueries) ?? (shouldValidate ? null : byIsin[0]);
       if (hit) {
         const entry = shouldValidate
           ? await buildEntryGuarded(isin, hit, paperName, txCurrency, matchQueries)
@@ -620,7 +624,9 @@ export async function resolveIsin(
             );
           }
         } else {
-          const hit = shouldValidate ? pickPlausible(byName, matchQueries) : byName[0];
+          // Prefer-plausible jak w Strategy 1 — fallback [0] tylko na ścieżce
+          // niewalidowanej.
+          const hit = pickPlausible(byName, matchQueries) ?? (shouldValidate ? null : byName[0]);
           if (hit) {
             const entry = shouldValidate
               ? await buildEntryGuarded(isin, hit, paperName, txCurrency, matchQueries)
@@ -638,21 +644,50 @@ export async function resolveIsin(
   // nie znalazł, ALE mamy gdzieś wynik zagraniczny z Yahoo (np. TSGAMES → 1HQ.SG) — użyjmy
   // go zamiast zwracać null. Wymaga to ponownego searchYahoo po ISIN (pierwszy byIsin poszedł
   // out of scope w try/catch powyżej).
+  //
+  // Trafienie MUSI przejść walidację jak wszędzie indziej — surowe [0] to dokładnie
+  // wzorzec z genezy ticker-match, a Yahoo potrafi błędnie dopasować nawet realny
+  // ISIN (US75960P1049 → Remitly zamiast Reliance Global). Docierają tu praktycznie
+  // wyłącznie realne polskie ISIN-y (gałąź pseudo-PL zwraca null wcześniej), więc
+  // przy chwilowej niedostępności katalogu BR [0] podstawiało losowy zagraniczny
+  // papier pod polską spółkę. CELOWO bez guardu waluty: zagraniczny listing
+  // polskiej spółki legalnie kwotuje w obcej walucie. Brak wiarygodnego trafienia
+  // → null → provisional stub + self-heal (lepiej zero ceny niż cudza cena).
   if (isPolishTicker) {
     const byIsinRetry = await searchYahoo(isin);
-    if (byIsinRetry.length > 0) {
-      return await buildEntry(
-        isin,
-        byIsinRetry[0].symbol,
-        byIsinRetry[0].name,
-        byIsinRetry[0].exchange,
-        paperName,
-        txCurrency,
-      );
+    const hit = pickPlausible(byIsinRetry, [isin, paperName, cleanName]);
+    if (hit) {
+      return await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
     }
   }
 
   return null;
+}
+
+/**
+ * Prowizoryczny stub dla nierozwiązanego papieru z otwartą pozycją.
+ * `ticker === name` (patrz isProvisionalStub) — self-heal ponawia rozpoznanie.
+ *
+ * Waluta idzie z TRANSAKCJI, nie z hardcode'u PLN: nierozwiązany walor USD
+ * figurował jako polski (GPW/PLN/stooq) do czasu self-heala — zła waluta psuła
+ * przewalutowanie ceny ręcznej/ostatniej transakcji w wycenie. Dla walut obcych
+ * nie zgadujemy giełdy (`OTHER` to realny stan, nie błąd danych).
+ */
+export function buildProvisionalStub(u: {
+  isin: string;
+  paperName: string;
+  currency: string;
+}): TickerMapEntry {
+  const currency = (u.currency || 'PLN').toUpperCase();
+  const foreign = currency !== 'PLN';
+  return {
+    isin: u.isin,
+    ticker: u.paperName,
+    name: u.paperName,
+    exchange: foreign ? 'OTHER' : 'GPW',
+    currency,
+    priceSource: foreign ? 'yahoo' : 'stooq',
+  };
 }
 
 /**

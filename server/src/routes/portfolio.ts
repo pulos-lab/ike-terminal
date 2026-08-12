@@ -24,6 +24,7 @@ import {
 } from '../db/operations-repo.js';
 import {
   getTickerMap,
+  getTickerByIsin,
   getTickerBySymbol,
   upsertTickerMapEntry,
   getAllTickers,
@@ -1054,6 +1055,83 @@ router.get(
     const cashFlow = computeCashFlow(operations, history, dailyFxRates, baseCurrency);
     const chartData = computeCashFlowChartData(history, dailyFxRates, baseCurrency);
     res.json({ cashFlow, chartData, baseCurrency });
+  }),
+);
+
+// PUT /api/portfolio/ticker-map/:isin — ręczna naprawa błędnie rozwiązanego wpisu.
+// Dotąd jedyne ścieżki korekty to edycja tickera per transakcja (tworzy pseudo-ISIN
+// AUTO_<TICKER> i fragmentuje pozycję) albo skrypty fix-* przez SSH. Ten endpoint
+// przepina CAŁĄ pozycję naraz: transakcje wskazują ISIN, a wpis ticker_map jest
+// per ISIN. `force` świadomie omija kotwicę anty-flip — to dokładnie przypadek
+// „użytkownik wie lepiej niż auto-resolve". Sektor/kraj zostają z wpisu, chyba że
+// zmienił się ticker — wtedy są czyszczone (stary sektor opisywał CUDZY papier)
+// i uzupełni je lazy backfill sektorów.
+router.put(
+  '/ticker-map/:isin',
+  asyncHandler((req, res) => {
+    const pid = req.portfolioId;
+    const isin = String(req.params.isin || '').trim();
+    const existing = getTickerByIsin(isin, pid);
+    if (!existing) {
+      return res.status(404).json({ error: 'Brak wpisu w ticker_map dla tego ISIN-u' });
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const ticker = typeof body.ticker === 'string' ? body.ticker.trim().toUpperCase() : '';
+    if (!ticker || ticker.length > 24) {
+      return res.status(400).json({ error: 'ticker jest wymagany (niepusty, ≤24 znaki)' });
+    }
+
+    const VALID_EXCHANGES = new Set([
+      'GPW',
+      'NC',
+      'CATALYST',
+      'NYSE',
+      'NASDAQ',
+      'TSX',
+      'XETRA',
+      'OTHER',
+    ]);
+    const exchange =
+      typeof body.exchange === 'string' ? body.exchange.trim().toUpperCase() : existing.exchange;
+    if (!VALID_EXCHANGES.has(exchange)) {
+      return res.status(400).json({ error: `Nieznana giełda: ${exchange}` });
+    }
+
+    const currency =
+      typeof body.currency === 'string' ? body.currency.trim().toUpperCase() : existing.currency;
+    if (!/^[A-Z]{3,4}$/.test(currency)) {
+      return res.status(400).json({ error: `Nieprawidłowa waluta: ${currency}` });
+    }
+
+    const VALID_PRICE_SOURCES = new Set(['yahoo', 'stooq', 'auto']);
+    const priceSource =
+      typeof body.priceSource === 'string' ? body.priceSource.trim() : existing.priceSource;
+    if (!VALID_PRICE_SOURCES.has(priceSource)) {
+      return res.status(400).json({ error: `Nieznane źródło cen: ${priceSource}` });
+    }
+
+    const name =
+      typeof body.name === 'string' && body.name.trim() ? body.name.trim() : existing.name;
+
+    const tickerChanged = ticker !== existing.ticker.toUpperCase();
+    upsertTickerMapEntry(
+      {
+        isin,
+        ticker,
+        name,
+        exchange: exchange as TickerMapEntry['exchange'],
+        currency,
+        priceSource: priceSource as TickerMapEntry['priceSource'],
+        sector: tickerChanged ? undefined : existing.sector,
+        supersector: tickerChanged ? undefined : existing.supersector,
+        country: tickerChanged ? undefined : existing.country,
+      },
+      pid,
+      true, // force — omija kotwicę anty-flip
+    );
+
+    res.json({ success: true, entry: getTickerByIsin(isin, pid) });
   }),
 );
 
