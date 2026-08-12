@@ -352,8 +352,10 @@ export function PortfolioPage() {
 
   const cashPositions = data?.cashPositions ?? [];
 
-  // Columns before "Wartość (PLN)": Ticker, Nazwa, Ilość, [Śr. cena], Prowizje, Kurs, [Zmiana]
-  const colsBeforeValue = 5 + (colVis.avgPrice ? 1 : 0) + (colVis.dailyChange ? 1 : 0);
+  // Kolumny przed „Wartość": Ticker, Nazwa, Ilość, [Śr. cena], Kurs, [Zmiana].
+  // Liczba MUSI zgadzać się z nagłówkiem — inaczej cały wiersz „Razem" jedzie
+  // o kolumnę w prawo i kwoty przestają stać pod swoimi nagłówkami.
+  const colsBeforeValue = 4 + (colVis.avgPrice ? 1 : 0) + (colVis.dailyChange ? 1 : 0);
 
   return (
     <div className="space-y-4">
