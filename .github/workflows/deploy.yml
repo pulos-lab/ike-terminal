@@ -4,12 +4,21 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Ratunek po awarii Actions: merge bez runa deploya (2026-08-06 — pięć PR-ów
+  # w main, prod na starym commicie) nie miał czego „powtórzyć z UI", bo push
+  # to zdarzenie jednorazowe. Ręczny trigger z gałęzi main dowozi zaległość.
+  workflow_dispatch:
 
 # Serializacja deployów: równoległe merge'e do main powodowały wyścig —
 # health check jednego runa trafiał w restart serwera z drugiego runa.
+# Checki PR-ów mają OSOBNE grupy (per numer PR): wspólna grupa z deployem
+# serializowała je z ~15-minutowymi deployami, a jeden zaklinowany run
+# blokował całą kolejkę (2026-08-06: runy PR queued 2h+ przy zerze
+# działających, nowe eventy pull_request nie tworzyły runów). W obrębie
+# jednego PR-a nowy push ubija poprzedni run — liczy się tylko ostatni stan.
 concurrency:
-  group: deploy-prod
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || 'deploy-prod' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   format-check:
@@ -74,7 +83,9 @@ jobs:
 
   deploy:
     needs: [format-check, test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
