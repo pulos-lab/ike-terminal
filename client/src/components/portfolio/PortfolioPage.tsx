@@ -32,7 +32,7 @@ import {
   formatPLN,
   formatQuantity,
 } from '@/lib/formatters';
-import { Eye, EyeOff, AlertTriangle, Info } from 'lucide-react';
+import { Eye, EyeOff, AlertTriangle, Info, ChevronUp, ChevronDown } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { QuoteFreshnessLabel } from './QuoteFreshnessLabel';
 import { PortfolioDiversification } from './PortfolioDiversification';
@@ -51,6 +51,101 @@ interface ColumnVisibility {
 }
 
 const STORAGE_KEY = 'portfolio-col-visibility';
+const SORT_STORAGE_KEY = 'portfolio-sort';
+
+export type SortKey =
+  | 'ticker'
+  | 'name'
+  | 'shares'
+  | 'avgPrice'
+  | 'price'
+  | 'dailyChange'
+  | 'value'
+  | 'pl'
+  | 'plPct'
+  | 'weight';
+
+export interface SortState {
+  key: SortKey;
+  dir: 'asc' | 'desc';
+}
+
+/** Kolumny tekstowe zaczynają od A→Z, liczbowe od największych — tak, jak
+ *  użytkownik zwykle chce przy pierwszym kliknięciu. */
+const TEXT_KEYS: ReadonlySet<SortKey> = new Set<SortKey>(['ticker', 'name']);
+
+/** Domyślnie to samo, co zwraca API (wartość malejąco) — bez zmiany zastanego
+ *  widoku dla kogoś, kto nigdy nie kliknie w nagłówek. */
+export const DEFAULT_SORT: SortState = { key: 'value', dir: 'desc' };
+
+/** Wartość porównywalna dla danej kolumny. `null` = brak danych; takie pozycje
+ *  lądują ZAWSZE na końcu, niezależnie od kierunku (papier bez notowań nie ma
+ *  wskakiwać na górę tylko dlatego, że sortujemy rosnąco). */
+function sortValue(p: Position, key: SortKey, useNativeCcy: boolean): number | string | null {
+  switch (key) {
+    case 'ticker':
+      return p.ticker ?? '';
+    case 'name':
+      return p.paperName ?? '';
+    case 'shares':
+      return p.shares;
+    case 'avgPrice':
+      return p.avgBuyPrice;
+    case 'price':
+      return p.currentPrice;
+    case 'dailyChange':
+      return p.dailyChangePct;
+    case 'value':
+      return useNativeCcy ? p.currentValue : p.currentValuePln;
+    case 'pl':
+      return useNativeCcy ? p.profitLoss : p.profitLossPln;
+    case 'plPct':
+      return p.profitLossPct;
+    case 'weight':
+      return p.weight;
+  }
+}
+
+/** Czysta funkcja — cała logika sortowania, testowana bez renderowania. */
+export function sortPositions(
+  positions: Position[],
+  sort: SortState,
+  useNativeCcy: boolean,
+): Position[] {
+  const factor = sort.dir === 'asc' ? 1 : -1;
+  return [...positions].sort((a, b) => {
+    const av = sortValue(a, sort.key, useNativeCcy);
+    const bv = sortValue(b, sort.key, useNativeCcy);
+    // Brak danych na koniec listy w obu kierunkach.
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1;
+    if (bv === null) return -1;
+    if (typeof av === 'string' || typeof bv === 'string') {
+      return String(av).localeCompare(String(bv), 'pl') * factor;
+    }
+    if (av === bv) return 0;
+    return (av < bv ? -1 : 1) * factor;
+  });
+}
+
+/** Kliknięcie w tę samą kolumnę odwraca kierunek; w nową — ustawia domyślny. */
+export function nextSort(current: SortState, key: SortKey): SortState {
+  if (current.key === key) return { key, dir: current.dir === 'asc' ? 'desc' : 'asc' };
+  return { key, dir: TEXT_KEYS.has(key) ? 'asc' : 'desc' };
+}
+
+function loadSort(): SortState {
+  try {
+    const stored = localStorage.getItem(SORT_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored) as SortState;
+      if (parsed?.key && (parsed.dir === 'asc' || parsed.dir === 'desc')) return parsed;
+    }
+  } catch {
+    /* ignore */
+  }
+  return { ...DEFAULT_SORT };
+}
 
 const DEFAULT_VISIBILITY: ColumnVisibility = {
   avgPrice: true,
@@ -75,6 +170,7 @@ function saveVisibility(v: ColumnVisibility) {
 
 export function PortfolioPage() {
   const [colVis, setColVis] = useState<ColumnVisibility>(loadVisibility);
+  const [sort, setSort] = useState<SortState>(loadSort);
   const [expandedPositions, togglePosition] = useToggleSet<string>();
   // Klik w wiersz pozycji → panel boczny z wykresem instrumentu (markery K/S);
   // pełna strona /app/instrument/:isin dostępna linkiem z panelu.
@@ -120,6 +216,57 @@ export function PortfolioPage() {
     () => (data?.positions ?? []).filter((p) => p.category === 'option'),
     [data?.positions],
   );
+
+  // Jedna posortowana lista dla tabeli i dla kart mobilnych — inaczej ten sam
+  // portfel miałby dwie różne kolejności zależnie od szerokości ekranu.
+  const sortedPositions = useMemo(
+    () => sortPositions(regularPositions, sort, useNativeCcy),
+    [regularPositions, sort, useNativeCcy],
+  );
+
+  const applySort = (key: SortKey) => {
+    const next = nextSort(sort, key);
+    setSort(next);
+    try {
+      localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* prywatny tryb przeglądarki — sortowanie zadziała, tylko się nie zapamięta */
+    }
+  };
+
+  /** Nagłówek klikalny: strzałka pokazuje kierunek, aria-sort informuje czytniki. */
+  const SortableHead = ({
+    sortKey,
+    children,
+    className,
+  }: {
+    sortKey: SortKey;
+    children: React.ReactNode;
+    className?: string;
+  }) => {
+    const active = sort.key === sortKey;
+    return (
+      <TableHead
+        className={className}
+        aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      >
+        <button
+          type="button"
+          onClick={() => applySort(sortKey)}
+          className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+          title={`Sortuj wg: ${typeof children === 'string' ? children : sortKey}`}
+        >
+          {children}
+          {active &&
+            (sort.dir === 'asc' ? (
+              <ChevronUp className="h-3 w-3" aria-hidden />
+            ) : (
+              <ChevronDown className="h-3 w-3" aria-hidden />
+            ))}
+        </button>
+      </TableHead>
+    );
+  };
 
   const totals = useMemo(() => {
     if (!regularPositions.length) return null;
@@ -274,7 +421,7 @@ export function PortfolioPage() {
           ) : regularPositions.length ? (
             <>
               <div className="md:hidden flex flex-col gap-2">
-                {regularPositions.map((pos) => (
+                {sortedPositions.map((pos) => (
                   <PortfolioPositionCardMobile
                     key={pos.isin}
                     position={pos}
@@ -310,20 +457,44 @@ export function PortfolioPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Ticker</TableHead>
-                      <TableHead>Nazwa</TableHead>
-                      <TableHead className="text-right">Ilość</TableHead>
-                      {colVis.avgPrice && <TableHead className="text-right">Śr. cena</TableHead>}
-                      <TableHead className="text-right">Kurs</TableHead>
-                      {colVis.dailyChange && <TableHead className="text-right">Zmiana</TableHead>}
-                      <TableHead className="text-right">Wartość ({baseCurrency})</TableHead>
-                      {colVis.pl && <TableHead className="text-right">P/L</TableHead>}
-                      {colVis.plPct && <TableHead className="text-right">P/L %</TableHead>}
-                      <TableHead className="text-right">Udział</TableHead>
+                      <SortableHead sortKey="ticker">Ticker</SortableHead>
+                      <SortableHead sortKey="name">Nazwa</SortableHead>
+                      <SortableHead sortKey="shares" className="text-right">
+                        Ilość
+                      </SortableHead>
+                      {colVis.avgPrice && (
+                        <SortableHead sortKey="avgPrice" className="text-right">
+                          Śr. cena
+                        </SortableHead>
+                      )}
+                      <SortableHead sortKey="price" className="text-right">
+                        Kurs
+                      </SortableHead>
+                      {colVis.dailyChange && (
+                        <SortableHead sortKey="dailyChange" className="text-right">
+                          Zmiana
+                        </SortableHead>
+                      )}
+                      <SortableHead sortKey="value" className="text-right">
+                        Wartość ({baseCurrency})
+                      </SortableHead>
+                      {colVis.pl && (
+                        <SortableHead sortKey="pl" className="text-right">
+                          P/L
+                        </SortableHead>
+                      )}
+                      {colVis.plPct && (
+                        <SortableHead sortKey="plPct" className="text-right">
+                          P/L %
+                        </SortableHead>
+                      )}
+                      <SortableHead sortKey="weight" className="text-right">
+                        Udział
+                      </SortableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {regularPositions.map((pos) => (
+                    {sortedPositions.map((pos) => (
                       <TableRow
                         key={pos.isin}
                         className="cursor-pointer"
