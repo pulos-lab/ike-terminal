@@ -42,7 +42,7 @@ import {
 } from '../parsers/generic/fingerprint.js';
 import { classifyFile } from './import-service.js';
 import { redactSampleRows } from './sample-redactor.js';
-import { resolveUnknownIsins } from './isin-resolver.js';
+import { buildProvisionalStub, resolveUnknownIsins } from './isin-resolver.js';
 import { reconcileQuoteCurrencies } from './quote-currency-reconciler.js';
 import { generateProfileFromContent } from './profile-generator.js';
 import { notifyNewImportProfile } from './admin-notifications.js';
@@ -773,17 +773,7 @@ async function runImportDocuments(args: {
       // tickerem, gdy źródło zacznie listować debiut (self-heal, bez bumpu wersji).
       if (getTickerByIsin(u.isin, pid)) continue;
       if (Math.abs(openNet(u.isin)) > 0.001) {
-        upsertTickerMapEntry(
-          {
-            isin: u.isin,
-            ticker: u.paperName,
-            name: u.paperName,
-            exchange: 'GPW',
-            currency: 'PLN',
-            priceSource: 'stooq',
-          },
-          pid,
-        );
+        upsertTickerMapEntry(buildProvisionalStub(u), pid);
       }
     }
     unresolvedVisible = resolution.unresolved.filter((u) => Math.abs(openNet(u.isin)) > 0.001);

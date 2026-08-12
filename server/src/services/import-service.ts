@@ -65,7 +65,7 @@ import {
   deleteTickerMapEntry,
   isProvisionalStub,
 } from '../db/ticker-map-repo.js';
-import { resolveUnknownIsins } from './isin-resolver.js';
+import { buildProvisionalStub, resolveUnknownIsins } from './isin-resolver.js';
 import { normalizeBossaPaperName } from './stooq-utils.js';
 import { reconcilePaymentCurrencies } from './payment-currency-reconciler.js';
 import { reconcileQuoteCurrencies } from './quote-currency-reconciler.js';
@@ -511,17 +511,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       const isinTxs = parsedTx.data.filter((t) => t.isin === u.isin);
       const net = isinTxs.reduce((sum, t) => sum + (t.side === 'K' ? t.quantity : -t.quantity), 0);
       if (Math.abs(net) > 0.001) {
-        upsertTickerMapEntry(
-          {
-            isin: u.isin,
-            ticker: u.paperName,
-            name: u.paperName,
-            exchange: 'GPW',
-            currency: 'PLN',
-            priceSource: 'stooq',
-          },
-          pid,
-        );
+        upsertTickerMapEntry(buildProvisionalStub(u), pid);
       }
     }
   }
