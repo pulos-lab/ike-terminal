@@ -6,9 +6,10 @@ import {
   isBondInstrument,
   findBondByIsin,
   findBondByTicker,
+  hasForeignYahooSuffix,
 } from 'shared';
 import { getTickerMap, upsertTickerMapEntry, isProvisionalStub } from '../db/ticker-map-repo.js';
-import { searchYahoo } from './ticker-search.js';
+import { searchYahoo, fetchYahooSymbolInfo } from './ticker-search.js';
 import { getBrCatalogService } from './biznesradar-catalog.js';
 import { fetchYahooPrice } from './yahoo-finance.js';
 import { resolveSector } from './sector-resolver.js';
@@ -94,7 +95,22 @@ function splitEtfName(name: string): string {
   return name;
 }
 
-// Stooq ticker aliases for renamed/rebranded Polish companies (old ticker → current Stooq ticker)
+/**
+ * Aliasy rebrandingowe polskich spółek: stary kod tickera → obecny.
+ *
+ * ⚠ KOD TICKERA BYWA RECYKLOWANY. Po delistingu GPW/NewConnect zwalnia
+ * trzyliterowy kod i nadaje go innej spółce. Alias, którego KLUCZ jest dziś
+ * żywym kodem, kieruje pozycję na CUDZY papier — tak `SUN: 'MIG'` (Sundragon
+ * → Military Group, 2025) rozjechał Suntech, który przejął kod `SUN`
+ * (zgłoszenie 2026-08-23). Rozstrzygnięcie „stary czy nowy właściciel kodu"
+ * wymagałoby daty transakcji, której ta mapa nie zna, więc:
+ *  1) resolver pyta katalog BR SUROWYM kodem PRZED aliasem (patrz `resolveIsin`),
+ *  2) klucz aliasu nie może być tickerem żywym w `NC_TICKER_MAP` — pilnuje tego
+ *     `__tests__/isin-resolver-alias-hygiene.test.ts`, więc dopisanie kolejnego
+ *     kolidującego aliasu wywala CI.
+ * Wyjątkiem jest `7FT`: tam alias jest POPRAWNY (7Fit naprawdę jest dziś OML),
+ * a nieaktualny jest wpis w mapie NC — scraper mapy jej nie odświeżył.
+ */
 export const STOOQ_ALIASES: Record<string, string> = {
   DINO: 'DNP', // Dino Polska
   R22: 'CBF', // R22 → CyberFolks
@@ -120,7 +136,10 @@ export const STOOQ_ALIASES: Record<string, string> = {
   // NewConnect renamed tickers
   RAE: 'GVT', // Raen → Grupa Virtus (2026)
   VAK: 'BTF', // Vakomtek → BTCS (2025)
-  SUN: 'MIG', // Sundragon → Military Group (2025)
+  // USUNIĘTE: SUN → MIG (Sundragon → Military Group, 2025). Kod SUN należy dziś
+  // do Suntechu, a Military Group jest osiągalny własnym kodem MIG. Alias na
+  // żywym kodzie tylko losowo (zależnie od dostępności katalogu) podstawiał
+  // cudzy papier — patrz nagłówek mapy.
   PGM: 'GNS', // Polska Grupa Motoryzacyjna → Grupa Niewiadów (2025)
   PUN: 'RAE', // PunkPirates → Raen (2023)
   BRZ: 'HUB', // Boruta-Zachem → Hub.Tech (2022)
@@ -129,7 +148,8 @@ export const STOOQ_ALIASES: Record<string, string> = {
   '7FT': 'OML', // 7Fit → One More Level (2020)
   BSP: 'IVO', // Baltic Storage → Incuvo (2020)
   ZAK: 'PDG', // Zaks → Pyramid Games (2019)
-  SKN: 'SIM', // Skin-System → SimFabric (2019)
+  // USUNIĘTE: SKN → SIM (Skin-System → SimFabric, 2019). Kod SKN nosi dziś
+  // Sakana — ta sama pułapka co SUN, tyle że jeszcze niezgłoszona.
   BLU: 'CLC', // Blumerang Pre-IPO → Columbus Energy (2018)
 };
 
@@ -321,8 +341,17 @@ export async function resolveIsin(
 
   // Should we prefer Warsaw Stock Exchange results?
   const isRealPolishIsin = isin.startsWith('PL') && isRealIsin(isin);
+  // Pseudo-ISIN z kanonicznym sufiksem giełdy Yahoo („SMSN.L", „INPST.AS",
+  // „NOVOB.CO") NIE jest polski — nawet gdy etykieta waluty mówi PLN. Ta
+  // etykieta bywa walutą KONTA: `resolveTradeCurrency` (parser XTB) ma kilka
+  // ścieżek, w których nie da się policzyć implikowanego kursu i zostaje waluta
+  // rachunku. Bez tego londyński GDR Samsunga („SMSN.UK" → „SMSN.L") szedł
+  // gałęzią polską, która akceptuje wyłącznie `.WA`, i wracał nierozpoznany
+  // (zgłoszenie 2026-08-23).
+  const foreignSuffix = isPseudoIsin && hasForeignYahooSuffix(isin);
   const isPolishTicker =
-    isRealPolishIsin || isin.endsWith('.WA') || (isPseudoIsin && txCurrency === 'PLN');
+    !foreignSuffix &&
+    (isRealPolishIsin || isin.endsWith('.WA') || (isPseudoIsin && txCurrency === 'PLN'));
 
   // Detect NewConnect from paper name suffix (Bossa uses "-NC", "-NC-FIX")
   const isNewConnect = isNewConnectPaperName(paperName);
@@ -359,8 +388,20 @@ export async function resolveIsin(
     // Check aliases for ambiguous names (e.g., "Dino" → "DNP")
     const aliasedName = STOOQ_ALIASES[cleanName.toUpperCase()] || cleanName;
 
+    // Czy kod, który podał broker, jest DZIŚ czyimś tickerem? Statyczna mapa NC
+    // jest tu jedynym offline'owym dowodem — i wystarczającym, bo recykling kodu
+    // po delistingu zdarza się właśnie na NewConnect (SUN, SKN, 7FT).
+    const ncExact = findNcTicker(cleanName);
+    const rawCodeIsLive = !!ncExact && ncExact.ticker.toUpperCase() === cleanName.toUpperCase();
+
     // 1. Dokładne dopasowanie tickera w katalogu BR (short tickers: PGE, CDR, JSW, DNP)
-    const candidates = [aliasedName];
+    //    Gdy kod jest żywy, pytamy o niego SUROWO przed aliasem: alias pamięta
+    //    POPRZEDNIEGO właściciela kodu i kierowałby pozycję na cudzy papier
+    //    (patrz nagłówek STOOQ_ALIASES). Bez tego dowodu kolejność zostaje dawna
+    //    — dla rebrandingu stary kod jest martwy i alias jest jedyną drogą.
+    const candidates: string[] = [];
+    if (rawCodeIsLive && aliasedName !== cleanName) candidates.push(cleanName);
+    candidates.push(aliasedName);
     if (
       !aliasedName.toUpperCase().startsWith('ETF') &&
       !aliasedName.toUpperCase().startsWith('BETA')
@@ -392,7 +433,24 @@ export async function resolveIsin(
       }
     }
 
-    // 2. Dopasowanie po nazwie spółki w katalogu BR (full names: mBank, Tauron, Budimex)
+    // 2. Statyczna mapa NC — DOKŁADNE trafienie kodu tickera, PRZED dopasowaniem
+    //    po nazwie. Kod jest unikalny w obrębie GPW+NewConnect, więc dokładne
+    //    trafienie jest autorytatywne; prefiks NAZWY nie jest — „SUN" jest
+    //    prefiksem i SUNNET, i SUNTECHU, a remis w findByName rozstrzygała
+    //    kolejność w indeksie katalogu. Stąd zgłoszenie 2026-08-23: Suntech
+    //    („SUN.PL" z XTB) rozwiązywał się na SNN.WA (Sunnet).
+    if (ncExact && rawCodeIsLive) {
+      return {
+        isin,
+        ticker: `${ncExact.ticker}.WA`,
+        name: ncExact.name,
+        exchange: 'NC' as TickerMapEntry['exchange'],
+        currency: 'PLN',
+        priceSource: 'stooq',
+      };
+    }
+
+    // 3. Dopasowanie po nazwie spółki w katalogu BR (full names: mBank, Tauron, Budimex)
     if (cleanName.length >= 3) {
       const brByName = await getBrCatalogService().findByName(cleanName);
       if (brByName) {
@@ -408,23 +466,17 @@ export async function resolveIsin(
       }
     }
 
-    // 3. NC offline fallback — statyczna mapa NC PRZED Yahoo (zapobiega błędnym
-    //    dopasowaniom zagranicznym). Uruchamiamy dla KAŻDEGO polskiego pseudo-ISINu
-    //    z dokładnym dopasowaniem kodu tickera, nie tylko dla nazw z sufiksem -NC:
-    //    XTB/mBank podają symbol jako "EXC.WA" bez markera NC, więc gdy Stooq jest
-    //    rate-limitowany kroki 1-2 zawodzą i bez tego kod spadał do Yahoo, łapiąc
-    //    zagraniczną kolizję o tym samym oznaczeniu (EXC → Exelon Corp, USD). Ticker
-    //    jest unikalny w obrębie GPW+NewConnect, więc dokładne trafienie kodu w mapę
-    //    NC jest autorytatywne. Dla Bossa (-NC, dopasowanie po NAZWIE spółki, np.
-    //    "MINERAL" → MND) zachowujemy dawne zachowanie przez warunek isNewConnect.
-    const ncFallback = findNcTicker(cleanName);
-    if (ncFallback) {
-      const exactTickerMatch = ncFallback.ticker.toUpperCase() === cleanName.toUpperCase();
-      if (isNewConnect || exactTickerMatch) {
+    // 4. NC offline fallback po NAZWIE — wyłącznie dla Bossy (sufiks -NC, np.
+    //    "MINERAL" → MND). Dopasowanie kodem obsłużył krok 2; tutaj zostaje
+    //    dawne, luźniejsze dopasowanie (prefiks nazwy), na które pozwala jedynie
+    //    autorytatywny marker NewConnectu z pliku brokera.
+    if (isNewConnect) {
+      const ncByName = findNcTicker(cleanName);
+      if (ncByName) {
         return {
           isin,
-          ticker: `${ncFallback.ticker}.WA`,
-          name: ncFallback.name,
+          ticker: `${ncByName.ticker}.WA`,
+          name: ncByName.name,
           exchange: 'NC' as TickerMapEntry['exchange'],
           currency: 'PLN',
           priceSource: 'stooq',
@@ -432,7 +484,7 @@ export async function resolveIsin(
       }
     }
 
-    // 4. Yahoo fallback — WYŁĄCZNIE listing .WA. Dla polskiego tickera (PLN) nigdy nie
+    // 5. Yahoo fallback — WYŁĄCZNIE listing .WA. Dla polskiego tickera (PLN) nigdy nie
     //    akceptujemy zagranicznego papieru: to samo 3-literowe oznaczenie bywa innym
     //    instrumentem na obcej giełdzie (EXC=Exelon/NASDAQ, CCC=CCC Intelligent/NASDAQ,
     //    MNS=Monster, DADA=PT Diamond/Dżakarta). Brak .WA hita → zwracamy null: wpis
@@ -493,6 +545,47 @@ export async function resolveIsin(
   const shouldValidate = isPseudoIsin && !isPolishTicker && !cfdKnown;
   const matchQueries = [foreignAlias, isin, paperName];
 
+  // Strategy 0: pseudo-ISIN JEST już kanonicznym symbolem Yahoo (ma sufiks
+  // giełdy) → pytamy o notowanie WPROST, zamiast szukać po wyszukiwarce.
+  // GENEZA (zgłoszenie 2026-08-23, `SMSN.UK` → `SMSN.L`): wyszukiwarka na
+  // zapytanie z sufiksem podsuwa sąsiedni listing (`SMSN.IL`), więc trafienie
+  // nie jest dokładne i guard waluty odrzuca je — notowanie GDR-u jest w USD,
+  // a etykieta z sufiksu `.UK` mówi GBP. Pozycja zostawała nierozpoznana, choć
+  // ręczne dodanie tickera działało: `POST /transactions` idzie DOKŁADNIE tą
+  // ścieżką (fetchYahooPrice + fetchYahooSymbolInfo).
+  //
+  // Guardu waluty tu nie ma świadomie — symbol jest dokładnie tym, o co
+  // pytaliśmy (semantyka `isExactSymbolMatch`). Brak ceny → `null` i cofamy się
+  // do Strategy 1 z pełnym kompletem guardów.
+  const directSymbol = foreignAlias ?? (foreignSuffix ? isin : undefined);
+  if (!cfdKnown && directSymbol && hasForeignYahooSuffix(directSymbol)) {
+    let quote: Awaited<ReturnType<typeof fetchYahooPrice>> = null;
+    try {
+      quote = await fetchYahooPrice(directSymbol);
+    } catch {
+      quote = null;
+    }
+    if (quote) {
+      // Nazwę i giełdę ustawiamy OD RAZU: dla `exchange: 'OTHER'` późniejszy
+      // `backfillTickerNamesForPortfolio` już tu nie zajrzy (patrz komentarz
+      // w scripts/backfill-ticker-exchange.ts) — teraz albo nigdy.
+      let info: Awaited<ReturnType<typeof fetchYahooSymbolInfo>> = null;
+      try {
+        info = await fetchYahooSymbolInfo(directSymbol);
+      } catch {
+        info = null;
+      }
+      return await buildEntry(
+        isin,
+        directSymbol,
+        info?.name ?? '',
+        info?.exchange ?? undefined,
+        paperName,
+        txCurrency,
+      );
+    }
+  }
+
   // Strategy 1: Yahoo search by ISIN (exact identifier — reliable)
   const byIsin = await searchYahoo(foreignAlias ?? isin);
   if (byIsin.length > 0) {
@@ -500,7 +593,9 @@ export async function resolveIsin(
     // spółek gdzie user kupuje przez GPW (txCurrency === 'PLN'). Przykład: GreenX Metals
     // (AU0000198939) — Yahoo zwraca [GRX.AX (Sydney AUD), GRX.WA (Warsaw PLN)]; user kupuje
     // przez Bossę w PLN, więc GRX.WA jest właściwe dla live prices i historii.
-    const preferWa = isPolishTicker || txCurrency === 'PLN';
+    // Symbol z sufiksem giełdy zagranicznej nie może wpaść w preferencję .WA
+    // przez samą etykietę waluty (bywa nią waluta konta) — patrz `foreignSuffix`.
+    const preferWa = !foreignSuffix && (isPolishTicker || txCurrency === 'PLN');
     if (preferWa) {
       const waHit = byIsin.find((r) => r.symbol.endsWith('.WA'));
       if (waHit) {

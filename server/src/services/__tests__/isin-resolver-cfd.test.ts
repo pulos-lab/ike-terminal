@@ -16,7 +16,7 @@ vi.mock('../../db/ticker-map-repo.js', () => ({
   isProvisionalStub: () => false,
 }));
 // Bezpieczniki: gałąź CFD nie rusza sieci — gdyby ruszyła, test by to wykrył.
-vi.mock('../ticker-search.js', () => ({ searchYahoo: vi.fn() }));
+vi.mock('../ticker-search.js', () => ({ searchYahoo: vi.fn(), fetchYahooSymbolInfo: vi.fn() }));
 vi.mock('../yahoo-finance.js', () => ({ fetchYahooPrice: vi.fn() }));
 vi.mock('../biznesradar-catalog.js', () => ({
   getBrCatalogService: () => ({

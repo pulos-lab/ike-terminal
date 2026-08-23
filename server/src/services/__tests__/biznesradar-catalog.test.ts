@@ -195,7 +195,7 @@ const GC_HTML = ['AAPL', 'TSLA', 'MSFT', 'NVDA', 'AMZN', 'META']
   .map((t) => `<tr><td><a href="/notowania/${t}">${t}</a></td></tr>`)
   .join('\n');
 
-function makePayload(fillerCount = 600): string {
+function makePayload(fillerCount = 600, extra: Record<string, unknown>[] = []): string {
   const filler = Array.from({ length: fillerCount }, (_, i) => ({
     i: 100000 + i,
     s: `Z${String(i).padStart(3, '0')}`,
@@ -222,7 +222,7 @@ function makePayload(fillerCount = 600): string {
     r: null,
     q: 2,
   };
-  return `var symbols = ${JSON.stringify([...INTERESTING, ...filler, trailingExact])};`;
+  return `var symbols = ${JSON.stringify([...INTERESTING, ...extra, ...filler, trailingExact])};`;
 }
 
 /**
@@ -613,6 +613,79 @@ describe('findByTicker / findByName', () => {
     expect((await svc.findByName('kghm polska miedz'))?.symbol).toBe('KGH.WA'); // bez diakrytyków
     expect(await svc.findByName('NIEISTNIEJACA SPOLKA XYZ')).toBeNull();
     expect(await svc.findByName('AB')).toBeNull(); // za krótkie (<3)
+    svc.close();
+  });
+
+  // GENEZA (zgłoszenie 2026-08-23): XTB „SUN.PL" (Suntech, NewConnect) trafiał
+  // na SNN.WA (Sunnet). „SUN" jest prefiksem obu nazw, a o wyniku decydowała
+  // kolejność w indeksie — SNN leży przed SUN.
+  const SUN_FAMILY = [
+    {
+      i: 700001,
+      s: 'SNN',
+      f: 'SUNNET SPÓŁKA AKCYJNA',
+      m: 'SUNNET',
+      d: 'SNN (SUNNET)',
+      u: 'SUNNET',
+      c: 1.2,
+      o: 'BDM',
+      r: null,
+      q: 3,
+    },
+    {
+      i: 700002,
+      s: 'SUN',
+      f: 'SUNTECH SPÓŁKA AKCYJNA',
+      m: 'SUNTECH',
+      d: 'SUN (SUNTECH)',
+      u: 'SUNTECH',
+      c: 2.4,
+      o: 'BDM',
+      r: null,
+      q: 3,
+    },
+    {
+      i: 700003,
+      s: 'STG',
+      f: 'SUNTAGO SPÓŁKA AKCYJNA',
+      m: 'SUNTAGO',
+      d: 'STG (SUNTAGO)',
+      u: 'SUNTAGO',
+      c: 3.1,
+      o: 'BDM',
+      r: null,
+      q: 3,
+    },
+  ];
+
+  function sunService() {
+    const { fn } = makeFetch({ catalog: [makePayload(600, SUN_FAMILY)] });
+    return createBrCatalogService({
+      guard: makeGuard(),
+      dbFile: ':memory:',
+      fetchFn: fn,
+      politenessDelayMs: 0,
+    });
+  }
+
+  it('findByName: zapytanie krótsze niż 4 znaki nie łapie się po PREFIKSIE (SUN ≠ SUNNET)', async () => {
+    const svc = sunService();
+    expect(await svc.findByName('SUN')).toBeNull();
+    // …ale dokładne trafienie KODU nadal działa — tym idzie resolver.
+    expect((await svc.findByTicker('SUN'))?.symbol).toBe('SUN.WA');
+    svc.close();
+  });
+
+  it('findByName: remis prefiksowy → null (SUNTECH vs SUNTAGO na „SUNT")', async () => {
+    const svc = sunService();
+    expect(await svc.findByName('SUNT')).toBeNull();
+    svc.close();
+  });
+
+  it('findByName: dokładny skrót wygrywa mimo rodziny prefiksów', async () => {
+    const svc = sunService();
+    expect((await svc.findByName('SUNTECH'))?.symbol).toBe('SUN.WA');
+    expect((await svc.findByName('SUNTAGO'))?.symbol).toBe('STG.WA');
     svc.close();
   });
 

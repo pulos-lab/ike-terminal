@@ -13,7 +13,10 @@ const findByTicker = vi.fn();
 const findByName = vi.fn();
 const searchYahoo = vi.fn();
 
-vi.mock('../ticker-search.js', () => ({ searchYahoo: (...a: unknown[]) => searchYahoo(...a) }));
+vi.mock('../ticker-search.js', () => ({
+  searchYahoo: (...a: unknown[]) => searchYahoo(...a),
+  fetchYahooSymbolInfo: vi.fn(),
+}));
 vi.mock('../biznesradar-catalog.js', () => ({
   getBrCatalogService: () => ({
     warmUp,

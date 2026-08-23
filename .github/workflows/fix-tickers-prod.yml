@@ -12,6 +12,11 @@ on:
         required: true
         type: boolean
         default: false
+      run_mismatched:
+        description: 'Uruchomić też fix:mismatched-tickers (wpisy wskazujące CUDZĄ spółkę, np. SUN.WA→SNN.WA)?'
+        required: true
+        type: boolean
+        default: false
       restart_server:
         description: 'Zrestartować serwer po naprawie?'
         required: true
@@ -48,6 +53,15 @@ jobs:
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
             cd /opt/ike-terminal/app &&
             DATA_DIR=/opt/ike-terminal/data node server/dist/scripts/fix-tickers.js $FLAG
+          "
+
+      - name: Run fix:mismatched-tickers
+        if: inputs.run_mismatched == true
+        run: |
+          FLAG="${{ inputs.apply == true && '--apply' || '' }}"
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
+            cd /opt/ike-terminal/app &&
+            DATA_DIR=/opt/ike-terminal/data node server/dist/scripts/fix-mismatched-tickers.js $FLAG
           "
 
       - name: Fix Orlen name (manual SQL)
