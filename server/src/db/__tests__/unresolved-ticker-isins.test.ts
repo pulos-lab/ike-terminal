@@ -93,10 +93,20 @@ describe('getUnresolvedTickerIsins — obie klasy: brak wpisu i stub', () => {
     expect(repo.getUnresolvedTickerIsins(PID)).toEqual(new Set());
   });
 
-  it('symbol z sufiksem giełdy NIE jest stubem, nawet gdy ticker === name', () => {
-    // Lustro `isProvisionalStub`: „CDR.WA"/„CDR.WA" to realny symbol, nie placeholder.
+  it('symbol z sufiksem giełdy TEŻ czeka na rozpoznanie, gdy nazwa = ticker', () => {
+    // Lustro `isProvisionalStub` po zmianie z 2026-08-23: nazwa równa tickerowi
+    // to wpis NIEPOTWIERDZONY (patrz geneza SMSN.L), więc pass ma go ponowić.
     txRepo.insertTransaction(tx('CDR.WA', 'CDR.WA'), PID);
     repo.upsertTickerMapEntry(entry({ isin: 'CDR.WA', ticker: 'CDR.WA', name: 'CDR.WA' }), PID);
+    expect(repo.getUnresolvedTickerIsins(PID)).toEqual(new Set(['CDR.WA']));
+  });
+
+  it('wpis z prawdziwą nazwą i sufiksem giełdy jest gotowy — pass go nie rusza', () => {
+    txRepo.insertTransaction(tx('SMSN.L', 'SMSN.L'), PID);
+    repo.upsertTickerMapEntry(
+      entry({ isin: 'SMSN.L', ticker: 'SMSN.IL', name: 'Samsung Electronics Co., Ltd.' }),
+      PID,
+    );
     expect(repo.getUnresolvedTickerIsins(PID)).toEqual(new Set());
   });
 

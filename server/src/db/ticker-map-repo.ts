@@ -177,7 +177,7 @@ export function migrateGpwToYahoo(portfolioId: string): number {
 export function isProvisionalStub(
   entry: Pick<TickerMapEntry, 'ticker' | 'name'> | null | undefined,
 ): boolean {
-  return !!entry && !!entry.name && entry.ticker === entry.name && !entry.ticker.includes('.');
+  return !!entry && !!entry.name && entry.ticker === entry.name;
 }
 
 /**
@@ -192,8 +192,15 @@ export function isProvisionalStub(
  * wpisu. Pass oparty tylko na stubach nigdy takiego papieru nie zobaczy i XTB-owe
  * pozycje zostawały bez ceny na zawsze (zgłoszenie GOOGC.US, 2026-08-06).
  *
- * Warunek stuba musi być lustrem `isProvisionalStub`: ticker === name ORAZ ticker
- * bez kropki (symbol z sufiksem giełdy nie jest placeholderem).
+ * Warunek stuba musi być lustrem `isProvisionalStub`: ticker === name.
+ *
+ * SYMBOL Z SUFIKSEM GIEŁDY TEŻ SIĘ LICZY (dawniej wykluczany warunkiem „bez
+ * kropki"). Nazwa równa tickerowi znaczy tylko tyle, że nikt tego papieru NIE
+ * POTWIERDZIŁ — dla `SMSN.L` Yahoo oddawało cenę z chartu, ale wyszukiwarka
+ * symbolu nie znała, więc wpis dostał nazwę „SMSN.L", cenę 4× niższą od
+ * instrumentu z XTB i — jako „nie-stub" — zamarzał pod kotwicą na zawsze
+ * (zgłoszenie 2026-08-23). Stub z sufiksem zapisuje też `buildProvisionalStub`
+ * dla starego formatu XTB (`JSW.WA`), więc te wpisy też nigdy się nie goiły.
  */
 export function getUnresolvedTickerIsins(portfolioId: string = 'default'): Set<string> {
   const db = getDb(portfolioId);
@@ -202,7 +209,7 @@ export function getUnresolvedTickerIsins(portfolioId: string = 'default'): Set<s
       `SELECT DISTINCT t.isin FROM transactions t
        LEFT JOIN ticker_map m ON m.isin = t.isin
        WHERE m.isin IS NULL
-          OR (m.name IS NOT NULL AND m.name <> '' AND m.ticker = m.name AND m.ticker NOT LIKE '%.%')`,
+          OR (m.name IS NOT NULL AND m.name <> '' AND m.ticker = m.name)`,
     )
     .all() as Array<{ isin: string }>;
   return new Set(rows.map((r) => r.isin));

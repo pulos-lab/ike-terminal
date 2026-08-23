@@ -64,8 +64,21 @@ describe('ticker-map-repo — provisional stub / anchor', () => {
       expect(repo.isProvisionalStub(realEntry())).toBe(false);
     });
 
-    it('NIE traktuje jako stub polskiego tickera z sufiksem .WA', () => {
-      expect(repo.isProvisionalStub({ ticker: 'CDR.WA', name: 'CDR.WA' })).toBe(false);
+    it('symbol z sufiksem giełdy TEŻ jest stubem, gdy nikt go nie potwierdził', () => {
+      // Zmiana z 2026-08-23: nazwa równa tickerowi znaczy „niepotwierdzony",
+      // niezależnie od kropki. Wcześniej taki wpis nie był stubem i zamarzał pod
+      // kotwicą — tak `SMSN.L` (cena 4× niższa od instrumentu z XTB, nazwa
+      // „SMSN.L", bo wyszukiwarka Yahoo tego symbolu nie znała) został w bazie
+      // na stałe. Ponowne rozpoznanie takich wpisów jest tanie i idzie przez
+      // te same guardy.
+      expect(repo.isProvisionalStub({ ticker: 'CDR.WA', name: 'CDR.WA' })).toBe(true);
+      expect(repo.isProvisionalStub({ ticker: 'SMSN.L', name: 'SMSN.L' })).toBe(true);
+    });
+
+    it('NIE traktuje jako stub wpisu z prawdziwą nazwą przy symbolu z sufiksem', () => {
+      expect(repo.isProvisionalStub({ ticker: 'SMSN.IL', name: 'Samsung Electronics' })).toBe(
+        false,
+      );
     });
 
     it('bezpieczny dla null/undefined/pustego name', () => {

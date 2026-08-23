@@ -145,6 +145,24 @@ export function isExactSymbolMatch(
 }
 
 /**
+ * Czy trafienie to ten sam kod papieru, różniący się WYŁĄCZNIE sufiksem giełdy
+ * (`SMSN.L` → `SMSN.IL`, `BRKB` → `BRKB.VI`)?
+ *
+ * Sam w sobie NIE jest dowodem poprawności — to ta sama furtka, przez którą
+ * wchodzi cudzy listing. Wołający używa go tam, gdzie waluta transakcji jest
+ * ZGADNIĘTA z sufiksu kraju u brokera i nie może rozstrzygać sporu (patrz
+ * `buildEntryGuarded`).
+ */
+export function isSameBaseSymbol(
+  queries: Array<string | undefined | null>,
+  symbol: string,
+): boolean {
+  const symBase = baseSymbol(symbol.toUpperCase());
+  if (!symBase) return false;
+  return queries.some((q) => !!q && q.trim().length > 0 && baseSymbol(q.toUpperCase()) === symBase);
+}
+
+/**
  * Pierwsze trafienie z listy, które przechodzi walidację. `null`, gdy żadne —
  * wtedy wołający MUSI zrezygnować, a nie sięgać po `[0]`.
  */

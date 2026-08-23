@@ -15,7 +15,7 @@ import { fetchYahooPrice } from './yahoo-finance.js';
 import { resolveSector } from './sector-resolver.js';
 import { mapWithConcurrency } from './concurrency.js';
 import { normalizeBossaPaperName, isNewConnectPaperName } from './stooq-utils.js';
-import { pickPlausible, isExactSymbolMatch } from './ticker-match.js';
+import { pickPlausible, isExactSymbolMatch, isSameBaseSymbol } from './ticker-match.js';
 
 interface UnresolvedIsin {
   isin: string;
@@ -231,10 +231,23 @@ async function buildEntryGuarded(
   paperName: string,
   txCurrency: string,
   matchQueries: Array<string | undefined>,
+  /**
+   * Waluta transakcji jest ZGADNIĘTA z sufiksu kraju u brokera (XTB: `.UK` → GBP),
+   * a nie odczytana z pliku. Wtedy nie może przeważyć nad notowaniem z Yahoo —
+   * patrz komentarz przy sprawdzeniu niżej.
+   */
+  txCurrencyIsGuess = false,
 ): Promise<TickerMapEntry | null> {
   const entry = await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
   if (isExactSymbolMatch(matchQueries, hit.symbol)) return entry;
   if (sameCurrency(entry.currency, txCurrency)) return entry;
+  // Sufiks kraju mówi, GDZIE papier jest notowany — nie W CZYM. Londyn kwotuje
+  // GDR-y w USD (`SMSN.IL`, `ISAC.L`), więc etykieta GBP z `.UK` przegrywa
+  // z walutą notowania, o ile trafienie jest tym samym kodem papieru i różni się
+  // wyłącznie sufiksem giełdy (zgłoszenie 2026-08-23: `SMSN.UK` → `SMSN.IL`).
+  // Dla symbolu BEZ sufiksu (`BRKB` → `BRKB.VI`) etykieta pochodzi z pliku i guard
+  // działa jak dotąd.
+  if (txCurrencyIsGuess && isSameBaseSymbol(matchQueries, hit.symbol)) return entry;
   console.log(
     `  ✗ ${isin} → ${hit.symbol} odrzucone: notowanie w ${entry.currency}, transakcja w ${txCurrency}`,
   );
@@ -559,30 +572,40 @@ export async function resolveIsin(
   // do Strategy 1 z pełnym kompletem guardów.
   const directSymbol = foreignAlias ?? (foreignSuffix ? isin : undefined);
   if (!cfdKnown && directSymbol && hasForeignYahooSuffix(directSymbol)) {
-    let quote: Awaited<ReturnType<typeof fetchYahooPrice>> = null;
+    // KOLEJNOŚĆ MA ZNACZENIE: najpierw potwierdzenie symbolu w wyszukiwarce,
+    // dopiero potem cena. `fetchYahooSymbolInfo` wymaga DOKŁADNEJ zgodności
+    // symbolu, więc odpowiada na pytanie „czy Yahoo w ogóle zna ten papier".
+    // Sama cena z chart API tego nie dowodzi: dla `SMSN.UK` mapa sufiksów daje
+    // `SMSN.L`, chart oddaje na to notowanie ~4× niższe od instrumentu, który
+    // XTB faktycznie śledzi (GDR Samsunga to `SMSN.IL`), a wyszukiwarka symbolu
+    // `SMSN.L` nie zna. Wpis powstawał więc z nazwą równą tickerowi — bezużyteczny
+    // w UI i, przez kotwicę, nie do samonaprawienia (zgłoszenie 2026-08-23).
+    let info: Awaited<ReturnType<typeof fetchYahooSymbolInfo>> = null;
     try {
-      quote = await fetchYahooPrice(directSymbol);
+      info = await fetchYahooSymbolInfo(directSymbol);
     } catch {
-      quote = null;
+      info = null;
     }
-    if (quote) {
-      // Nazwę i giełdę ustawiamy OD RAZU: dla `exchange: 'OTHER'` późniejszy
-      // `backfillTickerNamesForPortfolio` już tu nie zajrzy (patrz komentarz
-      // w scripts/backfill-ticker-exchange.ts) — teraz albo nigdy.
-      let info: Awaited<ReturnType<typeof fetchYahooSymbolInfo>> = null;
+    if (info?.name) {
+      let quote: Awaited<ReturnType<typeof fetchYahooPrice>> = null;
       try {
-        info = await fetchYahooSymbolInfo(directSymbol);
+        quote = await fetchYahooPrice(directSymbol);
       } catch {
-        info = null;
+        quote = null;
       }
-      return await buildEntry(
-        isin,
-        directSymbol,
-        info?.name ?? '',
-        info?.exchange ?? undefined,
-        paperName,
-        txCurrency,
-      );
+      // Nazwę i giełdę mamy z potwierdzenia — zapisujemy je OD RAZU: dla
+      // `exchange: 'OTHER'` późniejszy `backfillTickerNamesForPortfolio` już tu
+      // nie zajrzy (patrz komentarz w scripts/backfill-ticker-exchange.ts).
+      if (quote) {
+        return await buildEntry(
+          isin,
+          directSymbol,
+          info.name,
+          info.exchange ?? undefined,
+          paperName,
+          txCurrency,
+        );
+      }
     }
   }
 
@@ -619,7 +642,7 @@ export async function resolveIsin(
       const hit = pickPlausible(byIsin, matchQueries) ?? (shouldValidate ? null : byIsin[0]);
       if (hit) {
         const entry = shouldValidate
-          ? await buildEntryGuarded(isin, hit, paperName, txCurrency, matchQueries)
+          ? await buildEntryGuarded(isin, hit, paperName, txCurrency, matchQueries, foreignSuffix)
           : await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
         // Odrzucenie przez guard waluty NIE kończy resolwowania — Strategy 3
         // (szukanie po nazwie) może jeszcze trafić właściwy listing.
@@ -702,6 +725,14 @@ export async function resolveIsin(
       const split = splitEtfName(cleanName);
       if (split !== cleanName) searchVariants.push(split);
     }
+    // Symbol z sufiksem giełdy: dokładamy SAM KOD. Wyszukiwarka Yahoo nie zna
+    // każdego zapisu z sufiksem (`SMSN.L` nie zwraca nic), ale po samym kodzie
+    // oddaje właściwy listing (`SMSN` → `SMSN.IL`, GDR Samsunga notowany w USD).
+    // Tak samo szuka człowiek, gdy dodaje ticker ręcznie.
+    if (foreignSuffix) {
+      const base = baseTickerSymbol(isin);
+      if (base && !searchVariants.includes(base)) searchVariants.push(base);
+    }
 
     for (const variant of searchVariants) {
       const byName = await searchYahoo(variant);
@@ -724,7 +755,14 @@ export async function resolveIsin(
           const hit = pickPlausible(byName, matchQueries) ?? (shouldValidate ? null : byName[0]);
           if (hit) {
             const entry = shouldValidate
-              ? await buildEntryGuarded(isin, hit, paperName, txCurrency, matchQueries)
+              ? await buildEntryGuarded(
+                  isin,
+                  hit,
+                  paperName,
+                  txCurrency,
+                  matchQueries,
+                  foreignSuffix,
+                )
               : await buildEntry(isin, hit.symbol, hit.name, hit.exchange, paperName, txCurrency);
             if (entry) return entry;
           }
