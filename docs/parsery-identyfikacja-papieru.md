@@ -300,13 +300,16 @@ const isPolishTicker = isRealPolishIsin
 | IBKR `IBKR:GLOB` (sierota) | true | zagraniczna | ✅ |
 | XTB `JSW.WA` | true | polska (sufiks) | ❌ |
 | XTB `PLTR` + USD | true | zagraniczna | ✅ |
-| XTB placeholder + `PLN` | true | **polska** ⚠ | ❌ |
+| XTB `SMSN.L` + `PLN` (waluta konta) | true | **zagraniczna** — sufiks giełdy bije etykietę waluty | ✅ (Strategy 0 pyta o symbol wprost) |
+| XTB placeholder (nazwa spółki) + `PLN` | true | **polska** ⚠ | ❌ |
 | mBank `KGHM` + PLN | true | polska | ❌ |
 | mBank `MICRON TECH` + USD | true | zagraniczna | ✅ |
 
 ### Co z tego wynika
 
 **Dla mBanku i XTB-placeholdera waluta przesądza o wszystkim.** Instrument zagraniczny z etykietą `PLN` trafia w gałąź polską, gdzie z definicji go nie ma — a katalog GPW/NC podsuwa spółkę o podobnej nazwie. Tak Vertiv (NYSE) stał się MPLVERBUM z NewConnect.
+
+**Wyjątek: symbol z sufiksem giełdy.** Pseudo-ISIN, który jest już kanonicznym tickerem Yahoo (`SMSN.L`, `INPST.AS`, `NOVOB.CO` — zbiór w `shared/src/yahoo-exchange-suffix.ts`), nie idzie gałęzią polską nawet przy etykiecie `PLN`, i jest sprawdzany WPROST (`fetchYahooPrice` + `fetchYahooSymbolInfo`) zamiast przez wyszukiwarkę. Powód: dla `SMSN.UK` → `SMSN.L` (GDR Samsunga na LSE, notowany w USD) `search` zwraca sąsiedni listing `SMSN.IL`, więc trafienie nie jest dokładne i guard waluty odrzucał je — GBP z sufiksu `.UK` przeciwko USD z notowania. Waluta i nazwa pochodzą z odpowiedzi Yahoo, nie z sufiksu kraju u brokera.
 
 **Walidacja trafień nie chroni ścieżki realnych ISIN-ów.** Bramka to `isPseudoIsin && !isPolishTicker && !cfdKnown`, więc Bossa, DEGIRO i IBKR jej nie dostają. To świadoma decyzja — ta ścieżka nie została zmierzona na produkcji — ale **pozostaje otwartym ryzykiem**: Yahoo potrafi na zapytanie ISIN-em zwrócić kompletnie inną spółkę (`US75960P1049` → Remitly zamiast Reliance Global).
 
@@ -322,6 +325,8 @@ const isPolishTicker = isRealPolishIsin
 | `ISIN_ALIASES_MAP` ma tylko wpisy w formie symboli XTB | wywołanie `applyIsinAlias` z Bossy jest dziś no-opem |
 | Opcje IBKR seedowane przed resolverem | `OPT:` nigdy nie trafia do Yahoo |
 | DEGIRO nie ustawia `category` | gałęzie `bond`/`cfd` w resolverze są dla niego martwe |
+| Kod tickera bywa RECYKLOWANY po delistingu | alias rebrandingowy z żywym kluczem kieruje na cudzy papier (`SUN → MIG` vs Suntech); gdy mapa NC potwierdza, że kod jest żywy, idzie on przed aliasem, a `isin-resolver-alias-hygiene.test.ts` pilnuje mapy |
+| `findByName` dopasowuje po PREFIKSIE | poniżej 4 znaków i przy remisie zwraca `null` — inaczej „SUN" łapało SUNNET, bo SNN leży wcześniej w indeksie |
 
 ---
 

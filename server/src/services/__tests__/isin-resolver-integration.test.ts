@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock external services BEFORE importing the resolver
 vi.mock('../ticker-search.js', () => ({
   searchYahoo: vi.fn(),
+  fetchYahooSymbolInfo: vi.fn(),
 }));
 const findByTicker = vi.fn();
 const findByName = vi.fn();
@@ -247,5 +248,103 @@ describe('resolveIsin — sufiks -FIX i delisted GPW', () => {
     expect(result?.exchange).toBe('NC');
     expect(result?.ticker).toBe('SEV.WA');
     expect(tickerSearch.searchYahoo).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveIsin — recykling kodu tickera na NewConnect (zgłoszenie SUN.PL, 2026-08-23)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Domyślnie katalog BR milczy — sprawdzamy offline'owe siatki bezpieczeństwa.
+    findByTicker.mockResolvedValue(null);
+    findByName.mockResolvedValue(null);
+    (tickerSearch.searchYahoo as any).mockResolvedValue([]);
+  });
+
+  it('XTB SUN.PL („SUN.WA") → SUN.WA/SUNTECH (NC), nie SNN.WA/SUNNET', async () => {
+    // GENEZA: alias STOOQ_ALIASES miał SUN→MIG (Sundragon→Military Group 2025),
+    // a kod SUN nosi dziś Suntech. Alias zjadał dokładne trafienie, po czym
+    // findByName łapał po prefiksie „SUN" pierwszą spółkę w indeksie (SUNNET).
+    const result = await resolveIsin('SUN.WA', 'SUN.WA', 'PLN');
+
+    expect(result).toEqual({
+      isin: 'SUN.WA',
+      ticker: 'SUN.WA',
+      name: 'SUNTECH',
+      exchange: 'NC',
+      currency: 'PLN',
+      priceSource: 'stooq',
+    });
+    // Dokładny kod z mapy NC rozstrzyga PRZED zgadywaniem po nazwie.
+    expect(findByName).not.toHaveBeenCalled();
+    expect(tickerSearch.searchYahoo).not.toHaveBeenCalled();
+  });
+
+  it('katalog BR znający kod SUN wygrywa z mapą offline (i też nie pyta o nazwę)', async () => {
+    findByTicker.mockImplementation(async (ticker: string) =>
+      ticker.toUpperCase() === 'SUN'
+        ? { symbol: 'SUN.WA', name: 'SUNTECH SPÓŁKA AKCYJNA', exchange: 'NC', currency: 'PLN' }
+        : null,
+    );
+
+    const result = await resolveIsin('SUN.WA', 'SUN.WA', 'PLN');
+
+    expect(result?.ticker).toBe('SUN.WA');
+    expect(result?.name).toBe('SUNTECH SPÓŁKA AKCYJNA');
+    expect(result?.exchange).toBe('NC');
+    expect(findByName).not.toHaveBeenCalled();
+  });
+
+  it('SKN.WA → SAKANA (kod przejęty po Skin-System, alias SKN→SIM usunięty)', async () => {
+    const result = await resolveIsin('SKN.WA', 'SKN.WA', 'PLN');
+    expect(result?.ticker).toBe('SKN.WA');
+    expect(result?.name).toBe('SAKANA');
+    expect(result?.exchange).toBe('NC');
+  });
+
+  it('SNN.WA nadal rozwiązuje się na SUNNET — sąsiad z remisu nie ucierpiał', async () => {
+    const result = await resolveIsin('SNN.WA', 'SNN.WA', 'PLN');
+    expect(result?.ticker).toBe('SNN.WA');
+    expect(result?.name).toBe('SUNNET');
+    expect(result?.exchange).toBe('NC');
+  });
+
+  it('alias rebrandingowy działa, gdy surowego kodu nie ma w katalogu (DINO → DNP.WA)', async () => {
+    findByTicker.mockImplementation(async (ticker: string) =>
+      ticker.toUpperCase() === 'DNP'
+        ? { symbol: 'DNP.WA', name: 'DINO POLSKA', exchange: 'GPW', currency: 'PLN' }
+        : null,
+    );
+
+    const result = await resolveIsin('DINO', 'DINO', 'PLN');
+
+    expect(result?.ticker).toBe('DNP.WA');
+    expect(result?.exchange).toBe('GPW');
+    // „DINO" nie jest dziś kodem tickera (mapa NC go nie zna), więc kolejność
+    // kandydatów zostaje dawna — pytamy wyłącznie o cel aliasu.
+    expect(findByTicker.mock.calls.map((c: unknown[]) => c[0])).toEqual(['DNP']);
+  });
+
+  it('alias 7FT → OML zostaje: tam stary kod naprawdę wygasł (nieaktualny jest wpis NC)', async () => {
+    findByTicker.mockImplementation(async (ticker: string) =>
+      ticker.toUpperCase() === 'OML'
+        ? { symbol: 'OML.WA', name: 'ONE MORE LEVEL', exchange: 'NC', currency: 'PLN' }
+        : null,
+    );
+
+    const result = await resolveIsin('7FT.WA', '7FT.WA', 'PLN');
+
+    expect(result?.ticker).toBe('OML.WA');
+    expect(result?.exchange).toBe('NC');
+    // Mapa NC (nieaktualnie) zna kod 7FT, więc pytamy o niego surowo PRZED
+    // aliasem — katalog o nim milczy, decyduje więc cel aliasu.
+    expect(findByTicker.mock.calls.map((c: unknown[]) => c[0])).toEqual(['7FT', 'OML']);
+  });
+
+  it('kod spoza mapy NC i katalogu nie łapie się po prefiksie nazwy → null', async () => {
+    // findByName dostaje zapytanie ≥4 znaków dopiero wtedy, gdy nie ma pewnego
+    // trafienia kodem; przy pustym katalogu resolver ma zwrócić null zamiast
+    // zgadywać (lepiej zero ceny niż cudza cena).
+    const result = await resolveIsin('ZZZQ.WA', 'ZZZQ.WA', 'PLN');
+    expect(result).toBeNull();
   });
 });

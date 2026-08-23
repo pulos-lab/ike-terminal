@@ -109,7 +109,11 @@ function normalizeXtbSymbol(symbol: string): string {
 
 // ── XTB → Yahoo ticker mapping ──────────────────────────────────────────────
 
-const XTB_TO_YAHOO: Record<string, string> = {
+/** Sufiks kraju u XTB → sufiks giełdy Yahoo. Eksportowana dla testu parytetu
+ *  z `FOREIGN_YAHOO_SUFFIXES` (shared): każdy sufiks, który tu produkujemy,
+ *  musi być rozpoznawany przez resolver jako giełda zagraniczna — inaczej
+ *  papier trafia w gałąź polską po samej etykiecie waluty. */
+export const XTB_TO_YAHOO: Record<string, string> = {
   PL: '.WA',
   US: '',
   NL: '.AS',

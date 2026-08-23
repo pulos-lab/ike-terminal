@@ -511,17 +511,32 @@ export function createBrCatalogService(options: BrCatalogServiceOptions = {}): B
       if (q.length < 3) return null;
       try {
         const entries = await ensureIndex();
+        // Prefiks krótszy niż 4 znaki to loteria: „SUN" jest prefiksem SUNNET,
+        // SUNEX i SUNTECHU naraz, a o wyniku decydowała kolejność w indeksie
+        // (zgłoszenie 2026-08-23: XTB „SUN.PL" → SNN.WA). Dokładny skrót
+        // (score 3) zostaje bez progu — tam nie ma czego zgadywać.
+        const allowPrefix = q.length >= 4;
         let best: { e: BrCatalogEntry; score: number } | null = null;
+        let bestCount = 0;
         for (const e of entries) {
           const short = normalizeForMatch(e.shortName);
           const full = normalizeForMatch(e.name);
           let score = 0;
           if (short && short === q) score = 3;
-          else if (full.startsWith(q)) score = 2;
-          else if (short && short.startsWith(q)) score = 1;
-          if (score > (best?.score ?? 0)) best = { e, score };
+          else if (allowPrefix && full.startsWith(q)) score = 2;
+          else if (allowPrefix && short && short.startsWith(q)) score = 1;
+          if (score === 0) continue;
+          if (score > (best?.score ?? 0)) {
+            best = { e, score };
+            bestCount = 1;
+          } else if (best && score === best.score && e.ticker !== best.e.ticker) {
+            bestCount++;
+          }
         }
-        return best ? toResult(best.e) : null;
+        // Remis = brak rozstrzygnięcia. Ta sama zasada co w resolverze: lepiej
+        // zero ceny (papier zostaje stubem i sam się zagoi) niż cudza cena.
+        if (!best || bestCount > 1) return null;
+        return toResult(best.e);
       } catch (err) {
         console.warn('[biznesradar-catalog] findByName failed:', err);
         return null;

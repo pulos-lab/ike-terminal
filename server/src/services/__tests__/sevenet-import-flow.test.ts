@@ -3,6 +3,7 @@ import { parseBossaTransactions } from '../../parsers/bossa-transactions.js';
 
 vi.mock('../ticker-search.js', () => ({
   searchYahoo: vi.fn(),
+  fetchYahooSymbolInfo: vi.fn(),
   validateStooq: vi.fn(),
   searchStooqByName: vi.fn(),
 }));

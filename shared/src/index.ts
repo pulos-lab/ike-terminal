@@ -15,4 +15,5 @@ export * from './constants.js';
 export * from './gpw-sector-map.js';
 export * from './gics-to-stockwatch.js';
 export * from './country-region-map.js';
+export * from './yahoo-exchange-suffix.js';
 export * from './pl-name-normalize.js';

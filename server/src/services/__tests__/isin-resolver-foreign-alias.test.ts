@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock zewnętrznych źródeł PRZED importem resolvera (jak w isin-resolver-integration).
 vi.mock('../ticker-search.js', () => ({
   searchYahoo: vi.fn(),
+  fetchYahooSymbolInfo: vi.fn(),
 }));
 vi.mock('../biznesradar-catalog.js', () => ({
   getBrCatalogService: () => ({
