@@ -138,21 +138,58 @@ describe('resolveIsin — pseudo-ISIN z sufiksem giełdy zagranicznej', () => {
     expect(result?.currency).toBe('DKK');
   });
 
-  it('brak notowania dla symbolu → cofka do wyszukiwarki z PEŁNYMI guardami', async () => {
-    // fetchYahooPrice(SMSN.L) = null (symbol nieznany Yahoo) → Strategy 1.
-    // Wyszukiwarka podsuwa sąsiedni listing SMSN.IL w USD, transakcja jest w GBP
-    // → trafienie NIE jest dokładne, więc guard waluty je odrzuca.
+  it('symbol nieznany WYSZUKIWARCE nie jest akceptowany, choćby chart oddał cenę', async () => {
+    // GENEZA (produkcja, 2026-08-23): dla `SMSN.UK` mapa sufiksów daje `SMSN.L`.
+    // Chart API oddaje na to notowanie 1179,5 USD — ~4× mniej niż instrument,
+    // który XTB faktycznie śledzi (kupno z pliku: 4100). Wyszukiwarka symbolu
+    // `SMSN.L` NIE ZNA, i to jest właściwy sygnał: papier trzeba znaleźć po kodzie.
     (yahooFinance.fetchYahooPrice as any).mockImplementation(async (ticker: string) =>
-      ticker === 'SMSN.IL' ? price('USD', 1300) : null,
+      ticker === 'SMSN.L' ? price('USD', 1179.5) : price('USD', 4800),
     );
-    (tickerSearch.searchYahoo as any).mockResolvedValue([
-      { symbol: 'SMSN.IL', name: 'Samsung Electronics Co Ltd GDR', exchange: 'IOB' },
-    ]);
+    (tickerSearch.fetchYahooSymbolInfo as any).mockResolvedValue(null); // Yahoo nie zna SMSN.L
+    (tickerSearch.searchYahoo as any).mockImplementation(async (q: string) =>
+      q === 'SMSN'
+        ? [{ symbol: 'SMSN.IL', name: 'Samsung Electronics Co., Ltd.', exchange: 'IOB' }]
+        : [],
+    );
 
     const result = await resolveIsin('SMSN.L', 'SMSN.L', 'GBP');
 
+    expect(result?.ticker).toBe('SMSN.IL');
+    expect(result?.name).toBe('Samsung Electronics Co., Ltd.');
+    expect(result?.currency).toBe('USD');
+    // ISIN zostaje kotwicą historii — zmienia się wyłącznie ticker notowania.
+    expect(result?.isin).toBe('SMSN.L');
+  });
+
+  it('etykieta waluty z sufiksu kraju nie blokuje właściwego listingu (GBP vs USD)', async () => {
+    // Guard waluty odrzucał SMSN.IL, bo trafienie nie jest DOKŁADNE, a `.UK`
+    // sugeruje GBP. Sufiks mówi jednak, GDZIE papier jest notowany, nie W CZYM —
+    // przy zgodnym kodzie papieru wygrywa waluta z notowania.
+    (tickerSearch.fetchYahooSymbolInfo as any).mockResolvedValue(null);
+    (tickerSearch.searchYahoo as any).mockResolvedValue([
+      { symbol: 'SMSN.IL', name: 'Samsung Electronics Co., Ltd.', exchange: 'IOB' },
+    ]);
+    (yahooFinance.fetchYahooPrice as any).mockResolvedValue(price('USD', 4800));
+
+    const result = await resolveIsin('SMSN.L', 'SMSN.L', 'GBP');
+
+    expect(result?.ticker).toBe('SMSN.IL');
+    expect(result?.currency).toBe('USD');
+  });
+
+  it('poluzowanie guardu NIE dotyczy symbolu bez sufiksu (BRKB → BRKB.VI nadal odrzucone)', async () => {
+    // Regresja do PR #238: tam etykieta waluty pochodzi z pliku brokera, nie ze
+    // zgadywanki po sufiksie, więc rozjazd waluty dalej jest dowodem pomyłki.
+    (tickerSearch.fetchYahooSymbolInfo as any).mockResolvedValue(null);
+    (tickerSearch.searchYahoo as any).mockResolvedValue([
+      { symbol: 'BRKB.VI', name: 'Berkshire Hathaway Inc.', exchange: 'VIE' },
+    ]);
+    (yahooFinance.fetchYahooPrice as any).mockResolvedValue(price('EUR', 449.15));
+
+    const result = await resolveIsin('BRKB', 'BRKB', 'USD');
+
     expect(result).toBeNull();
-    expect(tickerSearch.searchYahoo).toHaveBeenCalled();
   });
 
   it('goły symbol bez sufiksu (PLTR) nie uruchamia bezpośredniego sprawdzenia', async () => {
