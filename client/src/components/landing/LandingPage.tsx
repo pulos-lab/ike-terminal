@@ -14,39 +14,40 @@ import { Logo } from '@/components/ui/Logo';
 
 const FEATURES = [
   {
-    icon: LayoutDashboard,
-    title: 'Dashboard z benchmarkiem',
-    description:
-      'Porównaj zwrot portfela z indeksami (S&P 500, WIG, NASDAQ). MWR, TWR, Sharpe, Max Drawdown i więcej.',
-  },
-  {
     icon: Upload,
     title: 'Import z brokerów',
     description:
       'Automatyczny import z Bossa, mBank, DEGIRO, XTB i Interactive Brokers. Inny broker? Uniwersalny import CSV/XLSX z pomocą AI.',
   },
   {
-    icon: Zap,
-    title: 'Ceny na żywo',
+    icon: Shield,
+    title: 'IKE / IKZE ready',
     description:
-      'Bieżące wyceny z GPW, NewConnect, Catalyst, NYSE, NASDAQ i XETRA. Cache i fallbacki — zawsze aktualne dane.',
+      'Konta emerytalne z pilnowaniem rocznych limitów wpłat, historią wpłat i ustawieniami prowizji.',
   },
   {
     icon: Coins,
-    title: 'Dywidendy i gotówka',
+    title: 'Dywidendy i podatek u źródła',
     description:
-      'Automatyczne wykrywanie dywidend, podatek u źródła, historia wpłat z limitem IKE/IKZE.',
+      'Automatyczne wykrywanie wypłat dywidend, podatek u źródła policzony po polsku, historia gotówki i wpłat.',
+  },
+  {
+    icon: LayoutDashboard,
+    title: 'Dashboard z benchmarkiem',
+    description:
+      'Porównaj zwrot portfela z indeksami (S&P 500, WIG, NASDAQ). MWR, TWR, Sharpe, Max Drawdown i więcej.',
+  },
+  {
+    icon: Zap,
+    title: 'Ceny na żywo',
+    description:
+      'Bieżące wyceny z GPW, NewConnect, Catalyst, NYSE, NASDAQ i XETRA — zawsze aktualne dane.',
   },
   {
     icon: Globe,
     title: 'Multi-walutowy',
     description:
       'PLN, USD, EUR, GBP, CAD i więcej. Automatyczne przeliczanie kursów walut i historia wymian.',
-  },
-  {
-    icon: Shield,
-    title: 'IKE / IKZE ready',
-    description: 'Dedykowane konta emerytalne z ustawieniami prowizji i limitów wpłat rocznych.',
   },
 ];
 
@@ -94,13 +95,14 @@ export function LandingPage() {
             Darmowe dla inwestorów indywidualnych
           </div>
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold leading-tight mb-4 max-w-3xl mx-auto tracking-tight">
-            Twój portfel inwestycyjny
+            Portfel inwestycyjny,
             <br />
-            <span className="text-amber-500">w jednym miejscu</span>
+            <span className="text-amber-500">który rozumie polskich brokerów</span>
           </h1>
           <p className="text-base sm:text-lg text-stone-400 max-w-xl mx-auto mb-8">
-            Importuj transakcje z wielu brokerów, śledź wyniki na żywo i analizuj zwroty vs
-            benchmarki — wszystko w jednym narzędziu.
+            Wrzuć eksport z XTB, mBanku, Bossy, DEGIRO czy IBKR — TIX poskłada transakcje i
+            dywidendy, policzy podatek u źródła, porówna wynik z WIG i S&P 500 i przypilnuje limitów
+            IKE/IKZE.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             <button
@@ -118,6 +120,9 @@ export function LandingPage() {
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
+          <p className="text-stone-600 text-xs mt-4">
+            Bez podłączania konta u brokera — importujesz pliki, które sam pobierasz.
+          </p>
         </div>
       </section>
 
@@ -220,6 +225,10 @@ export function LandingPage() {
           </div>
           <p className="text-stone-600 text-xs mt-6">
             …i inni — uniwersalny import CSV/XLSX dopasuje się do formatu Twojego brokera.
+          </p>
+          <p className="text-stone-500 text-sm mt-6 max-w-xl mx-auto">
+            Nie łączymy się z Twoim kontem — importujesz wyciąg, który sam pobierasz od brokera.
+            Parsery przetestowane na setkach prawdziwych wyciągów.
           </p>
         </div>
       </section>
