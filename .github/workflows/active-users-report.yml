@@ -1,0 +1,154 @@
+name: Active Users Report
+
+# Read-only raport na produkcji: ilu użytkowników zalogowało się w ostatnich
+# N dniach i ma jakiekolwiek dane w portfelach (transakcje / operacje gotówkowe
+# / pozycje ręczne). Bazy otwierane w trybie readonly — nic nie zapisuje.
+# Emaile w logu są maskowane (logi Actions widzi każdy z dostępem do repo).
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Okno aktywności w dniach (domyślnie 30)'
+        required: false
+        type: string
+        default: '30'
+      show_emails:
+        description: 'Pokazać pełne adresy email zamiast zamaskowanych?'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Write report script
+        run: |
+          cat > active-users.mjs <<'SCRIPT_EOF'
+          import { createRequire } from 'module';
+          import fs from 'fs';
+
+          // Skrypt leży w /tmp, a better-sqlite3 w node_modules aplikacji, więc
+          // baza rozwiązywania modułów musi wskazywać realny PLIK w /opt
+          // (package.json jest tam rsyncowany przez deploy.yml), nie katalog.
+          const require = createRequire('/opt/ike-terminal/app/package.json');
+          const Database = require('better-sqlite3');
+
+          const DATA = process.env.DATA_DIR || '/opt/ike-terminal/data';
+          const DAYS = Number(process.env.WINDOW_DAYS) || 30;
+          const SHOW_EMAILS = process.env.SHOW_EMAILS === 'true';
+
+          // better-auth zapisuje daty różnie zależnie od wersji (ISO / unix),
+          // stąd normalizacja do ms w JS zamiast porównywania stringów w SQL.
+          const toMs = (v) => {
+            if (v == null) return 0;
+            if (typeof v === 'number') return v > 1e12 ? v : v * 1000;
+            const s = String(v);
+            const t = Date.parse(s.includes('T') ? s : s.replace(' ', 'T') + 'Z');
+            return Number.isNaN(t) ? 0 : t;
+          };
+          const fmt = (e) =>
+            SHOW_EMAILS ? String(e) : String(e).replace(/^(..?)[^@]*(@.*)$/, '$1***$2');
+          const day = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '—');
+
+          const auth = new Database(`${DATA}/auth.db`, { readonly: true });
+          const users = auth.prepare('SELECT id, email, createdAt FROM "user"').all();
+          const sessions = auth.prepare('SELECT userId, createdAt, updatedAt FROM "session"').all();
+          auth.close();
+
+          const lastSeen = new Map();
+          for (const s of sessions) {
+            const t = Math.max(toMs(s.createdAt), toMs(s.updatedAt));
+            if (t > (lastSeen.get(s.userId) || 0)) lastSeen.set(s.userId, t);
+          }
+
+          const portfolios = JSON.parse(fs.readFileSync(`${DATA}/portfolios.json`, 'utf-8'));
+
+          /** Liczba wierszy danych użytkownika we wszystkich jego portfelach. */
+          const dataCount = (userId) => {
+            let n = 0;
+            for (const p of portfolios.filter((p) => p.userId === userId)) {
+              const dbPath = `${DATA}/${p.id}.db`;
+              if (!fs.existsSync(dbPath)) continue;
+              try {
+                const db = new Database(dbPath, { readonly: true });
+                for (const t of ['transactions', 'cash_operations', 'manual_positions']) {
+                  try {
+                    n += db.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n;
+                  } catch {
+                    // tabela może nie istnieć w starszej bazie — pomijamy
+                  }
+                }
+                db.close();
+              } catch {
+                // baza zablokowana lub uszkodzona — nie przerywamy raportu
+              }
+            }
+            return n;
+          };
+
+          const cutoff = Date.now() - DAYS * 24 * 3600 * 1000;
+          const rows = users.map((u) => ({
+            email: fmt(u.email),
+            registered: toMs(u.createdAt),
+            lastSeen: lastSeen.get(u.id) || 0,
+            rowCount: dataCount(u.id),
+            portfolioCount: portfolios.filter((p) => p.userId === u.id).length,
+          }));
+
+          const withData = rows.filter((r) => r.rowCount > 0);
+          const active = rows.filter((r) => r.lastSeen >= cutoff);
+          const activeWithData = active.filter((r) => r.rowCount > 0);
+
+          console.log(`Okno aktywności: ostatnie ${DAYS} dni (od ${day(cutoff)})`);
+          console.log('');
+          console.log(`Zarejestrowani użytkownicy:      ${rows.length}`);
+          console.log(`Z jakimikolwiek danymi:          ${withData.length}`);
+          console.log(`Zalogowani w oknie:              ${active.length}`);
+          console.log(`Zalogowani w oknie + mają dane:  ${activeWithData.length}`);
+          console.log('');
+          console.log(`Aktywni w ostatnich ${DAYS} dniach:`);
+          if (active.length === 0) {
+            console.log('  (brak)');
+          }
+          for (const r of active.sort((a, b) => b.lastSeen - a.lastSeen)) {
+            console.log(
+              `  ${r.email.padEnd(30)} ostatnio=${day(r.lastSeen)}  rejestracja=${day(
+                r.registered,
+              )}  portfele=${r.portfolioCount}  wiersze=${r.rowCount}`,
+            );
+          }
+          console.log('');
+          console.log(
+            'Uwaga: better-auth kasuje wiersz sesji przy JAWNYM wylogowaniu, więc kto',
+          );
+          console.log(
+            'zalogował się w oknie i potem wylogował, może tu nie wystąpić — liczby są',
+          );
+          console.log('dolnym oszacowaniem.');
+          SCRIPT_EOF
+
+      - name: Run report on prod
+        env:
+          WINDOW_DAYS: ${{ inputs.days }}
+          SHOW_EMAILS: ${{ inputs.show_emails }}
+        run: |
+          HOST="${{ secrets.DEPLOY_HOST }}"
+          USER="${{ secrets.DEPLOY_USER }}"
+          scp -i ~/.ssh/deploy_key active-users.mjs "$USER@$HOST:/tmp/active-users.mjs"
+          # Wartości inputów jadą przez env i są cytowane po stronie zdalnej —
+          # nigdy nie są wklejane w treść komendy (patrz command injection).
+          ssh -i ~/.ssh/deploy_key "$USER@$HOST" \
+            "WINDOW_DAYS='$WINDOW_DAYS' SHOW_EMAILS='$SHOW_EMAILS' node /tmp/active-users.mjs; rm -f /tmp/active-users.mjs"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key active-users.mjs
