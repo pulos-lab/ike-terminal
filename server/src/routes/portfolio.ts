@@ -1587,7 +1587,7 @@ router.get(
       //
       // Dla DEGIRO/XTB parser zapisał już jawnie `currency` = quote i `paymentCurrency` = base
       // account. Ufamy parserowi, ticker_map tylko jako fallback.
-      const isPolishBroker = tx.source === 'bossa' || tx.source === 'mbank';
+      const isPolishBroker = tx.source === 'bossa' || tx.source === 'mbank' || tx.source === 'ing';
       const quoteCurrency = isPolishBroker
         ? entry?.currency || tx.currency || 'PLN'
         : tx.currency || entry?.currency || 'PLN';

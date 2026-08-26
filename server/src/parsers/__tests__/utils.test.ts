@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseNumber, computeTotal, validateTradeFields } from '../utils.js';
+import { parseNumber, computeTotal, validateTradeFields, parseDashedDateTime } from '../utils.js';
 
 describe('parseNumber', () => {
   it('parsuje format europejski ze spacją tysięcy: "1 234,56"', () => {
@@ -30,6 +30,28 @@ describe('parseNumber', () => {
     expect(parseNumber('garbage')).toBe(0);
     expect(parseNumber('')).toBe(0);
     expect(parseNumber(undefined)).toBe(0);
+  });
+
+  it('połyka NBSP jako separator tysięcy (ING, win1250 0xA0): "6 657,00"', () => {
+    expect(parseNumber('6 657,00')).toBe(6657);
+  });
+});
+
+describe('parseDashedDateTime (ING)', () => {
+  it('parsuje datę z czasem dwukropkowym: "29-08-2023 14:25:33"', () => {
+    expect(parseDashedDateTime('29-08-2023 14:25:33')).toBe('2023-08-29T14:25:33');
+  });
+
+  it('parsuje archiwalny czas z myślnikami: "28-12-2020 09-00-00"', () => {
+    expect(parseDashedDateTime('28-12-2020 09-00-00')).toBe('2020-12-28T09:00:00');
+  });
+
+  it('sama data → T00:00:00', () => {
+    expect(parseDashedDateTime('30-07-2025')).toBe('2025-07-30T00:00:00');
+  });
+
+  it('nierozpoznany format zwraca wejście (konwencja parseDottedDate)', () => {
+    expect(parseDashedDateTime('2025/07/30')).toBe('2025/07/30');
   });
 });
 

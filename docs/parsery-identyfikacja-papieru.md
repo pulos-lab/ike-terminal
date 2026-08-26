@@ -24,21 +24,21 @@ Resolver **nie wie, z którego parsera przyszła transakcja**. Dostaje trzy stri
 
 ## Zestawienie zbiorcze
 
-| | **Bossa** | **DEGIRO** | **IBKR** | **XTB** | **mBank** | **T212** |
-|---|---|---|---|---|---|---|
-| format | CSV `;` | CSV `,` | HTML | XLSX | CSV `;`/`,` | CSV `,` |
-| **ISIN w pliku** | ✅ | ✅ | ✅ (osobna sekcja) | ❌ | ❌ | ✅ |
-| ticker w pliku | ✅ | ❌ | ✅ | ✅ lub nazwa | ❌ | ✅ |
-| `isin` w bazie | realny ISIN | realny ISIN | realny ISIN | ticker Yahoo | nazwa 1:1 | realny ISIN |
-| `paperName` | ticker z sufiksami | nazwa produktu | `Description` | **= `isin`** | **= `isin`** | `Name` |
-| pseudo-ISIN | — | — | awaryjnie | **zawsze** | **zawsze** | — |
-| `paymentCurrency` | `PLN` → reconcile | `EUR` → reconcile | **= `currency`** | waluta konta | z pliku | `Currency (Total)` |
-| `fxRate` | — | ✅ (odwrócony) | — | ✅ | ✅ (wyliczony) | ✅ (odwrócony) |
-| ułamkowe akcje | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ |
-| kategorie | `bond` | — | `stock`/`etf`/`bond`/`option` | `stock`/`etf`/`cfd` | — | — |
-| zmiany ISIN | — | — | ✅ | aliasy tickerów | — | — |
+| | **Bossa** | **DEGIRO** | **IBKR** | **XTB** | **mBank** | **ING** | **T212** |
+|---|---|---|---|---|---|---|---|
+| format | CSV `;` | CSV `,` | HTML | XLSX | CSV `;`/`,` | CSV `;` **bez nagłówka** | CSV `,` |
+| **ISIN w pliku** | ✅ | ✅ | ✅ (osobna sekcja) | ❌ | ❌ | ❌ w transakcjach, ✅ w opisach historii finansowej | ✅ |
+| ticker w pliku | ✅ | ❌ | ✅ | ✅ lub nazwa | ❌ | ✅ (długi skrót GPW) | ✅ |
+| `isin` w bazie | realny ISIN | realny ISIN | realny ISIN | ticker Yahoo | nazwa 1:1 | **realny — doszyty joinem po nr zlecenia** (fallback: ticker 1:1) | realny ISIN |
+| `paperName` | ticker z sufiksami | nazwa produktu | `Description` | **= `isin`** | **= `isin`** | ticker GPW | `Name` |
+| pseudo-ISIN | — | — | awaryjnie | **zawsze** | **zawsze** | tylko bez pliku ops | — |
+| `paymentCurrency` | `PLN` → reconcile | `EUR` → reconcile | **= `currency`** | waluta konta | z pliku | `PLN` na sztywno | `Currency (Total)` |
+| `fxRate` | — | ✅ (odwrócony) | — | ✅ | ✅ (wyliczony) | — | ✅ (odwrócony) |
+| ułamkowe akcje | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
+| kategorie | `bond` | — | `stock`/`etf`/`bond`/`option` | `stock`/`etf`/`cfd` | — | — | — |
+| zmiany ISIN | — | — | ✅ | aliasy tickerów | — | alias PDA (ZKA1→ZABKA) | — |
 
-Jednym zdaniem: **Bossa, DEGIRO i Trading 212 mówią wprost czym jest papier, IBKR mówi to w dwóch miejscach i trzeba je skleić, a XTB i mBank w ogóle nie mówią — trzeba wywnioskować.**
+Jednym zdaniem: **Bossa, DEGIRO i Trading 212 mówią wprost czym jest papier, IBKR mówi to w dwóch miejscach i trzeba je skleić, ING mówi to w DRUGIM pliku (join po numerze zlecenia), a XTB i mBank w ogóle nie mówią — trzeba wywnioskować.**
 
 ---
 
@@ -247,6 +247,46 @@ Fallback jest jednak używany WYŁĄCZNIE gdy w pliku brakuje kolumny „Waluta"
 
 ---
 
+## ING Biuro Maklerskie
+
+Jedyny parser, którego identyfikacja papieru jest **międzyplikowa**. Plik transakcji
+(`historiaTransakcji_*.csv`, bez nagłówka) zna tylko długi skrót GPW:
+
+```
+29-08-2023 14:25:33;843790613;ETFSP500;Kupno;35;190,20;6 657,00;24.63;6 681,63
+                    ^^^^^^^^^ numer zlecenia — klucz joinu
+```
+
+Parser zapisuje pseudo-ISIN (`isin = ticker`, konwencja mBank) i **przejściowe
+`orderId`** (nie trafia do DB). Historia finansowa (`historiaFinansowa_*.csv`,
+per waluta) niesie w opisach rozliczeń sprzedaży i blokad kupna/IPO parę
+`(numer zlecenia, ISIN)` — parser operacji zbiera ją do `orderIsinMap`, a
+import-service przed insertem doszywa transakcjom **realne ISIN-y** i propaguje
+je na pozostałe wiersze tego samego tickera. Efekt: przy imporcie z kompletem
+plików ING zachowuje się jak Bossa (realne ISIN-y), bez plików ops spada do
+ścieżki mBanka (`needsNameResolution` + katalog BR po shortName — `PKNORLEN`
+trafia przez `findByName`, nie `findByTicker`).
+
+Łańcuch: **alias PDA (`applyIsinAlias`, ZKA1→ZABKA) → name-resolution z
+ticker_map → join orderId→ISIN (nadpisuje) → resolver**.
+
+Waluty: transakcje WYŁĄCZNIE w PLN (`currency = paymentCurrency = 'PLN'`, bez
+`fxRate`); waluty obce to same wpływy (dywidendy, wykup przymusowy) księgowane
+w walucie zdarzenia — ING nie przewalutowuje automatycznie. Kupna nie mają
+rozliczeń w historii finansowej (cash idzie przez blokady → skip), sprzedaże są
+zdublowane (rozliczenia per fill → skip). Wykup przymusowy (`LAP1 Wykup
+przymusowy ISIN: 360 x 2,35 GBP`, kategoria PUSTA) → `RedemptionMarker(source
+'ing')` z jawnym qty/ceną z opisu — `reconcileIngRedemptions` wstawia
+syntetyczną S **także bez zakupów w historii** (eksport bywa ucięty; sierotę
+łapie skrzynka „Sprzedaż bez kupna").
+
+> ⚠️ Kropka w opisach historii finansowej to separator TYSIĘCY („1.000 x 4,70"
+> = 1000 szt) — ilości idą przez `parseIngDescQty`, nigdy `parseNumber`.
+> W pliku transakcji odwrotnie: prowizja ma kropkę DZIESIĘTNĄ obok wartości
+> z przecinkiem i NBSP tysięcy w tym samym wierszu.
+
+---
+
 ## Trading 212
 
 Jedyny broker, który podaje **wszystko naraz**: prawdziwy ISIN, ticker i pełną nazwę w tym samym wierszu. Identyfikacja papieru jest więc trywialna — `isin` to realny ISIN, `paperName` to `Name`, żadnych pseudo-ISIN-ów i żadnej resolucji po nazwie.
@@ -304,6 +344,8 @@ const isPolishTicker = isRealPolishIsin
 | XTB placeholder (nazwa spółki) + `PLN` | true | **polska** ⚠ | ❌ |
 | mBank `KGHM` + PLN | true | polska | ❌ |
 | mBank `MICRON TECH` + USD | true | zagraniczna | ✅ |
+| ING `PLPKN0000018` (join z ops) | false | polska (prefiks `PL`) | ❌ |
+| ING `PKNORLEN` + PLN (bez ops) | true | polska | ❌ |
 
 ### Co z tego wynika
 
@@ -324,7 +366,7 @@ const isPolishTicker = isRealPolishIsin
 | Guard NC offline wymaga sufiksu `-NC` | osiągalny **wyłącznie z Bossy** |
 | Guard delisted kluczowany ISIN-em | działa dla Bossy/DEGIRO/IBKR, nie dla XTB/mBanku |
 | `normalizeBossaPaperName` stosowana do **wszystkich** parserów | mimo nazwy — to ona ścina `.WA` z pseudo-ISIN-ów XTB |
-| `ISIN_ALIASES_MAP` ma tylko wpisy w formie symboli XTB | wywołanie `applyIsinAlias` z Bossy jest dziś no-opem |
+| `ISIN_ALIASES_MAP` ma wpisy w formie symboli XTB i tickerów ING (ZKA1) | wywołanie `applyIsinAlias` z Bossy jest dziś no-opem |
 | Opcje IBKR seedowane przed resolverem | `OPT:` nigdy nie trafia do Yahoo |
 | DEGIRO nie ustawia `category` | gałęzie `bond`/`cfd` w resolverze są dla niego martwe |
 | Kod tickera bywa RECYKLOWANY po delistingu | alias rebrandingowy z żywym kluczem kieruje na cudzy papier (`SUN → MIG` vs Suntech); gdy mapa NC potwierdza, że kod jest żywy, idzie on przed aliasem, a `isin-resolver-alias-hygiene.test.ts` pilnuje mapy |

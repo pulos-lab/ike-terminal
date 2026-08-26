@@ -65,6 +65,13 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
    - Klasyfikacja po PEŁNEJ liście wartości `Action`, nigdy po prefiksie: `Market look` wygląda identycznie jak `Market buy` i transakcją nie jest. Wyjątek: rodzina `Dividend (…)` z otwartą listą podtypów
    - Karta płatnicza (`Card debit`/`Card credit`/`Spending cashback`) → wypłata/wpłata, nie koszt (przepływ zewnętrzny jest neutralny dla TWR/MWR, a saldo gotówki zostaje poprawne). `Currency conversion` → para nóg `fx_exchange` (kwoty z kolumn, fallback z `Notes`). `Stock split open`+`close` → `stock_splits` (ratio z ilorazu nóg). `Transfer out` → syntetyczna S po cenie z pliku + RÓWNOWAŻĄCA wypłata
    - **Wybór ścieżki importu idzie po TREŚCI, nie po rozszerzeniu** — `.csv` dzielą T212 i parsery jednorolowe, więc `classifyFile` najpierw próbuje `detectCombinedBroker`, a przy braku dopasowania spada do ścieżki tekstowej
+7. **ING Biuro Maklerskie** — transakcje + historia finansowa **per waluta** (średnik, Windows-1250, CSV **bez nagłówka** — detekcja po kształcie wierszy, wpis ING celowo OSTATNI w rejestrze)
+   - Transakcje WYŁĄCZNIE w PLN (waluty obce = same wpływy dywidend/wykupów, bez auto-przewalutowania); ticker = długi skrót GPW bez ISIN
+   - **Realne ISIN-y doszywane joinem po numerze zlecenia**: rozliczenia sprzedaży i blokady kupna/IPO w historii finansowej niosą parę (orderId, ISIN) → `orderIsinMap` → import-service nadpisuje pseudo-ISIN-y przed insertem + propagacja per ticker; bez pliku ops spada do ścieżki mBanka (needsNameResolution)
+   - Kupna NIE mają rozliczeń w historii finansowej (cash przez blokady → skip); sprzedaże zdublowane (rozliczenia per fill → skip); dywidendy = wiersz brutto + OSOBNY wiersz podatku + bywają `Anulata:` (parowanie netto wzorem DEGIRO); wypłata na konto bankowe nazywa się `"Blokada;PZE/…"` (średnik w cytowanym polu!)
+   - Wykup przymusowy (kategoria PUSTA) → `RedemptionMarker(source 'ing')` z jawnym qty/ceną z opisu; `reconcileIngRedemptions` wstawia syntetyczną S TAKŻE bez zakupów w historii (ucięty eksport → skrzynka „Sprzedaż bez kupna")
+   - PUŁAPKI LICZB: prowizja z KROPKĄ dziesiętną obok wartości z przecinkiem + NBSP tysięcy w jednym wierszu (parseNumber per pole OK); w opisach historii kropka = separator TYSIĘCY („1.000 x 4,70" = 1000 szt → `parseIngDescQty`); archiwalne eksporty (~2020) mają nagłówek i czas `09-00-00`
+   - PDA z IPO: przydział Żabki księgowany jako ZKA1, sprzedaż jako ZABKA → alias w `ISIN_ALIASES_MAP`
 - Auto-detekcja formatu po nagłówkach CSV/XLSX — użytkownik nie musi wskazywać brokera
 - **Jak każdy parser identyfikuje papier** (co trafia do `isin`/`paperName`, pseudo-ISIN-y, waluty, którą gałęzią idzie resolver): `docs/parsery-identyfikacja-papieru.md`
 

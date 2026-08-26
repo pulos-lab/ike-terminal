@@ -183,7 +183,7 @@ export function InstrumentChart({
     // paymentCurrency ≠ currency przy tych źródłach.
     const priceNotInQuote = (t: TransactionWithMeta) =>
       (history?.currency ? t.currency !== history.currency : false) ||
-      ((t.source === 'bossa' || t.source === 'mbank') &&
+      ((t.source === 'bossa' || t.source === 'mbank' || t.source === 'ing') &&
         !!t.paymentCurrency &&
         t.paymentCurrency !== t.currency);
     if (instrumentTxs.some(priceNotInQuote)) return [];

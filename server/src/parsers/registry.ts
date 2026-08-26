@@ -14,6 +14,8 @@ import { parseBossaTransactions, isBossaFormat } from './bossa-transactions.js';
 import { parseBossaOperations, isBossaOperationsFormat } from './bossa-operations.js';
 import { parseMbankTransactions, isMbankFormat } from './mbank-transactions.js';
 import { parseMbankOperations, isMbankOperationsFormat } from './mbank-operations.js';
+import { parseIngTransactions, isIngFormat } from './ing-transactions.js';
+import { parseIngOperations, isIngOperationsFormat } from './ing-operations.js';
 import { parseDegiroTransactions, isDegiroFormat } from './degiro-transactions.js';
 import {
   parseDegiroOperations,
@@ -50,6 +52,9 @@ export type OperationsParseResult = ParseResult<CashOperation> & {
   bondAllocations?: BondAllocationMarker[];
   /** Zwroty kapitału (obniżenie nominału, wyrównanie wykupu) → CashOperation capital_return */
   capitalReturns?: CapitalReturnMarker[];
+  /** ING: numer zlecenia → realny ISIN z opisów rozliczeń/blokad — import-service
+   *  doszywa te ISIN-y do transakcji (po tx.orderId) przed insertem. */
+  orderIsinMap?: Map<string, string>;
   /** Ostrzeżenia parsera (PL) — import-service dokleja do crossFileWarnings */
   warnings?: string[];
 };
@@ -108,6 +113,20 @@ export const PARSER_REGISTRY: BrokerParser[] = [
     detectOperations: isBossaOperationsFormat,
     parseOperations: parseBossaOperations,
     needsNameResolution: false,
+  },
+  {
+    // ING celowo OSTATNIE: jego pliki nie mają nagłówka, więc detekcja idzie po
+    // kształcie wierszy (regex treści) — detektory nagłówkowe pozostałych
+    // brokerów muszą dostać pierwszeństwo, żeby luźniejszy wzorzec treściowy
+    // nigdy nie podebrał im pliku.
+    id: 'ing',
+    label: 'ING Biuro Maklerskie',
+    detect: isIngFormat,
+    parse: parseIngTransactions,
+    supportsOperations: true,
+    detectOperations: isIngOperationsFormat,
+    parseOperations: parseIngOperations,
+    needsNameResolution: true,
   },
 ];
 

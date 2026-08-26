@@ -21,8 +21,10 @@ data/*.db-shm
 data/*.db-wal
 data/portfolios.json
 
-# Personal import files
-/Import/
+# Personal import files (bez trailing slash — łapie też symlink `import`
+# w git worktree, wskazujący na katalog głównego checkoutu)
+/Import
+/import
 
 # OS files
 .DS_Store

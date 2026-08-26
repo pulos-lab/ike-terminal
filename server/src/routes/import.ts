@@ -35,6 +35,8 @@ router.use('/quarantine', importQuarantineRouter);
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 // IBKR eksportuje wyciągi per rok × konto — kilkanaście plików w jednej paczce to norma.
 const MAX_TX_FILES = 25;
+/** ING eksportuje historię finansową per waluta — kilka plików operacji w paczce. */
+const MAX_OPS_FILES = 5;
 
 /** Błąd z fileFilter — rozpoznawany w error-middleware na końcu routera, mapowany na 400. */
 class UnsupportedFileTypeError extends Error {
@@ -95,22 +97,22 @@ router.post(
   '/bulk',
   upload.fields([
     { name: 'transactions', maxCount: MAX_TX_FILES },
-    { name: 'operations', maxCount: 1 },
+    // Wiele plików operacji: ING eksportuje historię finansową osobno per waluta
+    // rachunku (PLN, GBP, …); pozostali brokerzy wgrywają jeden.
+    { name: 'operations', maxCount: MAX_OPS_FILES },
   ]),
   asyncHandler(async (req, res) => {
     const files = req.files as Record<string, Express.Multer.File[]>;
     const txFiles = files?.transactions ?? [];
-    const opsFile = files?.operations?.[0];
+    const opsFiles = files?.operations ?? [];
 
-    if (txFiles.length === 0 && !opsFile) {
+    if (txFiles.length === 0 && opsFiles.length === 0) {
       return res.status(400).json({ error: 'Nie przesłano żadnego pliku' });
     }
 
     const result = await bulkImport({
       transactionsFiles: txFiles.map((f) => ({ buffer: f.buffer, originalname: f.originalname })),
-      operationsFile: opsFile
-        ? { buffer: opsFile.buffer, originalname: opsFile.originalname }
-        : undefined,
+      operationsFiles: opsFiles.map((f) => ({ buffer: f.buffer, originalname: f.originalname })),
       portfolioId: req.portfolioId,
     });
 
