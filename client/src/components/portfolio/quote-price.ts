@@ -21,7 +21,7 @@ export interface QuotePrice {
  */
 export function toQuotePrice(tx: TransactionWithMeta, fx?: LiveFxRates): QuotePrice {
   const plnBooked =
-    (tx.source === 'bossa' || tx.source === 'mbank') &&
+    (tx.source === 'bossa' || tx.source === 'mbank' || tx.source === 'ing') &&
     !!tx.paymentCurrency &&
     tx.paymentCurrency !== tx.currency;
   if (!plnBooked) {

@@ -4,6 +4,7 @@ export type BrokerType =
   | 'auto'
   | 'bossa'
   | 'mbank'
+  | 'ing'
   | 'degiro'
   | 'xtb'
   | 'ibkr'
@@ -14,6 +15,7 @@ export const BROKER_LABELS: Record<BrokerType, string> = {
   auto: 'Wykryj automatycznie',
   bossa: 'Bossa',
   mbank: 'mBank eMakler',
+  ing: 'ING Biuro Maklerskie',
   degiro: 'DEGIRO',
   xtb: 'XTB',
   ibkr: 'Interactive Brokers',
@@ -28,6 +30,7 @@ export const BROKER_LABELS: Record<BrokerType, string> = {
 export type RecordSource =
   | 'bossa'
   | 'mbank'
+  | 'ing'
   | 'degiro'
   | 'xtb'
   | 'ibkr'
@@ -120,6 +123,13 @@ export interface Transaction {
    * rynkowego ceną strike) i UI (badge „przypisanie"/„wykonanie").
    */
   optionEvent?: 'assignment' | 'exercise';
+  /**
+   * Numer zlecenia brokera — pole PRZEJŚCIOWE, nie trafia do DB (INSERT
+   * w transactions-repo ma jawną listę kolumn). ING: nośnik joinu orderId→ISIN —
+   * opisy blokad/rozliczeń w historii finansowej niosą parę (orderId, ISIN),
+   * którą import-service doszywa do transakcji przed insertem.
+   */
+  orderId?: string;
 }
 
 // ============ Cash Operation Types ============
@@ -925,7 +935,7 @@ export interface RedemptionMarker {
   commission: number; // sparowana prowizja (np. `Rozliczenie oferty - prowizja TICKER`)
   description: string;
   currency: string;
-  source: 'bossa'; // na razie tylko Bossa; jeśli DEGIRO dostanie analogiczny wzorzec — rozszerzyć
+  source: 'bossa' | 'ing'; // dispatch reconciliation w import-service idzie po tym polu
   /**
    * Typ wydarzenia:
    * - 'certificate' — wykup certyfikatów (all-or-nothing, reconciliation zamyka pełne openQty)
@@ -936,6 +946,17 @@ export interface RedemptionMarker {
   kind: 'certificate' | 'tender' | 'bond';
   /** Cena per akcja (PLN) — wymagana dla `kind === 'tender'`, niewykorzystywana dla 'certificate'. */
   tenderPrice?: number;
+  /**
+   * Realny ISIN papieru — ING podaje go wprost w opisie wykupu, więc reconciliation
+   * dopasowuje pozycję po ISIN zamiast po paperName (Bossa zna tylko ticker).
+   */
+  isin?: string;
+  /**
+   * Jawna liczba sztuk z opisu zdarzenia (ING: "360 x 2,35 GBP"). Reconciliation ING
+   * używa jej wprost zamiast liczyć z openQty — eksport może nie sięgać zakupu pozycji
+   * i openQty bywa wtedy 0, a gotówka z wykupu i tak musi wejść na konto.
+   */
+  quantity?: number;
   /** Wartość nominalna 1 obligacji (dla `kind === 'bond'`) — z bond-map, gdy znana parserowi. */
   nominal?: number;
   /** URL źródłowy komunikatu ESPI (dla 'tender' z mapy) — pokazywany w tooltipie. */

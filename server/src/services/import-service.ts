@@ -41,7 +41,7 @@ import {
 import type { TransactionTax } from '../parsers/degiro-operations.js';
 import { upsertSplits } from '../db/splits-repo.js';
 import { upsertOptionContracts } from '../db/option-contracts-repo.js';
-import { computeTotal } from '../parsers/utils.js';
+import { computeTotal, roundTo2 } from '../parsers/utils.js';
 import { getBondCatalog } from './bond-catalog.js';
 import {
   insertTransactionsWithDedup,
@@ -161,7 +161,10 @@ export async function classifyFile(file: {
  * UI używa tego do decyzji, czy wymagać drugiego dropzone'u.
  */
 export function requiresOperationsFile(broker: BrokerType | null): boolean {
-  return broker === 'bossa' || broker === 'degiro';
+  // ING: kupna nie mają rozliczeń w historii finansowej (cash przez blokady),
+  // a dywidendy/wpłaty istnieją TYLKO tam — bez pliku operacji import jest ślepy
+  // na gotówkę i na realne ISIN-y (join po numerze zlecenia).
+  return broker === 'bossa' || broker === 'degiro' || broker === 'ing';
 }
 
 // ─── Main bulk entry point ───────────────────────────────────────────────────
@@ -174,22 +177,31 @@ export interface BulkInput {
    * pochodzić z tego samego brokera i być rolą `transactions`.
    */
   transactionsFiles?: Array<{ buffer: Buffer; originalname: string }>;
+  /**
+   * Pliki operacji gotówkowych — zwykle jeden; wiele plików jest potrzebne dla
+   * ING, który eksportuje historię finansową OSOBNO per waluta rachunku
+   * (historiaFinansowa PLN + GBP + …). Wszystkie muszą być z tego samego brokera.
+   */
+  operationsFiles?: Array<{ buffer: Buffer; originalname: string }>;
+  /** Zgodność wsteczna: pojedynczy plik operacji (równoważny operationsFiles o długości 1). */
   operationsFile?: { buffer: Buffer; originalname: string };
   requestedBroker?: BrokerType;
   portfolioId: string;
 }
 
 export async function bulkImport(input: BulkInput): Promise<ImportResult> {
-  const { portfolioId: pid, transactionsFiles = [], operationsFile } = input;
+  const { portfolioId: pid, transactionsFiles = [] } = input;
+  const operationsFiles =
+    input.operationsFiles ?? (input.operationsFile ? [input.operationsFile] : []);
   const importBatch = randomUUID();
 
-  if (transactionsFiles.length === 0 && !operationsFile) {
+  if (transactionsFiles.length === 0 && operationsFiles.length === 0) {
     return emptyResult(importBatch, ['Nie przesłano żadnego pliku']);
   }
 
-  // Klasyfikacja każdego pliku transakcji osobno
+  // Klasyfikacja każdego pliku osobno
   const txFiles = await Promise.all(transactionsFiles.map((f) => classifyFile(f)));
-  const opsFile = operationsFile ? await classifyFile(operationsFile) : null;
+  const opsFiles = await Promise.all(operationsFiles.map((f) => classifyFile(f)));
 
   // Walidacja ról
   for (const tx of txFiles) {
@@ -199,9 +211,17 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       ]);
     }
   }
-  if (opsFile && opsFile.role !== 'operations') {
+  for (const ops of opsFiles) {
+    if (ops.role !== 'operations') {
+      return emptyResult(importBatch, [
+        `Plik "${ops.originalName}" nie wygląda na eksport operacji gotówkowych (wykryto: ${ops.role}).`,
+      ]);
+    }
+  }
+  if (opsFiles.length > 1 && new Set(opsFiles.map((o) => o.broker)).size > 1) {
     return emptyResult(importBatch, [
-      `Plik "${opsFile.originalName}" nie wygląda na eksport operacji gotówkowych (wykryto: ${opsFile.role}).`,
+      `Pliki operacji pochodzą z różnych brokerów (${[...new Set(opsFiles.map((o) => o.broker))].join(', ')}). ` +
+        `Wgraj pliki z jednego brokera na raz.`,
     ]);
   }
 
@@ -240,7 +260,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   let parsedOps: OperationsParseResult | null = null;
   let txParserId: BrokerType | null = null;
   let opsParserId: BrokerType | null = null;
-  let opsContentRaw: string | null = null;
+  const opsContentsRaw: string[] = [];
 
   // Wyniki per plik — inserty idą osobno per plik, żeby dedup zliczeniowy
   // (porównanie z licznikiem w DB) wyłapywał nakładające się zakresy dat
@@ -260,7 +280,7 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     try {
       const bondScan = [
         ...txFiles.map((f) => decodeCSVBuffer(f.buffer)),
-        ...(opsFile ? [decodeCSVBuffer(opsFile.buffer)] : []),
+        ...opsFiles.map((f) => decodeCSVBuffer(f.buffer)),
       ];
       await getBondCatalog().resolveBondCandidatesFromContent(bondScan);
     } catch (err) {
@@ -307,13 +327,51 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
 
   // Parser operacji rozwiązywany czysto z registry — markery reconciliation
   // (redemptions / ipoSubscriptions / capitalReturns) siedzą w OperationsParseResult.
-  const opsParser = opsFile ? PARSER_REGISTRY.find((p) => p.id === opsFile.broker) : undefined;
-  if (opsFile && opsParser?.parseOperations) {
-    const content = decodeCSVBuffer(opsFile.buffer);
-    opsContentRaw = content;
-    parsedOps = opsParser.parseOperations(content, importBatch);
+  // Parsujemy PER PLIK (ING: osobna historia finansowa per waluta), scalając wyniki;
+  // inserty niżej też idą per plik — dedup zliczeniowy łapie nakładające się eksporty.
+  const parsedOpsFiles: OperationsParseResult[] = [];
+  const opsParser =
+    opsFiles.length > 0 ? PARSER_REGISTRY.find((p) => p.id === opsFiles[0].broker) : undefined;
+  if (opsParser?.parseOperations) {
+    for (const file of opsFiles) {
+      const content = decodeCSVBuffer(file.buffer);
+      opsContentsRaw.push(content);
+      const parsed = opsParser.parseOperations(content, importBatch);
+      parsedOpsFiles.push(parsed);
+      if (parsed.warnings?.length) parserWarnings.push(...parsed.warnings);
+    }
     opsParserId = opsParser.id;
-    if (parsedOps.warnings?.length) parserWarnings.push(...parsedOps.warnings);
+    parsedOps = mergeOperationsResults(parsedOpsFiles, parserWarnings);
+  }
+
+  // ING: doszycie realnych ISIN-ów do transakcji — join po numerze zlecenia.
+  // Wiersze rozliczeń sprzedaży i blokad kupna/IPO w historii finansowej niosą
+  // parę (orderId, ISIN); plik transakcji zna tylko tickery GPW. Po joinie
+  // propagujemy ISIN na pozostałe transakcje tego samego papieru (paperName),
+  // żeby pozycja nie rozpadła się na pseudo-ISIN i realny ISIN, gdy część
+  // zleceń leży poza zakresem eksportu historii finansowej.
+  if (txParserId === 'ing' && parsedTx && parsedOps?.orderIsinMap?.size) {
+    const isinByPaperName = new Map<string, string>();
+    const paperNameConflicts = new Set<string>();
+    for (const tx of parsedTx.data) {
+      const real = tx.orderId ? parsedOps.orderIsinMap.get(tx.orderId) : undefined;
+      if (!real) continue;
+      tx.isin = real;
+      const existing = isinByPaperName.get(tx.paperName);
+      if (existing && existing !== real) paperNameConflicts.add(tx.paperName);
+      else isinByPaperName.set(tx.paperName, real);
+    }
+    for (const tx of parsedTx.data) {
+      if (tx.orderId && parsedOps.orderIsinMap.has(tx.orderId)) continue; // już doszyte wprost
+      const real = isinByPaperName.get(tx.paperName);
+      if (real && !paperNameConflicts.has(tx.paperName)) tx.isin = real;
+    }
+    for (const name of paperNameConflicts) {
+      parserWarnings.push(
+        `ING: papier ${name} ma w historii finansowej więcej niż jeden ISIN — ` +
+          `ISIN-y doszyto tylko transakcjom z jednoznacznym numerem zlecenia.`,
+      );
+    }
   }
 
   // Atomowe inserty + reconciliation w jednej transakcji SQLite
@@ -340,14 +398,18 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       insertedTxDuplicates.push(...r.duplicates);
     }
 
-    // 2. Operacje
+    // 2. Operacje — insert PER PLIK (jak transakcje wyżej): licznik w DB rośnie
+    // po każdym pliku, więc nakładające się eksporty w jednej paczce są łapane.
     if (parsedOps && parsedOps.data.length > 0) {
       // Możliwe dublowanie z szacunkami skanera SPRAWDZAMY PRZED wstawieniem —
       // po nim nie odróżnimy wpisu brokera od tego, co już było.
       const overlaps = findAutoDividendOverlaps(pid, parsedOps.data);
-      const r = insertOperationsWithDedup(parsedOps.data, pid);
-      result.operationsImported = r.inserted;
-      insertedOpsDuplicates.push(...r.duplicates);
+      for (const pf of parsedOpsFiles) {
+        if (pf.data.length === 0) continue;
+        const r = insertOperationsWithDedup(pf.data, pid);
+        result.operationsImported += r.inserted;
+        insertedOpsDuplicates.push(...r.duplicates);
+      }
 
       // Świadomie tylko ostrzegamy: rozstrzygnięcie „która z tych dwóch jest
       // prawdziwa" wymaga wiedzy, której nie mamy (patrz findAutoDividendOverlaps).
@@ -363,15 +425,29 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     // 3. Reconciliation — dispatch po OBECNOŚCI markerów z parsera operacji
     // (nie po id brokera; markery emituje obecnie tylko parser Bossy).
 
-    // 3a. Redemption markers (tylko wykupy certyfikatów; tendery idą jako deposit + warning)
+    // 3a. Redemption markers — dispatch po `marker.source`: reconciliation Bossy
+    // liczy qty z openQty i dopasowuje po paperName, ING niesie jawne qty/ISIN
+    // z opisu (eksport może nie sięgać zakupu — Bossa by taki wykup pominęła,
+    // a gotówka z wykupu MUSI wejść na konto).
     if (parsedOps?.redemptions?.length) {
-      const r = reconcileBossaRedemptions(
-        parsedOps.redemptions,
-        pid,
-        importBatch,
-        crossFileWarnings,
-      );
-      syntheticSells += r;
+      const bossaRedemptions = parsedOps.redemptions.filter((m) => m.source !== 'ing');
+      const ingRedemptions = parsedOps.redemptions.filter((m) => m.source === 'ing');
+      if (bossaRedemptions.length > 0) {
+        syntheticSells += reconcileBossaRedemptions(
+          bossaRedemptions,
+          pid,
+          importBatch,
+          crossFileWarnings,
+        );
+      }
+      if (ingRedemptions.length > 0) {
+        syntheticSells += reconcileIngRedemptions(
+          ingRedemptions,
+          pid,
+          importBatch,
+          crossFileWarnings,
+        );
+      }
     }
 
     // 3a''. IPO subscriptions → synthetic K (znana cena emisyjna z mapy)
@@ -398,16 +474,18 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     // emit warning zachęcający do domknięcia sprzedaży (nie znamy liczby akcji i ceny tendera).
     // Celowo keyowane na brokerze: skan DB objąłby pending tendery Bossy także przy
     // imporcie innego brokera, dublując warningi.
-    if (opsFile?.broker === 'bossa') {
+    if (opsFiles[0]?.broker === 'bossa') {
       warnAboutTenderOffers(pid, crossFileWarnings);
     }
 
-    // 3b. Transaction taxes z pliku operacji (hook registry — obecnie tylko DEGIRO).
+    // 3b. Transaction taxes z plików operacji (hook registry — obecnie tylko DEGIRO).
     // Applied cross-batch (nawet jeśli user wgrał transakcje osobno wcześniej).
-    if (opsParser?.parseTransactionTaxes && opsContentRaw) {
-      const taxes = opsParser.parseTransactionTaxes(opsContentRaw);
-      const applied = applyTransactionTaxes(taxes, opsParser.label, pid, crossFileWarnings);
-      if (applied > 0) result.taxesApplied = applied;
+    if (opsParser?.parseTransactionTaxes) {
+      for (const content of opsContentsRaw) {
+        const taxes = opsParser.parseTransactionTaxes(content);
+        const applied = applyTransactionTaxes(taxes, opsParser.label, pid, crossFileWarnings);
+        if (applied > 0) result.taxesApplied = (result.taxesApplied ?? 0) + applied;
+      }
     }
 
     // 4. Skrzynka "Do wyjaśnienia" — nierozpoznane wiersze z surową treścią,
@@ -427,19 +505,21 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
       quarantined += q.inserted;
       quarantineOverflow += q.overflow;
     }
-    if (parsedOps && opsParserId) {
-      const q = insertQuarantineRows(
-        {
-          importBatch,
-          source: opsParserId,
-          fileName: opsFile?.originalName,
-          skipped: parsedOps.skipped,
-          maxRows: MAX_QUARANTINE_PER_BATCH - quarantined,
-        },
-        pid,
-      );
-      quarantined += q.inserted;
-      quarantineOverflow += q.overflow;
+    if (opsParserId) {
+      for (let i = 0; i < parsedOpsFiles.length; i++) {
+        const q = insertQuarantineRows(
+          {
+            importBatch,
+            source: opsParserId,
+            fileName: opsFiles[i]?.originalName,
+            skipped: parsedOpsFiles[i].skipped,
+            maxRows: MAX_QUARANTINE_PER_BATCH - quarantined,
+          },
+          pid,
+        );
+        quarantined += q.inserted;
+        quarantineOverflow += q.overflow;
+      }
     }
   });
   runAll();
@@ -459,6 +539,9 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   // dla polskich spółek; gdyby to był prawdziwy ticker jak "AAPL" — name byłoby "Apple Inc.").
   const reconciledIsinsNeedingRealTicker = new Set<string>();
   for (const red of parsedOps?.redemptions ?? []) {
+    // Blok zakłada semantykę Bossy (ticker brokera w markerze, ISIN z transakcji);
+    // markery ING niosą realny ISIN i nie zostawiają legacy stubów.
+    if (red.source !== 'bossa') continue;
     if (red.kind !== 'certificate') {
       // Znajdź ISIN z transakcji dla tego tickera
       const tx = parsedTx?.data.find((t) => t.paperName === red.ticker);
@@ -480,7 +563,9 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   // więc paymentCurrency zależy od stanu salda w momencie transakcji, nie od
   // stałej waluty konta. Idempotent — UPDATE tylko gdy obliczone różni się od
   // zapisanego. Musi być poza db.transaction bo czyta aktualny stan DB po
-  // insercie i robi osobne UPDATE-y.
+  // insercie i robi osobne UPDATE-y. ING celowo POZA listą: transakcje są
+  // zawsze PLN/PLN (broker wykonuje zlecenia wyłącznie w złotych), więc
+  // reconciler nie miałby czego przeliczać.
   const paymentRecon = reconcilePaymentCurrencies(pid, ['bossa', 'degiro']);
   if (paymentRecon.updatedCount > 0) {
     crossFileWarnings.push(
@@ -551,6 +636,52 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
     crossFileWarnings: crossFileWarnings.length > 0 ? crossFileWarnings : undefined,
     quarantined: quarantined > 0 ? quarantined : undefined,
   };
+}
+
+/**
+ * Scala wyniki wielu plików operacji (ING: historia finansowa per waluta) w jeden
+ * widok dla reconciliation i enrichmentu. Markery są konkatenowane; mapy
+ * orderId→ISIN merge'owane z guardem konfliktu MIĘDZY plikami (wpis usunięty
+ * + warning — nie zgadujemy, który plik ma rację).
+ */
+function mergeOperationsResults(
+  parts: OperationsParseResult[],
+  warnings: string[],
+): OperationsParseResult {
+  if (parts.length === 1) return parts[0];
+  const merged: OperationsParseResult = {
+    data: parts.flatMap((p) => p.data),
+    skipped: parts.flatMap((p) => p.skipped),
+  };
+  const redemptions = parts.flatMap((p) => p.redemptions ?? []);
+  if (redemptions.length > 0) merged.redemptions = redemptions;
+  const ipos = parts.flatMap((p) => p.ipoSubscriptions ?? []);
+  if (ipos.length > 0) merged.ipoSubscriptions = ipos;
+  const bonds = parts.flatMap((p) => p.bondAllocations ?? []);
+  if (bonds.length > 0) merged.bondAllocations = bonds;
+  const capitalReturns = parts.flatMap((p) => p.capitalReturns ?? []);
+  if (capitalReturns.length > 0) merged.capitalReturns = capitalReturns;
+
+  const orderIsinMap = new Map<string, string>();
+  const conflicted = new Set<string>();
+  for (const p of parts) {
+    for (const [orderId, isin] of p.orderIsinMap ?? []) {
+      if (conflicted.has(orderId)) continue;
+      const existing = orderIsinMap.get(orderId);
+      if (existing && existing !== isin) {
+        orderIsinMap.delete(orderId);
+        conflicted.add(orderId);
+        warnings.push(
+          `ING: zlecenie ${orderId} ma różne ISIN-y w różnych plikach historii finansowej ` +
+            `(${existing}, ${isin}) — pomijam je przy uzupełnianiu ISIN-ów transakcji.`,
+        );
+        continue;
+      }
+      orderIsinMap.set(orderId, isin);
+    }
+  }
+  if (orderIsinMap.size > 0) merged.orderIsinMap = orderIsinMap;
+  return merged;
 }
 
 // ─── Combined path (XTB XLSX single-file, IBKR HTML multi-file) ──────────────
@@ -1037,6 +1168,76 @@ function reconcileBossaRedemptions(
         pid,
       );
     }
+  }
+
+  return added;
+}
+
+/**
+ * Reconciliation wykupów przymusowych ING — syntetyczna S z jawnym qty i ceną z opisu.
+ *
+ * Celowo OSOBNO od reconcileBossaRedemptions: tam qty liczy się z openQty,
+ * dopasowanie idzie po paperName, a wykup bez zakupów w historii jest POMIJANY.
+ * Eksport ING może nie sięgać nabycia pozycji (zmierzony przypadek: GB00B1YKG049
+ * kupione przed 2019, wykup przymusowy 2026) — wtedy openQty = 0, a gotówka
+ * z wykupu i tak musi wejść na konto. Wstawiamy S mimo braku zakupów; sierotę
+ * wychwyci skrzynka „Sprzedaż bez kupna" (liczona na żywo downstream).
+ */
+function reconcileIngRedemptions(
+  redemptions: RedemptionMarker[],
+  pid: string,
+  importBatch: string,
+  warnings: string[],
+): number {
+  let added = 0;
+  const allTx = getAllTransactions(pid);
+
+  for (const red of redemptions) {
+    const isin = red.isin ?? red.ticker;
+    const qty = red.quantity ?? 0;
+    const price = red.tenderPrice ?? 0;
+    if (qty <= 0 || price <= 0) {
+      warnings.push(
+        `ING: ${red.description} — brak poprawnej ilości lub ceny w opisie wykupu; pomijam syntetyczną sprzedaż.`,
+      );
+      continue;
+    }
+
+    const txForIsin = allTx.filter((t) => t.isin === isin);
+    const bought = txForIsin.filter((t) => t.side === 'K').reduce((s, t) => s + t.quantity, 0);
+    const sold = txForIsin.filter((t) => t.side === 'S').reduce((s, t) => s + t.quantity, 0);
+    const openQty = bought - sold;
+    if (txForIsin.length === 0 || openQty <= 0) {
+      warnings.push(
+        `ING: ${red.description} — brak zakupów ${isin} w historii (eksport nie sięga nabycia?). ` +
+          `Wstawiam syntetyczną sprzedaż ${qty} szt; pozycja trafi do skrzynki „Sprzedaż bez kupna" — ` +
+          `uzupełnij zakup ręcznie albo wgraj eksport od początku rachunku.`,
+      );
+    } else if (openQty !== qty) {
+      warnings.push(
+        `ING: ${red.description} — wykup ${qty} szt, a otwarta pozycja ${isin} to ${openQty} szt. ` +
+          `Sprawdź kompletność plików.`,
+      );
+    }
+
+    const syntheticSell: Transaction = {
+      date: red.date,
+      paperName: txForIsin[0]?.paperName ?? red.ticker,
+      isin,
+      quantity: qty,
+      side: 'S',
+      price,
+      value: roundTo2(qty * price),
+      commission: red.commission,
+      total: roundTo2(red.amount - red.commission),
+      currency: red.currency,
+      // Wpływ zostaje w walucie zdarzenia — ING nie przewalutowuje automatycznie.
+      paymentCurrency: red.currency,
+      source: 'ing',
+      importBatch,
+      syntheticOrigin: `${red.description} — ${qty} szt @ ${price.toFixed(2)} ${red.currency} (wykup przymusowy; ilość i cena z opisu w historii finansowej ING)`,
+    };
+    added += insertTransactionsWithDedup([syntheticSell], pid).inserted;
   }
 
   return added;

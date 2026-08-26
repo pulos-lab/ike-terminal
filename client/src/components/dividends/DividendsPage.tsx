@@ -61,6 +61,7 @@ const SOURCE_LABELS: Record<string, { label: string; variant: BadgeVariant }> = 
   manual: { label: 'Ręczne', variant: 'muted' },
   bossa: { label: 'Bossa', variant: 'warning' },
   mbank: { label: 'mBank', variant: 'warning' },
+  ing: { label: 'ING', variant: 'warning' },
   degiro: { label: 'DEGIRO', variant: 'warning' },
   xtb: { label: 'XTB', variant: 'warning' },
 };

@@ -243,3 +243,19 @@ export function parseDegiroDate(dateStr: string, timeStr?: string): string {
   }
   return dateStr;
 }
+
+/**
+ * Parse ING date-time: DD-MM-YYYY + czas HH:MM:SS lub HH-MM-SS (archiwalne
+ * eksporty ~2020 mają czas z myślnikami: "28-12-2020 09-00-00").
+ * "29-08-2023 14:25:33" -> "2023-08-29T14:25:33"
+ * "29-08-2023"          -> "2023-08-29T00:00:00"
+ * Nierozpoznany format zwraca wejście bez zmian (konwencja parseDottedDate).
+ */
+export function parseDashedDateTime(dateStr: string): string {
+  const match = dateStr.match(/(\d{2})-(\d{2})-(\d{4})(?:[ T](\d{2})[:-](\d{2})[:-](\d{2}))?/);
+  if (match) {
+    const time = match[4] ? `${match[4]}:${match[5]}:${match[6]}` : '00:00:00';
+    return `${match[3]}-${match[2]}-${match[1]}T${time}`;
+  }
+  return dateStr;
+}

@@ -11,7 +11,7 @@ import type { BrokerType } from 'shared';
  */
 
 /** Brokerzy ze znanym schematem importu (osobno od ścieżki „Inny broker"). */
-export type KnownBroker = 'bossa' | 'mbank' | 'degiro' | 'xtb' | 'ibkr' | 'trading212';
+export type KnownBroker = 'bossa' | 'mbank' | 'ing' | 'degiro' | 'xtb' | 'ibkr' | 'trading212';
 
 export type FileRole = 'transactions' | 'operations';
 
@@ -42,6 +42,7 @@ export const BROKER_TILES: Array<{ id: KnownBroker | 'generic'; tagline: string 
   { id: 'bossa', tagline: '2 pliki CSV (transakcje + operacje)' },
   { id: 'degiro', tagline: '2 pliki CSV (Transactions + Account)' },
   { id: 'mbank', tagline: '1 plik CSV (operacje opcjonalnie)' },
+  { id: 'ing', tagline: '2+ pliki CSV (transakcje + historia finansowa per waluta)' },
   { id: 'xtb', tagline: '1 plik XLSX' },
   { id: 'ibkr', tagline: 'Pliki HTML (Activity Statement, 1 na rok)' },
   { id: 'trading212', tagline: '1 plik CSV (transakcje + gotówka)' },
@@ -131,6 +132,35 @@ export const BROKER_IMPORT_CONFIG: Record<KnownBroker, BrokerImportConfig> = {
       },
     ],
     formatNote: 'Format mBank: CSV ze średnikami, kodowanie Windows-1250.',
+  },
+
+  ing: {
+    exportSteps: [
+      'Zaloguj się do Mojego ING → Inwestycje (Biuro Maklerskie) → Historia.',
+      'Pobierz „Historię transakcji" do pliku CSV (plik „historiaTransakcji_….csv").',
+      'Pobierz „Historię finansową" do CSV OSOBNO dla każdej waluty rachunku (pliki „historiaFinansowa_….csv") — zawiera dywidendy, wpłaty/wypłaty i wykupy.',
+      'Zakres dat ustaw od początku rachunku — starsze sprzedaże bez widocznych zakupów trafią do skrzynki „Sprzedaż bez kupna".',
+      'Wgraj wszystkie pliki naraz poniżej i kliknij Importuj.',
+    ],
+    files: [
+      {
+        role: 'transactions',
+        label: 'Historia transakcji (CSV)',
+        accept: '.csv',
+        multiple: false,
+        required: true,
+        hint: 'Plik „historiaTransakcji_….csv" — 9 kolumn bez nagłówka (data, nr zlecenia, papier, kierunek…).',
+      },
+      {
+        role: 'operations',
+        label: 'Historia finansowa (CSV, per waluta)',
+        accept: '.csv',
+        multiple: true,
+        required: true,
+        hint: 'Pliki „historiaFinansowa_….csv" — po jednym na walutę. Plik PLN jest niezbędny: bez niego brakuje dywidend, wpłat i rozpoznania ISIN-ów.',
+      },
+    ],
+    formatNote: 'Format ING: CSV ze średnikami, kodowanie Windows-1250, pliki bez wiersza nagłówka.',
   },
 
   xtb: {

@@ -626,12 +626,15 @@ export const api = {
    * `transactionsFiles` może mieć 1-N plików (np. Bossa eksportuje osobno
    * per waluta: hisPW-PLN.csv + hisPW-USD.csv + hisPW-EUR.csv).
    */
-  bulkImport: (transactionsFiles: File[], operationsFile: File | null) => {
+  bulkImport: (transactionsFiles: File[], operationsFiles: File[]) => {
     const formData = new FormData();
     for (const file of transactionsFiles) {
       formData.append('transactions', file);
     }
-    if (operationsFile) formData.append('operations', operationsFile);
+    // Wiele plików operacji: ING eksportuje historię finansową osobno per waluta.
+    for (const file of operationsFiles) {
+      formData.append('operations', file);
+    }
     // `error` (singular) pochodzi z gałęzi !response.ok w uploadFile.
     return uploadFile<import('shared').ImportResult & { error?: string }>('/import/bulk', formData);
   },

@@ -79,6 +79,21 @@ export const ISIN_ALIASES_MAP: IsinAliasEntry[] = [
     source: 'https://www.biznesradar.pl/notowania/REX',
     appliesUntil: '2026-12-31',
   },
+  // Żabka Group: przydział z IPO (10.2024) ING księguje w historii transakcji pod
+  // tickerem PDA ZKA1, a sprzedaż po debiucie już jako ZABKA — bez wiersza konwersji.
+  // Asymilacja PDA→akcje zawsze 1:1, ciągłość kosztu zachowana. Forma pseudo-ISIN
+  // (isin = ticker), bo parser ING transakcji nie zna prawdziwych ISIN-ów; przy imporcie
+  // z plikiem historii finansowej join po numerze zlecenia i tak doszyje LU2910446546.
+  {
+    legacyIsin: 'ZKA1',
+    legacyTicker: 'ZKA1',
+    canonicalIsin: 'ZABKA',
+    canonicalTicker: 'ZABKA',
+    reason:
+      'Przydział z IPO Żabka Group (10.2024) księgowany przez ING pod tickerem PDA ZKA1; asymilacja PDA→akcje ZABKA 1:1.',
+    source: 'https://www.biznesradar.pl/notowania/ZABKA',
+    appliesUntil: '2025-12-31',
+  },
 ];
 
 /**

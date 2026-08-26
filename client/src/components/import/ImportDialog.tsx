@@ -145,10 +145,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
     }
     setUploading(true);
     try {
-      const result = await api.bulkImport(
-        filesByRole.transactions,
-        filesByRole.operations[0] ?? null,
-      );
+      const result = await api.bulkImport(filesByRole.transactions, filesByRole.operations);
 
       if (result.success) {
         const txCount = result.transactionsImported || 0;
