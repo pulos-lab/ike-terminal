@@ -112,6 +112,17 @@ describe('toPublicHistory', () => {
     const zeros = toPublicHistory({ ...RESPONSE, history: [point({ portfolioValue: 0 })] }, false);
     expect(zeros.history[0].portfolioValue).toBe(0);
   });
+
+  it('kursy base→PLN NIE wyciekają do widoku publicznego', () => {
+    // Mapa kursów jest dla klienta scalającego portfele właściciela; publiczny link
+    // ma dostawać wyłącznie to, co wypisuje whitelista toPublicHistory.
+    const withFx = { ...RESPONSE, baseCurrency: 'USD', baseToPlnByDate: { '2025-01-03': 4.1 } };
+    for (const showAmounts of [true, false]) {
+      const pub = toPublicHistory(withFx, showAmounts);
+      expect(pub).not.toHaveProperty('baseToPlnByDate');
+      expect(JSON.stringify(pub)).not.toContain('baseToPlnByDate');
+    }
+  });
 });
 
 describe('toPublicPositions', () => {

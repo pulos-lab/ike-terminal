@@ -28,6 +28,14 @@ export const COMPARE_SERIES_COLORS = {
   dark: ['#63b376', '#58a5e4', '#db684c', '#cfb47c'],
 } as const;
 
+/**
+ * Kolor linii „Razem" (portfel łączony). Fiolet jest jedynym odcieniem spoza palety
+ * porównania i benchmarku, więc suma nie myli się z żadną składową ani z indeksem;
+ * dodatkowo rysujemy ją grubszą kreską (patrz ComparisonChart).
+ *   oklch: (0.52 0.15 300) / (0.72 0.14 300)
+ */
+export const COMBINED_SERIES_COLOR = { light: '#7c50b8', dark: '#b18ce8' } as const;
+
 /** Kolor i-tego DOKŁADANEGO portfela (i = 0 dla pierwszego po aktywnym). */
 export function compareSeriesColor(index: number, isDark: boolean): string {
   const palette = isDark ? COMPARE_SERIES_COLORS.dark : COMPARE_SERIES_COLORS.light;

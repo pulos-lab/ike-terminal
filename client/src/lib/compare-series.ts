@@ -7,4 +7,7 @@ export interface CompareSeries {
   name: string;
   color: string;
   points: PortfolioHistoryPoint[];
+  /** Seria syntetyczna „Razem" (suma zaznaczonych portfeli) — nie odpowiada żadnemu
+   *  rekordowi w bazie, więc `portfolioId` jest sztuczne, a wykres rysuje ją grubiej. */
+  isCombined?: boolean;
 }

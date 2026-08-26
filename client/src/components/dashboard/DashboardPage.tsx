@@ -8,8 +8,13 @@ import { filterAndRebaseHistory, getPresetStartDate } from '@/lib/returns';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { useLocalStorage } from '@/lib/use-local-storage';
 import { useTheme } from '@/lib/use-theme';
-import { compareSeriesColor, ACTIVE_SERIES_COLOR } from '@/lib/chart-palette';
+import {
+  compareSeriesColor,
+  ACTIVE_SERIES_COLOR,
+  COMBINED_SERIES_COLOR,
+} from '@/lib/chart-palette';
 import type { CompareSeries } from '@/lib/compare-series';
+import { combineHistories, toPlnSeries, type CombineSource } from '@/lib/combine-history';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldError } from '@/components/ui/field-error';
@@ -32,9 +37,14 @@ import { HeroKPI } from './HeroKPI';
 import { DrawdownChart } from './DrawdownChart';
 import { MonthlyReturnsChart } from './MonthlyReturnsChart';
 import { ShareDialog } from './ShareDialog';
+import { CombinedStatsDialog } from './CombinedStatsDialog';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 
 const PRESET_RANGES = ['1M', '3M', '6M', 'YTD', '1Y', '3Y', 'ALL'] as const;
+
+/** Sztuczne id serii „Razem" — nie odpowiada żadnemu portfelowi w bazie, służy tylko
+ *  jako klucz Reacta. Prefiks `__` wyklucza kolizję z realnym id portfela. */
+const COMBINED_SERIES_ID = '__combined__';
 
 function ChartLegend({
   portfolioPct,
@@ -186,11 +196,91 @@ export function DashboardPage() {
       endDate,
     ],
   );
-  // Serie z <2 punktami po filtrze nie mają czego rysować (kafle pokażą "—").
-  const chartSeries = useMemo(
-    () => compareSeries.filter((s) => s.points.length >= 2),
-    [compareSeries],
+  // Portfel łączony — suma zaznaczonych portfeli traktowana jak jeden rachunek.
+  // Scalamy SUROWE historie (przed filtrem zakresu), bo łańcuch TWR i kotwica MWR muszą
+  // biec od początku życia portfeli; dopiero wynik przechodzi przez ten sam
+  // filterAndRebaseHistory co pozostałe serie. Kwoty sprowadzamy do PLN, więc sub-konto
+  // walutowe da się dodać do portfela złotówkowego.
+  const combined = useMemo(() => {
+    if (!compareMode) return null;
+
+    const sources: CombineSource[] = [];
+    const members: string[] = [];
+    const excluded: string[] = [];
+    let mixedCurrency = false;
+
+    const take = (name: string, res: typeof data) => {
+      if (res?.history?.length) {
+        sources.push({
+          points: toPlnSeries(res.history, res.baseToPlnByDate),
+          baseCurrency: res.baseCurrency,
+        });
+        members.push(name);
+        if (res.baseCurrency !== 'PLN') mixedCurrency = true;
+      } else {
+        excluded.push(name);
+      }
+    };
+
+    take(activeName, data);
+    validCompareIds.forEach((id, i) => {
+      take(portfolios.find((p) => p.id === id)?.name ?? id, compareResults[i]?.data);
+    });
+
+    // Jedna seria to nie suma — dopóki drugi portfel się ładuje, linii „Razem" nie ma.
+    if (sources.length < 2) return null;
+
+    return {
+      points: filterAndRebaseHistory(combineHistories(sources), startDate, endDate),
+      members,
+      excluded,
+      mixedCurrency,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    compareMode,
+    compareSelectionKey,
+    compareDataKey,
+    data,
+    portfolios,
+    activeName,
+    startDate,
+    endDate,
+  ]);
+
+  const combinedSeries: CompareSeries | null = useMemo(
+    () =>
+      combined && combined.points.length >= 2
+        ? {
+            portfolioId: COMBINED_SERIES_ID,
+            name: 'Razem',
+            color: isDark ? COMBINED_SERIES_COLOR.dark : COMBINED_SERIES_COLOR.light,
+            points: combined.points,
+            isCombined: true,
+          }
+        : null,
+    [combined, isDark],
   );
+
+  // Serie z <2 punktami po filtrze nie mają czego rysować (kafle pokażą "—").
+  // Suma dokleja się NA KOŃCU: reszta kodu zakłada, że indeks 0 to portfel aktywny,
+  // a element i odpowiada compareResults[i − 1] (chipy niżej, DrawdownChart).
+  const chartSeries = useMemo(() => {
+    const base = compareSeries.filter((s) => s.points.length >= 2);
+    return combinedSeries ? [...base, combinedSeries] : base;
+  }, [compareSeries, combinedSeries]);
+
+  // Krzywe obsunięcia: składowe + suma (widać, ile dywersyfikacja ścina z drawdownu).
+  const drawdownSeries = useMemo(
+    () => (combinedSeries ? [...compareSeries, combinedSeries] : compareSeries),
+    [compareSeries, combinedSeries],
+  );
+
+  const rangeLabel = isCustom
+    ? customFrom && customTo
+      ? `${customFrom} – ${customTo}`
+      : 'własny zakres'
+    : timeRange;
 
   // Portfele startujące w różnych momentach zakresu: każda linia zaczyna od 0%
   // od własnego pierwszego punktu — przy >7 dniach różnicy pokazujemy notkę.
@@ -517,6 +607,39 @@ export function DashboardPage() {
                   />
                 );
               })}
+              {combinedSeries && (
+                <SeriesChip
+                  name={combinedSeries.name}
+                  color={combinedSeries.color}
+                  pct={
+                    combinedSeries.points.length
+                      ? combinedSeries.points[combinedSeries.points.length - 1][
+                          chartMode === 'twr' ? 'twrPct' : 'returnPct'
+                        ]
+                      : null
+                  }
+                  loading={false}
+                  error={false}
+                  warning={
+                    combined?.excluded.length
+                      ? `Bez portfeli: ${combined.excluded.join(', ')} (nie pobrano historii)`
+                      : undefined
+                  }
+                />
+              )}
+              {combined && (
+                <CombinedStatsDialog
+                  data={combined.points}
+                  memberNames={combined.members}
+                  excludedNames={combined.excluded}
+                  rangeLabel={rangeLabel}
+                  benchmarkLabel={benchmarkLabel}
+                  showBenchmark={showBenchmark}
+                  riskFreeRatePct={data?.riskFreeRatePct}
+                  color={isDark ? COMBINED_SERIES_COLOR.dark : COMBINED_SERIES_COLOR.light}
+                  mixedCurrency={combined.mixedCurrency}
+                />
+              )}
             </div>
           )}
 
@@ -605,7 +728,7 @@ export function DashboardPage() {
             data={filteredHistory}
             benchmarkLabel={benchmarkLabel}
             showBenchmark={showBenchmark}
-            compareSeries={compareMode ? compareSeries : undefined}
+            compareSeries={compareMode ? drawdownSeries : undefined}
           />
         )}
     </div>
@@ -620,25 +743,32 @@ function SeriesChip({
   error,
   onRetry,
   onRemove,
+  warning,
 }: {
   name: string;
   color: string;
   pct: number | null;
   loading: boolean;
   error: boolean;
-  onRetry: () => void;
+  /** Brak = chip serii syntetycznej (nie ma czego ponawiać). */
+  onRetry?: () => void;
   /** Brak = chip aktywnego portfela (nie da się go usunąć z porównania). */
   onRemove?: () => void;
+  /** Miękkie ostrzeżenie przy poprawnej wartości — np. suma bez portfela, który się nie pobrał. */
+  warning?: string;
 }) {
   return (
     <span
+      title={warning}
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full border bg-card px-2 py-0.5 text-xs',
         error && 'border-loss/50',
+        warning && 'border-warning/50',
       )}
     >
       <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
       <span className="max-w-[140px] truncate font-medium">{name}</span>
+      {warning && <AlertTriangle className="h-3 w-3 shrink-0 text-warning" aria-label={warning} />}
       {error ? (
         <button
           onClick={onRetry}

@@ -1127,6 +1127,16 @@ export interface PortfolioHistoryResponse {
    * przybliżenie dla portfeli PLN) — do Sharpe/Sortino/alfa po stronie klienta.
    */
   riskFreeRatePct: number;
+  /**
+   * Kurs waluty bazowej portfela do PLN per dzień (`data → ile PLN za 1 jednostkę base`).
+   * Obecne WYŁĄCZNIE gdy `baseCurrency !== 'PLN'` — dla portfeli PLN-owych kurs to
+   * z definicji 1 i pole nie zajmuje miejsca w payloadzie.
+   *
+   * Potrzebne klientowi do scalania portfeli o różnych walutach bazowych w jeden
+   * portfel łączony (`client/src/lib/combine-history.ts`): sumowanie `portfolioValue`
+   * portfela PLN z sub-kontem USD wymaga wspólnej jednostki.
+   */
+  baseToPlnByDate?: Record<string, number>;
 }
 
 /**

@@ -77,7 +77,9 @@ export function ComparisonChart({ series, mode, benchmark }: Props) {
     for (const s of series) {
       const handle = chart.addSeries(LineSeries, {
         color: s.color,
-        lineWidth: 2,
+        // Suma jest wnioskiem z pozostałych linii, nie kolejną równorzędną serią —
+        // grubsza kreska ustawia hierarchię, gdy na wykresie jest ich pięć.
+        lineWidth: s.isCombined ? 3 : 2,
         // Legendą są chipy nad wykresem — wbudowane etykiety LWC przy 5 seriach
         // zaśmiecałyby oś cen.
         title: '',
@@ -108,9 +110,14 @@ export function ComparisonChart({ series, mode, benchmark }: Props) {
 
     chart.timeScale().fitContent();
 
-    // Ograniczenie zakresu — nie wyjeżdżamy poza dane (z małym buforem);
-    // oś czasu wyznacza najdłuższa seria.
-    const maxLen = Math.max(...series.map((s) => s.points.length), benchmark?.points.length ?? 0);
+    // Ograniczenie zakresu — nie wyjeżdżamy poza dane (z małym buforem). Oś logiczna
+    // lightweight-charts biegnie po UNII dat wszystkich serii, więc licząc długość
+    // najdłuższej pojedynczej serii clamp ucinał prawy skraj przy portfelach o rozłącznych
+    // zakresach (seria A: sty–mar, seria B: kwi–cze → unia 6 mies., najdłuższa seria 3).
+    const allDates = new Set<string>();
+    for (const s of series) for (const p of s.points) allDates.add(p.date);
+    for (const p of benchmark?.points ?? []) allDates.add(p.date);
+    const maxLen = allDates.size;
     const maxIdx = maxLen - 1;
     const buffer = Math.ceil(maxLen * 0.03);
     let clamping = false;
@@ -197,7 +204,7 @@ export function ComparisonChart({ series, mode, benchmark }: Props) {
       ref={containerRef}
       role="img"
       aria-label={`Wykres porównania ${mode === 'twr' ? 'TWR' : 'MWR'} portfeli: ${series
-        .map((s) => s.name)
+        .map((s) => (s.isCombined ? `${s.name} (portfel łączony)` : s.name))
         .join(', ')}${benchmark ? ` vs ${benchmark.label}` : ''}`}
     >
       <div

@@ -279,6 +279,28 @@ function persistNewSplits(pid: string, detected: DetectedSplit[], saved: Detecte
   if (newSplits.length > 0) bumpPortfolioDataVersion(pid);
 }
 
+/**
+ * Kurs waluty bazowej portfela → PLN per dzień, wyciągnięty ze snapshotu FX silnika.
+ *
+ * `dailyFxRates` trzyma mnożniki `waluta → waluta BAZOWA` (silnik liczy w bazie, nie
+ * w PLN — patrz `computePortfolioHistory`), czyli `fxRates.get(cur) = ratePln(cur) / fxBaseToPln`.
+ * Stąd wpis dla PLN to `1 / fxBaseToPln`, a szukany kurs base→PLN to jego odwrotność.
+ *
+ * Dni bez sensownego wpisu (0/ujemny/brak) po prostu wypadają — konsument (klient)
+ * forward-fillem bierze ostatni znany kurs, co jest bezpieczniejsze niż zapisanie 1
+ * i ciche potraktowanie waluty obcej jak złotówek.
+ */
+export function buildBaseToPlnMap(
+  dailyFxRates: Map<string, Map<string, number>>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [date, rates] of dailyFxRates) {
+    const plnToBase = rates.get('PLN');
+    if (plnToBase && plnToBase > 0) out[date] = 1 / plnToBase;
+  }
+  return out;
+}
+
 /** Historia zwrotów vs benchmark — ciało dawnego POST /api/portfolio/history. */
 export async function buildHistoryView(
   pid: string,
@@ -334,7 +356,19 @@ export async function buildHistoryView(
   // wewnętrzny fallback na stałą gdy sieć padnie); przybliżenie dla PLN.
   const riskFreeRatePct = (await riskFreeRate(1)) * 100;
 
-  return { history: result.history, metrics: result.metrics, baseCurrency, riskFreeRatePct };
+  // Kursy base→PLN tylko dla portfeli walutowych — klient potrzebuje ich, żeby scalić
+  // taki portfel z PLN-owym w portfel łączony. Dla baseCurrency='PLN' kurs to stałe 1,
+  // więc pole zostaje nieobecne i payload dashboardu nie rośnie ani o bajt.
+  const baseToPlnByDate =
+    baseCurrency === 'PLN' ? undefined : buildBaseToPlnMap(result.dailyFxRates);
+
+  return {
+    history: result.history,
+    metrics: result.metrics,
+    baseCurrency,
+    riskFreeRatePct,
+    ...(baseToPlnByDate ? { baseToPlnByDate } : {}),
+  };
 }
 
 /** Otwarte pozycje + cash — ciało dawnego GET /api/portfolio/positions. */
