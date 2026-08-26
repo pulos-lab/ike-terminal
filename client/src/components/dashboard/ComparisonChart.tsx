@@ -77,7 +77,7 @@ export function ComparisonChart({ series, mode, benchmark }: Props) {
     for (const s of series) {
       const handle = chart.addSeries(LineSeries, {
         color: s.color,
-        lineWidth: 2,
+        lineWidth: s.lineWidth ?? 2,
         // Legendą są chipy nad wykresem — wbudowane etykiety LWC przy 5 seriach
         // zaśmiecałyby oś cen.
         title: '',

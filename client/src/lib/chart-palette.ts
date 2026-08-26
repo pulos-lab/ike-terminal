@@ -33,3 +33,10 @@ export function compareSeriesColor(index: number, isDark: boolean): string {
   const palette = isDark ? COMPARE_SERIES_COLORS.dark : COMPARE_SERIES_COLORS.light;
   return palette[index % palette.length];
 }
+
+/** Seria „Łącznie" (portfele połączone jak jeden rachunek) — fiolet --chart-7.
+ *  Hue spoza palety składników (sage/błękit/rust/ochra) i z dala od amberu
+ *  aktywnego oraz szarego benchmarku: agregat ma czytać się jako osobny byt,
+ *  nie kolejny portfel. */
+// oklch: (0.55 0.17 293) / (0.72 0.13 293)
+export const COMBINED_SERIES_COLOR = { light: '#7c5bd1', dark: '#a78bfa' } as const;
