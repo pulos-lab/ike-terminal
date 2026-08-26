@@ -36,6 +36,7 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -83,6 +84,7 @@
   --chart-4: oklch(0.55 0.13 35); /* rust */
   --chart-5: oklch(0.65 0.08 85); /* ochre */
   --chart-6: oklch(0.55 0.12 245); /* błękit (hue --info) — chłodny akcent serii */
+  --chart-7: oklch(0.55 0.17 293); /* fiolet — seria „Łącznie" trybu porównania */
   --sidebar: oklch(0.965 0.004 80); /* #f1eee7 lekko ciemniejszy od tła */
   --sidebar-foreground: oklch(0.205 0.006 60);
   --sidebar-primary: oklch(0.62 0.17 55);
@@ -129,6 +131,7 @@
   --chart-4: oklch(0.65 0.15 35); /* rust */
   --chart-5: oklch(0.78 0.08 85);
   --chart-6: oklch(0.7 0.12 245); /* błękit (hue --info) — chłodny akcent serii */
+  --chart-7: oklch(0.72 0.13 293); /* fiolet — seria „Łącznie" trybu porównania */
   --sidebar: oklch(0.145 0.005 60); /* flush with bg */
   --sidebar-foreground: oklch(0.985 0.002 60);
   --sidebar-primary: oklch(0.78 0.17 70);

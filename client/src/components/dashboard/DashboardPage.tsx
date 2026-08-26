@@ -8,8 +8,13 @@ import { filterAndRebaseHistory, getPresetStartDate } from '@/lib/returns';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { useLocalStorage } from '@/lib/use-local-storage';
 import { useTheme } from '@/lib/use-theme';
-import { compareSeriesColor, ACTIVE_SERIES_COLOR } from '@/lib/chart-palette';
-import type { CompareSeries } from '@/lib/compare-series';
+import {
+  compareSeriesColor,
+  ACTIVE_SERIES_COLOR,
+  COMBINED_SERIES_COLOR,
+} from '@/lib/chart-palette';
+import { COMBINED_SERIES_ID, type CompareSeries } from '@/lib/compare-series';
+import { buildCombinedHistory, combinedBaseCurrencyConflict } from '@/lib/combined-series';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldError } from '@/components/ui/field-error';
@@ -27,6 +32,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { PortfolioChart } from './PortfolioChart';
 import { ComparisonChart, type BenchmarkLine } from './ComparisonChart';
 import { ComparePortfolioPicker } from './ComparePortfolioPicker';
+import { CombinedStatsSection, type CombinedPortfolioSummary } from './CombinedStatsSection';
 import { PerformanceStats } from './PerformanceStats';
 import { HeroKPI } from './HeroKPI';
 import { DrawdownChart } from './DrawdownChart';
@@ -90,6 +96,9 @@ export function DashboardPage() {
 
   // Tryb porównania: id INNYCH portfeli dokładanych na wykres (aktywny zawsze w grze).
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  // Seria „Łącznie" (portfele policzone jak jeden rachunek) — domyślnie widoczna,
+  // wyłączana z popovera porównania albo X-em na chipie.
+  const [showCombined, setShowCombined] = useState(true);
   // Nowy aktywny mógł być wśród zaznaczonych „innych" — po przełączeniu czyścimy
   // wybór. Wzorzec „adjust state during render" zamiast setState w efekcie
   // (bez dodatkowego renderu z nieaktualnym zaznaczeniem).
@@ -97,6 +106,7 @@ export function DashboardPage() {
   if (lastActiveId !== activeId) {
     setLastActiveId(activeId);
     setCompareIds([]);
+    setShowCombined(true);
   }
   // Ghost-id guard: portfel usunięty w międzyczasie znika z zaznaczenia.
   const validCompareIds = useMemo(
@@ -186,10 +196,79 @@ export function DashboardPage() {
       endDate,
     ],
   );
+  // Dane „Łącznie" wymagają KOMPLETU odpowiedzi (agregujemy kwoty, nie procenty)
+  // i wspólnej waluty bazowej — sumowanie PLN z USD dawałoby bezsensowne liczby.
+  const compareLoaded = compareMode && !!data && compareResults.every((r) => !!r.data);
+  const currencyConflict = useMemo(
+    () =>
+      compareLoaded
+        ? combinedBaseCurrencyConflict([
+            data.baseCurrency,
+            ...compareResults.map((r) => r.data!.baseCurrency),
+          ])
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compareLoaded, compareDataKey, compareSelectionKey],
+  );
+
+  // Historia połączonych portfeli (jak jeden rachunek) liczona na PEŁNYCH
+  // seriach — filtr zakresu i rebase dopiero na wyniku, jak przy innych seriach.
+  const combinedHistory = useMemo(
+    () =>
+      compareLoaded && !currencyConflict
+        ? buildCombinedHistory([data.history, ...compareResults.map((r) => r.data!.history)])
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compareLoaded, currencyConflict, compareDataKey, compareSelectionKey],
+  );
+  const combinedFiltered = useMemo(
+    () => filterAndRebaseHistory(combinedHistory, startDate, endDate),
+    [combinedHistory, startDate, endDate],
+  );
+  const combinedColor = isDark ? COMBINED_SERIES_COLOR.dark : COMBINED_SERIES_COLOR.light;
+  const showCombinedSeries = showCombined && !currencyConflict && combinedFiltered.length >= 2;
+
   // Serie z <2 punktami po filtrze nie mają czego rysować (kafle pokażą "—").
-  const chartSeries = useMemo(
-    () => compareSeries.filter((s) => s.points.length >= 2),
-    [compareSeries],
+  // „Łącznie" idzie WYŁĄCZNIE na wykres — kafle porównawcze i drawdown zostają
+  // per portfel (agregat w rankingu „najlepszy" nie ma sensu); jego statystyki
+  // żyją w CombinedStatsSection na dole strony.
+  const chartSeries = useMemo(() => {
+    const base = compareSeries.filter((s) => s.points.length >= 2);
+    if (showCombinedSeries) {
+      base.push({
+        portfolioId: COMBINED_SERIES_ID,
+        name: 'Łącznie',
+        color: combinedColor,
+        points: combinedFiltered,
+        lineWidth: 3,
+      });
+    }
+    return base;
+  }, [compareSeries, showCombinedSeries, combinedFiltered, combinedColor]);
+
+  // Wiersze sekcji „Statystyki łączne" — agregaty z już pobranych odpowiedzi.
+  const combinedSummaries: CombinedPortfolioSummary[] = useMemo(
+    () =>
+      compareLoaded
+        ? [
+            {
+              portfolioId: activeId,
+              name: activeName,
+              color: isDark ? ACTIVE_SERIES_COLOR.dark : ACTIVE_SERIES_COLOR.light,
+              baseCurrency: data.baseCurrency,
+              metrics: data.metrics,
+            },
+            ...validCompareIds.map((id, i) => ({
+              portfolioId: id,
+              name: portfolios.find((p) => p.id === id)?.name ?? id,
+              color: compareSeriesColor(i, isDark),
+              baseCurrency: compareResults[i].data!.baseCurrency,
+              metrics: compareResults[i].data!.metrics,
+            })),
+          ]
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compareLoaded, compareDataKey, compareSelectionKey, portfolios, activeId, activeName, isDark],
   );
 
   // Portfele startujące w różnych momentach zakresu: każda linia zaczyna od 0%
@@ -309,6 +388,11 @@ export function DashboardPage() {
                     activeId={activeId}
                     selectedOtherIds={compareIds}
                     onChange={setCompareIds}
+                    showCombined={showCombined}
+                    onShowCombinedChange={setShowCombined}
+                    combinedDisabledReason={
+                      currencyConflict ? `Różne waluty bazowe: ${currencyConflict}` : null
+                    }
                   />
                 )}
 
@@ -517,6 +601,21 @@ export function DashboardPage() {
                   />
                 );
               })}
+              {showCombinedSeries && (
+                <SeriesChip
+                  name="Łącznie"
+                  color={combinedColor}
+                  pct={
+                    combinedFiltered[combinedFiltered.length - 1][
+                      chartMode === 'twr' ? 'twrPct' : 'returnPct'
+                    ]
+                  }
+                  loading={false}
+                  error={false}
+                  onRetry={() => {}}
+                  onRemove={() => setShowCombined(false)}
+                />
+              )}
             </div>
           )}
 
@@ -608,6 +707,19 @@ export function DashboardPage() {
             compareSeries={compareMode ? compareSeries : undefined}
           />
         )}
+
+      {/* Statystyki łączne — agregaty per portfel + metryki „jak jeden rachunek";
+          sekcja niezależna od przełącznika linii „Łącznie" na wykresie. */}
+      {compareMode && !isLoading && compareLoaded && (
+        <CombinedStatsSection
+          summaries={combinedSummaries}
+          currencyConflict={currencyConflict}
+          combinedPoints={combinedFiltered}
+          benchmarkLabel={benchmarkLabel}
+          showBenchmark={showBenchmark}
+          riskFreeRatePct={data?.riskFreeRatePct}
+        />
+      )}
     </div>
   );
 }

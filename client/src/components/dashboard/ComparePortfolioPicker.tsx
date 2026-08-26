@@ -22,6 +22,13 @@ interface Props {
   /** Zaznaczone INNE portfele; kolejność zaznaczenia = kolory palety. */
   selectedOtherIds: string[];
   onChange: (ids: string[]) => void;
+  /** Przełącznik serii „Łącznie" (portfele policzone jak jeden rachunek) —
+   *  widoczny tylko przy aktywnym porównaniu. */
+  showCombined: boolean;
+  onShowCombinedChange: (show: boolean) => void;
+  /** Powód niedostępności „Łącznie" (np. różne waluty bazowe) — ustawiony
+   *  wyłącza przełącznik i pokazuje opis. */
+  combinedDisabledReason?: string | null;
 }
 
 export function ComparePortfolioPicker({
@@ -29,6 +36,9 @@ export function ComparePortfolioPicker({
   activeId,
   selectedOtherIds,
   onChange,
+  showCombined,
+  onShowCombinedChange,
+  combinedDisabledReason,
 }: Props) {
   const active = portfolios.find((p) => p.id === activeId);
   const others = portfolios.filter((p) => p.id !== activeId);
@@ -100,6 +110,24 @@ export function ComparePortfolioPicker({
             <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
               Maksymalnie {MAX_COMPARED} portfeli naraz
             </p>
+          </>
+        )}
+        {comparing && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem
+              checked={showCombined && !combinedDisabledReason}
+              disabled={!!combinedDisabledReason}
+              onSelect={(e) => e.preventDefault()}
+              onCheckedChange={(c) => onShowCombinedChange(c === true)}
+            >
+              <span className="truncate">Linia „Łącznie" (jak jeden rachunek)</span>
+            </DropdownMenuCheckboxItem>
+            {combinedDisabledReason && (
+              <p className="px-2 pb-1.5 text-[11px] text-muted-foreground">
+                {combinedDisabledReason}
+              </p>
+            )}
           </>
         )}
       </DropdownMenuContent>
