@@ -149,7 +149,12 @@ export async function buildFxToPlnLookup(
  */
 export function convertClosedTradesToPln(trades: ClosedTrade[], fx: FxToPlnLookup): void {
   for (const trade of trades) {
-    if (trade.currency.toUpperCase() === 'PLN') {
+    // Waluta nogi otwarcia — różna od `currency` tylko dla trade'ów mieszanych
+    // (migracja delistingowa: kupno GPW/PLN → squeeze-out LSE/GBP).
+    const buyCur = trade.buyCurrency ?? trade.currency;
+    const mixed = trade.buyCurrency !== undefined;
+
+    if (trade.currency.toUpperCase() === 'PLN' && buyCur.toUpperCase() === 'PLN') {
       trade.profitLossPln = trade.profitLoss;
       if (trade.costBasis !== undefined) trade.costBasisPln = trade.costBasis;
       trade.fxRateOpen = 1;
@@ -157,11 +162,18 @@ export function convertClosedTradesToPln(trades: ClosedTrade[], fx: FxToPlnLooku
       continue;
     }
 
+    // Mieszany SHORT: derywacja coverValue z naiwnego P/L (niżej) nie przeżywa
+    // mieszania walut — świadomie zostawiamy trade nieprzeliczalny (klient
+    // raportuje go w „bez N poz. bez kursu"), zamiast policzyć źle. Przypadek
+    // hipotetyczny (short otwarty w jednej walucie, pokryty w innej).
+    if (mixed && trade.isShort) continue;
+
     // Kursy: preferuj DOKŁADNY kurs rozliczenia brokera z nogi transakcji
     // (computeClosedTrades ustawia fxRateOpen/Close z tx.fxRate, gdy rozliczenie
     // było w PLN — np. implied rate XTB z kwot); kurs dzienny rynkowy tylko jako
     // fallback (m.in. mBank bez kursu w CSV, stare szablony XTB po stronie sprzedaży).
-    const openFx = trade.fxRateOpen ?? fx(trade.currency, trade.buyDate);
+    // Noga otwarcia idzie po SWOJEJ walucie (PLN → 1 bez sieci), zamknięcia po swojej.
+    const openFx = trade.fxRateOpen ?? fx(buyCur, trade.buyDate);
     const closeFx = trade.fxRateClose ?? fx(trade.currency, trade.sellDate);
     if (openFx == null || closeFx == null || trade.costBasis === undefined) continue;
 
@@ -187,11 +199,27 @@ export function convertClosedTradesToPln(trades: ClosedTrade[], fx: FxToPlnLooku
     } else {
       // costBasis = wartość nabycia (z nominałem obligacji) + prowizja kupna,
       // stąd wartość sprzedaży = P/L + costBasis + prowizja sprzedaży + opłaty.
+      // Tożsamość działa TAKŻE dla mieszanych nóg: naiwne pl z silnika odtwarza
+      // tu wartość sprzedaży w walucie sprzedaży (costBasis jest w walucie kupna,
+      // ale w sumie i różnicy skraca się do sellValue), więc wystarczy openFx
+      // z waluty kupna i closeFx z waluty sprzedaży.
       const sellValue = trade.profitLoss + trade.costBasis + trade.sellCommission + fees;
       trade.profitLossPln =
         (sellValue - trade.sellCommission - fees) * closeFx - trade.costBasis * openFx;
     }
     trade.costBasisPln = trade.costBasis * openFx;
+
+    // Mieszany trade: naiwne pl/plPct z silnika (różnica kwot w dwóch walutach)
+    // nadpisujemy wynikiem przeliczonym per noga — wyrażonym w walucie zamknięcia
+    // po kursie z dnia zamknięcia, żeby suma per waluta i znak w win rate mówiły
+    // prawdę bez rozsiewania fallbacków po kliencie.
+    if (mixed && trade.profitLossPln !== undefined && closeFx > 0) {
+      trade.profitLoss = trade.profitLossPln / closeFx;
+      trade.profitLossPct =
+        trade.costBasisPln !== undefined && trade.costBasisPln > 0
+          ? (trade.profitLossPln / trade.costBasisPln) * 100
+          : 0;
+    }
   }
 }
 
@@ -283,15 +311,26 @@ export async function summarizeDividendsInPln(
  */
 export async function annotateClosedTradesPln(trades: ClosedTrade[]): Promise<void> {
   if (trades.length === 0) return;
-  const foreign = trades.filter((t) => t.currency.toUpperCase() !== 'PLN');
+  // „Zagraniczny" jest trade, którego KTÓRAKOLWIEK noga nie jest w PLN — trade
+  // mieszany (buyCurrency) z samą sprzedażą w PLN też potrzebuje kursu nogi kupna.
+  const foreign = trades.filter(
+    (t) =>
+      t.currency.toUpperCase() !== 'PLN' ||
+      (t.buyCurrency !== undefined && t.buyCurrency.toUpperCase() !== 'PLN'),
+  );
   let minDate = '9999-12-31';
   for (const t of foreign) {
     const open = t.buyDate.slice(0, 10);
     if (open < minDate) minDate = open;
   }
+  const currencies = new Set<string>();
+  for (const t of foreign) {
+    if (t.currency.toUpperCase() !== 'PLN') currencies.add(t.currency);
+    if (t.buyCurrency && t.buyCurrency.toUpperCase() !== 'PLN') currencies.add(t.buyCurrency);
+  }
   const lookup =
     foreign.length > 0
-      ? await buildFxToPlnLookup(Array.from(new Set(foreign.map((t) => t.currency))), minDate)
+      ? await buildFxToPlnLookup(Array.from(currencies), minDate)
       : (((cur: string) => (cur.toUpperCase() === 'PLN' ? 1 : null)) as FxToPlnLookup);
   convertClosedTradesToPln(trades, lookup);
 }

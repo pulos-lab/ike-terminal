@@ -223,18 +223,40 @@ export function ImportDialog({ open, onOpenChange }: Props) {
             'cancelled_trade',
             'aliased_ignore',
           ]);
-          const visible = result.skipped.filter(
+          // Wewnętrzna księgowość brokera — pominięta CELOWO i masowo (księga ING
+          // to w ~85% blokady/rozliczenia/salda: realny import = 620 takich
+          // wierszy). Zamiast listy — jedna zbiorcza linia informacyjna.
+          const internalReasons = new Set<SkipReason>(['settlement_record', 'summary_row']);
+          const relevant = result.skipped.filter(
             (s) => !hiddenReasons.has(s.reason) && !(s.raw && QUARANTINE_REASONS.has(s.reason)),
           );
+          const internal = relevant.filter((s) => internalReasons.has(s.reason));
+          const visible = relevant.filter((s) => !internalReasons.has(s.reason));
+          if (internal.length > 0) {
+            addMessage({
+              kind: 'info',
+              text:
+                internal.length === 1
+                  ? 'Pominięto 1 wiersz wewnętrznej księgowości brokera (blokady, rozliczenia, salda) — celowo poza importem.'
+                  : `Pominięto ${internal.length} wierszy wewnętrznej księgowości brokera (blokady, rozliczenia, salda) — celowo poza importem.`,
+            });
+          }
           if (visible.length > 0) {
-            const lines = visible.map((s) => {
+            // Szczegóły z limitem — pełna liczba w nagłówku (wzorzec kreatora
+            // importu uniwersalnego).
+            const MAX_LINES = 20;
+            const lines = visible.slice(0, MAX_LINES).map((s) => {
               const name = s.paperName ? `${s.paperName} ` : '';
               const reason = SKIP_REASON_LABELS[s.reason] || s.reason;
               return `${name}(wiersz ${s.row}) — ${reason}`;
             });
+            const overflow = visible.length - lines.length;
+            if (overflow > 0) {
+              lines.push(overflow === 1 ? '…i 1 kolejny' : `…i ${overflow} kolejnych`);
+            }
             addMessage({
               kind: 'warn',
-              text: `Pominięto ${visible.length} wierszy:\n${lines.join('\n')}`,
+              text: `Pominięto ${visible.length} ${visible.length === 1 ? 'wiersz' : 'wierszy'}:\n${lines.join('\n')}`,
             });
           }
         }

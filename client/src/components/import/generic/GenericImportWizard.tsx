@@ -516,6 +516,8 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
             (s) =>
               `${s.paperName ? `${s.paperName} ` : ''}(wiersz ${s.row}) — ${SKIP_REASON_LABELS[s.reason as SkipReason] ?? s.reason}`,
           );
+        const overflow = visibleSkipped.length - lines.length;
+        if (overflow > 0) lines.push(overflow === 1 ? '…i 1 kolejny' : `…i ${overflow} kolejnych`);
         msgs.push({
           kind: 'warn',
           text: `Pominięto ${visibleSkipped.length} wierszy:\n${lines.join('\n')}`,

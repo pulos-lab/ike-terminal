@@ -28,8 +28,9 @@ import type {
   CapitalReturnMarker,
   ParseResult,
 } from 'shared';
-import { findBondByTicker, findBondByName, inferBondNominal } from 'shared';
+import { findBondByTicker, findBondByName, inferBondNominal, ISIN_ALIASES_MAP } from 'shared';
 import { decodeCSVBuffer } from '../parsers/encoding.js';
+import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import {
   detectBroker,
   detectCombinedBroker,
@@ -350,9 +351,11 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   // propagujemy ISIN na pozostałe transakcje tego samego papieru (paperName),
   // żeby pozycja nie rozpadła się na pseudo-ISIN i realny ISIN, gdy część
   // zleceń leży poza zakresem eksportu historii finansowej.
+  // Mapy hoistowane: blok healingu w runAll (niżej) leczy nimi także wiersze
+  // zaimportowane WCZEŚNIEJ pod pseudo-ISIN-em (np. import v1 bez pliku ops).
+  const isinByPaperName = new Map<string, string>();
+  const paperNameConflicts = new Set<string>();
   if (txParserId === 'ing' && parsedTx && parsedOps?.orderIsinMap?.size) {
-    const isinByPaperName = new Map<string, string>();
-    const paperNameConflicts = new Set<string>();
     for (const tx of parsedTx.data) {
       const real = tx.orderId ? parsedOps.orderIsinMap.get(tx.orderId) : undefined;
       if (!real) continue;
@@ -388,6 +391,63 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
   const crossFileWarnings: string[] = [...parserWarnings];
 
   const runAll = db.transaction(() => {
+    // 0. ING — healing wierszy zaimportowanych WCZEŚNIEJ, PRZED insertami:
+    // klucz dedupu zawiera `isin`, więc wiersz z realnym ISIN-em (dzisiejszy
+    // import z plikiem ops) nie sparowałby się z pseudo-ISIN-owym bliźniakiem
+    // w DB (wcześniejszy import bez ops) i wszedłby jako dubel. Wzorzec 1:1
+    // z IBKR isinChanges. Konwencja ING: pseudo-ISIN ≡ paperName.
+    // Bramka obejmuje też import SAMYCH plików historii finansowej (dosłanie
+    // ops po wcześniejszym imporcie transakcji) — healing i reconcile wykupów
+    // muszą wtedy widzieć wyleczone kupna.
+    if (txParserId === 'ing' || opsParserId === 'ing') {
+      let healedRows = 0;
+      // (a) alias PDA/delisting (ZKA1→ZABKA, PROVIDENT→GB00B1YKG049) — leczy
+      // wiersze sprzed dodania wpisu do mapy; bound po appliesUntil jak w
+      // scripts/fix-isin-alias-backfill.
+      for (const alias of ISIN_ALIASES_MAP) {
+        const bound = alias.appliesUntil ? ' AND date <= ?' : '';
+        const params = alias.appliesUntil
+          ? [
+              alias.canonicalIsin,
+              alias.canonicalTicker,
+              alias.legacyIsin,
+              alias.legacyTicker,
+              `${alias.appliesUntil}T23:59:59`,
+            ]
+          : [alias.canonicalIsin, alias.canonicalTicker, alias.legacyIsin, alias.legacyTicker];
+        const r = db
+          .prepare(
+            `UPDATE transactions SET isin = ?, paper_name = ? WHERE source = 'ing' AND isin = ? AND paper_name = ?${bound}`,
+          )
+          .run(...params);
+        if (r.changes > 0) {
+          healedRows += r.changes;
+          deleteTickerMapEntry(alias.legacyIsin, pid);
+          crossFileWarnings.push(
+            `ING: przepisano ${r.changes} wcześniej zaimportowanych transakcji ` +
+              `${alias.legacyTicker} → ${alias.canonicalTicker} (${alias.canonicalIsin}).`,
+          );
+        }
+      }
+      // (b) join orderId→ISIN z dzisiejszych plików ops.
+      for (const [paperName, realIsin] of isinByPaperName) {
+        if (paperNameConflicts.has(paperName)) continue;
+        const r = db
+          .prepare(`UPDATE transactions SET isin = ? WHERE source = 'ing' AND isin = ?`)
+          .run(realIsin, paperName);
+        if (r.changes > 0) {
+          healedRows += r.changes;
+          deleteTickerMapEntry(paperName, pid);
+          crossFileWarnings.push(
+            `ING: doszyto ISIN ${realIsin} do ${r.changes} wcześniej zaimportowanych transakcji ${paperName}.`,
+          );
+        }
+      }
+      // Czysty re-import wstawia 0 wierszy (dedup), więc bump z insertów nie
+      // nastąpi — memo historii musi zobaczyć zmianę ISIN-ów jawnie.
+      if (healedRows > 0) bumpPortfolioDataVersion(pid);
+    }
+
     // 1. Transakcje — insert PER PLIK: licznik w DB rośnie po każdym pliku,
     // więc kopia tej samej transakcji w drugim pliku (nakładające się eksporty,
     // np. hisPW 2022-24 + hisPW 2023-25) zostaje wykryta jako duplikat.

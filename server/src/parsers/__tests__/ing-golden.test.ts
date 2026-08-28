@@ -30,6 +30,19 @@ function listCsv(dir: string): string[] {
     .map((f) => path.join(dir, f));
 }
 
+/** Plik walutowy historii finansowej — CASE-INSENSITIVE: eksporty użytkowników
+ *  nazywają go i „…_GBP_…", i „…_cala_gbp_…". */
+const hasGbpName = (f: string) => path.basename(f).toLowerCase().includes('gbp');
+
+/** Saldo z wiersza „Saldo początkowe/końcowe" surowego CSV (kolumna 6). */
+function readBalance(csv: string, label: string): number | null {
+  for (const line of csv.split('\n')) {
+    const cells = line.split(';');
+    if (cells[3]?.trim() === label) return parseFloat(cells[5]);
+  }
+  return null;
+}
+
 describe.skipIf(!fs.existsSync(ING_DIR))('golden — realne pliki import/ING', () => {
   it('historiaTransakcji: wykrywa się i parsuje w całości', () => {
     const files = listCsv(ING_DIR).filter((f) => path.basename(f).startsWith('historiaTransakcji'));
@@ -43,6 +56,11 @@ describe.skipIf(!fs.existsSync(ING_DIR))('golden — realne pliki import/ING', (
       // Wszystkie transakcje PLN z orderId; alias ZKA1→ZABKA zastosowany.
       expect(result.data.every((t) => t.currency === 'PLN' && t.orderId)).toBe(true);
       expect(result.data.some((t) => t.paperName === 'ZKA1')).toBe(false);
+      // Alias delistingowy: kupno PROVIDENT (2020, GPW) dostaje ISIN wykupu
+      // przymusowego z LSE — pozycję domyka syntetyczna S z pliku GBP.
+      for (const t of result.data.filter((x) => x.paperName === 'PROVIDENT')) {
+        expect(t.isin, `${path.basename(file)}: PROVIDENT`).toBe('GB00B1YKG049');
+      }
     }
   });
 
@@ -65,42 +83,68 @@ describe.skipIf(!fs.existsSync(ING_DIR))('golden — realne pliki import/ING', (
     }
   });
 
-  it('plik GBP: dywidendy + wykup przymusowy LAP1 uzgadniają saldo końcowe 1086.12', () => {
-    const gbp = listCsv(ING_DIR).find((f) => path.basename(f).includes('GBP'));
-    if (!gbp) return; // zestaw bez pliku GBP — asercje pokrywa test wyżej
-    const result = parseIngOperations(decodeCSVBuffer(fs.readFileSync(gbp)), 'golden');
-    const opsSum = result.data.reduce((s, o) => s + o.amount, 0);
-    const redemptionSum = result.redemptions.reduce((s, r) => s + r.amount, 0);
-    // Saldo początkowe 0.00 (2019) → końcowe 1086.12: suma operacji + wykup.
-    expect(Math.round((opsSum + redemptionSum) * 100) / 100).toBe(1086.12);
-    expect(result.redemptions[0]).toMatchObject({
-      isin: 'GB00B1YKG049',
-      quantity: 360,
-      tenderPrice: 2.35,
-    });
+  it('pliki walutowe: operacje + wykupy uzgadniają salda z wierszy Saldo', () => {
+    // CASE-INSENSITIVE: „…_GBP_…" (v1) i „…_cala_gbp_…" (v2) to ta sama waluta.
+    const gbpFiles = listCsv(ING_DIR).filter(
+      (f) => path.basename(f).startsWith('historiaFinansowa') && hasGbpName(f),
+    );
+    if (gbpFiles.length === 0) return; // zestaw bez plików walutowych
+    for (const file of gbpFiles) {
+      const csv = decodeCSVBuffer(fs.readFileSync(file));
+      const result = parseIngOperations(csv, 'golden');
+      const opsSum = result.data.reduce((s, o) => s + o.amount, 0);
+      const redemptionSum = result.redemptions.reduce((s, r) => s + r.amount, 0);
+      // Uzgodnienie z SALDAMI TEGO pliku (nie z hardkodem — generacje eksportów
+      // mogą mieć różne zakresy): suma operacji + wykupy = końcowe − początkowe.
+      const opening = readBalance(csv, 'Saldo początkowe');
+      const closing = readBalance(csv, 'Saldo końcowe');
+      expect(opening, path.basename(file)).not.toBeNull();
+      expect(closing, path.basename(file)).not.toBeNull();
+      expect(opsSum + redemptionSum, path.basename(file)).toBeCloseTo(closing! - opening!, 2);
+      for (const red of result.redemptions) {
+        expect(red, path.basename(file)).toMatchObject({
+          isin: 'GB00B1YKG049',
+          quantity: 360,
+          tenderPrice: 2.35,
+          source: 'ing',
+        });
+      }
+    }
   });
 
-  it('join orderId→ISIN: każdy ticker z pliku PLN dostaje dokładnie jeden ISIN', () => {
-    const txFile = listCsv(ING_DIR).find((f) => path.basename(f).startsWith('historiaTransakcji'));
-    const plnOps = listCsv(ING_DIR).find(
-      (f) => path.basename(f).startsWith('historiaFinansowa') && !path.basename(f).includes('GBP'),
-    );
-    if (!txFile || !plnOps) return;
-    const tx = parseIngTransactions(decodeCSVBuffer(fs.readFileSync(txFile)), 'golden');
-    const ops = parseIngOperations(decodeCSVBuffer(fs.readFileSync(plnOps)), 'golden');
-    const isinsByTicker = new Map<string, Set<string>>();
-    for (const t of tx.data) {
-      const isin = t.orderId ? ops.orderIsinMap.get(t.orderId) : undefined;
-      if (!isin) continue;
-      if (!isinsByTicker.has(t.paperName)) isinsByTicker.set(t.paperName, new Set());
-      isinsByTicker.get(t.paperName)!.add(isin);
+  it('join orderId→ISIN: każdy ticker dostaje dokładnie jeden ISIN (pary per katalog)', () => {
+    // Parujemy transakcje z historią finansową z TEGO SAMEGO katalogu — v2 ma
+    // szerszy zakres dat niż v1 i krzyżowe pary dawałyby fałszywe rozjazdy.
+    const byDir = new Map<string, { tx?: string; plnOps?: string }>();
+    for (const f of listCsv(ING_DIR)) {
+      const base = path.basename(f);
+      const e = byDir.get(path.dirname(f)) ?? {};
+      if (base.startsWith('historiaTransakcji')) e.tx = f;
+      if (base.startsWith('historiaFinansowa') && !hasGbpName(f)) e.plnOps = f;
+      byDir.set(path.dirname(f), e);
     }
-    expect(isinsByTicker.size).toBeGreaterThan(0);
-    for (const [ticker, isins] of isinsByTicker) {
-      expect(isins.size, `${ticker}: ${[...isins].join(', ')}`).toBe(1);
+    const pairs = [...byDir.values()].filter((e) => e.tx && e.plnOps);
+    expect(pairs.length).toBeGreaterThan(0);
+    for (const pair of pairs) {
+      const tx = parseIngTransactions(decodeCSVBuffer(fs.readFileSync(pair.tx!)), 'golden');
+      const ops = parseIngOperations(decodeCSVBuffer(fs.readFileSync(pair.plnOps!)), 'golden');
+      const isinsByTicker = new Map<string, Set<string>>();
+      for (const t of tx.data) {
+        const isin = t.orderId ? ops.orderIsinMap.get(t.orderId) : undefined;
+        if (!isin) continue;
+        if (!isinsByTicker.has(t.paperName)) isinsByTicker.set(t.paperName, new Set());
+        isinsByTicker.get(t.paperName)!.add(isin);
+      }
+      expect(isinsByTicker.size).toBeGreaterThan(0);
+      for (const [ticker, isins] of isinsByTicker) {
+        expect(isins.size, `${ticker}: ${[...isins].join(', ')}`).toBe(1);
+      }
+      // Przydział IPO Żabki: ZKA1 (po aliasie ZABKA) joinuje do realnego ISIN-u —
+      // tylko gdy ta generacja eksportu w ogóle zawiera ZABKĘ.
+      if (tx.data.some((t) => t.paperName === 'ZABKA')) {
+        expect(isinsByTicker.get('ZABKA')?.has('LU2910446546')).toBe(true);
+      }
     }
-    // Przydział IPO Żabki: ZKA1 (po aliasie ZABKA) joinuje do realnego ISIN-u.
-    expect(isinsByTicker.get('ZABKA')?.has('LU2910446546')).toBe(true);
   });
 });
 

@@ -66,6 +66,9 @@ export function ClosedPositionCardMobile({
   // Wartości obliczane z lotów (multi-lot ma różne ceny zakupu/sprzedaży na nogę)
   const costBasis = group.trades.reduce((s, t) => s + t.quantity * t.buyPrice, 0);
   const grossRevenue = group.trades.reduce((s, t) => s + t.quantity * t.sellPrice, 0);
+  // Trade mieszany (kupno w innej walucie niż sprzedaż — migracja delistingowa):
+  // etykiety wartości/cen KUPNA idą po walucie nogi kupna.
+  const buyCurrencyLabel = group.buyCurrency ?? group.currency;
 
   const commission = group.trades.reduce((s, t) => s + t.buyCommission + t.sellCommission, 0);
   const fees = group.trades.flatMap((t) => t.fees ?? []);
@@ -134,7 +137,7 @@ export function ClosedPositionCardMobile({
         >
           <SectionTitle>Transakcja</SectionTitle>
           <Row label="Ilość" value={`${formatQuantity(group.totalQuantity)} szt.`} />
-          <Row label="Cena kupna" value={`${buyPriceLabel} ${group.currency}`} />
+          <Row label="Cena kupna" value={`${buyPriceLabel} ${buyCurrencyLabel}`} />
           <Row label="Cena sprzedaży" value={`${sellPriceLabel} ${group.currency}`} />
           {group.totalCost > 0 && (
             <Row
@@ -179,7 +182,7 @@ export function ClosedPositionCardMobile({
           <Row label="Czas posiadania" value={`${group.avgHoldingDays}d`} />
 
           <SectionTitle>Wartości</SectionTitle>
-          <Row label="Wartość kupna" value={`${formatNumber(costBasis)} ${group.currency}`} />
+          <Row label="Wartość kupna" value={`${formatNumber(costBasis)} ${buyCurrencyLabel}`} />
           <Row
             label="Wartość sprzedaży"
             value={`${formatNumber(grossRevenue)} ${group.currency}`}

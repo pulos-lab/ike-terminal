@@ -382,3 +382,79 @@ describe('buildFxToPlnLookup — kurs krzyżowy przez USD', () => {
     expect(fx('NOK', '2026-04-10')).toBeNull();
   });
 });
+
+describe('convertClosedTradesToPln — mieszane waluty nóg', () => {
+  it('PROVIDENT (kupno PLN, sprzedaż GBP): koszt po 1, przychód po kursie GBP, pl nadpisane', () => {
+    // Naiwne pl z silnika: 360×2,35 − 360×2,78 − 3 = −157.80 (GBP minus PLN, placeholder).
+    const t = trade({
+      currency: 'GBP',
+      buyCurrency: 'PLN',
+      quantity: 360,
+      buyPrice: 2.78,
+      buyCommission: 3,
+      sellPrice: 2.35,
+      sellCommission: 0,
+      profitLoss: 360 * 2.35 - 360 * 2.78 - 3,
+      costBasis: 1003.8,
+      buyDate: '2020-07-31',
+      sellDate: '2026-08-19',
+    });
+    convertClosedTradesToPln([t], fxStub({ 'GBP|2026-08-19': 4.8 }));
+    // Noga kupna w PLN → openFx 1 (bez sieci); sprzedaż 846 GBP × 4.8.
+    expect(t.fxRateOpen).toBe(1);
+    expect(t.fxRateClose).toBe(4.8);
+    expect(t.costBasisPln).toBeCloseTo(1003.8, 2);
+    expect(t.profitLossPln).toBeCloseTo(846 * 4.8 - 1003.8, 2); // 3057.00
+    // Surowe pola NADPISANE wynikiem przez PLN (w walucie sprzedaży) — bez tego
+    // wiersz i win rate pokazywałyby stratę na transakcji z zyskiem ~300%.
+    expect(t.profitLoss).toBeCloseTo(3057 / 4.8, 2); // ≈636.88 GBP
+    expect(t.profitLossPct).toBeCloseTo((3057 / 1003.8) * 100, 1); // ≈304.5%
+  });
+
+  it('kierunek odwrotny (kupno USD, sprzedaż PLN) nie wpada w fast-path PLN', () => {
+    const t = trade({
+      currency: 'PLN',
+      buyCurrency: 'USD',
+      quantity: 10,
+      buyPrice: 100,
+      buyCommission: 0,
+      sellPrice: 420,
+      sellCommission: 0,
+      profitLoss: 10 * 420 - 10 * 100, // naiwne PLN−USD
+      costBasis: 1000,
+      buyDate: '2024-01-10',
+      sellDate: '2024-06-10',
+    });
+    convertClosedTradesToPln([t], fxStub({ 'USD|2024-01-10': 4.0 }));
+    expect(t.fxRateOpen).toBe(4.0); // noga kupna po SWOIM kursie
+    expect(t.fxRateClose).toBe(1);
+    expect(t.costBasisPln).toBeCloseTo(4000, 2);
+    expect(t.profitLossPln).toBeCloseTo(4200 - 4000, 2);
+    expect(t.profitLoss).toBeCloseTo(200, 2); // nadpisane (waluta sprzedaży = PLN)
+  });
+
+  it('mieszany short pozostaje nieprzeliczalny (świadome ograniczenie)', () => {
+    const t = trade({
+      currency: 'EUR',
+      buyCurrency: 'USD',
+      isShort: true,
+      profitLoss: 50,
+      costBasis: 250,
+      buyDate: '2024-01-10',
+      sellDate: '2024-02-10',
+    });
+    convertClosedTradesToPln([t], fxStub({ 'EUR|2024-02-10': 4.3, 'USD|2024-01-10': 4.0 }));
+    expect(t.profitLossPln).toBeUndefined();
+    expect(t.costBasisPln).toBeUndefined();
+  });
+
+  it('trade z samą nogą kupna obcą liczy się mimo sprzedaży w PLN (lookup zbiera obie nogi)', async () => {
+    yahooMock.series = {
+      'USDPLN=X': [{ date: '2024-01-10', close: 4.0 }],
+    };
+    yahooMock.calls = [];
+    const lookup = await buildFxToPlnLookup(['USD'], '2024-01-10');
+    expect(lookup('USD', '2024-01-10')).toBe(4.0);
+    expect(lookup('PLN', '2024-06-10')).toBe(1);
+  });
+});

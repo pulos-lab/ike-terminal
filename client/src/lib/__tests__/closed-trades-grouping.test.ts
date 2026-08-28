@@ -232,3 +232,47 @@ describe('groupClosedTrades — scalanie spreadów opcyjnych', () => {
     expect(groups.every((g) => !g.isSpread)).toBe(true);
   });
 });
+
+describe('trade mieszany (buyCurrency ≠ currency — migracja delistingowa)', () => {
+  const mixed = () =>
+    makeTrade({
+      currency: 'GBP',
+      buyCurrency: 'PLN',
+      quantity: 360,
+      buyPrice: 2.78,
+      buyCommission: 3,
+      sellPrice: 2.35,
+      // Po convertClosedTradesToPln: pl nadpisane wynikiem przez PLN (w GBP).
+      profitLoss: 636.88,
+      profitLossPct: 304.5,
+      costBasis: 1003.8,
+      costBasisPln: 1003.8,
+      fxRateOpen: 1,
+      fxRateClose: 4.8,
+      tradeGroupId: 'GB00B1YKG049#1',
+    });
+
+  it('lotCostBasis przelicza koszt na walutę sprzedaży (costBasisPln / fxRateClose)', () => {
+    expect(lotCostBasis(mixed())).toBeCloseTo(1003.8 / 4.8, 4);
+  });
+
+  it('bez danych PLN fallback do kosztu w walucie kupna (jak dotąd)', () => {
+    const t = mixed();
+    t.costBasisPln = undefined;
+    expect(lotCostBasis(t)).toBeCloseTo(360 * 2.78 + 3, 2);
+  });
+
+  it('grupa propaguje buyCurrency i liczy sensowny weightedProfitLossPct', () => {
+    const groups = groupClosedTrades([mixed()]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].buyCurrency).toBe('PLN');
+    expect(groups[0].currency).toBe('GBP');
+    // Σpl / Σkoszt w JEDNEJ walucie (GBP): 636.88 / (1003.8/4.8) ≈ 304.5%.
+    expect(groups[0].weightedProfitLossPct).toBeCloseTo(304.5, 0);
+  });
+
+  it('grupa bez mieszanych nóg nie dostaje buyCurrency', () => {
+    const groups = groupClosedTrades([makeTrade()]);
+    expect(groups[0].buyCurrency).toBeUndefined();
+  });
+});

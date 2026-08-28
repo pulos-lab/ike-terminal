@@ -94,6 +94,23 @@ export const ISIN_ALIASES_MAP: IsinAliasEntry[] = [
     source: 'https://www.biznesradar.pl/notowania/ZABKA',
     appliesUntil: '2025-12-31',
   },
+  // International Personal Finance plc (marka Provident): delisting z GPW (2021),
+  // notowania zostały tylko na LSE (IPF), pozycję domknął wykup przymusowy
+  // (squeeze-out) 2026. ING księguje kupno pod długim skrótem GPW „PROVIDENT"
+  // bez ISIN-u, a wykup w historii finansowej pod realnym GB00B1YKG049 — bez
+  // aliasu kupno wisi jako pozycja-duch, a wykup jako sprzedaż bez pokrycia.
+  // Join po numerze zlecenia tu nie działa: zlecenie kupna PROVIDENT jako jedyne
+  // nie ma ŻADNEGO wiersza w historii finansowej (zmierzone na pełnym eksporcie).
+  {
+    legacyIsin: 'PROVIDENT',
+    legacyTicker: 'PROVIDENT',
+    canonicalIsin: 'GB00B1YKG049',
+    canonicalTicker: 'PROVIDENT',
+    reason:
+      'International Personal Finance plc (IPF) — delisting z GPW (2021); pozycja domknięta wykupem przymusowym na LSE (2026). ING księguje kupno pod tickerem GPW PROVIDENT bez ISIN-u.',
+    source: 'https://www.biznesradar.pl/notowania/IPF',
+    appliesUntil: '2021-12-31',
+  },
 ];
 
 /**

@@ -39,10 +39,19 @@ export interface TradeGroup {
   isSpread?: boolean;
   /** Czytelna etykieta spreadu ("DECK 90/100 PUT" / "DECK · 3 nogi"); tylko dla isSpread. */
   spreadLabel?: string;
+  /** Waluta nogi kupna, gdy różni się od `currency` (trade mieszany — np. kupno
+   *  GPW/PLN domknięte squeeze-outem LSE/GBP). Etykiety cen kupna idą po niej. */
+  buyCurrency?: string;
 }
 
 /** Koszt nabycia lota — zaangażowany kapitał (cena kupna × ilość + prowizja kupna). */
 export function lotCostBasis(trade: ClosedTrade): number {
+  // Trade mieszany (waluta kupna ≠ waluty sprzedaży): koszt w walucie kupna nie
+  // sumuje się z P/L w walucie sprzedaży — bierzemy koszt przeliczony przez PLN
+  // z powrotem na walutę sprzedaży (kursy z nóg policzone na serwerze).
+  if (trade.buyCurrency && trade.costBasisPln != null && trade.fxRateClose) {
+    return trade.costBasisPln / trade.fxRateClose;
+  }
   return (trade.buyPrice ?? 0) * (trade.quantity ?? 0) + (trade.buyCommission ?? 0);
 }
 
@@ -191,6 +200,7 @@ function buildGroup(
     trades: groupTrades,
     isSpread: isSpread || undefined,
     spreadLabel,
+    buyCurrency: groupTrades.find((t) => t.buyCurrency)?.buyCurrency,
   };
 }
 
