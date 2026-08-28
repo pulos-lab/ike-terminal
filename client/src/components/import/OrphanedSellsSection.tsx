@@ -8,17 +8,25 @@ import { QUERY_KEYS } from '@/lib/query-keys';
 import { formatDate, formatQuantity } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { AlertTriangle, Loader2, RotateCcw } from 'lucide-react';
+import { AddTransactionDialog } from '@/components/transactions/AddTransactionDialog';
 
 /**
- * Kupno spin-off (cena 0) domykające sierocą sprzedaż: dzień przed pierwszą
- * sprzedażą, arytmetyka w UTC na samej części datowej (firstSellDate z importu
- * bywa z czasem, a endpoint wymaga YYYY-MM-DD). Współdzielone z ImportDialog.
+ * Data kupna domykającego sierocą sprzedaż: dzień przed pierwszą sprzedażą,
+ * arytmetyka w UTC na samej części datowej (firstSellDate z importu bywa
+ * z czasem, a endpoint wymaga YYYY-MM-DD).
  */
-export function createSpinoffBuy(orphan: OrphanedSell): Promise<CreateTransactionResult> {
+export function dayBeforeFirstSell(orphan: OrphanedSell): string {
   const buyDate = new Date(orphan.firstSellDate.slice(0, 10) + 'T00:00:00Z');
   buyDate.setUTCDate(buyDate.getUTCDate() - 1);
+  return buyDate.toISOString().slice(0, 10);
+}
+
+/**
+ * Kupno spin-off (cena 0) domykające sierocą sprzedaż. Współdzielone z ImportDialog.
+ */
+export function createSpinoffBuy(orphan: OrphanedSell): Promise<CreateTransactionResult> {
   return api.createTransaction({
-    date: buyDate.toISOString().slice(0, 10),
+    date: dayBeforeFirstSell(orphan),
     ticker: orphan.ticker,
     side: 'K',
     quantity: orphan.missingQuantity,
@@ -38,6 +46,10 @@ export function createSpinoffBuy(orphan: OrphanedSell): Promise<CreateTransactio
 export function OrphanedSellsSection() {
   const queryClient = useQueryClient();
   const [showDismissed, setShowDismissed] = useState(false);
+  /** Sierota, dla której otwarto ręczne dodanie kupna (prefillowany dialog transakcji) —
+   *  ścieżka dla akcji nabytych poza tym rachunkiem (np. IPO w innym DM przypisane
+   *  do konta), gdzie kupno po cenie 0 zafałszowałoby koszt. */
+  const [manualOrphan, setManualOrphan] = useState<OrphanedSell | null>(null);
 
   const { data } = useQuery({
     queryKey: QUERY_KEYS.orphanedSells,
@@ -99,8 +111,9 @@ export function OrphanedSellsSection() {
         <h2 className="text-lg font-semibold">Sprzedaże bez kupna</h2>
         <p className="text-sm text-muted-foreground mt-1">
           Papiery, dla których import znalazł sprzedaż większą niż suma kupien — najczęściej
-          spin-off (akcje otrzymane bez transakcji kupna). Dodaj kupno po cenie 0 albo zignoruj,
-          jeśli to zamierzone.
+          spin-off (akcje otrzymane bez transakcji kupna) albo papiery przeniesione z innego
+          rachunku (np. przydział z IPO w innym domu maklerskim). Dodaj kupno po cenie 0
+          (spin-off), wpisz kupno ręcznie z realną ceną nabycia albo zignoruj, jeśli to zamierzone.
         </p>
       </div>
 
@@ -134,6 +147,15 @@ export function OrphanedSellsSection() {
                     ) : (
                       'Dodaj kupno — spin-off (cena 0)'
                     )}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    disabled={busy}
+                    onClick={() => setManualOrphan(o)}
+                  >
+                    Dodaj kupno ręcznie…
                   </Button>
                   <Button
                     size="sm"
@@ -184,6 +206,34 @@ export function OrphanedSellsSection() {
           )}
         </div>
       )}
+
+      {/* Ręczne kupno domykające sierotę — prefill z wykrycia, cena od usera
+          (realna cena nabycia, np. cena emisyjna z IPO w innym DM). */}
+      <AddTransactionDialog
+        key={`manual-orphan-${manualOrphan?.isin ?? 'none'}`}
+        open={manualOrphan !== null}
+        onClose={() => setManualOrphan(null)}
+        defaultValues={
+          manualOrphan
+            ? {
+                date: dayBeforeFirstSell(manualOrphan),
+                ticker: manualOrphan.ticker,
+                side: 'K',
+                quantity: manualOrphan.missingQuantity,
+                currency: manualOrphan.currency,
+              }
+            : undefined
+        }
+        onCreated={() => {
+          toast.success(
+            manualOrphan
+              ? `Dodano kupno domykające ${manualOrphan.paperName} (${formatQuantity(manualOrphan.missingQuantity)} szt.)`
+              : 'Dodano kupno',
+          );
+          setManualOrphan(null);
+          invalidate();
+        }}
+      />
     </div>
   );
 }

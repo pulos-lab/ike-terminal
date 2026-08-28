@@ -52,6 +52,29 @@ interface DeleteSellTarget {
   quantity: number;
 }
 
+/**
+ * Badge round-tripu z RÓŻNĄ walutą nóg (migracja delistingowa, np. kupno na GPW
+ * w PLN domknięte squeeze-outem na LSE w GBP). Wynik takiego trade'u serwer
+ * przelicza per noga przez PLN — badge tłumaczy, skąd waluty w jednym wierszu.
+ */
+function MixedCurrencyBadge({
+  buyCurrency,
+  sellCurrency,
+}: {
+  buyCurrency?: string;
+  sellCurrency: string;
+}) {
+  if (!buyCurrency) return null;
+  return (
+    <span
+      className="ml-1 text-[10px] font-semibold bg-amber-500/15 text-amber-500 px-1 py-0.5 rounded cursor-help"
+      title={`Kupno w ${buyCurrency}, sprzedaż w ${sellCurrency} — wynik przeliczony przez PLN po kursach z dni transakcji.`}
+    >
+      {buyCurrency}→{sellCurrency}
+    </span>
+  );
+}
+
 function CostCell({ trade, muted }: { trade: ClosedTrade; muted?: boolean }) {
   const totalCost = trade.totalCost || 0;
   if (totalCost <= 0) return <span>—</span>;
@@ -448,6 +471,10 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                             <TableCell className="font-mono font-medium">
                               <TickerLabel ticker={trade.ticker} />
                               <CategoryBadge category={trade.category} />
+                              <MixedCurrencyBadge
+                                buyCurrency={trade.buyCurrency}
+                                sellCurrency={trade.currency}
+                              />
                               {trade.isShort && (
                                 <span className="ml-1 text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
                                   SHORT
@@ -546,6 +573,10 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
                                   <TickerLabel ticker={group.ticker} />
                                 )}
                                 <CategoryBadge category={group.trades[0]?.category} />
+                                <MixedCurrencyBadge
+                                  buyCurrency={group.buyCurrency}
+                                  sellCurrency={group.currency}
+                                />
                                 {group.trades.some((t) => t.isShort) && (
                                   <span className="text-[10px] font-semibold bg-violet-500/15 text-violet-400 px-1 py-0.5 rounded">
                                     {group.spreadLabel

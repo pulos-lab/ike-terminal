@@ -1089,6 +1089,10 @@ export function computeClosedTrades(
       price: number;
       commission: number;
       date: string;
+      /** Waluta notowania nogi kupna — trade z inną walutą nogi sprzedaży (migracja
+       *  delistingowa, np. PROVIDENT: kupno GPW/PLN → squeeze-out LSE/GBP) dostaje
+       *  buyCurrency i jest przeliczany per noga w convertClosedTradesToPln. */
+      currency: string;
       /** Kurs brokera → PLN nogi kupna (patrz legFxToPln). */
       fxToPln?: number;
     }> = [];
@@ -1196,6 +1200,10 @@ export function computeClosedTrades(
               profitLossPct: plPct,
               holdingDays,
               currency: tx.currency,
+              // Short: noga otwarcia = sprzedaż; mieszane waluty nóg oznaczamy,
+              // ale konwersja PLN świadomie ich nie przelicza (patrz fx-history).
+              buyCurrency:
+                shortLot.sellTx.currency !== tx.currency ? shortLot.sellTx.currency : undefined,
               sellTransactionId: shortLot.sellTx.id!,
               sellSource: shortLot.sellTx.source,
               category: tx.category,
@@ -1224,6 +1232,7 @@ export function computeClosedTrades(
               price: tx.price,
               commission: tx.commission * (remaining / tx.quantity),
               date: tx.date,
+              currency: tx.currency,
               fxToPln: legFxToPln(tx),
             });
           }
@@ -1233,6 +1242,7 @@ export function computeClosedTrades(
             price: tx.price,
             commission: tx.commission,
             date: tx.date,
+            currency: tx.currency,
             fxToPln: legFxToPln(tx),
           });
         }
@@ -1273,6 +1283,10 @@ export function computeClosedTrades(
           const feesTotal = lotSwap + lotRollover;
 
           // P/L: use XTB gross profit when available (CFD: includes contract multiplier + FX)
+          // Przy MIESZANYCH walutach nóg (lot.currency ≠ tx.currency) ta różnica jest
+          // placeholderem — convertClosedTradesToPln nadpisze pl/plPct wartością
+          // przeliczoną per noga przez PLN (tożsamość pl+costBasis+prowizje+fees
+          // nadal algebraicznie odtwarza tam wartość sprzedaży w walucie sprzedaży).
           const grossProfitPortion =
             tx.cfdGrossProfit !== undefined
               ? roundTo2(tx.cfdGrossProfit * (matched / tx.quantity))
@@ -1310,6 +1324,7 @@ export function computeClosedTrades(
             profitLossPct: plPct,
             holdingDays,
             currency: tx.currency,
+            buyCurrency: lot.currency !== tx.currency ? lot.currency : undefined,
             sellTransactionId: tx.id!,
             sellSource: tx.source,
             category: tx.category,

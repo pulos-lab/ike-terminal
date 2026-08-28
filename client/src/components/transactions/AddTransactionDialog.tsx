@@ -53,13 +53,16 @@ function inferQuoteFromTicker(t: string): string {
 interface AddTransactionDialogProps {
   open: boolean;
   onClose: () => void;
-  /** Prefill pól przy otwarciu — np. ze skrzynki "Do wyjaśnienia" (hint pominiętego wiersza). */
+  /** Prefill pól przy otwarciu — np. ze skrzynki "Do wyjaśnienia" (hint pominiętego wiersza)
+   *  albo z sekcji „Sprzedaż bez kupna" (kupno domykające sierotę). */
   defaultValues?: {
     date?: string;
     ticker?: string;
     side?: 'K' | 'S';
     quantity?: number;
     price?: number;
+    /** Waluta notowania — np. waluta sierocej sprzedaży; user może nadpisać. */
+    currency?: string;
   };
   /** Wołane po udanym zapisie z id nowej transakcji (resolve wiersza kwarantanny). */
   onCreated?: (id: number) => void;
@@ -175,7 +178,7 @@ export function AddTransactionDialog({
     setPrice(defaultValues?.price ? String(defaultValues.price) : '');
     setCommission('0');
     setCommissionTouched(false);
-    setQuoteCurrency('');
+    setQuoteCurrency(defaultValues?.currency ?? '');
     setPaymentCurrency('auto');
     setFxRate('');
     setCategory('stock');

@@ -322,26 +322,52 @@ export function tryBondGuard(
 }
 
 /**
- * Statyczna mapa spółek trwale wycofanych z obrotu na GPW (delisting). Yahoo/Stooq
- * nie kwotują ich już cen, więc resolver bez tego guardu zwracałby null. Klucz = ISIN.
+ * Statyczna mapa papierów trwale wycofanych z obrotu (delisting). Yahoo/Stooq
+ * nie kwotują ich już cen, więc resolver bez tego guardu zwracałby null — a wpis
+ * z name ≠ ticker nie jest stubem, więc zatrzymuje też wieczną pętlę ponawiania
+ * `resolveUnknownIsins` (retry co 6 h per portfel). Klucz = ISIN.
+ * Pola giełdowe opcjonalne z defaultami GPW/PLN/stooq (historycznie mapa była
+ * GPW-only; wpisy zagraniczne podają swoje).
  *
  * TODO (patrz backlog): docelowo `status`/`category` na `ticker_map` + scraper archiwum
  * GPW zamiast hardcode. Na teraz — analogicznie do NC/bond map — mała mapa wystarcza.
  */
-const DELISTED_GPW = new Map<string, { ticker: string; name: string }>([
+const DELISTED_PAPERS = new Map<
+  string,
+  {
+    ticker: string;
+    name: string;
+    exchange?: TickerMapEntry['exchange'];
+    currency?: string;
+    priceSource?: TickerMapEntry['priceSource'];
+  }
+>([
   ['PLPSTBX00016', { ticker: 'PLASTBOX', name: 'Plast-Box S.A.' }],
+  // International Personal Finance (marka Provident): delisting z GPW 2021,
+  // squeeze-out na LSE 2026 — papier nie kwotuje już nigdzie; pozycje są
+  // domknięte wykupem (parser ING + alias PROVIDENT→GB00B1YKG049).
+  [
+    'GB00B1YKG049',
+    {
+      ticker: 'IPF',
+      name: 'International Personal Finance plc',
+      exchange: 'OTHER',
+      currency: 'GBP',
+      priceSource: 'yahoo',
+    },
+  ],
 ]);
 
 export function tryDelistedGuard(isin: string): TickerMapEntry | null {
-  const entry = DELISTED_GPW.get(isin);
+  const entry = DELISTED_PAPERS.get(isin);
   if (!entry) return null;
   return {
     isin,
     ticker: entry.ticker,
     name: entry.name,
-    exchange: 'GPW',
-    currency: 'PLN',
-    priceSource: 'stooq',
+    exchange: entry.exchange ?? 'GPW',
+    currency: entry.currency ?? 'PLN',
+    priceSource: entry.priceSource ?? 'stooq',
   };
 }
 

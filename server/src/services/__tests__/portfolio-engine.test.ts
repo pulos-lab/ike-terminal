@@ -273,3 +273,68 @@ describe('computeClosedTrades — kursy brokera z nóg (fxRateOpen/Close)', () =
     expect(trades.map((t) => t.fxRateClose).sort()).toEqual([4.1, 4.2]);
   });
 });
+
+describe('computeClosedTrades — mieszane waluty nóg (migracja delistingowa)', () => {
+  const NO_MAP = new Map();
+
+  it('PROVIDENT: kupno GPW/PLN + squeeze-out LSE/GBP → buyCurrency na trade', () => {
+    // Realne liczby: K 360 @ 2,78 PLN (+3,00 prowizji, 2020), syntetyczna S
+    // 360 @ 2,35 GBP z wykupu przymusowego (2026, reconcileIngRedemptions).
+    const txs = [
+      makeTx({
+        side: 'K',
+        quantity: 360,
+        price: 2.78,
+        commission: 3,
+        date: '2020-07-31T09:52:38',
+        currency: 'PLN',
+        paymentCurrency: 'PLN',
+        isin: 'GB00B1YKG049',
+        id: 1,
+      }),
+      makeTx({
+        side: 'S',
+        quantity: 360,
+        price: 2.35,
+        commission: 0,
+        date: '2026-08-19',
+        currency: 'GBP',
+        paymentCurrency: 'GBP',
+        isin: 'GB00B1YKG049',
+        id: 2,
+      }),
+    ];
+    const trades = computeClosedTrades(txs, NO_MAP);
+    expect(trades).toHaveLength(1);
+    const t = trades[0];
+    expect(t.buyCurrency).toBe('PLN');
+    expect(t.currency).toBe('GBP');
+    expect(t.costBasis).toBeCloseTo(360 * 2.78 + 3, 2); // 1003.80, w walucie KUPNA
+    expect(t.quantity).toBe(360);
+    // ING nie rozlicza nóg przez PLN-FX brokera → kursy uzupełni konwersja.
+    expect(t.fxRateOpen).toBeUndefined();
+    expect(t.fxRateClose).toBeUndefined();
+  });
+
+  it('obie nogi w tej samej walucie → buyCurrency nieustawione (payload bez zmian)', () => {
+    const txs = [
+      makeTx({ side: 'K', quantity: 10, price: 100, date: '2024-01-01', currency: 'USD', id: 1 }),
+      makeTx({ side: 'S', quantity: 10, price: 110, date: '2024-02-01', currency: 'USD', id: 2 }),
+    ];
+    const trades = computeClosedTrades(txs, NO_MAP);
+    expect(trades).toHaveLength(1);
+    expect(trades[0].buyCurrency).toBeUndefined();
+  });
+
+  it('mieszany SHORT: buyCurrency z nogi otwarcia (sprzedaży)', () => {
+    const txs = [
+      makeTx({ side: 'S', quantity: 5, price: 50, date: '2024-01-01', currency: 'USD', id: 1 }),
+      makeTx({ side: 'K', quantity: 5, price: 40, date: '2024-02-01', currency: 'EUR', id: 2 }),
+    ];
+    const trades = computeClosedTrades(txs, NO_MAP);
+    expect(trades).toHaveLength(1);
+    expect(trades[0].isShort).toBe(true);
+    expect(trades[0].buyCurrency).toBe('USD'); // otwarcie shorta
+    expect(trades[0].currency).toBe('EUR'); // zamknięcie (odkup)
+  });
+});

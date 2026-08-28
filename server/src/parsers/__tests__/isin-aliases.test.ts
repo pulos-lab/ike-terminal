@@ -49,3 +49,18 @@ describe('applyIsinAlias', () => {
     }
   });
 });
+
+describe('applyIsinAlias — PROVIDENT (delisting GPW → squeeze-out LSE)', () => {
+  it('kupno z 2020 (GPW) dostaje ISIN wykupu z LSE', () => {
+    const r = applyIsinAlias('PROVIDENT', 'PROVIDENT', '2020-07-31T09:52:38');
+    expect(r).toEqual({
+      isin: 'GB00B1YKG049',
+      paperName: 'PROVIDENT',
+      aliasApplied: true,
+    });
+  });
+
+  it('data po delistingu z GPW (appliesUntil 2021-12-31) → bez aliasu', () => {
+    expect(applyIsinAlias('PROVIDENT', 'PROVIDENT', '2022-06-01').aliasApplied).toBe(false);
+  });
+});

@@ -306,6 +306,16 @@ export interface ClosedTrade {
   profitLossPct: number;
   holdingDays: number;
   currency: string;
+  /**
+   * Waluta nogi OTWARCIA, ustawiana WYŁĄCZNIE gdy różni się od `currency` (nogi
+   * zamknięcia) — trade „mieszany", np. migracja delistingowa: kupno na GPW w PLN,
+   * squeeze-out na LSE w GBP (PROVIDENT/IPF). Dla takich trade'ów `costBasis`
+   * pozostaje w buyCurrency, a `profitLoss`/`profitLossPct` po przejściu przez
+   * convertClosedTradesToPln wyrażają wynik przeliczony PER NOGA przez PLN
+   * (koszt po kursie z dnia otwarcia, przychód z dnia zamknięcia), w walucie
+   * zamknięcia. Brak pola = obie nogi w `currency` (100% dotychczasowych trade'ów).
+   */
+  buyCurrency?: string;
   sellTransactionId: number;
   sellSource: RecordSource;
   category?: InstrumentCategory;
@@ -313,8 +323,9 @@ export interface ClosedTrade {
   totalCost?: number;
   isShort?: boolean;
   /**
-   * Zaangażowany kapitał w walucie instrumentu: qty × buyPrice × bondMult + prowizja
-   * otwarcia (dla short: wartość otwarcia shorta; dla CFD z cfdGrossProfit: notional).
+   * Zaangażowany kapitał w walucie NOGI OTWARCIA (buyCurrency ?? currency):
+   * qty × buyPrice × bondMult + prowizja otwarcia (dla short: wartość otwarcia
+   * shorta; dla CFD z cfdGrossProfit: notional).
    * Mianownik dla zagregowanego P/L% — w przeciwieństwie do buyPrice × qty po stronie
    * klienta uwzględnia nominał obligacji i mnożnik kontraktu CFD.
    */

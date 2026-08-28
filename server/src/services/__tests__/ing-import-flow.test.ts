@@ -74,6 +74,8 @@ describe('bulkImport — ING: transakcje + historia finansowa per waluta', () =>
   afterAll(() => {
     connection.closeDb('test-ing');
     connection.closeDb('test-ing-dedup');
+    connection.closeDb('test-ing-heal');
+    connection.closeDb('test-ing-alias-heal');
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -140,5 +142,93 @@ describe('bulkImport — ING: transakcje + historia finansowa per waluta', () =>
     expect(second.operationsImported).toBe(0);
     expect(txRepo.getAllTransactions(PID)).toHaveLength(txCountAfterFirst);
     expect(opsRepo.getAllOperations(PID)).toHaveLength(opsCountAfterFirst);
+  });
+});
+
+describe('bulkImport — ING: healing pseudo→realny ISIN przy re-imporcie', () => {
+  let bulkImport: typeof import('../import-service.js').bulkImport;
+  let txRepo: typeof import('../../db/transactions-repo.js');
+
+  beforeAll(async () => {
+    ({ bulkImport } = await import('../import-service.js'));
+    txRepo = await import('../../db/transactions-repo.js');
+  });
+
+  it('import bez ops → pseudo-ISIN; dosłanie plików ops leczy wiersze w DB bez dubli', async () => {
+    const PID = 'test-ing-heal';
+
+    // Runda 1: same transakcje (bez historii finansowej) — jak import v1 bez ops.
+    const first = await bulkImport({
+      transactionsFiles: [{ buffer: tx(TX_ROWS), originalname: 'historiaTransakcji_test.csv' }],
+      portfolioId: PID,
+    });
+    expect(first.success).toBe(true);
+    expect(first.transactionsImported).toBe(3);
+    const afterFirst = txRepo.getAllTransactions(PID);
+    // Bez pliku ops nie ma joinu — pseudo-ISIN = ticker (alias ZKA1→ZABKA już w parserze).
+    expect(
+      afterFirst.filter((t) => t.paperName === 'PKNORLEN').every((t) => t.isin === 'PKNORLEN'),
+    ).toBe(true);
+    expect(afterFirst.find((t) => t.paperName === 'ZABKA')?.isin).toBe('ZABKA');
+
+    // Runda 2: pełny komplet (te same transakcje + historia finansowa per waluta).
+    const second = await bulkImport(bulkInput(PID));
+    expect(second.success).toBe(true);
+    // Healing PRZED insertami: wiersze w DB przepisane na realne ISIN-y, więc
+    // dedup zliczeniowy paruje je z dzisiejszymi (też realnymi) — zero dubli.
+    expect(second.transactionsImported).toBe(0);
+    expect(second.crossFileWarnings?.some((w) => w.includes('doszyto ISIN'))).toBe(true);
+
+    const afterSecond = txRepo.getAllTransactions(PID);
+    // 3 wiersze z plików + 1 syntetyczna S wykupu — bez duplikatów.
+    expect(afterSecond).toHaveLength(4);
+    expect(
+      afterSecond.filter((t) => t.paperName === 'PKNORLEN').every((t) => t.isin === 'PLPKN0000018'),
+    ).toBe(true);
+    expect(afterSecond.find((t) => t.paperName === 'ZABKA')?.isin).toBe('LU2910446546');
+  });
+
+  it('heal aliasowy: wiersz sprzed dodania wpisu do mapy (PROVIDENT) + wykup domyka pozycję', async () => {
+    const PID = 'test-ing-alias-heal';
+
+    // Symulacja importu sprzed aliasu PROVIDENT: wiersz ING z pseudo-ISIN-em w DB.
+    txRepo.insertTransactionsWithDedup(
+      [
+        {
+          date: '2020-07-31T09:52:38',
+          paperName: 'PROVIDENT',
+          isin: 'PROVIDENT',
+          quantity: 360,
+          side: 'K',
+          price: 2.78,
+          value: 1000.8,
+          commission: 3,
+          total: 1003.8,
+          currency: 'PLN',
+          paymentCurrency: 'PLN',
+          source: 'ing',
+        },
+      ],
+      PID,
+    );
+
+    // Dosłanie SAMEGO pliku GBP (wykup przymusowy) — healing musi zadziałać
+    // przed reconcile, żeby syntetyczna S trafiła w wyleczone kupno.
+    const result = await bulkImport({
+      operationsFiles: [{ buffer: ops(OPS_GBP_ROWS), originalname: 'historiaFinansowa_gbp.csv' }],
+      portfolioId: PID,
+    });
+    expect(result.success).toBe(true);
+    expect(result.crossFileWarnings?.some((w) => w.includes('PROVIDENT'))).toBe(true);
+    expect(result.syntheticSells).toBe(1);
+
+    const txs = txRepo.getAllTransactions(PID);
+    const buy = txs.find((t) => t.side === 'K')!;
+    expect(buy).toMatchObject({ paperName: 'PROVIDENT', isin: 'GB00B1YKG049' });
+    const sell = txs.find((t) => t.side === 'S')!;
+    expect(sell).toMatchObject({ isin: 'GB00B1YKG049', quantity: 360, currency: 'GBP' });
+    // Pozycja domknięta 360/360 → wykup NIE jest już sierotą.
+    expect(result.orphanedSells?.some((o) => o.isin === 'GB00B1YKG049')).toBeFalsy();
+    expect(result.crossFileWarnings?.some((w) => w.includes('Sprzedaż bez kupna'))).toBeFalsy();
   });
 });
