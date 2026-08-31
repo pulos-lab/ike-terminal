@@ -334,7 +334,14 @@ export async function buildHistoryView(
   // wewnętrzny fallback na stałą gdy sieć padnie); przybliżenie dla PLN.
   const riskFreeRatePct = (await riskFreeRate(1)) * 100;
 
-  return { history: result.history, metrics: result.metrics, baseCurrency, riskFreeRatePct };
+  return {
+    history: result.history,
+    metrics: result.metrics,
+    baseCurrency,
+    riskFreeRatePct,
+    unpricedInstruments:
+      result.unpricedInstruments.length > 0 ? result.unpricedInstruments : undefined,
+  };
 }
 
 /** Otwarte pozycje + cash — ciało dawnego GET /api/portfolio/positions. */

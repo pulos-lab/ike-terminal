@@ -72,6 +72,24 @@ describe('toPublicHistory', () => {
     expect(pub.metrics.totalInvested).toBe(12000);
   });
 
+  it('unpricedInstruments (nazwy papierów właściciela) nie wycieka do widoku publicznego', () => {
+    const withUnpriced = {
+      ...RESPONSE,
+      unpricedInstruments: [
+        {
+          isin: 'BRIJU',
+          name: 'BRIJU',
+          firstHeld: '2017-03-15',
+          lastHeld: '2017-09-15',
+          mode: 'tx-price-fallback' as const,
+        },
+      ],
+    };
+    for (const showAmounts of [true, false]) {
+      expect(toPublicHistory(withUnpriced, showAmounts)).not.toHaveProperty('unpricedInstruments');
+    }
+  });
+
   it('showAmounts=false: normalizuje kwoty (ostatnia wartość = 1000), % nietknięte', () => {
     const pub = toPublicHistory(RESPONSE, false);
     const last = pub.history[pub.history.length - 1];

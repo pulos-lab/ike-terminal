@@ -1149,6 +1149,24 @@ export interface PortfolioGreeksResponse {
   asOf: string;
 }
 
+/**
+ * Instrument wyceniany w historii portfela BEZ notowań providera — delisted/
+ * nierozpoznany papier, którego seria budowana jest wyłącznie z cen transakcji
+ * użytkownika (kotwice + interpolacja + forward-fill). Metadane do banera
+ * „wycena częściowo przybliżona" na dashboardzie.
+ */
+export interface UnpricedInstrument {
+  isin: string;
+  /** Nazwa/ticker do wyświetlenia (paperName z transakcji lub name z ticker_map). */
+  name: string;
+  /** Pierwszy dzień posiadania (data pierwszej transakcji, YYYY-MM-DD). */
+  firstHeld: string;
+  /** Dzień domknięcia pozycji do zera (YYYY-MM-DD) albo null, gdy nadal trzymana. */
+  lastHeld: string | null;
+  /** Tryb wyceny — na razie jedyny: seria z cen transakcji. */
+  mode: 'tx-price-fallback';
+}
+
 export interface PortfolioHistoryResponse {
   history: PortfolioHistoryPoint[];
   metrics: PortfolioMetrics;
@@ -1159,6 +1177,12 @@ export interface PortfolioHistoryResponse {
    * przybliżenie dla portfeli PLN) — do Sharpe/Sortino/alfa po stronie klienta.
    */
   riskFreeRatePct: number;
+  /**
+   * Instrumenty bez historii notowań w JAKIMKOLWIEK źródle (delisted itp.) —
+   * ich okresy wyceniono z cen transakcji. Puste/brak = pełne pokrycie.
+   * NIE trafia do widoku publicznego (share-redaction buduje odpowiedź jawnie).
+   */
+  unpricedInstruments?: UnpricedInstrument[];
 }
 
 /**
