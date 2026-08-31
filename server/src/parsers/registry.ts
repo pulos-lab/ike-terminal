@@ -15,6 +15,7 @@ import { parseBossaOperations, isBossaOperationsFormat } from './bossa-operation
 import { parseMbankTransactions, isMbankFormat } from './mbank-transactions.js';
 import { parseMbankOperations, isMbankOperationsFormat } from './mbank-operations.js';
 import { parseIngTransactions, isIngFormat } from './ing-transactions.js';
+import { parsePkoTransactions, isPkoFormat } from './pko-transactions.js';
 import { parseIngOperations, isIngOperationsFormat } from './ing-operations.js';
 import { parseDegiroTransactions, isDegiroFormat } from './degiro-transactions.js';
 import {
@@ -113,6 +114,16 @@ export const PARSER_REGISTRY: BrokerParser[] = [
     detectOperations: isBossaOperationsFormat,
     parseOperations: parseBossaOperations,
     needsNameResolution: false,
+  },
+  {
+    id: 'pko',
+    label: 'PKO BP Biuro Maklerskie',
+    detect: isPkoFormat,
+    parse: parsePkoTransactions,
+    // Raport transakcji to jedyny znany format PKO — historii rachunku
+    // pieniężnego (dywidendy, wpłaty) nie mamy jeszcze na oczy widzianej.
+    supportsOperations: false,
+    needsNameResolution: true,
   },
   {
     // ING celowo OSTATNIE: jego pliki nie mają nagłówka, więc detekcja idzie po

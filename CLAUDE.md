@@ -72,6 +72,12 @@ Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPasswor
    - Wykup przymusowy (kategoria PUSTA) → `RedemptionMarker(source 'ing')` z jawnym qty/ceną z opisu; `reconcileIngRedemptions` wstawia syntetyczną S TAKŻE bez zakupów w historii (ucięty eksport → skrzynka „Sprzedaż bez kupna")
    - PUŁAPKI LICZB: prowizja z KROPKĄ dziesiętną obok wartości z przecinkiem + NBSP tysięcy w jednym wierszu (parseNumber per pole OK); w opisach historii kropka = separator TYSIĘCY („1.000 x 4,70" = 1000 szt → `parseIngDescQty`); archiwalne eksporty (~2020) mają nagłówek i czas `09-00-00`
    - PDA z IPO: przydział Żabki księgowany jako ZKA1, sprzedaż jako ZABKA → alias w `ISIN_ALIASES_MAP`
+8. **PKO BP Biuro Maklerskie (Supermakler)** — „Raport transakcji" CSV (średnik, UTF-8 z BOM); NA RAZIE TYLKO TRANSAKCJE — historii rachunku pieniężnego (dywidendy/wpłaty/podatek) nie mamy jeszcze na żadnej próbce
+   - DWA pokolenia nazw kolumn: bieżące (`Walor;Giełda;Waluta notowania;…;Numer transakcji`, data `DD-MM-YYYY`, `Kupno`/`Sprzedaż`, `Zrealizowane`) i archiwalne z 2021 (`Walor(Portfel);…;Kurs - waluta;…;Nr.transakcji`, data ISO, `K`/`S`, `Wykonane`) — zmieniły się też KOLEJNOŚĆ kolumn, więc mapowanie wyłącznie po nazwach
+   - **Stopka sum na końcu pliku** (bez daty/waloru) obejmuje TAKŻE wiersze `Unieważnione` → nie jest sumą kontrolną importu; anulowane lecą do `cancelled_trade` + zbiorcze ostrzeżenie (realny plik: 9 z 119 wierszy)
+   - Prowizja rozdzielona między fills jednego `Id zlecenia` bez proporcji (0,00 obok 1,90) — suma per zlecenie daje równą stawkę; bierzemy per wiersz wprost
+   - Ticker = 9-znakowy skrót GPW bez ISIN → pseudo-ISIN = skrót (ścieżka mBanka, `needsNameResolution`); resolver trafia po `short_name` z katalogu biznesradar, sufiks rynku (`-NC`) zostaje jak w Bossie
+   - Waluty: realne pliki są złotowe, konwencji kolumny `Kurs przewalutowania` NIE potwierdza żadna próbka → przy rozjeździe walut kurs liczymy z kwot (payment-per-quote, wzorzec mBanka), a kolumna z pliku służy tylko do kontroli (rozjazd >2% → ostrzeżenie)
 - Auto-detekcja formatu po nagłówkach CSV/XLSX — użytkownik nie musi wskazywać brokera
 - **Jak każdy parser identyfikuje papier** (co trafia do `isin`/`paperName`, pseudo-ISIN-y, waluty, którą gałęzią idzie resolver): `docs/parsery-identyfikacja-papieru.md`
 
