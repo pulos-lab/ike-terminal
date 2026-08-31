@@ -62,8 +62,11 @@ const MAX_MEMO_ENTRIES = 24;
  * v9: TWR odporny na wartość bliską zeru/ujemną (formuła standardowa + zamrożenie <5%
  *     szczytu, bez fałszywego Modified Dietz) + brak blipa dnia przypisania (akcje po strike
  *     nie nadpisują kursu rynkowego).
+ * v10: syntetyczne wpisy dla papierów bez ticker_map (delisted) — wycena z cen
+ *     transakcji zamiast twardego zera (koniec startu wykresu od −50% i skoków
+ *     przy sprzedaży) + metadane unpricedInstruments.
  */
-const ENGINE_VERSION = 9;
+const ENGINE_VERSION = 10;
 
 const memo = new Map<string, Promise<HistoryResult>>();
 

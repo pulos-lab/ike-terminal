@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { createChart, LineSeries, type IChartApi } from 'lightweight-charts';
 import { useTheme } from '@/lib/use-theme';
+import { CHART_MIN_BAR_SPACING } from '@/lib/chart-options';
 
 interface ChartDataPoint {
   date: string;
@@ -56,6 +57,7 @@ export function PortfolioChart({
       timeScale: {
         borderColor: isDark ? '#27272a' : '#ddd5c8',
         timeVisible: false,
+        minBarSpacing: CHART_MIN_BAR_SPACING,
       },
       crosshair: {
         horzLine: { labelBackgroundColor: isDark ? '#27272a' : '#1c1917' },

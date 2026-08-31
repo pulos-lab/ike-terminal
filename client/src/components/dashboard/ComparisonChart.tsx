@@ -3,6 +3,7 @@ import { createChart, LineSeries, type IChartApi, type ISeriesApi } from 'lightw
 import type { CompareSeries } from '@/lib/compare-series';
 import { BENCHMARK_COLOR } from '@/lib/chart-palette';
 import { useTheme } from '@/lib/use-theme';
+import { CHART_MIN_BAR_SPACING } from '@/lib/chart-options';
 
 export interface BenchmarkLine {
   label: string;
@@ -56,6 +57,7 @@ export function ComparisonChart({ series, mode, benchmark }: Props) {
       timeScale: {
         borderColor: isDark ? '#27272a' : '#ddd5c8',
         timeVisible: false,
+        minBarSpacing: CHART_MIN_BAR_SPACING,
       },
       crosshair: {
         horzLine: { labelBackgroundColor: isDark ? '#27272a' : '#1c1917' },

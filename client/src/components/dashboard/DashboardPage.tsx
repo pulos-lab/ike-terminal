@@ -281,6 +281,36 @@ export function DashboardPage() {
     return (new Date(max).getTime() - new Date(min).getTime()) / 86400000 > 7;
   }, [chartSeries]);
 
+  // Instrumenty bez historii notowań (delisted itp.) — silnik wycenia ich okresy
+  // z cen transakcji. Notka pod wykresem, chowana per portfel i ZESTAW
+  // instrumentów: pojawienie się nowego nieznanego papieru pokazuje ją ponownie.
+  const unpriced = data?.unpricedInstruments ?? [];
+  const unpricedKey = unpriced
+    .map((u) => u.isin)
+    .sort()
+    .join(',');
+  const [dismissedUnpricedKey, setDismissedUnpricedKey] = useLocalStorage(
+    `dashboard-unpriced-dismissed-${activeId}`,
+    '',
+  );
+  const unpricedNotice = useMemo(() => {
+    if (unpriced.length === 0 || dismissedUnpricedKey === unpricedKey) return null;
+    const label = (u: (typeof unpriced)[number]) => {
+      const from = u.firstHeld.slice(0, 4);
+      const to = u.lastHeld?.slice(0, 4);
+      const period = to ? (to === from ? from : `${from}–${to}`) : `od ${from}`;
+      return `${u.name} (${period})`;
+    };
+    const shown = unpriced.slice(0, 3).map(label).join(', ');
+    const more = unpriced.length - 3;
+    return (
+      `Wycena częściowo przybliżona — brak historii notowań dla: ${shown}` +
+      `${more > 0 ? ` i ${more} więcej` : ''}. ` +
+      `Okresy bez notowań wyceniono po cenach z Twoich transakcji.`
+    );
+  }, [unpriced, unpricedKey, dismissedUnpricedKey]);
+  const dismissUnpricedNotice = () => setDismissedUnpricedKey(unpricedKey);
+
   function selectPreset(range: string) {
     setTimeRange(range);
   }
@@ -667,6 +697,21 @@ export function DashboardPage() {
               <Info className="mt-0.5 h-3 w-3 shrink-0" />
               Portfele mają różne daty startu w tym zakresie — każda linia startuje od 0% od
               własnego pierwszego punktu.
+            </p>
+          )}
+
+          {!compareMode && unpricedNotice && (
+            <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+              <Info className="mt-0.5 h-3 w-3 shrink-0" />
+              <span className="flex-1">{unpricedNotice}</span>
+              <button
+                type="button"
+                className="shrink-0 hover:text-foreground transition-colors"
+                aria-label="Ukryj informację o przybliżonej wycenie"
+                onClick={dismissUnpricedNotice}
+              >
+                <X className="h-3 w-3" />
+              </button>
             </p>
           )}
         </CardContent>

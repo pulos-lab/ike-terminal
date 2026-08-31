@@ -3,6 +3,7 @@ import { createChart, AreaSeries, type IChartApi, type ISeriesApi } from 'lightw
 import { formatCurrency } from '@/lib/formatters';
 import { useTheme } from '@/lib/use-theme';
 import { Maximize2 } from 'lucide-react';
+import { CHART_MIN_BAR_SPACING } from '@/lib/chart-options';
 
 interface CashFlowChartProps {
   data: { date: string; netCashFlow: number; portfolioValue: number }[];
@@ -53,6 +54,7 @@ export function CashFlowChart({ data, currency, showPortfolio, showCashFlow }: C
         borderColor: isDark ? '#27272a' : '#e4e4e7',
         timeVisible: false,
         lockVisibleTimeRangeOnResize: true,
+        minBarSpacing: CHART_MIN_BAR_SPACING,
       },
       crosshair: {
         horzLine: { labelBackgroundColor: isDark ? '#27272a' : '#18181b' },

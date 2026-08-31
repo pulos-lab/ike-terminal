@@ -53,7 +53,12 @@ import {
   parseOccTicker,
   optionIntrinsicValue,
 } from 'shared';
-import type { InstrumentCategory, OptionContract, ParsedOptionSymbol } from 'shared';
+import type {
+  InstrumentCategory,
+  OptionContract,
+  ParsedOptionSymbol,
+  UnpricedInstrument,
+} from 'shared';
 
 // ============ Bond Helpers ============
 
@@ -1924,6 +1929,9 @@ export async function computePortfolioHistory(
    *  1/USDPLN). Wyjście eksponowane dla downstream consumers (computeCashFlow
    *  i inne) którzy potrzebują konwertować wartości bez re-fetchu. */
   dailyFxRates: Map<string, Map<string, number>>;
+  /** Instrumenty wycenione bez notowań providera (seria z cen transakcji) —
+   *  metadane do banera „wycena częściowo przybliżona" na dashboardzie. */
+  unpricedInstruments: UnpricedInstrument[];
 }> {
   const baseCur = baseCurrency.toUpperCase();
   // Determine date range
@@ -2022,10 +2030,48 @@ export async function computePortfolioHistory(
     if (so.status === 'applied' && allIsins.has(so.parentIsin)) allIsins.add(so.childIsin);
   }
 
+  // ── Syntetyczne wpisy dla papierów BEZ ticker_map (delisted/nierozpoznane) ──
+  // Pozycja bez wpisu była dotąd TWARDO pomijana w wycenie dziennej (`if (!entry)
+  // continue` niżej) — kontrybucja 0 przy zdjętej gotówce za kupno → wykres startował
+  // głęboko pod kreską i skakał przy sprzedaży. Zmierzone na pełnym imporcie ING
+  // 2017→2026 (BRIJU/GETBACK — delisted; żadne źródło nie ma ich historii:
+  // biznesradar i Yahoo → 404, Stooq historyczny martwy). Wpis in-memory (BEZ zapisu
+  // do DB — zamknięte pozycje celowo nie dostają stubów przy imporcie) wpuszcza
+  // papier w istniejącą maszynerię wyceny z cen transakcji: kotwice tx-price,
+  // interpolacja między transakcjami i forward-fill.
+  const syntheticIsins = new Set<string>();
+  {
+    const augmented = new Map(tickerMap);
+    const takenTickers = new Set<string>();
+    for (const e of tickerMap.values()) takenTickers.add(e.ticker);
+    for (const tx of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
+      if (augmented.has(tx.isin) || tx.price <= 0) continue;
+      // Guard kolizji: paperName martwego papieru bywa RÓWNY tickerowi żywego
+      // wpisu innego ISIN-u (recykling kodów GPW) — klucz serii musi być unikalny,
+      // inaczej wycena podpięłaby się pod CUDZE notowania.
+      const ticker = takenTickers.has(tx.paperName) ? `${tx.paperName}~${tx.isin}` : tx.paperName;
+      takenTickers.add(ticker);
+      augmented.set(tx.isin, {
+        isin: tx.isin,
+        ticker,
+        name: tx.paperName,
+        exchange: 'OTHER',
+        currency: tx.currency,
+        priceSource: 'yahoo',
+      });
+      syntheticIsins.add(tx.isin);
+    }
+    // Lokalna kopia — mapa wywołującego pozostaje nietknięta.
+    tickerMap = augmented;
+  }
+
   // Fetch historical prices for all tickers + FX
   const tickersToFetch: Array<{ isin: string; ticker: string; source: string; currency: string }> =
     [];
   for (const isin of allIsins) {
+    // Syntetyki NIE idą do sieci: nie mają źródła (pusty strzał/404), a symbol
+    // z gołego paperName mógłby trafić w CUDZY papier u providera.
+    if (syntheticIsins.has(isin)) continue;
     const entry = tickerMap.get(isin);
     if (entry) {
       tickersToFetch.push({
@@ -2192,6 +2238,50 @@ export async function computePortfolioHistory(
   }
 
   await Promise.all(fetchPromises);
+
+  // Seed pustych serii syntetyków — pętle kotwic tx-price i interpolacji niżej
+  // wymagają ISTNIEJĄCEJ mapy; punkty dosypią się z cen transakcji.
+  for (const isin of syntheticIsins) {
+    const t = tickerMap.get(isin)!.ticker;
+    if (!historicalPrices.has(t)) historicalPrices.set(t, new Map());
+  }
+
+  // ── Pokrycie notowaniami — migawka PO fetchach, PRZED kotwicami z cen transakcji ──
+  // Pusta seria w tym punkcie = instrument wyceniany wyłącznie z cen transakcji
+  // (syntetyki oraz stuby delisted z martwym symbolem). Opcje wyłączone — mają
+  // własny tor wyceny (premia/intrinsic), wygasłe kontrakty ZAWSZE mają pustą serię.
+  const unpricedInstruments: UnpricedInstrument[] = [];
+  {
+    const unpricedIsins: string[] = [];
+    for (const isin of allIsins) {
+      const entry = tickerMap.get(isin);
+      if (!entry) continue;
+      if (isin.startsWith('OPT:')) continue;
+      const serie = historicalPrices.get(entry.ticker);
+      if (!serie || serie.size === 0) unpricedIsins.push(isin);
+    }
+    for (const isin of unpricedIsins) {
+      const txs = transactions
+        .filter((t) => t.isin === isin)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (txs.length === 0) continue; // np. dziecko spin-offu bez własnych transakcji
+      const entry = tickerMap.get(isin)!;
+      let net = 0;
+      let lastHeld: string | null = null;
+      for (const t of txs) {
+        net += t.side === 'K' ? t.quantity : -t.quantity;
+        lastHeld = Math.abs(net) < 0.001 ? t.date.slice(0, 10) : null;
+      }
+      unpricedInstruments.push({
+        isin,
+        name: entry.name || txs[0].paperName,
+        firstHeld: txs[0].date.slice(0, 10),
+        lastHeld,
+        mode: 'tx-price-fallback',
+      });
+    }
+    unpricedInstruments.sort((a, b) => a.firstHeld.localeCompare(b.firstHeld));
+  }
 
   // ── Opcje: seria wyceny = premia rynkowa (forward-fill) z floorem intrinsic ──
   // Yahoo v8 chart MA historię premii aktywnych kontraktów OCC (seria rzadka — opcje
@@ -2657,10 +2747,15 @@ export async function computePortfolioHistory(
       );
       prevPrices.set(entry.ticker, price);
 
-      // Yahoo returns London-listed prices in GBX (pence) — convert to GBP
+      // Yahoo returns London-listed prices in GBX (pence) — convert to GBP.
+      // Syntetyk z walutą GBX: seria budowana z cen transakcji jest w pensach,
+      // a ticker nie ma sufiksu .L — bez tej gałęzi kurs szedłby ×100 do fx GBP.
       const upperCur = entry.currency.toUpperCase();
       const isGbx = upperCur === 'GBP' || upperCur === 'GBX';
-      if (isGbx && entry.ticker.endsWith('.L')) {
+      if (
+        isGbx &&
+        (entry.ticker.endsWith('.L') || (syntheticIsins.has(isin) && upperCur === 'GBX'))
+      ) {
         price = price / 100;
       }
 
@@ -2831,7 +2926,7 @@ export async function computePortfolioHistory(
     totalCapitalReturn,
   };
 
-  return { history, metrics, detectedSplits: allSplits, dailyFxRates };
+  return { history, metrics, detectedSplits: allSplits, dailyFxRates, unpricedInstruments };
 }
 
 // ============ Cash Flow History ============
