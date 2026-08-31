@@ -24,19 +24,19 @@ Resolver **nie wie, z którego parsera przyszła transakcja**. Dostaje trzy stri
 
 ## Zestawienie zbiorcze
 
-| | **Bossa** | **DEGIRO** | **IBKR** | **XTB** | **mBank** | **ING** | **T212** |
-|---|---|---|---|---|---|---|---|
-| format | CSV `;` | CSV `,` | HTML | XLSX | CSV `;`/`,` | CSV `;` **bez nagłówka** | CSV `,` |
-| **ISIN w pliku** | ✅ | ✅ | ✅ (osobna sekcja) | ❌ | ❌ | ❌ w transakcjach, ✅ w opisach historii finansowej | ✅ |
-| ticker w pliku | ✅ | ❌ | ✅ | ✅ lub nazwa | ❌ | ✅ (długi skrót GPW) | ✅ |
-| `isin` w bazie | realny ISIN | realny ISIN | realny ISIN | ticker Yahoo | nazwa 1:1 | **realny — doszyty joinem po nr zlecenia** (fallback: ticker 1:1) | realny ISIN |
-| `paperName` | ticker z sufiksami | nazwa produktu | `Description` | **= `isin`** | **= `isin`** | ticker GPW | `Name` |
-| pseudo-ISIN | — | — | awaryjnie | **zawsze** | **zawsze** | tylko bez pliku ops | — |
-| `paymentCurrency` | `PLN` → reconcile | `EUR` → reconcile | **= `currency`** | waluta konta | z pliku | `PLN` na sztywno | `Currency (Total)` |
-| `fxRate` | — | ✅ (odwrócony) | — | ✅ | ✅ (wyliczony) | — | ✅ (odwrócony) |
-| ułamkowe akcje | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
-| kategorie | `bond` | — | `stock`/`etf`/`bond`/`option` | `stock`/`etf`/`cfd` | — | — | — |
-| zmiany ISIN | — | — | ✅ | aliasy tickerów | — | alias PDA (ZKA1→ZABKA) | — |
+| | **Bossa** | **DEGIRO** | **IBKR** | **XTB** | **mBank** | **ING** | **PKO** | **T212** |
+|---|---|---|---|---|---|---|---|---|
+| format | CSV `;` | CSV `,` | HTML | XLSX | CSV `;`/`,` | CSV `;` **bez nagłówka** | CSV `;` UTF-8 z BOM | CSV `,` |
+| **ISIN w pliku** | ✅ | ✅ | ✅ (osobna sekcja) | ❌ | ❌ | ❌ w transakcjach, ✅ w opisach historii finansowej | ❌ | ✅ |
+| ticker w pliku | ✅ | ❌ | ✅ | ✅ lub nazwa | ❌ | ✅ (długi skrót GPW) | ✅ (skrót GPW) | ✅ |
+| `isin` w bazie | realny ISIN | realny ISIN | realny ISIN | ticker Yahoo | nazwa 1:1 | **realny — doszyty joinem po nr zlecenia** (fallback: ticker 1:1) | skrót 1:1 | realny ISIN |
+| `paperName` | ticker z sufiksami | nazwa produktu | `Description` | **= `isin`** | **= `isin`** | ticker GPW | **= `isin`** (z sufiksem `-NC`) | `Name` |
+| pseudo-ISIN | — | — | awaryjnie | **zawsze** | **zawsze** | tylko bez pliku ops | **zawsze** | — |
+| `paymentCurrency` | `PLN` → reconcile | `EUR` → reconcile | **= `currency`** | waluta konta | z pliku | `PLN` na sztywno | z pliku (`Waluta Wartość`) | `Currency (Total)` |
+| `fxRate` | — | ✅ (odwrócony) | — | ✅ | ✅ (wyliczony) | — | ✅ (wyliczony) | ✅ (odwrócony) |
+| ułamkowe akcje | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| kategorie | `bond` | — | `stock`/`etf`/`bond`/`option` | `stock`/`etf`/`cfd` | — | — | — | — |
+| zmiany ISIN | — | — | ✅ | aliasy tickerów | — | alias PDA (ZKA1→ZABKA) | alias PDA | — |
 
 Jednym zdaniem: **Bossa, DEGIRO i Trading 212 mówią wprost czym jest papier, IBKR mówi to w dwóch miejscach i trzeba je skleić, ING mówi to w DRUGIM pliku (join po numerze zlecenia), a XTB i mBank w ogóle nie mówią — trzeba wywnioskować.**
 
@@ -284,6 +284,43 @@ syntetyczną S **także bez zakupów w historii** (eksport bywa ucięty; sierot�
 > = 1000 szt) — ilości idą przez `parseIngDescQty`, nigdy `parseNumber`.
 > W pliku transakcji odwrotnie: prowizja ma kropkę DZIESIĘTNĄ obok wartości
 > z przecinkiem i NBSP tysięcy w tym samym wierszu.
+
+---
+
+## PKO BP (Supermakler)
+
+Ten sam punkt wyjścia co mBank — **zero ISIN-ów** — ale z lepszym identyfikatorem:
+w kolumnie `Walor` siedzi **skrót giełdowy GPW** (9 znaków), a nie nazwa handlowa.
+
+```ts
+paperName: alias.paperName,   // 'ELEKTROTI', 'CYBERFLKS', 'SIMFABRIC-NC'
+isin: alias.isin,             // = paperName (pseudo-ISIN, konwencja mBank)
+```
+
+To skrót, którym GPW opisuje instrument w systemie notującym — i **dokładnie ten
+sam string** trzyma katalog biznesradar w polu `short_name`. Dlatego gałąź polska
+resolvera trafia go `findByName` z wynikiem *exact* (score 3), bez prefiksowego
+zgadywania: na realnym eksporcie 17 z 17 walorów (`ELEKTROTI→ELT`, `CYBERFLKS→CBF`,
+`SYN2BIO→S2B`). Sufiks rynku z archiwalnych plików (`SIMFABRIC-NC`) **zostaje** —
+tak jak w Bossie, bo to on włącza guard NewConnectu; ścina go dopiero
+`normalizeBossaPaperName` w momencie dopasowania.
+
+### Czego w pliku NIE ma
+
+Raport transakcji PKO nie zawiera ani operacji gotówkowych, ani stanu początkowego.
+Papier sprzedany przed początkiem okresu raportu wchodzi więc jako sprzedaż bez
+pokrycia (skrzynka „Sprzedaż bez kupna"), a dywidend i wpłat nie ma wcale — to
+ograniczenie ŹRÓDŁA, nie parsera.
+
+### Waluta: kurs z kwot, kolumna tylko do kontroli
+
+Format ma komplet kolumn walutowych (`Waluta notowania`, `Waluta Wartość`,
+`Kurs przewalutowania`), ale każdy realny plik, jaki widzieliśmy, jest złotowy —
+kolumna kursu jest w nim pusta w KAŻDYM wierszu. Konwencji (payment-per-quote czy
+odwrotnie) nie da się z niego odczytać, a zgadnięcie kosztowałoby rząd wielkości
+w wycenie. Dlatego przy rozjeździe walut liczymy kurs z kwot (`Wartość` / (ilość ×
+`Kurs`) — jak mBank), a kolumnę z pliku traktujemy jak sumę kontrolną: rozjazd
+powyżej 2% idzie w ostrzeżenie z prośbą o zgłoszenie pliku.
 
 ---
 
