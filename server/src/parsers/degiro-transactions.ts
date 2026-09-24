@@ -1,3 +1,4 @@
+import { currencyBucket } from 'shared';
 import Papa from 'papaparse';
 import type { Transaction, ParseResult, SkippedRow } from 'shared';
 import {
@@ -251,8 +252,7 @@ function mapColumns(header: string[]): ColumnMap {
  * GBX (pence) → GBP, NO → NOK.
  */
 function normalizeCurrency(currency: string): string {
-  const upper = currency.toUpperCase().trim();
-  if (upper === 'GBX') return 'GBP';
+  const upper = currencyBucket(currency);
   if (upper === 'NO') return 'NOK';
   return upper || 'EUR';
 }

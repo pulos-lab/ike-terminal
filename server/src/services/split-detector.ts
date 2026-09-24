@@ -1,3 +1,4 @@
+import { currencyBucket } from 'shared';
 import type { Transaction, TickerMapEntry, DetectedSplit } from 'shared';
 
 /** Maximum tolerance when matching a raw ratio to a known split ratio (5%) */
@@ -132,9 +133,8 @@ export function detectSplits(
 
     // Skip if currencies don't match (FX difference, not split)
     // Normalize: GBX/GBp/GBP are all equivalent for comparison
-    const txCurNorm = tx.currency.toUpperCase() === 'GBX' ? 'GBP' : tx.currency.toUpperCase();
-    const entryCurNorm =
-      entry.currency.toUpperCase() === 'GBX' ? 'GBP' : entry.currency.toUpperCase();
+    const txCurNorm = currencyBucket(tx.currency);
+    const entryCurNorm = currencyBucket(entry.currency);
     if (txCurNorm !== entryCurNorm) continue;
 
     const dateKey = tx.date.split('T')[0];

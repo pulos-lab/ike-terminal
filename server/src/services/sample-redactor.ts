@@ -1,3 +1,4 @@
+import { ISIN_PATTERN } from 'shared';
 /**
  * Redakcja próbek CSV przed zapisem do biblioteki profili i (w Fazie 4)
  * przed wysyłką do LLM API. Defense in depth: próbka służy WYŁĄCZNIE do
@@ -32,7 +33,7 @@ const LONG_DIGITS_RE = /(?<![\d.,])\d{9,}(?![\d.,])/g;
 // samego LONG_DIGITS_RE o litery — identyfikatory klienta z literowym prefiksem
 // (np. „ID123456789") mają dalej być maskowane. IBAN nie koliduje: ma >12
 // znaków, więc granice \b wykluczają dopasowanie kształtu ISIN w jego wnętrzu.
-const ISIN_RE = /\b[A-Z]{2}[A-Z0-9]{9}[0-9]\b/g;
+const ISIN_RE = new RegExp(`\\b${ISIN_PATTERN}\\b`, 'g');
 // NUL nie występuje w zdekodowanym CSV — restore nie pomyli placeholdera z treścią.
 const ISIN_PLACEHOLDER_RE = /\u0000(\d+)\u0000/g;
 

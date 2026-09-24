@@ -1,3 +1,4 @@
+import { currencyBucket } from 'shared';
 import { getAllTransactions, updateTransaction } from '../db/transactions-repo.js';
 import { getTickerMap } from '../db/ticker-map-repo.js';
 
@@ -32,11 +33,8 @@ export interface QuoteReconcileResult {
   warnings: string[];
 }
 
-/** GBX/GBp → GBP; reszta uppercase. */
-function normalizeQuoteCurrency(c: string): string {
-  const u = c.toUpperCase().trim();
-  return u === 'GBX' || u === 'GBP' ? 'GBP' : u;
-}
+/** GBX/GBp → GBP; reszta uppercase (wspólne `currencyBucket`). */
+const normalizeQuoteCurrency = currencyBucket;
 
 export function reconcileQuoteCurrencies(portfolioId: string): QuoteReconcileResult {
   const transactions = getAllTransactions(portfolioId);

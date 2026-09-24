@@ -34,7 +34,18 @@ export function normalizeForDetect(s: string): string {
  */
 export function parseNumber(value: string | undefined): number {
   if (!value) return 0;
-  let cleaned = value.toString().replace(/\s/g, '');
+  const num = parseFloat(normalizeNumericText(value.toString()));
+  return isNaN(num) ? 0 : num;
+}
+
+/**
+ * Wspólne czyszczenie tekstu liczby dla `parseNumber` i `isStrictNumber` (dawniej
+ * dwie kopie tego samego kodu): usuwa białe znaki (w tym NBSP i wąską spację),
+ * zamienia typograficzny minus (U+2212) i półpauzę na `-`, a separatory
+ * rozstrzyga regułą „ostatni separator jest dziesiętny".
+ */
+export function normalizeNumericText(value: string): string {
+  let cleaned = value.replace(/\s/g, '').replace(/[\u2212\u2013]/g, '-');
   const lastComma = cleaned.lastIndexOf(',');
   const lastDot = cleaned.lastIndexOf('.');
   if (lastComma >= 0 && lastDot >= 0) {
@@ -45,8 +56,7 @@ export function parseNumber(value: string | undefined): number {
   } else {
     cleaned = cleaned.replace(',', '.');
   }
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? 0 : num;
+  return cleaned;
 }
 
 /**
@@ -139,18 +149,7 @@ export interface RowShapeField {
  * W przeciwieństwie do parseNumber odrzuca częściowe dopasowania ('12abc').
  */
 export function isStrictNumber(value: string): boolean {
-  let cleaned = value.replace(/\s/g, '');
-  const lastComma = cleaned.lastIndexOf(',');
-  const lastDot = cleaned.lastIndexOf('.');
-  if (lastComma >= 0 && lastDot >= 0) {
-    cleaned =
-      lastComma > lastDot
-        ? cleaned.replace(/\./g, '').replace(',', '.')
-        : cleaned.replace(/,/g, '');
-  } else {
-    cleaned = cleaned.replace(',', '.');
-  }
-  return /^[+-]?\d+(\.\d+)?$/.test(cleaned);
+  return /^[+-]?\d+(\.\d+)?$/.test(normalizeNumericText(value));
 }
 
 /**

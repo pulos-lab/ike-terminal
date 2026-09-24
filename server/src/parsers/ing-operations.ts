@@ -1,3 +1,4 @@
+import { ISIN_PATTERN } from 'shared';
 import Papa from 'papaparse';
 import type { CashOperation, SkippedRow, RedemptionMarker, ParseResult } from 'shared';
 import {
@@ -91,8 +92,8 @@ export function isIngOperationsFormat(csvContent: string): boolean {
 
 // ── Wzorce klasyfikacji ──
 
-/** ISIN: 2 litery kraju + 10 znaków. */
-const ISIN = '([A-Z]{2}[A-Z0-9]{10})';
+/** ISIN (grupa przechwytująca) — wspólny kształt z shared. */
+const ISIN = `(${ISIN_PATTERN})`;
 
 /** "Rozliczenie transakcji sprzedaży nr 1128 do zlecenia 937900176, PLPKN0000018, 78 x 83,84" */
 const SELL_SETTLEMENT_RE = new RegExp(

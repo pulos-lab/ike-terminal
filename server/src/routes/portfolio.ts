@@ -77,6 +77,7 @@ import {
   toOccTicker,
   toOptionPseudoIsin,
   optionDisplayName,
+  currencyBucket,
 } from 'shared';
 import { computePortfolioHistoryMemoized } from '../services/history-memo.js';
 import {
@@ -1204,16 +1205,16 @@ router.get(
     for (const entry of tickerMap.values()) {
       if (entry.currency) {
         const u = entry.currency.toUpperCase();
-        if (u !== 'PLN') allForeignCurrencies.add(u === 'GBX' ? 'GBP' : u);
+        if (u !== 'PLN') allForeignCurrencies.add(currencyBucket(u));
       }
     }
     for (const tx of transactions) {
       const u = tx.currency.toUpperCase();
-      if (u !== 'PLN') allForeignCurrencies.add(u === 'GBX' ? 'GBP' : u);
+      if (u !== 'PLN') allForeignCurrencies.add(currencyBucket(u));
     }
     for (const cur of Object.keys(cashBalances)) {
       const u = cur.toUpperCase();
-      if (u !== 'PLN') allForeignCurrencies.add(u === 'GBX' ? 'GBP' : u);
+      if (u !== 'PLN') allForeignCurrencies.add(currencyBucket(u));
     }
     const fxRatesObj: Record<string, number> = { PLN: 1 };
     const todayFxRatesToPln = new Map<string, number>();
@@ -1266,7 +1267,7 @@ router.get(
     for (const pos of positions) {
       const cur = (pos.currency || 'PLN').toUpperCase();
       if (cur === 'PLN') continue;
-      const curKey = cur === 'GBX' ? 'GBP' : cur;
+      const curKey = currencyBucket(cur);
       const native = pos.currentValue ?? 0;
       foreignExposures.set(curKey, (foreignExposures.get(curKey) ?? 0) + native);
       exposurePlnByCurrency.set(
@@ -1278,7 +1279,7 @@ router.get(
       const upperCur = cur.toUpperCase();
       if (upperCur === 'PLN') continue;
       if (balance > 0) {
-        const curKey = upperCur === 'GBX' ? 'GBP' : upperCur;
+        const curKey = currencyBucket(upperCur);
         foreignExposures.set(curKey, (foreignExposures.get(curKey) ?? 0) + balance);
         const cashPln = balance * (todayFxRatesToPln.get(curKey) || 0);
         exposurePlnByCurrency.set(curKey, (exposurePlnByCurrency.get(curKey) ?? 0) + cashPln);
@@ -1291,7 +1292,7 @@ router.get(
       const upperCur = cur.toUpperCase();
       if (upperCur === 'PLN') cashValuePln += balance;
       else {
-        const curKey = upperCur === 'GBX' ? 'GBP' : upperCur;
+        const curKey = currencyBucket(upperCur);
         cashValuePln += balance * (todayFxRatesToPln.get(curKey) || 0);
       }
     }
@@ -1327,7 +1328,7 @@ router.get(
       if (!op.amount) continue;
       const rawCur = (op.currency || '').toUpperCase();
       if (!rawCur || rawCur === 'PLN') continue;
-      const cur = rawCur === 'GBX' ? 'GBP' : rawCur;
+      const cur = currencyBucket(rawCur);
       const hasDirectPlnRate =
         op.fxRate !== undefined && op.fxRate > 0 && op.fxPair?.toUpperCase().includes('PLN');
       if (hasDirectPlnRate) continue; // silnik użyje plnPerXFromOp
@@ -1367,8 +1368,8 @@ router.get(
       if (!Number.isFinite(tx.value) || tx.value <= 0) continue;
       const quoteRaw = (tx.currency || '').toUpperCase();
       const payRaw = (tx.paymentCurrency || '').toUpperCase();
-      const quoteCcy = quoteRaw === 'GBX' ? 'GBP' : quoteRaw;
-      const payCcy = payRaw === 'GBX' ? 'GBP' : payRaw;
+      const quoteCcy = currencyBucket(quoteRaw);
+      const payCcy = currencyBucket(payRaw);
       const dateKey = tx.date.split('T')[0];
 
       if (payRaw && payCcy !== quoteCcy) {
@@ -1409,7 +1410,7 @@ router.get(
       if (!yahooTicker) continue;
       const rawNative = (entry?.currency || '').toUpperCase();
       if (!rawNative || rawNative === 'PLN') continue; // papier w PLN — brak przewalutowania
-      const nativeCcy = rawNative === 'GBX' ? 'GBP' : rawNative;
+      const nativeCcy = currencyBucket(rawNative);
       if (!fxRelevantCurrencies.has(nativeCcy)) continue;
       let bucket = impliedTxsByTicker.get(yahooTicker);
       if (!bucket) {
@@ -1525,8 +1526,7 @@ router.get(
     for (const [cur, balance] of Object.entries(cashBalances)) {
       if (balance >= 0) continue;
       const upperCur = cur.toUpperCase();
-      const rate =
-        upperCur === 'PLN' ? 1 : todayFxRatesToPln.get(upperCur === 'GBX' ? 'GBP' : upperCur) || 0;
+      const rate = upperCur === 'PLN' ? 1 : todayFxRatesToPln.get(currencyBucket(upperCur)) || 0;
       marginDebtPln += -balance * rate;
     }
     const leverage =

@@ -11,6 +11,7 @@
  * (NodeCache → price_history.db → sieć), więc po pierwszym żądaniu lookup jest
  * praktycznie darmowy.
  */
+import { currencyBucket, penceFactor } from 'shared';
 import type { ClosedTrade, DividendRecord, DividendCurrencyTotal } from 'shared';
 import { fetchYahooHistory } from './yahoo-finance.js';
 
@@ -22,12 +23,9 @@ const MAX_LOOKBACK_DAYS = 7;
 
 /** GBX/GBp (pensy) = 1/100 GBP — Yahoo ma tylko parę GBPPLN=X. */
 function fxPairFor(currency: string): { pair: string; factor: number } | null {
-  const upper = currency.toUpperCase();
-  if (upper === 'PLN') return null;
-  if (upper === 'GBX' || upper === 'GBP') {
-    return { pair: 'GBP', factor: currency.toUpperCase() === 'GBX' ? 0.01 : 1 };
-  }
-  return { pair: upper, factor: 1 };
+  const pair = currencyBucket(currency);
+  if (pair === 'PLN') return null;
+  return { pair, factor: penceFactor(currency) };
 }
 
 function shiftDays(dateKey: string, days: number): string {

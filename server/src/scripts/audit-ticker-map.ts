@@ -26,6 +26,7 @@ import {
   NC_TICKER_MAP,
   GPW_NAME_TO_TICKER,
   NAME_ALIASES,
+  isIsinShape,
 } from 'shared';
 import { config } from '../config.js';
 import { getDb } from '../db/connection.js';
@@ -41,7 +42,7 @@ for (const entry of NC_TICKER_MAP) {
 }
 
 function isRealIsin(value: string): boolean {
-  return /^[A-Z]{2}[A-Z0-9]{10}$/.test(value);
+  return isIsinShape(value);
 }
 
 const EXCLUDED = new Set(['auth.db', 'price_history.db', 'bug-reports.db']);

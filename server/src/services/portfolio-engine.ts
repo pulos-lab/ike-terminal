@@ -52,6 +52,7 @@ import {
   SPIN_OFF_MAP,
   parseOccTicker,
   optionIntrinsicValue,
+  currencyBucket,
 } from 'shared';
 import type {
   InstrumentCategory,
@@ -675,12 +676,12 @@ export async function computeOpenPositions(
   for (const entry of tickerMap.values()) {
     if (entry.currency) {
       const u = entry.currency.toUpperCase();
-      liveCurrencies.add(u === 'GBX' || u === 'GBP' ? 'GBP' : u);
+      liveCurrencies.add(currencyBucket(u));
     }
   }
   for (const tx of transactions) {
     const u = tx.currency.toUpperCase();
-    liveCurrencies.add(u === 'GBX' ? 'GBP' : u);
+    liveCurrencies.add(currencyBucket(u));
   }
   liveCurrencies.delete('PLN');
 
@@ -906,7 +907,7 @@ export async function computeOpenPositions(
     if ((entCurUpper === 'GBP' || entCurUpper === 'GBX') && entry.ticker.endsWith('.L')) {
       priceInNative = priceInNative / 100;
     }
-    const fxKey = entCurUpper === 'GBX' ? 'GBP' : entCurUpper;
+    const fxKey = currencyBucket(entCurUpper);
     const fxNativeToPln = fxRates[fxKey] || fxRates[entry.currency] || 1;
 
     // Determine category from the first transaction
@@ -1745,7 +1746,7 @@ export function computeFxImpact(
     for (const op of operations) {
       // Klucze foreignExposures są znormalizowane do GBP — operacja wpisana
       // ręcznie jako GBX (pensy) musi trafić do tego samego kubełka.
-      const opCur = op.currency?.toUpperCase() === 'GBX' ? 'GBP' : op.currency?.toUpperCase();
+      const opCur = currencyBucket(op.currency);
       if (opCur !== curKey) continue;
       // corporate_action_pending nie wchodzi do cashflow portfela — pomijamy.
       if (op.operationType === 'corporate_action_pending') continue;
@@ -2169,7 +2170,7 @@ export async function computePortfolioHistory(
   // Normalize GBX/GBp → GBP (Yahoo reports London prices in pence but FX pair is GBPPLN=X)
   function normalizeCurrency(c: string): string {
     const u = c.toUpperCase();
-    return u === 'GBX' || u === 'GBP' ? 'GBP' : u;
+    return currencyBucket(u);
   }
   const allCurrencies = new Set<string>();
   for (const op of operations) allCurrencies.add(normalizeCurrency(op.currency));
@@ -2470,9 +2471,8 @@ export async function computePortfolioHistory(
     const entry = tickerMap.get(tx.isin);
     if (!entry) continue;
     // Normalize currencies for comparison (GBX/GBp/GBP are all equivalent)
-    const txCurNorm = tx.currency.toUpperCase() === 'GBX' ? 'GBP' : tx.currency.toUpperCase();
-    const entryCurNorm =
-      entry.currency.toUpperCase() === 'GBX' ? 'GBP' : entry.currency.toUpperCase();
+    const txCurNorm = currencyBucket(tx.currency);
+    const entryCurNorm = currencyBucket(entry.currency);
     if (txCurNorm !== entryCurNorm) continue;
     const dateKey = tx.date.split('T')[0];
     const priceMap = historicalPrices.get(entry.ticker);
@@ -2759,7 +2759,7 @@ export async function computePortfolioHistory(
         price = price / 100;
       }
 
-      const fx = fxRates.get(upperCur === 'GBX' ? 'GBP' : upperCur) ?? 1;
+      const fx = fxRates.get(currencyBucket(upperCur)) ?? 1;
       stockValueBase += shares * price * (bondMultByIsin.get(isin) ?? 1) * fx;
     }
 
