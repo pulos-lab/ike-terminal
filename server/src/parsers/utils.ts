@@ -66,6 +66,16 @@ export function roundFxRate(rate: number): number {
 }
 
 /**
+ * Ilość akcji z CSV: usuwa szum zmiennoprzecinkowy (9.9999999 → 10), ale NIE
+ * zaokrągla realnych ułamków. Dawne `Math.round(qty)` w mBanku/Bossie/ING
+ * zamieniało 0,4 szt. na 0 już PO walidacji (a `value` liczono z ułamka).
+ */
+export function normalizeQuantity(quantity: number): number {
+  const whole = Math.round(quantity);
+  return Math.abs(quantity - whole) < 1e-6 ? whole : Math.round(quantity * 1e6) / 1e6;
+}
+
+/**
  * Dywidenda netto z pary brutto + podatek u źródła, ZE ZNAKIEM.
  *
  * Wcześniej parsery liczyły `|brutto| − |podatek|`, więc korekta (ujemna

@@ -171,3 +171,12 @@ describe('netDividendAmount — dywidenda netto ze znakiem', () => {
     expect(netDividendAmount(-12.346, undefined).net).toBe(-12.35);
   });
 });
+
+describe('normalizeQuantity', () => {
+  it('usuwa szum, zostawia ułamki', async () => {
+    const { normalizeQuantity } = await import('../utils.js');
+    expect(normalizeQuantity(9.9999999)).toBe(10);
+    expect(normalizeQuantity(0.4)).toBe(0.4);
+    expect(normalizeQuantity(0.30690001)).toBe(0.3069);
+  });
+});

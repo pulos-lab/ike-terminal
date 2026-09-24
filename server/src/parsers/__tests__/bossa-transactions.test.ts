@@ -23,6 +23,13 @@ describe('isBossaFormat', () => {
 });
 
 describe('parseBossaTransactions', () => {
+  it('pusta „wartość" i „po prowizji" → przeliczone z ilości, kursu i prowizji + ostrzeżenie', () => {
+    const csv = buildCsv(['25.02.2026;KGHM;PLKGHM000017;K;10;150,00;;5,00;;PLN']);
+    const result = parseBossaTransactions(csv, 'batch-test');
+    expect(result.data[0]).toMatchObject({ value: 1500, total: 1505, quantity: 10 });
+    expect(result.warnings?.some((w) => w.includes('przeliczono'))).toBe(true);
+  });
+
   it('skips rows with price <= 0 as invalid_price', () => {
     const csv = buildCsv(['25.02.2026;KGHM;PLKGHM000017;K;10;0;0;0;0;PLN']);
     const result = parseBossaTransactions(csv, 'batch-test');
