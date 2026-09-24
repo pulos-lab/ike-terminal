@@ -53,6 +53,7 @@ router.post(
     res.json(
       await analyzeGenericFiles(
         files.map((f) => ({ buffer: f.buffer, originalname: f.originalname })),
+        req.userId,
       ),
     );
   }),
@@ -185,10 +186,12 @@ router.post(
   upload.single('file'),
   asyncHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'Brak pliku' });
-    const result = await reimportGenericBatchFromUpload(req.portfolioId, req.params.importBatch, {
-      buffer: req.file.buffer,
-      originalname: req.file.originalname,
-    });
+    const result = await reimportGenericBatchFromUpload(
+      req.portfolioId,
+      req.params.importBatch,
+      { buffer: req.file.buffer, originalname: req.file.originalname },
+      req.userId,
+    );
     if (!result.success) {
       return res.status(400).json({ ...result, error: result.errors.join('; ') });
     }

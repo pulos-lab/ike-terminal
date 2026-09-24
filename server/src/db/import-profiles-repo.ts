@@ -75,18 +75,37 @@ const SELECT_COLS = `id, fingerprint, version, status, spec_version, profile_jso
   header_names_json, delimiter, sample_rows_json, generated_by, created_by_user_id,
   created_at, usage_count`;
 
-/** Aktywny profil dla fingerprinta: approved ma pierwszeństwo nad pending. */
-export function findActiveProfileByFingerprint(fingerprint: string): ImportProfileRow | null {
+/**
+ * Widoczność profilu dla użytkownika: 'approved' (po kuracji admina) widzi każdy,
+ * 'pending' — WYŁĄCZNIE jego autor. Wcześniej cudzy, niezweryfikowany pending
+ * (inline albo z LLM) był wstępnie wybierany w kreatorze innych użytkowników
+ * o tym samym nagłówku i po cichu przemapowywał ich re-importy.
+ */
+const VISIBLE_TO_VIEWER = `(status = 'approved' OR (status = 'pending' AND created_by_user_id = @viewer))`;
+
+/** Aktywny profil dla fingerprinta: approved ma pierwszeństwo nad WŁASNYM pending. */
+export function findActiveProfileByFingerprint(
+  fingerprint: string,
+  viewerUserId?: string,
+): ImportProfileRow | null {
   const db = getImportsDb();
   const row = db
     .prepare(
       `SELECT ${SELECT_COLS} FROM import_profiles
-       WHERE fingerprint = ? AND status IN ('approved','pending')
+       WHERE fingerprint = @fingerprint AND ${VISIBLE_TO_VIEWER}
        ORDER BY CASE status WHEN 'approved' THEN 0 ELSE 1 END, version DESC
        LIMIT 1`,
     )
-    .get(fingerprint) as RawRow | undefined;
+    .get({ fingerprint, viewer: viewerUserId ?? null }) as RawRow | undefined;
   return row ? mapRow(row) : null;
+}
+
+/** Czy użytkownik może użyć profilu (approved albo własny pending). */
+export function isProfileVisibleTo(row: ImportProfileRow, viewerUserId?: string): boolean {
+  return (
+    row.status === 'approved' ||
+    (row.status === 'pending' && !!viewerUserId && row.createdByUserId === viewerUserId)
+  );
 }
 
 export function getProfileById(id: string): ImportProfileRow | null {
@@ -97,15 +116,15 @@ export function getProfileById(id: string): ImportProfileRow | null {
   return row ? mapRow(row) : null;
 }
 
-/** Wszystkie aktywne profile (approved/pending) — do sugestii Jaccarda przy analyze. */
-export function listActiveProfiles(): ImportProfileRow[] {
+/** Profile widoczne dla użytkownika (approved + własne pending) — sugestie Jaccarda. */
+export function listActiveProfiles(viewerUserId?: string): ImportProfileRow[] {
   const db = getImportsDb();
   const rows = db
     .prepare(
       `SELECT ${SELECT_COLS} FROM import_profiles
-       WHERE status IN ('approved','pending') ORDER BY usage_count DESC`,
+       WHERE ${VISIBLE_TO_VIEWER} ORDER BY usage_count DESC`,
     )
-    .all() as RawRow[];
+    .all({ viewer: viewerUserId ?? null }) as RawRow[];
   return rows.map(mapRow);
 }
 
