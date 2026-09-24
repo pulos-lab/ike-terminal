@@ -495,7 +495,13 @@ export function parseIngOperations(
   };
 }
 
-/** Surowa treść wiersza do kwarantanny (cells + hint do prefillu dialogów). */
+/** Nagłówki pozycyjne eksportu bez nagłówka — do podglądu wiersza w skrzynce. */
+const ING_OPS_HEADERS = ['Lp', 'Data', 'Kategoria', 'Opis', 'Kwota', 'Saldo', 'Waluta'];
+
+/** Surowa treść wiersza do kwarantanny (cells + hint do prefillu dialogów).
+ *  `rawType` (kategoria, a przy pustej — pierwsze słowo opisu) jest kluczem
+ *  zgłoszeń i aliasów typów — bez niego wiersze ING nie dawały się ani
+ *  pogrupować, ani zmapować aliasem przez admina. */
 function rawFor(
   row: string[],
   isoDate: string,
@@ -503,7 +509,11 @@ function rawFor(
   currency: string,
   description: string,
 ): NonNullable<SkippedRow['raw']> {
+  const category = row[2]?.trim() ?? '';
+  const rawType = (category || description.split(/[\s:]/)[0] || '').toLowerCase();
   return {
+    rawType: rawType || undefined,
+    headers: ING_OPS_HEADERS,
     cells: row.map((c) => c ?? ''),
     hint: {
       date: isoDate.slice(0, 10),

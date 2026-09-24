@@ -254,7 +254,8 @@ const COMBINED_PARSER_REGISTRY: CombinedBrokerParser[] = [
     label: 'Trading 212',
     extensions: ['.csv'],
     detect: isT212Format,
-    parse: (buffer, importBatch, fileName) => parseT212File(buffer, importBatch, fileName),
+    parse: (buffer, importBatch, fileName, ctx) =>
+      parseT212File(buffer, importBatch, fileName, ctx),
     needsNameResolution: false,
     supportsMultipleFiles: false,
   },

@@ -11,6 +11,7 @@ import type {
 } from 'shared';
 import { applyIsinAlias, findCfdTicker } from 'shared';
 import type { ParserContext } from './registry.js';
+import { buildAliasedCashOperation } from './alias-ops.js';
 import {
   roundTo2,
   roundFxRate,
@@ -1544,7 +1545,7 @@ export async function parseXtbFile(
       continue;
     }
     if (alias?.kind === 'cash_operation' && alias.value) {
-      const op = buildAliasedCashOperation(raw, alias.value, accountCurrency, importBatch);
+      const op = xtbAliasedCashOperation(raw, alias.value, accountCurrency, importBatch);
       if (op) {
         operations.push(op);
         continue;
@@ -1578,55 +1579,27 @@ export async function parseXtbFile(
   };
 }
 
-/** Dozwolone operationType dla aliasów cash_operation — bez typów specjalnych
- * (fx_exchange wymaga parowania nóg, corporate_action_pending logiki reconciliation). */
-const ALIAS_ALLOWED_OPERATION_TYPES = new Set<OperationType>([
-  'deposit',
-  'withdrawal',
-  'dividend',
-  'fee',
-  'trade_fee',
-  'commission_refund',
-  'capital_return',
-  'other',
-]);
-
-/** Buduje CashOperation z surowego wiersza wg targetu aliasu cash_operation
- * (JSON CashOperationAliasTarget). null = target/data nieparsowalne — caller
- * zostawia wiersz w unknown (skrzynka), nic nie ginie po cichu. */
-function buildAliasedCashOperation(
+/** Wiersz XTB → operacja z aliasu cash_operation (wspólny builder w alias-ops). */
+function xtbAliasedCashOperation(
   raw: RawRow,
   targetJson: string,
   accountCurrency: string,
   importBatch: string,
 ): CashOperation | null {
-  let target: CashOperationAliasTarget;
-  try {
-    target = JSON.parse(targetJson);
-  } catch {
-    return null;
-  }
-  if (!target?.operationType || !ALIAS_ALLOWED_OPERATION_TYPES.has(target.operationType)) {
-    return null;
-  }
   const isoTime = parseXtbTime(raw.time);
   if (!isoTime) return null;
-
-  const sign = target.sign ?? 'file';
-  const amount =
-    sign === 'file' ? raw.amount : sign === '+' ? Math.abs(raw.amount) : -Math.abs(raw.amount);
-
-  return {
-    date: isoTime,
-    operationType: target.operationType,
-    subkind: (target.subkind as CashOperation['subkind']) ?? undefined,
-    description: raw.comment || raw.type,
-    amount,
-    currency: accountCurrency,
-    ticker: raw.symbol || undefined,
-    source: 'xtb',
-    importBatch,
-  };
+  return buildAliasedCashOperation(
+    {
+      date: isoTime,
+      amount: raw.amount,
+      currency: accountCurrency,
+      description: raw.comment || raw.type,
+      ticker: raw.symbol || undefined,
+      source: 'xtb',
+      importBatch,
+    },
+    targetJson,
+  );
 }
 
 /** Canonical operation type names that the main dispatch loop handles.

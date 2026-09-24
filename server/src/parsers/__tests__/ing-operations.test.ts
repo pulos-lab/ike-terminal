@@ -237,7 +237,10 @@ describe('parseIngOperations — polityka kwarantanny', () => {
       expect(s.reason).toBe('unknown_operation_type');
       expect(s.raw?.cells.length).toBeGreaterThan(0);
       expect(s.raw?.hint?.amount).toBeDefined();
+      expect(s.raw?.headers).toHaveLength(7);
     }
+    // rawType = klucz aliasów/zgłoszeń: kategoria, a przy pustej — 1. słowo opisu.
+    expect(result.skipped.map((s) => s.raw?.rawType)).toEqual(['transakcje', 'nieznane']);
   });
 
   it('pusta kwota przy nieznanym opisie → zero_amount (nie kwarantanna)', () => {

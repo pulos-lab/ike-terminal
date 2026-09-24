@@ -135,6 +135,34 @@ describe('Trading 212 — konwencje kwot', () => {
     expect(s.raw?.hint?.currency).toBe('EUR');
   });
 
+  it('zatwierdzony alias typu: ignore → aliased_ignore, cash_operation → operacja', async () => {
+    const ctx = {
+      typeAliases: new Map([
+        [
+          'nowy typ',
+          { kind: 'cash_operation' as const, value: '{"operationType":"fee","sign":"-"}' },
+        ],
+        ['inny typ', { kind: 'ignore' as const }],
+      ]),
+    };
+    const r = await parseT212File(
+      csv(
+        'Nowy typ,2025-01-01 10:00:00,,,,,,,,1.00,EUR,,,,x-1',
+        'Inny typ,2025-01-02 10:00:00,,,,,,,,2.00,EUR,,,,x-2',
+      ),
+      'b',
+      undefined,
+      ctx,
+    );
+    expect(r.operations.data).toHaveLength(1);
+    expect(r.operations.data[0]).toMatchObject({
+      operationType: 'fee',
+      amount: -1,
+      currency: 'EUR',
+    });
+    expect(r.operations.skipped.map((s) => s.reason)).toEqual(['aliased_ignore']);
+  });
+
   it('transfer papierów: sprzedaż po cenie z pliku + równoważąca wypłata', async () => {
     const r = await parseT212File(
       csv(
