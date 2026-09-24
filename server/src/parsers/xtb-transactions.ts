@@ -1235,7 +1235,14 @@ export async function parseXtbFile(
       });
     } else if (raw.type === 'Free funds interest' || raw.type === 'Free funds interest tax') {
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) continue;
+      if (!isoTime) {
+        opsSkipped.push({
+          row: raw.rowNum,
+          reason: 'invalid_date',
+          paperName: raw.symbol || raw.type,
+        });
+        continue;
+      }
 
       // Odsetki od wolnych środków → 'other' + subkind='interest' (wirtualna
       // kategoria "Odsetki" w panelu "Korekty i koszty"; bez subkind wpadały do
@@ -1290,7 +1297,14 @@ export async function parseXtbFile(
       if (swapCategory === 'cfd') continue;
 
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) continue;
+      if (!isoTime) {
+        opsSkipped.push({
+          row: raw.rowNum,
+          reason: 'invalid_date',
+          paperName: raw.symbol || raw.type,
+        });
+        continue;
+      }
 
       operations.push({
         date: isoTime,
@@ -1312,7 +1326,14 @@ export async function parseXtbFile(
       });
     } else if (raw.type === 'rights issue') {
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) continue;
+      if (!isoTime) {
+        opsSkipped.push({
+          row: raw.rowNum,
+          reason: 'invalid_date',
+          paperName: raw.symbol || raw.type,
+        });
+        continue;
+      }
 
       operations.push({
         date: isoTime,
@@ -1393,7 +1414,14 @@ export async function parseXtbFile(
   // Add unmatched fees as CashOperations
   for (const raw of unmatchedFees) {
     const isoTime = parseXtbTime(raw.time);
-    if (!isoTime) continue;
+    if (!isoTime) {
+      opsSkipped.push({
+        row: raw.rowNum,
+        reason: 'invalid_date',
+        paperName: raw.symbol || raw.type,
+      });
+      continue;
+    }
 
     operations.push({
       date: isoTime,

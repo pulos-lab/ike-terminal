@@ -57,6 +57,22 @@ describe('bulkImport — dedup między plikami w jednej paczce', () => {
     expect(result.duplicatesSkipped).toBe(1);
   });
 
+  it('plik bez żadnego użytecznego wiersza → błąd z listą pominiętych, nie „sukces 0"', async () => {
+    const result = await bulkImport({
+      transactionsFiles: [
+        {
+          buffer: bossaCsv(['15.03.2023 10:00:00;XYZ;PLOPTTC00011;10;K;0;0;0;0;PLN']),
+          originalname: 'hisPW-puste.csv',
+        },
+      ],
+      portfolioId: 'test-bulk-zero-rows',
+    });
+    expect(result.success).toBe(false);
+    expect(result.errors.join(' ')).toMatch(/nie zawiera żadnych wierszy/);
+    expect(result.skipped?.[0]?.reason).toBe('invalid_price');
+    connection.closeDb('test-bulk-zero-rows');
+  });
+
   it('reimport tej samej paczki jest idempotentny', async () => {
     const file1 = bossaCsv([ROW_CDR_2023, ROW_PKN_2024]);
     const file2 = bossaCsv([ROW_PKN_2024, ROW_KGH_2025]);
