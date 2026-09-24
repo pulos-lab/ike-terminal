@@ -198,6 +198,23 @@ describe('Trading 212 — konwencje kwot', () => {
     expect([from.amount, from.currency]).toEqual([-0.5, 'GBP']);
     expect([to.amount, to.currency]).toEqual([0.58, 'EUR']);
   });
+
+  it('kurs wymiany PLN→USD w konwencji „PLN za 1 USD" niezależnie od kierunku', async () => {
+    // Wcześniej zapisywane jako to/from = 0,25 — silnik czytał „0,25 PLN za dolara".
+    const buy = await parseT212File(
+      csv('Currency conversion,2024-03-01 10:00:00,,,,,,,,,,,,400.00 PLN -> 100.00 USD,fx-2'),
+      'b',
+    );
+    for (const leg of buy.operations.data) {
+      expect(leg.fxPair).toBe('PLN/USD');
+      expect(leg.fxRate).toBe(4);
+    }
+    const sell = await parseT212File(
+      csv('Currency conversion,2024-03-02 10:00:00,,,,,,,,,,,,100.00 USD -> 395.00 PLN,fx-3'),
+      'b',
+    );
+    for (const leg of sell.operations.data) expect(leg.fxRate).toBe(3.95);
+  });
 });
 
 // ── Regresja: rozpoznawanie roli pliku po dodaniu T212 do ścieżki combined ──

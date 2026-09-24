@@ -215,7 +215,14 @@ export interface CashOperation {
   amount: number;
   currency: string;
   ticker?: string; // for dividends
-  fxRate?: number; // for fx exchanges
+  /**
+   * Kurs wymiany (`fx_exchange`). Para z PLN: **PLN za 1 jednostkę waluty obcej**,
+   * niezależnie od kierunku wymiany (≈4 dla USD) — czyta tak `plnPerXFromOp`.
+   * Jedyny wyjątek: `source='xtb'` zapisuje X za 1 PLN (silnik odwraca po source).
+   * Para krzyżowa: `to` za 1 `from` (silnik bierze wtedy kurs historyczny).
+   * Parsery liczące kurs z kwot używają `fxExchangeRate` z `parsers/utils.ts`.
+   */
+  fxRate?: number;
   fxPair?: string; // e.g., 'PLN/USD'
   source: RecordSource;
   importBatch?: string;

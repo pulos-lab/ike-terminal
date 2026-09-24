@@ -66,6 +66,49 @@ export function roundFxRate(rate: number): number {
 }
 
 /**
+ * Kurs dla operacji `fx_exchange` w kanonicznej konwencji `CashOperation.fxRate`:
+ * przy parze z PLN — **PLN za 1 jednostkę waluty obcej** NIEZALEŻNIE od kierunku
+ * wymiany (tak zapisują Bossa/DEGIRO/mBank i tak czyta `plnPerXFromOp` w silniku).
+ * Kurs wyliczany z KWOT, więc kierunek jest jednoznaczny. Para krzyżowa (bez PLN):
+ * `to` za 1 `from` — silnik i tak bierze wtedy kurs historyczny.
+ *
+ * Wcześniej T212 i generic zapisywały zawsze `to/from`: wymiana PLN→USD dawała
+ * ~0,25 zamiast ~4, a księga wpływu walut liczyła fikcyjny zysk.
+ */
+export function fxExchangeRate(
+  from: { amount: number; currency: string },
+  to: { amount: number; currency: string },
+): number | undefined {
+  const fromAbs = Math.abs(from.amount);
+  const toAbs = Math.abs(to.amount);
+  if (!(fromAbs > 0) || !(toAbs > 0)) return undefined;
+  const fromCur = from.currency.toUpperCase();
+  const toCur = to.currency.toUpperCase();
+  if (fromCur === 'PLN' && toCur !== 'PLN') return roundFxRate(fromAbs / toAbs);
+  if (toCur === 'PLN' && fromCur !== 'PLN') return roundFxRate(toAbs / fromAbs);
+  return roundFxRate(toAbs / fromAbs);
+}
+
+/**
+ * Kurs podany wprost w pliku (kolumna profilu) ma NIEZNANY kierunek. Wybiera
+ * orientację (r albo 1/r) bliższą kursowi z kwot i zwraca go w konwencji
+ * `fxExchangeRate`. Gdy żadna orientacja nie pasuje (±10%) — kurs z kwot.
+ */
+export function orientFxRate(
+  explicitRate: number | undefined,
+  from: { amount: number; currency: string },
+  to: { amount: number; currency: string },
+): number | undefined {
+  const fromAmounts = fxExchangeRate(from, to);
+  if (!explicitRate || !(explicitRate > 0)) return fromAmounts;
+  if (!fromAmounts) return roundFxRate(explicitRate);
+  const close = (a: number) => Math.abs(a / fromAmounts - 1) <= 0.1;
+  if (close(explicitRate)) return roundFxRate(explicitRate);
+  if (close(1 / explicitRate)) return roundFxRate(1 / explicitRate);
+  return fromAmounts;
+}
+
+/**
  * Total transakcji wg konwencji K/S: kupno powiększa wartość o prowizję,
  * sprzedaż ją pomniejsza. Zaokrąglone do 2 miejsc (waluta).
  *

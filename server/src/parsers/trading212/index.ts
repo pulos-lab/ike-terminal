@@ -8,6 +8,7 @@ import {
   parseNumber,
   roundTo2,
   roundFxRate,
+  fxExchangeRate,
   computeTotal,
   validateTradeFields,
   detectColumnShift,
@@ -334,8 +335,7 @@ export function parseT212File(
           });
           continue;
         }
-        const rate =
-          legs.to.amount !== 0 ? roundFxRate(legs.to.amount / legs.from.amount) : undefined;
+        const rate = fxExchangeRate(legs.from, legs.to);
         const fxPair = `${legs.from.currency}/${legs.to.currency}`;
         const description = `Wymiana ${fxPair}`;
         operations.push({

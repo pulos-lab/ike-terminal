@@ -118,3 +118,37 @@ describe('validateTradeFields', () => {
     });
   });
 });
+
+describe('fxExchangeRate / orientFxRate — konwencja CashOperation.fxRate', () => {
+  it('para z PLN: PLN za 1 X w obu kierunkach', async () => {
+    const { fxExchangeRate } = await import('../utils.js');
+    expect(
+      fxExchangeRate({ amount: -400, currency: 'PLN' }, { amount: 100, currency: 'USD' }),
+    ).toBe(4);
+    expect(
+      fxExchangeRate({ amount: -100, currency: 'USD' }, { amount: 400, currency: 'PLN' }),
+    ).toBe(4);
+    // JPY: PLN za 1 JPY < 1 — konwencja nie zakłada „kurs > 1".
+    expect(
+      fxExchangeRate({ amount: -27, currency: 'PLN' }, { amount: 1000, currency: 'JPY' }),
+    ).toBe(0.027);
+  });
+  it('para krzyżowa: to za 1 from; zero → undefined', async () => {
+    const { fxExchangeRate } = await import('../utils.js');
+    expect(
+      fxExchangeRate({ amount: -100, currency: 'EUR' }, { amount: 110, currency: 'USD' }),
+    ).toBe(1.1);
+    expect(
+      fxExchangeRate({ amount: 0, currency: 'EUR' }, { amount: 110, currency: 'USD' }),
+    ).toBeUndefined();
+  });
+  it('orientFxRate: odwraca kurs podany w przeciwnej orientacji, śmieć → kurs z kwot', async () => {
+    const { orientFxRate } = await import('../utils.js');
+    const from = { amount: -400, currency: 'PLN' };
+    const to = { amount: 100, currency: 'USD' };
+    expect(orientFxRate(4.01, from, to)).toBe(4.01);
+    expect(orientFxRate(0.25, from, to)).toBe(4);
+    expect(orientFxRate(17, from, to)).toBe(4);
+    expect(orientFxRate(undefined, from, to)).toBe(4);
+  });
+});

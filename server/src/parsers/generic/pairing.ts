@@ -1,5 +1,5 @@
 import type { CashOperation, PairingRules, SkippedRow } from 'shared';
-import { roundTo2 } from '../utils.js';
+import { orientFxRate, roundTo2 } from '../utils.js';
 
 /**
  * Parowanie wierszy importu generycznego:
@@ -170,9 +170,9 @@ export function pairFxLegs(
   const usedDebits = new Set<number>();
 
   const emitPair = (debit: PendingCashRow, credit: PendingCashRow) => {
-    // Kurs wyliczany ma 6 miejsc — zaokrąglenie do 2 zniekształcałoby pary typu 3.5713.
-    const computedRate = Number((Math.abs(credit.amount) / Math.abs(debit.amount)).toFixed(6));
-    const fxRate = credit.rate || debit.rate || computedRate || undefined;
+    // Konwencja CashOperation.fxRate (PLN za 1 X przy parach z PLN) — kurs z kolumny
+    // pliku ma nieznany kierunek, więc orientujemy go względem kwot.
+    const fxRate = orientFxRate(credit.rate || debit.rate, debit, credit);
     const fxPair = `${debit.currency}/${credit.currency}`;
     const description = `Wymiana ${fxPair}`;
     operations.push({
