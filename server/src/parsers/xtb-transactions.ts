@@ -11,6 +11,7 @@ import type {
 } from 'shared';
 import { applyIsinAlias, findCfdTicker } from 'shared';
 import type { ParserContext } from './registry.js';
+import { loadWorkbook } from './xlsx-to-csv.js';
 import {
   roundTo2,
   roundFxRate,
@@ -474,8 +475,7 @@ const XTB_HEADER_TOKENS = [
 
 export async function isXtbFormat(buffer: Buffer): Promise<boolean> {
   try {
-    const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+    const wb = await loadWorkbook(buffer);
     const sheet = wb.worksheets.find((ws) => ws.name.toUpperCase().includes('CASH OPERATION'));
     if (!sheet) return false;
     // Anti-false-positive: sama nazwa arkusza to za mało — obcy XLSX z arkuszem
@@ -647,8 +647,7 @@ export async function parseXtbFile(
   operations: ParseResult<CashOperation>;
   warnings?: string[];
 }> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+  const wb = await loadWorkbook(buffer);
 
   // ── Extract instrument categories and ticker lookup from Closed Positions sheet ──
   const categoryMap = extractCategoryMap(wb);
