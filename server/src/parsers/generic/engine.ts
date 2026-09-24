@@ -19,6 +19,8 @@ import { classifyRow, evalCondition } from './classification.js';
 import { pairDividendsWithWht, pairFxLegs, type PendingCashRow } from './pairing.js';
 import {
   ColumnResolver,
+  compileRegex,
+  REGEX_CELL_LIMIT,
   GenericParseError,
   normalizeHeaderName,
   resolveDate,
@@ -798,7 +800,11 @@ function resolveCategory(
       ) {
         return rule.category;
       }
-      if (w.by === 'nameRegex' && new RegExp(w.pattern, 'i').test(paperName)) return rule.category;
+      if (
+        w.by === 'nameRegex' &&
+        compileRegex(w.pattern, 'i').test(paperName.slice(0, REGEX_CELL_LIMIT))
+      )
+        return rule.category;
     }
     // Sekcja jest, żadna reguła nie trafiła — wbudowana detekcja obligacji przed defaultem.
     if (isBondInstrument(paperName, isin)) return 'bond';

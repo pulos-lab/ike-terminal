@@ -1,6 +1,6 @@
 import type { ClassificationRule, Condition, Matcher, RowClass } from 'shared';
 import { parseNumber } from '../utils.js';
-import { ColumnResolver, compileRegex } from './value-parsers.js';
+import { ColumnResolver, compileRegex, REGEX_CELL_LIMIT } from './value-parsers.js';
 
 /**
  * Klasyfikacja wierszy CSV wg reguł profilu — ordered, first-match-wins.
@@ -28,7 +28,9 @@ function evalMatcher(m: Matcher, row: string[], resolver: ColumnResolver): boole
     case 'startsWith':
       return values.some((v) => subject.startsWith(v));
     case 'regex':
-      return compileRegex(m.pattern ?? '', m.caseInsensitive ? 'i' : '').test(cell);
+      return compileRegex(m.pattern ?? '', m.caseInsensitive ? 'i' : '').test(
+        cell.slice(0, REGEX_CELL_LIMIT),
+      );
     case 'signPositive':
       return parseNumber(cell) > 0;
     case 'signNegative':

@@ -1,4 +1,5 @@
 import type { ColRef, DateFormat, DateSpec, ValueSource } from 'shared';
+import { isCatastrophicRegex } from 'shared';
 import { parseNumber } from '../utils.js';
 
 /**
@@ -80,6 +81,10 @@ export class ColumnResolver {
   }
 }
 
+/** Regex profilu widzi najwyżej tyle znaków komórki — druga linia obrony przed
+ *  wolnym dopasowaniem (komórki brokerów to krótkie opisy, nie akapity). */
+export const REGEX_CELL_LIMIT = 1000;
+
 /** Cache skompilowanych regexów (pattern+flags) — profile używają ich per wiersz. */
 const regexCache = new Map<string, RegExp>();
 
@@ -87,6 +92,13 @@ export function compileRegex(pattern: string, flags = ''): RegExp {
   const key = `${flags}::${pattern}`;
   let re = regexCache.get(key);
   if (!re) {
+    // Strażnik także w runtime: profile zapisane przed walidacją ReDoS (biblioteka
+    // w import_profiles.db) nie przechodzą ponownie przez schemat przy każdym użyciu.
+    if (isCatastrophicRegex(pattern)) {
+      throw new GenericParseError(
+        `Wyrażenie regularne w profilu ma zagnieżdżone powtórzenia (ryzyko zawieszenia): ${pattern}`,
+      );
+    }
     try {
       re = new RegExp(pattern, flags);
     } catch {
@@ -113,7 +125,7 @@ export function resolveValueSource(
     case 'regexExtract': {
       const cell = resolver.cell(row, vs.col);
       if (!cell) return vs.fallback;
-      const match = cell.match(compileRegex(vs.pattern));
+      const match = cell.slice(0, REGEX_CELL_LIMIT).match(compileRegex(vs.pattern));
       if (!match) return vs.fallback;
       const group = match[vs.group];
       return group !== undefined ? group.trim() : vs.fallback;
