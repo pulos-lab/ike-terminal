@@ -11,7 +11,6 @@ import type {
 } from 'shared';
 import { applyIsinAlias, findCfdTicker } from 'shared';
 import type { ParserContext } from './registry.js';
-import { buildAliasedCashOperation } from './alias-ops.js';
 import {
   roundTo2,
   roundFxRate,
@@ -20,6 +19,7 @@ import {
   columnShiftWarning,
   rawRowForWarning,
 } from './utils.js';
+import { buildAliasedCashOperation } from './alias-ops.js';
 
 /** Infer CFD category from instrument name using static CFD_TICKER_MAP.
  *  Used as fallback when Closed Positions sheet is missing. */
