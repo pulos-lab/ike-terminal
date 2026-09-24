@@ -43,8 +43,8 @@ export const NAME_ALIASES: Record<string, string> = {
   ONCOARENDI: 'PLONCTH00011', // → Molecure (MOC.WA)
   LIVECHAT: 'PLLVTSF00010', // → Text (TXT.WA)
   LIVECHATSOFTWARE: 'PLLVTSF00010', // → Text (TXT.WA)
-  R22: 'PLR220000018', // → CyberFolks (CYB.WA)
-  'R22.WA': 'PLR220000018', // → CyberFolks (CYB.WA) — XTB format
+  R22: 'PLR220000018', // → cyber_Folks (CBF.WA)
+  'R22.WA': 'PLR220000018', // → cyber_Folks (CBF.WA) — XTB format
   BRU: 'PLMOBRK00013', // → Mo-BRUK (MBR.WA) — old ticker
   'BRU.WA': 'PLMOBRK00013', // → Mo-BRUK (MBR.WA) — XTB format
 };

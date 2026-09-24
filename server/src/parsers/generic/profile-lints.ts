@@ -1,3 +1,4 @@
+import { isIsinShape } from 'shared';
 import type {
   CashMapping,
   ColRef,
@@ -83,8 +84,6 @@ const hasNoTime = (iso: string): boolean => iso.slice(11, 19) === '00:00:00';
 
 // ── Pomocnicze dla lintów strukturalnych (kształt kolumn vs. mapowanie) ──
 
-/** ISIN: 2 litery kraju + 9 alfanumerycznych + cyfra kontrolna. */
-const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
 /** Nagłówek wyglądający na prowizję/opłatę (po normalizeHeaderName = lowercase). */
 const FEE_HEADER_RE = /(prowizj|commission|opłat|oplat|\bfee\b|\bfees\b|\bcharge\b|koszt)/;
 /** Udział kwot z pliku na wierszach odrzuconych, powyżej którego ostrzegamy. */
@@ -346,7 +345,7 @@ export function lintProfile(
         const v = (row[c] ?? '').trim();
         if (!v) continue;
         nonEmpty++;
-        if (ISIN_RE.test(v.toUpperCase())) isinLike++;
+        if (isIsinShape(v.toUpperCase())) isinLike++;
       }
       if (nonEmpty >= 3 && isinLike >= 3 && isinLike / nonEmpty >= 0.6) {
         isinCol = c;

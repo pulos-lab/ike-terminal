@@ -50,7 +50,7 @@
 import { readdirSync } from 'node:fs';
 import { basename } from 'node:path';
 import type { TickerMapEntry } from 'shared';
-import { findCfdTicker } from 'shared';
+import { findCfdTicker, isIsinShape } from 'shared';
 import { config } from '../config.js';
 import { getDb } from '../db/connection.js';
 import { upsertTickerMapEntry } from '../db/ticker-map-repo.js';
@@ -68,7 +68,7 @@ const NEUTRAL_CURRENCY = 'USD';
 
 /** ISIN w rozumieniu formatu (2 litery + 10 alfanumerycznych) — tak jak w resolverze. */
 function isRealIsin(value: string): boolean {
-  return /^[A-Z]{2}[A-Z0-9]{10}$/.test(value);
+  return isIsinShape(value);
 }
 
 interface TickerRow {

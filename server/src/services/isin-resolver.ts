@@ -7,6 +7,8 @@ import {
   findBondByIsin,
   findBondByTicker,
   hasForeignYahooSuffix,
+  sameCurrency,
+  isIsinShape,
 } from 'shared';
 import { getTickerMap, upsertTickerMapEntry, isProvisionalStub } from '../db/ticker-map-repo.js';
 import { searchYahoo, fetchYahooSymbolInfo } from './ticker-search.js';
@@ -72,11 +74,13 @@ function inferPriceSource(ticker: string, exchange?: string): 'yahoo' | 'stooq' 
  * 3. Stooq validation for Polish (PL*) ISINs
  */
 /**
- * Check if a string looks like a real ISIN (2 uppercase letters + 10 alphanumeric chars).
- * mBank pseudo-ISINs (e.g., "ETFSP500", "PKOBP") won't match this pattern.
+ * Czy to prawdziwy ISIN (ścisły kształt ze shared: ostatni znak = cyfra kontrolna).
+ * Pseudo-ISIN-y z nazw papierów (mBank „ETFSP500", 12-literowe skróty) nie przejdą —
+ * dawny luźny regex przepuszczał 12 znaków zakończonych literą. Suma kontrolna
+ * (`isValidIsin`) celowo NIE rozstrzyga gałęzi resolvera.
  */
 function isRealIsin(value: string): boolean {
-  return /^[A-Z]{2}[A-Z0-9]{10}$/.test(value);
+  return isIsinShape(value);
 }
 
 /**
@@ -201,12 +205,6 @@ export const BROKER_TICKER_ALIASES: Record<string, string> = {
   // czyli notowanie kopenhaskie w DKK (amerykański ADR `NVO` chodzi ~40 USD).
   NOVOB: 'NOVO-B.CO',
 };
-
-/** GBX/GBp (pensy) i GBP to ta sama waluta w innej jednostce — nie mylić z niezgodnością. */
-function sameCurrency(a: string, b: string): boolean {
-  const norm = (c: string) => (c.toUpperCase() === 'GBX' ? 'GBP' : c.toUpperCase());
-  return norm(a) === norm(b);
-}
 
 /**
  * `buildEntry` + guard waluty dla trafień NIE-dokładnych.

@@ -1,3 +1,4 @@
+import { sameCurrency, penceFactor } from 'shared';
 import Papa from 'papaparse';
 import type { Transaction, CashOperation, SkippedRow } from 'shared';
 import type { CombinedParseOutput } from '../registry.js';
@@ -409,9 +410,8 @@ function hasInstrument(action: NonNullable<RowKind>): boolean {
 
 /** Funt i pens to ta sama waluta w dwóch jednostkach: 1 GBP = 100 GBX. */
 function gbpGbxFactor(from: string, to: string): number | null {
-  if (from === 'GBP' && to === 'GBX') return 100;
-  if (from === 'GBX' && to === 'GBP') return 0.01;
-  return null;
+  if (from === to || !sameCurrency(from, to)) return null;
+  return penceFactor(from) / penceFactor(to);
 }
 
 /**

@@ -147,7 +147,11 @@ export function cellsToRecord(headers: string[], cells: string[]): Record<string
  * minus dla ujemnych ("−1,076.52" → -1076.52). Puste / "--" → null.
  */
 export function parseIbkrNumber(raw: string): number | null {
-  const cleaned = raw.replace(/ /g, ' ').trim();
+  // U+2212 (typograficzny minus) — obiecany w opisie, a Number('−1076.52') = NaN.
+  const cleaned = raw
+    .replace(/\u00a0/g, ' ')
+    .replace(/\u2212/g, '-')
+    .trim();
   if (cleaned === '' || cleaned === '--' || cleaned === '-') return null;
   const num = Number(cleaned.replace(/,/g, ''));
   return Number.isFinite(num) ? num : null;
