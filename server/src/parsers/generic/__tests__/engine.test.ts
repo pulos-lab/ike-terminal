@@ -99,6 +99,26 @@ describe('parseWithProfile — transakcje', () => {
     expect(tx.value).toBeCloseTo(551.2);
   });
 
+  it('GBX: kolumny wartości i prowizji w pensach też ÷100', () => {
+    const profile = tradeProfile();
+    profile.trade!.value = { kind: 'column', col: { name: 'wartosc' } };
+    profile.trade!.commission = { kind: 'column', col: { name: 'prowizja' } };
+    const csv = `${TRADE_HEADER};wartosc;prowizja\n01.03.2026;RIO;GB0007188757;K;10;5512,00;GBX;55120,00;500,00`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    const tx = out.transactions.data[0];
+    expect(tx.value).toBeCloseTo(551.2);
+    expect(tx.commission).toBeCloseTo(5);
+    expect(tx.total).toBeCloseTo(556.2);
+  });
+
+  it('GBX: wartość już w funtach (waluta konta) zostaje bez zmian', () => {
+    const profile = tradeProfile();
+    profile.trade!.value = { kind: 'column', col: { name: 'wartosc' } };
+    const csv = `${TRADE_HEADER};wartosc\n01.03.2026;RIO;GB0007188757;K;10;5512,00;GBX;551,20`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    expect(out.transactions.data[0].value).toBeCloseTo(551.2);
+  });
+
   it('wholeShares zaokrągla ilość do pełnych sztuk', () => {
     const profile = tradeProfile();
     profile.trade!.wholeShares = true;

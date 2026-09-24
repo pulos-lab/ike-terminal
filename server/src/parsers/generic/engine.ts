@@ -680,14 +680,21 @@ function buildTransaction(
   const check = validateTradeFields({ date: dateRaw, paperName, side, quantity, price });
   if (!check.ok) return skip(check.reason);
 
-  const value = trade.value
-    ? Math.abs(resolveNumber(trade.value, row, resolver))
-    : roundTo2(quantity * price);
+  // GBX: cena jest już w funtach, a kolumny kwot bywają w PENSACH (ta sama waluta
+  // co cena) albo w funtach (waluta konta) — rozstrzyga porównanie z qty×cena.
+  // Wcześniej kwoty w pensach szły dalej bez ÷100 (prowizja 100× za duża).
+  const rawValue = trade.value ? Math.abs(resolveNumber(trade.value, row, resolver)) : undefined;
+  const pence =
+    isGbx &&
+    rawValue !== undefined &&
+    Math.abs(rawValue / 100 - quantity * price) <= Math.max(0.05, quantity * price * 0.01);
+  const unit = pence ? 100 : 1;
+  const value = rawValue !== undefined ? roundTo2(rawValue / unit) : roundTo2(quantity * price);
   const commission = trade.commission
-    ? Math.abs(resolveNumber(trade.commission, row, resolver))
+    ? Math.abs(resolveNumber(trade.commission, row, resolver)) / unit
     : 0;
   const total = trade.total
-    ? resolveNumber(trade.total, row, resolver)
+    ? resolveNumber(trade.total, row, resolver) / unit
     : computeTotal(side, value, commission);
 
   // Kategoria: reguły profilu → wbudowana detekcja obligacji → default.
