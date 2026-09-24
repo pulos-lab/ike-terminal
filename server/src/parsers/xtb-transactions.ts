@@ -407,14 +407,17 @@ function resolveTradeCurrency(args: {
  * string format "DD/MM/YYYY HH:MM:SS" → ISO 8601.
  */
 function parseXtbTime(time: string | number | Date): string | null {
-  // ExcelJS may return Date objects for date-formatted cells
+  // ExcelJS zwraca komórki dat jako Date z czasem ścianowym zapisanym w UTC
+  // (serial Excela → ms od epoki bez strefy). Gettery UTC dają czas z pliku
+  // niezależnie od strefy procesu — lokalne przesuwały go o offset serwera
+  // (a z nim klucze dedup). Produkcja działa w Etc/UTC → tam wynik bez zmian.
   if (time instanceof Date) {
-    const yyyy = time.getFullYear();
-    const mm = String(time.getMonth() + 1).padStart(2, '0');
-    const dd = String(time.getDate()).padStart(2, '0');
-    const hh = String(time.getHours()).padStart(2, '0');
-    const mi = String(time.getMinutes()).padStart(2, '0');
-    const ss = String(time.getSeconds()).padStart(2, '0');
+    const yyyy = time.getUTCFullYear();
+    const mm = String(time.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(time.getUTCDate()).padStart(2, '0');
+    const hh = String(time.getUTCHours()).padStart(2, '0');
+    const mi = String(time.getUTCMinutes()).padStart(2, '0');
+    const ss = String(time.getUTCSeconds()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}`;
   }
 
