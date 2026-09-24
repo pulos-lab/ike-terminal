@@ -193,10 +193,10 @@ describe('generic-import-service — analyze → preview → commit → reimport
     expect(txRepo.getTransactionsCount(PID)).toBe(2);
 
     // Profil w bibliotece pod fingerprintem pliku
-    const analyze = await svc.analyzeGenericFile({
-      buffer: csvBuffer([ROW_CDR]),
-      originalname: 'x.csv',
-    });
+    const analyze = await svc.analyzeGenericFile(
+      { buffer: csvBuffer([ROW_CDR]), originalname: 'x.csv' },
+      'user-1',
+    );
     expect(analyze.profile?.summary.id).toBe(result.profileId);
     expect(analyze.profile?.summary.status).toBe('pending');
 
@@ -208,14 +208,15 @@ describe('generic-import-service — analyze → preview → commit → reimport
   });
 
   it('re-commit tego samego pliku po profileId → wszystko jako duplikaty', async () => {
-    const analyze = await svc.analyzeGenericFile({
-      buffer: csvBuffer([ROW_CDR]),
-      originalname: 'x.csv',
-    });
+    const analyze = await svc.analyzeGenericFile(
+      { buffer: csvBuffer([ROW_CDR]), originalname: 'x.csv' },
+      'user-1',
+    );
     const result = await svc.commitGeneric({
       buffer: csvBuffer([ROW_CDR, ROW_KGH]),
       originalname: 'unknown-broker-again.csv',
       portfolioId: PID,
+      userId: 'user-1',
       profileId: analyze.profile!.summary.id,
     });
 
@@ -231,6 +232,7 @@ describe('generic-import-service — analyze → preview → commit → reimport
       buffer: csvBuffer([ROW_CDR, ROW_KGH]),
       originalname: 'unknown-broker.csv',
       portfolioId: PID,
+      userId: 'user-1',
       profileJson: edited,
     });
 
@@ -239,10 +241,10 @@ describe('generic-import-service — analyze → preview → commit → reimport
     expect(result.duplicatesSkipped).toBe(2); // dane już są — sam profil się zmienił
 
     // Aktywny = nowa wersja; poprzednia wyparta
-    const analyze = await svc.analyzeGenericFile({
-      buffer: csvBuffer([ROW_CDR]),
-      originalname: 'x.csv',
-    });
+    const analyze = await svc.analyzeGenericFile(
+      { buffer: csvBuffer([ROW_CDR]), originalname: 'x.csv' },
+      'user-1',
+    );
     expect(analyze.profile?.summary.version).toBe(2);
     expect(analyze.profile?.summary.brokerLabel).toBe('Testowy Broker v2');
   });
@@ -255,10 +257,12 @@ describe('generic-import-service — analyze → preview → commit → reimport
     const target = batches[batches.length - 1];
 
     // Użytkownik wgrywa TEN SAM plik ponownie (plików nie przechowujemy).
-    const result = await svc.reimportGenericBatchFromUpload(PID, target.importBatch, {
-      buffer: csvBuffer([ROW_CDR, ROW_KGH]),
-      originalname: 'unknown-broker.csv',
-    });
+    const result = await svc.reimportGenericBatchFromUpload(
+      PID,
+      target.importBatch,
+      { buffer: csvBuffer([ROW_CDR, ROW_KGH]), originalname: 'unknown-broker.csv' },
+      'user-1',
+    );
 
     expect(result.success).toBe(true);
     expect(result.transactionsImported).toBe(2); // wstawione na nowo po delete
@@ -296,7 +300,10 @@ describe('generic-import-service — analyze → preview → commit → reimport
   it('analyze: podobny format (dodatkowa kolumna) → sugestia z biblioteki', async () => {
     const similarHeader = `${HEADER}|Extra fee`;
     const similar = Buffer.from([similarHeader, `${ROW_CDR}|0.00`].join('\n'), 'utf-8');
-    const result = await svc.analyzeGenericFile({ buffer: similar, originalname: 'similar.csv' });
+    const result = await svc.analyzeGenericFile(
+      { buffer: similar, originalname: 'similar.csv' },
+      'user-1',
+    );
 
     expect(result.known).toBe(false);
     expect(result.profile).toBeUndefined(); // inny fingerprint — exact match nie trafia
@@ -307,6 +314,30 @@ describe('generic-import-service — analyze → preview → commit → reimport
     const sp = result.suggestions![0].profileJson as { file?: unknown; classify?: unknown };
     expect(sp.file).toBeDefined();
     expect(sp.classify).toBeDefined();
+  });
+
+  it('cudzy pending jest niewidoczny: brak wstępnego wyboru, sugestii i commitu po id', async () => {
+    const own = await svc.analyzeGenericFile(
+      { buffer: csvBuffer([ROW_CDR]), originalname: 'x.csv' },
+      'user-1',
+    );
+    expect(own.profile?.summary.status).toBe('pending');
+
+    const foreign = await svc.analyzeGenericFile(
+      { buffer: csvBuffer([ROW_CDR]), originalname: 'x.csv' },
+      'user-2',
+    );
+    expect(foreign.profile).toBeUndefined();
+    expect(foreign.suggestions ?? []).toHaveLength(0);
+
+    const commit = await svc.commitGeneric({
+      buffer: csvBuffer([ROW_CDR]),
+      originalname: 'x.csv',
+      portfolioId: 'other-portfolio-isolation',
+      userId: 'user-2',
+      profileId: own.profile!.summary.id,
+    });
+    expect(commit.success).toBe(false);
   });
 
   it('commit bez profilu → czytelny błąd', async () => {

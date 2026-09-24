@@ -9,6 +9,84 @@ import type {
 } from './types.js';
 
 /**
+ * Czy wzorzec grozi katastrofalnym backtrackingiem (ReDoS)? Regexy profili
+ * pochodzą od użytkownika albo z LLM i są wykonywane na serwerze per komórka —
+ * jeden `(a+)+$` blokuje pętlę zdarzeń Node dla WSZYSTKICH użytkowników.
+ *
+ * Heurystyka „wysokości gwiazdki": grupa powtarzana nieograniczenie (`*`, `+`,
+ * `{n,}`, `{n,m}` z m>1), która sama zawiera kwantyfikator nieograniczony lub
+ * alternatywę. Odrzuca rodzinę `(a+)+`, `(\w*x)*`, `(a|aa)+`; przepuszcza
+ * wszystkie wzorce spotykane w profilach (`(?:\s+(?:netto|brutto))?`, `([\d.]+)`).
+ * Świadomie konserwatywna: fałszywy alarm = komunikat „uprość wzorzec".
+ */
+export function isCatastrophicRegex(pattern: string): boolean {
+  // Stos grup: czy wnętrze ma kwantyfikator nieograniczony / alternatywę.
+  const stack: { inner: boolean }[] = [];
+  let lastGroupInner: boolean | null = null; // grupa zamknięta tuż przed bieżącym znakiem
+  const markInner = () => {
+    if (stack.length > 0) stack[stack.length - 1].inner = true;
+  };
+  const unboundedAt = (i: number): number => {
+    // Zwraca długość kwantyfikatora nieograniczonego zaczynającego się w i (0 = brak).
+    const c = pattern[i];
+    if (c === '*' || c === '+') return 1;
+    if (c === '{') {
+      const m = /^\{(\d*)(,?)(\d*)\}/.exec(pattern.slice(i));
+      if (!m) return 0;
+      const unbounded = m[2] === ',' && (m[3] === '' || Number(m[3]) > 1);
+      return unbounded ? m[0].length : 0;
+    }
+    return 0;
+  };
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === '\\') {
+      i++;
+      lastGroupInner = null;
+      continue;
+    }
+    if (c === '[') {
+      // Klasa znaków — do zamykającego `]` (z obsługą escape).
+      i++;
+      if (pattern[i] === '^') i++;
+      if (pattern[i] === ']') i++;
+      while (i < pattern.length && pattern[i] !== ']') {
+        if (pattern[i] === '\\') i++;
+        i++;
+      }
+      lastGroupInner = null;
+      continue;
+    }
+    if (c === '(') {
+      stack.push({ inner: false });
+      lastGroupInner = null;
+      continue;
+    }
+    if (c === ')') {
+      const g = stack.pop();
+      lastGroupInner = g ? g.inner : null;
+      continue;
+    }
+    if (c === '|') {
+      markInner();
+      lastGroupInner = null;
+      continue;
+    }
+    const q = unboundedAt(i);
+    if (q > 0) {
+      if (lastGroupInner === true) return true;
+      markInner();
+      i += q - 1;
+      lastGroupInner = null;
+      continue;
+    }
+    if (c === '?') continue; // `?` po kwantyfikatorze (lazy) albo opcjonalność
+    lastGroupInner = null;
+  }
+  return false;
+}
+
+/**
  * ImportProfile — deklaratywny opis formatu CSV brokera dla uniwersalnego importu.
  *
  * Profil opisuje STRUKTURĘ formatu (mapowanie kolumn, reguły klasyfikacji wierszy,
@@ -585,6 +663,16 @@ export const ImportProfileSchema = z
         ctx.issues.push({
           code: 'custom',
           message: `Niepoprawny regex w ${where}: ${pattern}`,
+          input: p,
+        });
+        return;
+      }
+      if (isCatastrophicRegex(pattern)) {
+        ctx.issues.push({
+          code: 'custom',
+          message:
+            `Regex w ${where} ma zagnieżdżone powtórzenia (ryzyko zawieszenia importu): ` +
+            `${pattern} — uprość wzorzec, np. (a+)+ → a+`,
           input: p,
         });
       }

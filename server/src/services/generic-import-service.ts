@@ -53,6 +53,7 @@ import {
   getProfileById,
   insertPendingProfile,
   listActiveProfiles,
+  isProfileVisibleTo,
   listProfileBatches,
   recordProfileBatch,
   type ImportProfileRow,
@@ -192,11 +193,11 @@ function profileWithSheet(profile: ImportProfile, sheet?: string): ImportProfile
 // ── Analyze ──────────────────────────────────────────────────────────────────
 
 /** Analiza jednej tabeli: profil z biblioteki / sugestie / zredagowana próbka. */
-function analyzeDocument(doc: ImportDocument): GenericSheetAnalysis {
-  const active = findActiveProfileByFingerprint(doc.fingerprint);
+function analyzeDocument(doc: ImportDocument, userId?: string): GenericSheetAnalysis {
+  const active = findActiveProfileByFingerprint(doc.fingerprint, userId);
   const suggestions = active
     ? []
-    : listActiveProfiles()
+    : listActiveProfiles(userId)
         .map((p) => ({ p, similarity: jaccardSimilarity(doc.candidate.headers, p.headerNames) }))
         .filter((s) => s.similarity >= SUGGESTION_THRESHOLD)
         .sort((a, b) => b.similarity - a.similarity)
@@ -224,10 +225,13 @@ function analyzeDocument(doc: ImportDocument): GenericSheetAnalysis {
   };
 }
 
-export async function analyzeGenericFile(file: {
-  buffer: Buffer;
-  originalname: string;
-}): Promise<GenericAnalyzeResult> {
+export async function analyzeGenericFile(
+  file: {
+    buffer: Buffer;
+    originalname: string;
+  },
+  userId?: string,
+): Promise<GenericAnalyzeResult> {
   // Parsery wbudowane zawsze wygrywają — znany broker idzie przez /api/import/bulk.
   const classified = await classifyFile(file);
   if (classified.broker) {
@@ -252,7 +256,7 @@ export async function analyzeGenericFile(file: {
 
   // CSV: pola płaskie (wsteczna zgodność). XLSX: lista arkuszy.
   if (format === 'csv') {
-    const a = analyzeDocument(documents[0]);
+    const a = analyzeDocument(documents[0], userId);
     return {
       known: false,
       format: 'csv',
@@ -269,7 +273,7 @@ export async function analyzeGenericFile(file: {
   return {
     known: false,
     format: 'xlsx',
-    sheets: documents.map(analyzeDocument),
+    sheets: documents.map((d) => analyzeDocument(d, userId)),
     skippedSheets: skippedSheets.length > 0 ? skippedSheets : undefined,
   };
 }
@@ -283,9 +287,10 @@ export async function analyzeGenericFile(file: {
  */
 export async function analyzeGenericFiles(
   files: Array<{ buffer: Buffer; originalname: string }>,
+  userId?: string,
 ): Promise<GenericAnalyzeResult> {
   if (files.length === 1) {
-    const single = await analyzeGenericFile(files[0]);
+    const single = await analyzeGenericFile(files[0], userId);
     if (single.known) return single;
   }
 
@@ -298,7 +303,7 @@ export async function analyzeGenericFiles(
   }
 
   const { documents, skipped } = await enumerateImportFiles(unknown);
-  const docAnalyses = documents.map(analyzeDocument);
+  const docAnalyses = documents.map((d) => analyzeDocument(d, userId));
 
   if (docAnalyses.length === 0 && knownFiles.length === 0) {
     return {
@@ -556,7 +561,7 @@ function resolveOrInsertProfileRow(
 ): { row: ImportProfileRow } | { errors: string[] } {
   if (si.profileId) {
     const row = getProfileById(si.profileId);
-    if (!row || row.status === 'rejected' || row.status === 'superseded') {
+    if (!row || !isProfileVisibleTo(row, userId)) {
       return {
         errors: [
           'Wskazany profil importu nie istnieje albo został wycofany — odśwież analizę pliku.',
@@ -854,6 +859,7 @@ export async function reimportGenericBatchFromUpload(
   portfolioId: string,
   importBatch: string,
   file: { buffer: Buffer; originalname: string },
+  userId?: string,
 ): Promise<GenericCommitResult> {
   const batch = getProfileBatch(portfolioId, importBatch);
   if (!batch) {
@@ -862,7 +868,7 @@ export async function reimportGenericBatchFromUpload(
 
   const original = getProfileById(batch.profileId);
   const active = original
-    ? (findActiveProfileByFingerprint(original.fingerprint) ?? original)
+    ? (findActiveProfileByFingerprint(original.fingerprint, userId) ?? original)
     : null;
   if (!active) {
     return failResult(importBatch, ['Profil tego importu nie istnieje w bibliotece.']);
