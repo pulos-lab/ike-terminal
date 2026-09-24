@@ -66,6 +66,32 @@ export function roundFxRate(rate: number): number {
 }
 
 /**
+ * Dywidenda netto z pary brutto + podatek u źródła, ZE ZNAKIEM.
+ *
+ * Wcześniej parsery liczyły `|brutto| − |podatek|`, więc korekta (ujemna
+ * dywidenda odwracająca wypłatę) stawała się DOCHODEM, a zwrot podatku
+ * (dodatni wiersz WHT) był odejmowany zamiast dodany.
+ *
+ * - znaki przeciwne (typowo +brutto / −podatek albo −brutto / +zwrot przy
+ *   korekcie): suma ze znakiem;
+ * - znaki zgodne (np. plik podaje podatek jako magnitudę): dawna semantyka
+ *   `|brutto| − |podatek|` ze znakiem brutto — `sameSign` pozwala zgłosić warning.
+ */
+export function netDividendAmount(
+  gross: number,
+  tax: number | undefined,
+): { net: number; taxAbs: number; taxPct: number; sameSign: boolean } {
+  const g = gross;
+  const t = tax ?? 0;
+  const taxAbs = Math.abs(t);
+  const sameSign = t !== 0 && g !== 0 && Math.sign(t) === Math.sign(g);
+  const net = sameSign ? Math.sign(g) * (Math.abs(g) - taxAbs) : g + t;
+  const gAbs = Math.abs(g);
+  const taxPct = gAbs > 0 && taxAbs > 0 ? Math.round((taxAbs / gAbs) * 100) : 0;
+  return { net: roundTo2(net), taxAbs, taxPct, sameSign };
+}
+
+/**
  * Kurs dla operacji `fx_exchange` w kanonicznej konwencji `CashOperation.fxRate`:
  * przy parze z PLN — **PLN za 1 jednostkę waluty obcej** NIEZALEŻNIE od kierunku
  * wymiany (tak zapisują Bossa/DEGIRO/mBank i tak czyta `plnPerXFromOp` w silniku).

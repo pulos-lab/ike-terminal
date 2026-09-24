@@ -927,7 +927,15 @@ function finalizeCashOperation(
       amount = -Math.abs(amount);
     }
   } else if (cls === 'dividend' || cls === 'coupon') {
-    amount = Math.abs(amount);
+    // W pliku ze znakami ujemna dywidenda to korekta wcześniejszej wypłaty —
+    // abs() księgował ją jako dochód.
+    if (amount < 0 && signedAmounts) {
+      warnings.push(
+        `Wiersz ${pending.rowNum}: ujemna dywidenda (${amount}) — zaimportowano jako korektę.`,
+      );
+    } else {
+      amount = Math.abs(amount);
+    }
   }
 
   return {

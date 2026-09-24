@@ -152,3 +152,22 @@ describe('fxExchangeRate / orientFxRate — konwencja CashOperation.fxRate', () 
     expect(orientFxRate(undefined, from, to)).toBe(4);
   });
 });
+
+describe('netDividendAmount — dywidenda netto ze znakiem', () => {
+  it('typowo: +brutto / −podatek', async () => {
+    const { netDividendAmount } = await import('../utils.js');
+    expect(netDividendAmount(100, -15)).toMatchObject({ net: 85, taxPct: 15, sameSign: false });
+  });
+  it('korekta: −brutto / +zwrot podatku → ujemne netto', async () => {
+    const { netDividendAmount } = await import('../utils.js');
+    expect(netDividendAmount(-100, 15).net).toBe(-85);
+  });
+  it('zwrot podatku bez korekty dywidendy: +brutto / +zwrot → znak zgodny, dawna semantyka', async () => {
+    const { netDividendAmount } = await import('../utils.js');
+    expect(netDividendAmount(100, 15)).toMatchObject({ net: 85, sameSign: true });
+  });
+  it('bez podatku', async () => {
+    const { netDividendAmount } = await import('../utils.js');
+    expect(netDividendAmount(-12.346, undefined).net).toBe(-12.35);
+  });
+});

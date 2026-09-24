@@ -8,6 +8,7 @@ import {
   detectColumnShift,
   columnShiftWarning,
   rawRowForWarning,
+  netDividendAmount,
 } from './utils.js';
 
 /**
@@ -199,11 +200,15 @@ export function parseDegiroOperations(
         !usedTaxRows.has(t.rowNum),
     );
     if (tax) usedTaxRows.add(tax.rowNum);
-    const grossAmount = Math.abs(div.amount);
-    const taxAmount = tax ? Math.abs(tax.amount) : 0;
-    const netAmount = roundTo2(grossAmount - taxAmount);
-
-    const taxPct = grossAmount > 0 ? Math.round((taxAmount / grossAmount) * 100) : 0;
+    // Ze znakiem: ujemna „Dywidenda" to korekta wcześniejszej wypłaty, dodatni
+    // „Podatek Dywidendowy" to zwrot — abs() zamieniał je w dochód/koszt.
+    const { net: netAmount, taxPct } = netDividendAmount(div.amount, tax?.amount);
+    if (div.amount < 0) {
+      warnings.push(
+        `DEGIRO: ujemna dywidenda ${div.product} ${div.date} (${div.amount} ${div.currency}) — ` +
+          `korekta wcześniejszej wypłaty, zaimportowano ze znakiem ujemnym`,
+      );
+    }
     const descParts = [div.product];
     if (taxPct > 0) descParts.push(`(podatek ${taxPct}%)`);
 
@@ -256,7 +261,8 @@ export function parseDegiroOperations(
       date: parseDegiroDate(dep.date, dep.time),
       operationType: 'deposit',
       description: dep.description,
-      amount: Math.abs(dep.amount),
+      // Ujemny „Depozyt" = korekta/zwrot wpłaty — znak z pliku, nie abs().
+      amount: dep.amount,
       currency: dep.currency || 'PLN',
       source: 'degiro',
       importBatch,

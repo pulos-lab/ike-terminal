@@ -8,6 +8,7 @@ import {
   detectColumnShift,
   columnShiftWarning,
   rawRowForWarning,
+  netDividendAmount,
 } from './utils.js';
 
 /**
@@ -444,11 +445,7 @@ export function parseIngOperations(
     );
     if (tax) tax.used = true;
 
-    const grossAmount = Math.abs(gross.amount);
-    const taxAmount = tax ? Math.abs(tax.amount) : 0;
-    const netAmount = roundTo2(grossAmount - taxAmount);
-    const taxPct =
-      grossAmount > 0 && taxAmount > 0 ? Math.round((taxAmount / grossAmount) * 100) : 0;
+    const { net: netAmount, taxPct } = netDividendAmount(gross.amount, tax?.amount);
 
     const qty = parseIngDescQty(gross.qtyToken);
     const rate = parseNumber(gross.rateToken);
