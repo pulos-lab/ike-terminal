@@ -1658,7 +1658,7 @@ function plnPerXFromOp(op: CashOperation): number | null {
   const pair = op.fxPair?.toUpperCase();
   if (!pair || !pair.includes('PLN')) return null; // cross-rate — caller użyje historical
   if (op.source === 'xtb') return 1 / op.fxRate;
-  return op.fxRate; // bossa, degiro, mbank, manual
+  return op.fxRate; // bossa, degiro, mbank, ibkr, trading212, generic, manual
 }
 
 /** Zdarzenie księgi walutowej — znormalizowany przepływ przekraczający granicę

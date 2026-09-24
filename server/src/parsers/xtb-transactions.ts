@@ -18,6 +18,7 @@ import {
   detectColumnShift,
   columnShiftWarning,
   rawRowForWarning,
+  netDividendAmount,
 } from './utils.js';
 
 /** Infer CFD category from instrument name using static CFD_TICKER_MAP.
@@ -1170,8 +1171,9 @@ export async function parseXtbFile(
         continue;
       }
 
-      const grossAmount = Math.abs(raw.amount);
-      let netAmount = grossAmount;
+      // Ze znakiem: ujemna dywidenda XTB to korekta wypłaty (abs() robił z niej dochód).
+      const grossAmount = raw.amount;
+      let netAmount = roundTo2(grossAmount);
       let description = raw.comment || `Dividend: ${raw.symbol}`;
 
       // Try to pair with WHT (FIFO — n-ta dywidenda pod kluczem bierze n-ty WHT)
@@ -1179,7 +1181,7 @@ export async function parseXtbFile(
       const wht = takeWht(whtKey);
       if (wht) {
         const whtAbs = Math.abs(wht.amount);
-        netAmount = roundTo2(grossAmount - whtAbs);
+        netAmount = netDividendAmount(grossAmount, wht.amount).net;
         const pctMatch = wht.comment.match(/WHT (\d+)%/);
         const pctStr = pctMatch ? ` WHT ${pctMatch[1]}%` : ' WHT';
         description = `${raw.comment} (brutto ${grossAmount},${pctStr} -${whtAbs})`;

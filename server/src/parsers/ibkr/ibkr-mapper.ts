@@ -18,7 +18,7 @@
  */
 import type { CashOperation, OptionContract, SkippedRow, SkippedRowRaw, Transaction } from 'shared';
 import type { TransactionTax } from '../degiro-operations.js';
-import { computeTotal, roundTo2 } from '../utils.js';
+import { computeTotal, netDividendAmount, roundTo2 } from '../utils.js';
 import type { IbkrCashRow, IbkrStatement, IbkrTrade } from './section-types.js';
 import {
   normalizeBondSymbol,
@@ -527,9 +527,9 @@ function mapDividendsWithWht(
     whtGroups.delete(key);
     if (div.net === 0 && (!tax || tax.net === 0)) continue; // pełny reversal — grupa znika
     const gross = div.net;
-    const taxAmount = tax ? Math.abs(tax.net) : 0;
-    const netAmount = roundTo2(gross - taxAmount);
-    const taxPct = gross > 0 ? Math.round((taxAmount / gross) * 100) : 0;
+    // Grupa WHT z dodatnim saldem = zwrot podatku — dodajemy, nie odejmujemy.
+    const { net: netAmount, taxPct: rawPct } = netDividendAmount(gross, tax?.net);
+    const taxPct = gross > 0 ? rawPct : 0;
     const descParts = [div.description.replace(/\s*\([^)]*\)\s*$/, '')];
     if (taxPct > 0) descParts.push(`(podatek ${taxPct}%)`);
     if (gross < 0) {

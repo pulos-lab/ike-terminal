@@ -30,6 +30,20 @@ describe('parseMbankTransactions', () => {
     expect(result.data[1].currency).toBe('PLN');
   });
 
+  it('giełda spoza mapy: waluta z prefiksu kraju, nieznana → PLN z ostrzeżeniem', () => {
+    const csv = [
+      'Czas transakcji,Papier,Gie\u0142da,K/S,Liczba,Kurs,Waluta,Prowizja,Waluta,Warto\u015b\u0107,Waluta',
+      '03.03.2026 16:26:23,LVMH,FRA-EURONEXT,K,1,600,,,,,',
+      '03.03.2026 16:27:00,CEZ,CZE-PSE,K,10,900,,,,,',
+      '03.03.2026 16:28:00,COS,XYZ-ABC,K,1,10,,,,,',
+    ].join('\n');
+    const result = parseMbankTransactions(csv, 'batch-test');
+    expect(result.data.map((t) => t.currency)).toEqual(['EUR', 'CZK', 'PLN']);
+    expect(result.warnings?.some((w) => w.includes('XYZ-ABC') && w.includes('przyjęto PLN'))).toBe(
+      true,
+    );
+  });
+
   it('parses semicolon-delimited CSV (legacy format)', () => {
     const csv = [
       'Czas transakcji;Papier;Gie\u0142da;K/S;Liczba;Kurs;Waluta;Prowizja;Waluta;Warto\u015b\u0107;Waluta',

@@ -1,5 +1,5 @@
 import type { CashOperation, PairingRules, SkippedRow } from 'shared';
-import { roundTo2 } from '../utils.js';
+import { netDividendAmount, orientFxRate, roundTo2 } from '../utils.js';
 
 /**
  * Parowanie wierszy importu generycznego:
@@ -73,18 +73,21 @@ export function pairDividendsWithWht(
     const wht = whtRows.find((t) => !usedWht.has(t.rowNum) && matches(div, t));
     if (wht) usedWht.add(wht.rowNum);
 
-    const gross = Math.abs(div.amount);
+    // Plik może podawać kwoty jako magnitudy — dywidendę ze znakiem ujemnym
+    // traktujemy jako korektę tylko, gdy podatek ma znak przeciwny (plik ze znakami).
+    const signed = !!wht && Math.sign(wht.amount) === -Math.sign(div.amount);
+    const gross = signed ? div.amount : Math.abs(div.amount);
     const tax = wht ? Math.abs(wht.amount) : 0;
 
     if (rules.handling === 'subtract') {
-      const taxPct = gross > 0 ? Math.round((tax / gross) * 100) : 0;
+      const { net, taxPct } = netDividendAmount(gross, signed ? wht!.amount : -tax);
       const baseDesc = div.description || 'Dywidenda';
       operations.push({
         date: div.dateIso,
         operationType: 'dividend',
         description: taxPct > 0 ? `${baseDesc} (podatek ${taxPct}%)` : baseDesc,
         details: div.details,
-        amount: roundTo2(gross - tax),
+        amount: net,
         currency: div.currency,
         ticker: div.ticker,
         source: 'generic',
@@ -170,9 +173,9 @@ export function pairFxLegs(
   const usedDebits = new Set<number>();
 
   const emitPair = (debit: PendingCashRow, credit: PendingCashRow) => {
-    // Kurs wyliczany ma 6 miejsc — zaokrąglenie do 2 zniekształcałoby pary typu 3.5713.
-    const computedRate = Number((Math.abs(credit.amount) / Math.abs(debit.amount)).toFixed(6));
-    const fxRate = credit.rate || debit.rate || computedRate || undefined;
+    // Konwencja CashOperation.fxRate (PLN za 1 X przy parach z PLN) — kurs z kolumny
+    // pliku ma nieznany kierunek, więc orientujemy go względem kwot.
+    const fxRate = orientFxRate(credit.rate || debit.rate, debit, credit);
     const fxPair = `${debit.currency}/${credit.currency}`;
     const description = `Wymiana ${fxPair}`;
     operations.push({

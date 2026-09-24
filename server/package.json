@@ -19,6 +19,7 @@
     "fix:nc": "tsx src/scripts/fix-nc-misidentification.ts",
     "fix:auto-dividend-tax": "tsx src/scripts/fix-auto-dividend-tax.ts",
     "fix:xtb-interest-subkind": "tsx src/scripts/fix-xtb-interest-subkind.ts",
+    "fix:import-money-p1": "tsx src/scripts/fix-import-money-p1.ts",
     "fix:tickers": "tsx src/scripts/fix-tickers.ts",
     "fix:ticker-price-mismatch": "tsx src/scripts/fix-ticker-price-mismatch.ts",
     "fix:mismatched-tickers": "tsx src/scripts/fix-mismatched-tickers.ts",

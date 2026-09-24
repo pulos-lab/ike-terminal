@@ -64,6 +64,28 @@ describe('parseDegiroOperations — dywidendy', () => {
 
 // ── parseDegiroTransactionTaxes ──
 
+describe('parseDegiroOperations — znaki korekt (audyt 2026-09)', () => {
+  it('ujemna dywidenda + dodatni zwrot podatku = ujemna korekta netto, nie dochód', () => {
+    const csv = [
+      ACCOUNT_HEADER,
+      '05-03-2024,09:00,05-03-2024,APPLE INC,US0378331005,Dywidenda,,USD,"-100,00",,USD,',
+      '05-03-2024,09:00,05-03-2024,APPLE INC,US0378331005,Podatek Dywidendowy,,USD,"15,00",,USD,',
+    ].join('\n');
+    const { data, warnings } = parseDegiroOperations(csv, 'batch-1');
+    const div = data.find((o) => o.operationType === 'dividend')!;
+    expect(div.amount).toBe(-85);
+    expect(warnings?.some((w) => w.includes('ujemna dywidenda'))).toBe(true);
+  });
+
+  it('ujemny Depozyt (korekta wpłaty) zostaje ujemny', () => {
+    const csv = [ACCOUNT_HEADER, '05-03-2024,09:00,05-03-2024,,,Depozyt,,PLN,"-50,00",,PLN,'].join(
+      '\n',
+    );
+    const { data } = parseDegiroOperations(csv, 'batch-1');
+    expect(data.find((o) => o.operationType === 'deposit')!.amount).toBe(-50);
+  });
+});
+
 describe('parseDegiroOperations — niesparowany podatek dywidendowy', () => {
   it('podatek bez dywidendy → samodzielna ujemna korekta + warning', () => {
     const csv = accountCsv([

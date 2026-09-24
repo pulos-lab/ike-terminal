@@ -66,6 +66,85 @@ export function roundFxRate(rate: number): number {
 }
 
 /**
+ * Ilość akcji z CSV: usuwa szum zmiennoprzecinkowy (9.9999999 → 10), ale NIE
+ * zaokrągla realnych ułamków. Dawne `Math.round(qty)` w mBanku/Bossie/ING
+ * zamieniało 0,4 szt. na 0 już PO walidacji (a `value` liczono z ułamka).
+ */
+export function normalizeQuantity(quantity: number): number {
+  const whole = Math.round(quantity);
+  return Math.abs(quantity - whole) < 1e-6 ? whole : Math.round(quantity * 1e6) / 1e6;
+}
+
+/**
+ * Dywidenda netto z pary brutto + podatek u źródła, ZE ZNAKIEM.
+ *
+ * Wcześniej parsery liczyły `|brutto| − |podatek|`, więc korekta (ujemna
+ * dywidenda odwracająca wypłatę) stawała się DOCHODEM, a zwrot podatku
+ * (dodatni wiersz WHT) był odejmowany zamiast dodany.
+ *
+ * - znaki przeciwne (typowo +brutto / −podatek albo −brutto / +zwrot przy
+ *   korekcie): suma ze znakiem;
+ * - znaki zgodne (np. plik podaje podatek jako magnitudę): dawna semantyka
+ *   `|brutto| − |podatek|` ze znakiem brutto — `sameSign` pozwala zgłosić warning.
+ */
+export function netDividendAmount(
+  gross: number,
+  tax: number | undefined,
+): { net: number; taxAbs: number; taxPct: number; sameSign: boolean } {
+  const g = gross;
+  const t = tax ?? 0;
+  const taxAbs = Math.abs(t);
+  const sameSign = t !== 0 && g !== 0 && Math.sign(t) === Math.sign(g);
+  const net = sameSign ? Math.sign(g) * (Math.abs(g) - taxAbs) : g + t;
+  const gAbs = Math.abs(g);
+  const taxPct = gAbs > 0 && taxAbs > 0 ? Math.round((taxAbs / gAbs) * 100) : 0;
+  return { net: roundTo2(net), taxAbs, taxPct, sameSign };
+}
+
+/**
+ * Kurs dla operacji `fx_exchange` w kanonicznej konwencji `CashOperation.fxRate`:
+ * przy parze z PLN — **PLN za 1 jednostkę waluty obcej** NIEZALEŻNIE od kierunku
+ * wymiany (tak zapisują Bossa/DEGIRO/mBank i tak czyta `plnPerXFromOp` w silniku).
+ * Kurs wyliczany z KWOT, więc kierunek jest jednoznaczny. Para krzyżowa (bez PLN):
+ * `to` za 1 `from` — silnik i tak bierze wtedy kurs historyczny.
+ *
+ * Wcześniej T212 i generic zapisywały zawsze `to/from`: wymiana PLN→USD dawała
+ * ~0,25 zamiast ~4, a księga wpływu walut liczyła fikcyjny zysk.
+ */
+export function fxExchangeRate(
+  from: { amount: number; currency: string },
+  to: { amount: number; currency: string },
+): number | undefined {
+  const fromAbs = Math.abs(from.amount);
+  const toAbs = Math.abs(to.amount);
+  if (!(fromAbs > 0) || !(toAbs > 0)) return undefined;
+  const fromCur = from.currency.toUpperCase();
+  const toCur = to.currency.toUpperCase();
+  if (fromCur === 'PLN' && toCur !== 'PLN') return roundFxRate(fromAbs / toAbs);
+  if (toCur === 'PLN' && fromCur !== 'PLN') return roundFxRate(toAbs / fromAbs);
+  return roundFxRate(toAbs / fromAbs);
+}
+
+/**
+ * Kurs podany wprost w pliku (kolumna profilu) ma NIEZNANY kierunek. Wybiera
+ * orientację (r albo 1/r) bliższą kursowi z kwot i zwraca go w konwencji
+ * `fxExchangeRate`. Gdy żadna orientacja nie pasuje (±10%) — kurs z kwot.
+ */
+export function orientFxRate(
+  explicitRate: number | undefined,
+  from: { amount: number; currency: string },
+  to: { amount: number; currency: string },
+): number | undefined {
+  const fromAmounts = fxExchangeRate(from, to);
+  if (!explicitRate || !(explicitRate > 0)) return fromAmounts;
+  if (!fromAmounts) return roundFxRate(explicitRate);
+  const close = (a: number) => Math.abs(a / fromAmounts - 1) <= 0.1;
+  if (close(explicitRate)) return roundFxRate(explicitRate);
+  if (close(1 / explicitRate)) return roundFxRate(1 / explicitRate);
+  return fromAmounts;
+}
+
+/**
  * Total transakcji wg konwencji K/S: kupno powiększa wartość o prowizję,
  * sprzedaż ją pomniejsza. Zaokrąglone do 2 miejsc (waluta).
  *

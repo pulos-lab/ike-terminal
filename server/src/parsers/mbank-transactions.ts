@@ -11,6 +11,7 @@ import {
   columnShiftWarning,
   rawRowForWarning,
   roundFxRate,
+  normalizeQuantity,
 } from './utils.js';
 
 /**
@@ -79,6 +80,38 @@ const EXCHANGE_CURRENCY: Record<string, string> = {
   'UK-LSE': 'GBP',
 };
 
+/** Prefiks kraju w kodzie giełdy mBanku (`FRA-EURONEXT`, `CZE-PSE`) → waluta.
+ *  Fallback dla giełd spoza jawnej mapy — wcześniej każda taka giełda przy
+ *  pustej kolumnie waluty dawała CICHO PLN. */
+const COUNTRY_PREFIX_CURRENCY: Record<string, string> = {
+  USA: 'USD',
+  DEU: 'EUR',
+  GER: 'EUR',
+  FRA: 'EUR',
+  NLD: 'EUR',
+  BEL: 'EUR',
+  AUT: 'EUR',
+  ESP: 'EUR',
+  ITA: 'EUR',
+  PRT: 'EUR',
+  FIN: 'EUR',
+  IRL: 'EUR',
+  GBR: 'GBP',
+  UK: 'GBP',
+  CHE: 'CHF',
+  CZE: 'CZK',
+  HUN: 'HUF',
+  SWE: 'SEK',
+  NOR: 'NOK',
+  DNK: 'DKK',
+  WWA: 'PLN',
+};
+
+function currencyFromExchange(exchange: string | undefined): string | undefined {
+  if (!exchange) return undefined;
+  return EXCHANGE_CURRENCY[exchange] ?? COUNTRY_PREFIX_CURRENCY[exchange.split('-')[0]];
+}
+
 export function parseMbankTransactions(
   csvContent: string,
   importBatch: string,
@@ -107,6 +140,8 @@ export function parseMbankTransactions(
   let commissionDropped = 0;
   /** Wiersze, w których walutę zgadywano z kolumny „Giełda". */
   let exchangeFallback = 0;
+  /** Giełdy bez waluty w pliku i spoza map — waluta przyjęta PLN, user dostaje ostrzeżenie. */
+  const unknownExchanges = new Set<string>();
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -161,8 +196,10 @@ export function parseMbankTransactions(
     const isoDate = parseDottedDate(dateStr!);
     const value = roundTo2(quantity * price);
     // Infer currency from exchange column when price currency is empty
-    const currency = priceCurrency || EXCHANGE_CURRENCY[exchange || ''] || 'PLN';
-    if (!priceCurrency && exchange && EXCHANGE_CURRENCY[exchange]) exchangeFallback++;
+    const inferred = priceCurrency ? undefined : currencyFromExchange(exchange);
+    const currency = priceCurrency || inferred || 'PLN';
+    if (!priceCurrency && inferred) exchangeFallback++;
+    if (!priceCurrency && !inferred && exchange) unknownExchanges.add(exchange);
 
     // Waluta rozliczenia z pliku. eMakler to rachunek złotowy — przy papierze
     // notowanym w USD/EUR mBank przewalutowuje po WŁASNYM kursie i obciąża konto
@@ -200,7 +237,7 @@ export function parseMbankTransactions(
       date: isoDate,
       paperName: paperName!, // zwalidowane w validateTradeFields wyżej
       isin: paperName!, // Placeholder — resolved after import via ticker name
-      quantity: Math.round(quantity), // GPW/NC: only whole shares; round removes CSV floating-point noise
+      quantity: normalizeQuantity(quantity), // szum zmiennoprzecinkowy CSV, bez ucinania ułamków
       side: side as 'K' | 'S',
       price,
       value,
@@ -233,6 +270,12 @@ export function parseMbankTransactions(
     warnings.push(
       `mBank: w nagłówku pliku brakuje kolumn: ${missingCols.join('; ')} — ` +
         `zweryfikuj prowizje i waluty zaimportowanych transakcji.${fallbackNote}`,
+    );
+  }
+  if (unknownExchanges.size > 0) {
+    warnings.push(
+      `mBank: nieznana waluta notowania dla giełd ${[...unknownExchanges].join(', ')} ` +
+        `(pusta kolumna waluty, giełda spoza mapy) — przyjęto PLN. Sprawdź ceny tych transakcji.`,
     );
   }
   if (fxUnavailable > 0) {

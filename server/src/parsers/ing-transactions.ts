@@ -11,6 +11,7 @@ import {
   detectColumnShift,
   columnShiftWarning,
   rawRowForWarning,
+  normalizeQuantity,
 } from './utils.js';
 
 /**
@@ -88,6 +89,7 @@ export function parseIngTransactions(
   const skipped: SkippedRow[] = [];
   const warnings: string[] = [];
   /** Wiersze, w których „Wartość z prowizją" z pliku ≠ wartość ± prowizja. */
+  let filledValues = 0;
   let totalMismatches = 0;
 
   for (let i = 0; i < rows.length; i++) {
@@ -140,7 +142,10 @@ export function parseIngTransactions(
     }
 
     const isoDate = parseDashedDateTime(dateStr);
-    const value = parseNumber(valueStr);
+    // Pusta „Wartość" dawała 0 → total = sama prowizja (zakup prawie za darmo).
+    const valueMissing = !valueStr?.trim();
+    const value = valueMissing ? roundTo2(quantity * price) : parseNumber(valueStr);
+    if (valueMissing) filledValues++;
     const commission = parseNumber(commissionStr);
     // Przeliczamy total z części (wzorzec mBank); kolumnę z pliku traktujemy jako
     // sumę kontrolną — rozjazd sygnalizujemy zbiorczo, ale nie odrzucamy wiersza.
@@ -158,7 +163,7 @@ export function parseIngTransactions(
       date: isoDate,
       paperName: alias.paperName,
       isin: alias.isin,
-      quantity: Math.round(quantity),
+      quantity: normalizeQuantity(quantity),
       side: side as 'K' | 'S',
       price,
       value,
@@ -172,6 +177,9 @@ export function parseIngTransactions(
     });
   }
 
+  if (filledValues > 0) {
+    warnings.push(`ING: ${filledValues} transakcji bez „Wartości" — przeliczono z ilości × kursu.`);
+  }
   if (totalMismatches > 0) {
     warnings.push(
       `ING: w ${totalMismatches} wierszach „Wartość z prowizją" z pliku różni się od wyliczonej ` +

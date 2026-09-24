@@ -99,6 +99,26 @@ describe('parseWithProfile — transakcje', () => {
     expect(tx.value).toBeCloseTo(551.2);
   });
 
+  it('GBX: kolumny wartości i prowizji w pensach też ÷100', () => {
+    const profile = tradeProfile();
+    profile.trade!.value = { kind: 'column', col: { name: 'wartosc' } };
+    profile.trade!.commission = { kind: 'column', col: { name: 'prowizja' } };
+    const csv = `${TRADE_HEADER};wartosc;prowizja\n01.03.2026;RIO;GB0007188757;K;10;5512,00;GBX;55120,00;500,00`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    const tx = out.transactions.data[0];
+    expect(tx.value).toBeCloseTo(551.2);
+    expect(tx.commission).toBeCloseTo(5);
+    expect(tx.total).toBeCloseTo(556.2);
+  });
+
+  it('GBX: wartość już w funtach (waluta konta) zostaje bez zmian', () => {
+    const profile = tradeProfile();
+    profile.trade!.value = { kind: 'column', col: { name: 'wartosc' } };
+    const csv = `${TRADE_HEADER};wartosc\n01.03.2026;RIO;GB0007188757;K;10;5512,00;GBX;551,20`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    expect(out.transactions.data[0].value).toBeCloseTo(551.2);
+  });
+
   it('wholeShares zaokrągla ilość do pełnych sztuk', () => {
     const profile = tradeProfile();
     profile.trade!.wholeShares = true;
@@ -485,6 +505,36 @@ describe('parseWithProfile — wymiany walutowe', () => {
       description: 'Wymiana PLN/EUR',
     });
     expect(out.operations.data[1]).toMatchObject({ amount: 100, currency: 'EUR' });
+  });
+
+  it('kurs z kolumny w odwrotnej orientacji → normalizowany do „PLN za 1 X"', () => {
+    const profile = opsProfile(
+      classify,
+      { fxLeg: fxCash },
+      {
+        pairing: {
+          fxLegs: {
+            pairKey: { by: 'column', col: { name: 'orderid' } },
+            rateSource: { kind: 'column', col: { name: 'kurs' } },
+          },
+        },
+      },
+    );
+    const csv = `${HEADER}\n2026-01-10;10:00;FX Withdrawal;0,231873;PLN;-431,27;ord-1\n2026-01-10;10:00;FX Credit;0,231873;EUR;100,00;ord-1`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    for (const op of out.operations.data) expect(op.fxRate).toBeCloseTo(4.3127, 3);
+  });
+
+  it('kurs wyliczany z kwot przy kupnie waluty = PLN za 1 X (nie to/from)', () => {
+    const profile = opsProfile(
+      classify,
+      { fxLeg: fxCash },
+      { pairing: { fxLegs: { pairKey: { by: 'column', col: { name: 'orderid' } } } } },
+    );
+    const csv = `${HEADER}\n2026-01-10;10:00;FX Withdrawal;;PLN;-400,00;ord-1\n2026-01-10;10:00;FX Credit;;USD;100,00;ord-1`;
+    const out = parseWithProfile(csv, profile, BATCH);
+    expect(out.operations.data).toHaveLength(2);
+    for (const op of out.operations.data) expect(op.fxRate).toBe(4);
   });
 
   it('niesparowana noga → import samodzielny + warning', () => {

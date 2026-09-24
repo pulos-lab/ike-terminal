@@ -9,6 +9,9 @@ import {
   detectColumnShift,
   columnShiftWarning,
   rawRowForWarning,
+  roundTo2,
+  computeTotal,
+  normalizeQuantity,
 } from './utils.js';
 
 /**
@@ -65,6 +68,7 @@ export function parseBossaTransactions(
   const transactions: Transaction[] = [];
   const skipped: SkippedRow[] = [];
   const warnings: string[] = [];
+  let filledAmounts = 0;
 
   const rows = result.data as any[];
   for (let i = 0; i < rows.length; i++) {
@@ -76,11 +80,13 @@ export function parseBossaTransactions(
     const quantity = parseNumber(row['ilość']);
     const side = row['-']?.trim();
     const price = parseNumber(row['cena']);
-    const value = parseNumber(row['wartość']);
+    let value = parseNumber(row['wartość']);
     const commission = parseNumber(row['prowizja']);
     // Bossa podaje total wprost w kolumnie 'po prowizji' — ufamy CSV zamiast
     // przeliczać computeTotal() (broker jest źródłem prawdy dla rozliczenia).
-    const total = parseNumber(row['po prowizji']);
+    let total = parseNumber(row['po prowizji']);
+    const valueMissing = !row['wartość']?.trim();
+    const totalMissing = !row['po prowizji']?.trim();
     const currency = row['waluta']?.trim();
 
     // Ochrona przed cichym przesunięciem kolumn (dodatkowy średnik w którymś polu):
@@ -126,6 +132,26 @@ export function parseBossaTransactions(
     // a wyłapuje błędny nominał (pomyłka rzędu 10×). Saldo gotówki liczone z `po prowizji`
     // jest poprawne niezależnie od tego — warning jest informacyjny.
     const isBond = isBondInstrument(canonicalPaperName, canonicalIsin);
+
+    // Pusta komórka kwoty dawała 0 → zakup „za darmo" i saldo gotówki bez obciążenia.
+    // Akcje: wartość = ilość × kurs; obligacji tak nie odtworzymy (kurs w %, odsetki
+    // narosłe), więc wiersz trafia do pominiętych.
+    if (valueMissing) {
+      if (isBond) {
+        skipped.push({ row: rowNum, reason: 'invalid_price', paperName });
+        warnings.push(
+          `Wiersz ${rowNum}: obligacja ${canonicalPaperName} bez kolumny „wartość" — pominięto.`,
+        );
+        continue;
+      }
+      value = roundTo2(quantity * price);
+      filledAmounts++;
+    }
+    if (totalMissing) {
+      total = computeTotal(side as 'K' | 'S', value, commission);
+      filledAmounts++;
+    }
+
     if (isBond) {
       const nominal =
         findBondByTicker(canonicalPaperName)?.nominal ?? inferBondNominal(quantity, price, value);
@@ -146,7 +172,7 @@ export function parseBossaTransactions(
       date: isoDate,
       paperName: canonicalPaperName,
       isin: canonicalIsin,
-      quantity: Math.round(quantity), // GPW/NC: only whole shares; round removes CSV floating-point noise
+      quantity: normalizeQuantity(quantity), // szum zmiennoprzecinkowy CSV, bez ucinania ułamków
       side,
       price,
       value,
@@ -163,5 +189,11 @@ export function parseBossaTransactions(
     });
   }
 
+  if (filledAmounts > 0) {
+    warnings.push(
+      `Bossa: ${filledAmounts} pustych komórek „wartość"/„po prowizji" — przeliczono z ilości, ` +
+        `kursu i prowizji. Sprawdź saldo gotówki.`,
+    );
+  }
   return { data: transactions, skipped, warnings: warnings.length > 0 ? warnings : undefined };
 }

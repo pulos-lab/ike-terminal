@@ -109,14 +109,26 @@ describe('Trading 212 — konwencje kwot', () => {
       ),
       'b',
     );
-    const [dividend, tax] = r.operations.data;
+    expect(r.operations.data).toHaveLength(1);
+    const [dividend] = r.operations.data;
     expect(dividend.operationType).toBe('dividend');
     expect(dividend.amount).toBe(0.85);
     expect(dividend.currency).toBe('EUR');
-    // Podatek u źródła bywa w INNEJ walucie niż kwota, która wpłynęła.
-    expect(tax.operationType).toBe('fee');
-    expect(tax.amount).toBe(-0.15);
-    expect(tax.currency).toBe('USD');
+  });
+
+  it('podatek u źródła NIE jest księgowany drugi raz — Total jest już netto', async () => {
+    // Realny wiersz (próbka publiczna): UNP deklarowane 1,30 USD → w pliku 1,11 (×0,85).
+    const r = await parseT212File(
+      csv(
+        'Dividend (Dividend),2023-12-28 09:32:51,US9078181081,UNP,Union Pacific,10,1.11,USD,Not available,11.10,USD,1.96,USD,,d-2',
+      ),
+      'b',
+    );
+    expect(r.operations.data).toHaveLength(1);
+    const [dividend] = r.operations.data;
+    expect(dividend.amount).toBe(11.1);
+    expect(dividend.description).toBe('Dywidenda UNP (podatek 15%)');
+    expect(r.operations.data.some((o) => o.operationType === 'fee')).toBe(false);
   });
 
   it('nieznany typ operacji trafia do kwarantanny, nie do importu', async () => {
@@ -185,6 +197,23 @@ describe('Trading 212 — konwencje kwot', () => {
     expect(from.operationType).toBe('fx_exchange');
     expect([from.amount, from.currency]).toEqual([-0.5, 'GBP']);
     expect([to.amount, to.currency]).toEqual([0.58, 'EUR']);
+  });
+
+  it('kurs wymiany PLN→USD w konwencji „PLN za 1 USD" niezależnie od kierunku', async () => {
+    // Wcześniej zapisywane jako to/from = 0,25 — silnik czytał „0,25 PLN za dolara".
+    const buy = await parseT212File(
+      csv('Currency conversion,2024-03-01 10:00:00,,,,,,,,,,,,400.00 PLN -> 100.00 USD,fx-2'),
+      'b',
+    );
+    for (const leg of buy.operations.data) {
+      expect(leg.fxPair).toBe('PLN/USD');
+      expect(leg.fxRate).toBe(4);
+    }
+    const sell = await parseT212File(
+      csv('Currency conversion,2024-03-02 10:00:00,,,,,,,,,,,,100.00 USD -> 395.00 PLN,fx-3'),
+      'b',
+    );
+    for (const leg of sell.operations.data) expect(leg.fxRate).toBe(3.95);
   });
 });
 

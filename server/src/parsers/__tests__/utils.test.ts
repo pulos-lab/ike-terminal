@@ -118,3 +118,65 @@ describe('validateTradeFields', () => {
     });
   });
 });
+
+describe('fxExchangeRate / orientFxRate — konwencja CashOperation.fxRate', () => {
+  it('para z PLN: PLN za 1 X w obu kierunkach', async () => {
+    const { fxExchangeRate } = await import('../utils.js');
+    expect(
+      fxExchangeRate({ amount: -400, currency: 'PLN' }, { amount: 100, currency: 'USD' }),
+    ).toBe(4);
+    expect(
+      fxExchangeRate({ amount: -100, currency: 'USD' }, { amount: 400, currency: 'PLN' }),
+    ).toBe(4);
+    // JPY: PLN za 1 JPY < 1 — konwencja nie zakłada „kurs > 1".
+    expect(
+      fxExchangeRate({ amount: -27, currency: 'PLN' }, { amount: 1000, currency: 'JPY' }),
+    ).toBe(0.027);
+  });
+  it('para krzyżowa: to za 1 from; zero → undefined', async () => {
+    const { fxExchangeRate } = await import('../utils.js');
+    expect(
+      fxExchangeRate({ amount: -100, currency: 'EUR' }, { amount: 110, currency: 'USD' }),
+    ).toBe(1.1);
+    expect(
+      fxExchangeRate({ amount: 0, currency: 'EUR' }, { amount: 110, currency: 'USD' }),
+    ).toBeUndefined();
+  });
+  it('orientFxRate: odwraca kurs podany w przeciwnej orientacji, śmieć → kurs z kwot', async () => {
+    const { orientFxRate } = await import('../utils.js');
+    const from = { amount: -400, currency: 'PLN' };
+    const to = { amount: 100, currency: 'USD' };
+    expect(orientFxRate(4.01, from, to)).toBe(4.01);
+    expect(orientFxRate(0.25, from, to)).toBe(4);
+    expect(orientFxRate(17, from, to)).toBe(4);
+    expect(orientFxRate(undefined, from, to)).toBe(4);
+  });
+});
+
+describe('netDividendAmount — dywidenda netto ze znakiem', () => {
+  it('typowo: +brutto / −podatek', async () => {
+    const { netDividendAmount } = await import('../utils.js');
+    expect(netDividendAmount(100, -15)).toMatchObject({ net: 85, taxPct: 15, sameSign: false });
+  });
+  it('korekta: −brutto / +zwrot podatku → ujemne netto', async () => {
+    const { netDividendAmount } = await import('../utils.js');
+    expect(netDividendAmount(-100, 15).net).toBe(-85);
+  });
+  it('zwrot podatku bez korekty dywidendy: +brutto / +zwrot → znak zgodny, dawna semantyka', async () => {
+    const { netDividendAmount } = await import('../utils.js');
+    expect(netDividendAmount(100, 15)).toMatchObject({ net: 85, sameSign: true });
+  });
+  it('bez podatku', async () => {
+    const { netDividendAmount } = await import('../utils.js');
+    expect(netDividendAmount(-12.346, undefined).net).toBe(-12.35);
+  });
+});
+
+describe('normalizeQuantity', () => {
+  it('usuwa szum, zostawia ułamki', async () => {
+    const { normalizeQuantity } = await import('../utils.js');
+    expect(normalizeQuantity(9.9999999)).toBe(10);
+    expect(normalizeQuantity(0.4)).toBe(0.4);
+    expect(normalizeQuantity(0.30690001)).toBe(0.3069);
+  });
+});

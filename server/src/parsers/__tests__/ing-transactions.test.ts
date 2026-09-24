@@ -148,3 +148,12 @@ describe('kodowanie — surowy bufor przechodzi przez decodeCSVBuffer', () => {
     expect(result.data[1]).toMatchObject({ side: 'S', paperName: 'ENEA', value: 941.92 });
   });
 });
+
+describe('parseIngTransactions — pusta Wartość (audyt 2026-09)', () => {
+  it('przelicza wartość z ilości × kursu zamiast przyjąć 0', () => {
+    const row = '29-08-2023 14:25:33;843790613;ETFSP500;Kupno;35;190,20;;24.63;';
+    const result = parseIngTransactions(row, 'batch-test');
+    expect(result.data[0].value).toBe(6657);
+    expect(result.data[0].total).toBeCloseTo(6681.63, 2);
+  });
+});
