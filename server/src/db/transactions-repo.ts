@@ -57,10 +57,21 @@ export interface InsertWithDedupResult {
   duplicates: SkippedRow[];
 }
 
+/** Źródła, które NIE rozróżniają brokera w kluczu dedup: import uniwersalny
+ *  (ten sam plik bywa wgrany profilem i parserem wbudowanym), ręczne wpisy
+ *  (edycja zaimportowanej transakcji zmienia jej source na 'manual') i wiersze
+ *  sprzed kolumny source. Pasują do każdego źródła — jak przed zmianą klucza. */
+const SOURCE_WILDCARDS = ['generic', 'manual'];
+
 /** Insert transactions with duplicate detection (count-based).
  *
  * Dedup strategy:
- *  - Standard transactions: grouped + counted by (date, isin, side, quantity, price).
+ *  - Standard transactions: grouped + counted by (date, isin, side, quantity, price)
+ *    W OBRĘBIE tego samego brokera (source). Dwa różne parsery wbudowane w jednym
+ *    portfelu (np. mBank + Bossa) z identycznym zleceniem to dwie realne
+ *    transakcje — wcześniej druga ginęła jako „duplikat". Nakładające się pliki
+ *    TEGO SAMEGO brokera dalej się deduplikują (celowo — patrz bulk-import-dedup).
+ *    `generic`/`manual`/NULL pasują do każdego źródła (SOURCE_WILDCARDS).
  *  - CFD transactions with cfd_position_id: grouped + counted by
  *    (cfd_position_id, side, date). CFD positions carry a broker-unique
  *    Position ID that identifies the trade regardless of price/volume
@@ -73,9 +84,12 @@ export function insertTransactionsWithDedup(
 ): InsertWithDedupResult {
   const db = getDb(portfolioId);
 
+  const wildcardList = SOURCE_WILDCARDS.map((s) => `'${s}'`).join(', ');
   const countStmt = db.prepare(`
     SELECT COUNT(*) as cnt FROM transactions
-    WHERE date = ? AND isin = ? AND side = ? AND quantity = ? AND price = ?
+    WHERE date = @date AND isin = @isin AND side = @side AND quantity = @quantity AND price = @price
+      AND (@source IS NULL OR @source IN (${wildcardList})
+           OR source IS NULL OR source IN (${wildcardList}) OR source = @source)
   `);
   const countCfdStmt = db.prepare(`
     SELECT COUNT(*) as cnt FROM transactions
@@ -94,7 +108,7 @@ export function insertTransactionsWithDedup(
     const isCfd = !!tx.cfdPositionId;
     const key = isCfd
       ? `CFD|${tx.cfdPositionId}|${tx.side}|${tx.date}`
-      : `${tx.date}|${tx.isin}|${tx.side}|${tx.quantity}|${tx.price}`;
+      : `${tx.date}|${tx.isin}|${tx.side}|${tx.quantity}|${tx.price}|${tx.source ?? ''}`;
     const group = groups.get(key);
     if (group) group.txs.push(tx);
     else groups.set(key, { txs: [tx], isCfd });
@@ -108,9 +122,14 @@ export function insertTransactionsWithDedup(
       const sample = txGroup[0];
       const { cnt: existingCount } = isCfd
         ? (countCfdStmt.get(sample.cfdPositionId, sample.side, sample.date) as { cnt: number })
-        : (countStmt.get(sample.date, sample.isin, sample.side, sample.quantity, sample.price) as {
-            cnt: number;
-          });
+        : (countStmt.get({
+            date: sample.date,
+            isin: sample.isin,
+            side: sample.side,
+            quantity: sample.quantity,
+            price: sample.price,
+            source: sample.source ?? null,
+          }) as { cnt: number });
 
       const toInsert = Math.max(0, txGroup.length - existingCount);
 
