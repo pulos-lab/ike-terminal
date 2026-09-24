@@ -109,14 +109,26 @@ describe('Trading 212 — konwencje kwot', () => {
       ),
       'b',
     );
-    const [dividend, tax] = r.operations.data;
+    expect(r.operations.data).toHaveLength(1);
+    const [dividend] = r.operations.data;
     expect(dividend.operationType).toBe('dividend');
     expect(dividend.amount).toBe(0.85);
     expect(dividend.currency).toBe('EUR');
-    // Podatek u źródła bywa w INNEJ walucie niż kwota, która wpłynęła.
-    expect(tax.operationType).toBe('fee');
-    expect(tax.amount).toBe(-0.15);
-    expect(tax.currency).toBe('USD');
+  });
+
+  it('podatek u źródła NIE jest księgowany drugi raz — Total jest już netto', async () => {
+    // Realny wiersz (próbka publiczna): UNP deklarowane 1,30 USD → w pliku 1,11 (×0,85).
+    const r = await parseT212File(
+      csv(
+        'Dividend (Dividend),2023-12-28 09:32:51,US9078181081,UNP,Union Pacific,10,1.11,USD,Not available,11.10,USD,1.96,USD,,d-2',
+      ),
+      'b',
+    );
+    expect(r.operations.data).toHaveLength(1);
+    const [dividend] = r.operations.data;
+    expect(dividend.amount).toBe(11.1);
+    expect(dividend.description).toBe('Dywidenda UNP (podatek 15%)');
+    expect(r.operations.data.some((o) => o.operationType === 'fee')).toBe(false);
   });
 
   it('nieznany typ operacji trafia do kwarantanny, nie do importu', async () => {

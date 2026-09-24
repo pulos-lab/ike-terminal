@@ -260,35 +260,33 @@ export function parseT212File(
 
       case 'dividend':
       case 'dividend_adjustment': {
+        // `Total` to kwota NETTO, która wpłynęła na konto — T212 potrąca podatek
+        // u źródła już w `Price / share` (UNP XII 2023: deklarowane 1,30 USD,
+        // w pliku 1,11 = ×0,85). Kolumna `Withholding tax` jest informacyjna;
+        // księgowanie jej jako osobnej opłaty odejmowało podatek DRUGI raz
+        // (fantomowe ujemne saldo w walucie podatku). Wzorem DEGIRO: jedna
+        // operacja netto, stawka tylko w opisie.
+        const wht = Math.abs(parseNumber(at(cols.withholdingTax)));
+        const whtCurrency = at(cols.withholdingTaxCurrency)?.trim() || paymentCurrency;
+        const netInQuote = quantity * price;
+        const taxPct =
+          wht > 0 && whtCurrency === quoteCurrency && netInQuote > 0
+            ? Math.round((wht / (netInQuote + wht)) * 100)
+            : 0;
+        const base =
+          action.kind === 'dividend_adjustment'
+            ? `Korekta dywidendy${notes ? `: ${notes}` : ''}`
+            : `Dywidenda ${ticker || name || ''}`.trim();
         operations.push({
           date: isoDate,
           operationType: 'dividend',
-          description:
-            action.kind === 'dividend_adjustment'
-              ? `Korekta dywidendy${notes ? `: ${notes}` : ''}`
-              : `Dywidenda ${ticker || name || ''}`.trim(),
+          description: taxPct > 0 ? `${base} (podatek ${taxPct}%)` : base,
           amount: totalAmount,
           currency: paymentCurrency,
           ticker: ticker || undefined,
           source: SOURCE,
           importBatch,
         });
-        // Podatek u źródła bywa w INNEJ walucie niż kwota, która wpłynęła
-        // (0,01 USD przy dywidendzie 0,03 EUR) — księgujemy osobno, z własną
-        // walutą, wzorem parsera XTB.
-        const wht = parseNumber(at(cols.withholdingTax));
-        if (wht > 0) {
-          operations.push({
-            date: isoDate,
-            operationType: 'fee',
-            description: `Podatek u źródła ${ticker || name || ''}`.trim(),
-            amount: -Math.abs(wht),
-            currency: at(cols.withholdingTaxCurrency)?.trim() || paymentCurrency,
-            ticker: ticker || undefined,
-            source: SOURCE,
-            importBatch,
-          });
-        }
         break;
       }
 
