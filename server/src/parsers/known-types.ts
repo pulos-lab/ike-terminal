@@ -5,8 +5,9 @@ import { KNOWN_XTB_TYPES } from './xtb-transactions.js';
  * aliasów parser_type (walidacja approve w panelu admina). Zły alias w DB
  * nie może wpuścić wiersza w nieistniejącą gałąź dispatchu parsera.
  *
- * Faza 1: tylko XTB (jedyny parser konsultujący aliasy). Kolejne brokerzy
- * dochodzą tu razem z konsumpcją ParserContext w ich parserach.
+ * parser_type: tylko XTB. Aliasy terminalne (ignore / cash_operation) konsumują
+ * XTB i Trading 212 (wspólny builder w alias-ops.ts). Kolejni brokerzy dochodzą
+ * tu razem z konsumpcją ParserContext w ich parserach.
  */
 export const KNOWN_PARSER_TYPES: Record<string, ReadonlySet<string>> = {
   xtb: KNOWN_XTB_TYPES,

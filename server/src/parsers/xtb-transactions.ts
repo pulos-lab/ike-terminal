@@ -21,6 +21,7 @@ import {
   rawRowForWarning,
   netDividendAmount,
 } from './utils.js';
+import { buildAliasedCashOperation } from './alias-ops.js';
 
 /** Infer CFD category from instrument name using static CFD_TICKER_MAP.
  *  Used as fallback when Closed Positions sheet is missing. */
@@ -408,14 +409,17 @@ function resolveTradeCurrency(args: {
  * string format "DD/MM/YYYY HH:MM:SS" → ISO 8601.
  */
 function parseXtbTime(time: string | number | Date): string | null {
-  // ExcelJS may return Date objects for date-formatted cells
+  // ExcelJS zwraca komórki dat jako Date z czasem ścianowym zapisanym w UTC
+  // (serial Excela → ms od epoki bez strefy). Gettery UTC dają czas z pliku
+  // niezależnie od strefy procesu — lokalne przesuwały go o offset serwera
+  // (a z nim klucze dedup). Produkcja działa w Etc/UTC → tam wynik bez zmian.
   if (time instanceof Date) {
-    const yyyy = time.getFullYear();
-    const mm = String(time.getMonth() + 1).padStart(2, '0');
-    const dd = String(time.getDate()).padStart(2, '0');
-    const hh = String(time.getHours()).padStart(2, '0');
-    const mi = String(time.getMinutes()).padStart(2, '0');
-    const ss = String(time.getSeconds()).padStart(2, '0');
+    const yyyy = time.getUTCFullYear();
+    const mm = String(time.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(time.getUTCDate()).padStart(2, '0');
+    const hh = String(time.getUTCHours()).padStart(2, '0');
+    const mi = String(time.getUTCMinutes()).padStart(2, '0');
+    const ss = String(time.getUTCSeconds()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}`;
   }
 
@@ -1236,7 +1240,14 @@ export async function parseXtbFile(
       });
     } else if (raw.type === 'Free funds interest' || raw.type === 'Free funds interest tax') {
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) continue;
+      if (!isoTime) {
+        opsSkipped.push({
+          row: raw.rowNum,
+          reason: 'invalid_date',
+          paperName: raw.symbol || raw.type,
+        });
+        continue;
+      }
 
       // Odsetki od wolnych środków → 'other' + subkind='interest' (wirtualna
       // kategoria "Odsetki" w panelu "Korekty i koszty"; bez subkind wpadały do
@@ -1291,7 +1302,14 @@ export async function parseXtbFile(
       if (swapCategory === 'cfd') continue;
 
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) continue;
+      if (!isoTime) {
+        opsSkipped.push({
+          row: raw.rowNum,
+          reason: 'invalid_date',
+          paperName: raw.symbol || raw.type,
+        });
+        continue;
+      }
 
       operations.push({
         date: isoTime,
@@ -1313,7 +1331,14 @@ export async function parseXtbFile(
       });
     } else if (raw.type === 'rights issue') {
       const isoTime = parseXtbTime(raw.time);
-      if (!isoTime) continue;
+      if (!isoTime) {
+        opsSkipped.push({
+          row: raw.rowNum,
+          reason: 'invalid_date',
+          paperName: raw.symbol || raw.type,
+        });
+        continue;
+      }
 
       operations.push({
         date: isoTime,
@@ -1394,7 +1419,14 @@ export async function parseXtbFile(
   // Add unmatched fees as CashOperations
   for (const raw of unmatchedFees) {
     const isoTime = parseXtbTime(raw.time);
-    if (!isoTime) continue;
+    if (!isoTime) {
+      opsSkipped.push({
+        row: raw.rowNum,
+        reason: 'invalid_date',
+        paperName: raw.symbol || raw.type,
+      });
+      continue;
+    }
 
     operations.push({
       date: isoTime,
@@ -1517,7 +1549,7 @@ export async function parseXtbFile(
       continue;
     }
     if (alias?.kind === 'cash_operation' && alias.value) {
-      const op = buildAliasedCashOperation(raw, alias.value, accountCurrency, importBatch);
+      const op = xtbAliasedCashOperation(raw, alias.value, accountCurrency, importBatch);
       if (op) {
         operations.push(op);
         continue;
@@ -1551,55 +1583,27 @@ export async function parseXtbFile(
   };
 }
 
-/** Dozwolone operationType dla aliasów cash_operation — bez typów specjalnych
- * (fx_exchange wymaga parowania nóg, corporate_action_pending logiki reconciliation). */
-const ALIAS_ALLOWED_OPERATION_TYPES = new Set<OperationType>([
-  'deposit',
-  'withdrawal',
-  'dividend',
-  'fee',
-  'trade_fee',
-  'commission_refund',
-  'capital_return',
-  'other',
-]);
-
-/** Buduje CashOperation z surowego wiersza wg targetu aliasu cash_operation
- * (JSON CashOperationAliasTarget). null = target/data nieparsowalne — caller
- * zostawia wiersz w unknown (skrzynka), nic nie ginie po cichu. */
-function buildAliasedCashOperation(
+/** Wiersz XTB → operacja z aliasu cash_operation (wspólny builder w alias-ops). */
+function xtbAliasedCashOperation(
   raw: RawRow,
   targetJson: string,
   accountCurrency: string,
   importBatch: string,
 ): CashOperation | null {
-  let target: CashOperationAliasTarget;
-  try {
-    target = JSON.parse(targetJson);
-  } catch {
-    return null;
-  }
-  if (!target?.operationType || !ALIAS_ALLOWED_OPERATION_TYPES.has(target.operationType)) {
-    return null;
-  }
   const isoTime = parseXtbTime(raw.time);
   if (!isoTime) return null;
-
-  const sign = target.sign ?? 'file';
-  const amount =
-    sign === 'file' ? raw.amount : sign === '+' ? Math.abs(raw.amount) : -Math.abs(raw.amount);
-
-  return {
-    date: isoTime,
-    operationType: target.operationType,
-    subkind: (target.subkind as CashOperation['subkind']) ?? undefined,
-    description: raw.comment || raw.type,
-    amount,
-    currency: accountCurrency,
-    ticker: raw.symbol || undefined,
-    source: 'xtb',
-    importBatch,
-  };
+  return buildAliasedCashOperation(
+    {
+      date: isoTime,
+      amount: raw.amount,
+      currency: accountCurrency,
+      description: raw.comment || raw.type,
+      ticker: raw.symbol || undefined,
+      source: 'xtb',
+      importBatch,
+    },
+    targetJson,
+  );
 }
 
 /** Canonical operation type names that the main dispatch loop handles.

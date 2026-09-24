@@ -19,6 +19,7 @@ import {
   upsertOperationTypeAlias,
 } from '../db/type-aliases-repo.js';
 import { KNOWN_PARSER_TYPES, knownTypesForBroker } from '../parsers/known-types.js';
+import { ALIAS_ALLOWED_OPERATION_TYPES } from '../parsers/alias-ops.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 
 const router = Router();
@@ -36,17 +37,9 @@ router.get('/catalog', (_req, res) => {
 const REPORT_STATUSES = new Set(['open', 'approved', 'rejected', 'wont_fix']);
 const REPORT_KINDS = new Set(['classified', 'unsupported']);
 
-/** operationType dozwolone w targetach cash_operation (lustro walidacji parsera XTB). */
-const ALIAS_OPERATION_TYPES = new Set([
-  'deposit',
-  'withdrawal',
-  'dividend',
-  'fee',
-  'trade_fee',
-  'commission_refund',
-  'capital_return',
-  'other',
-]);
+/** operationType dozwolone w targetach cash_operation — ten sam zbiór co w builderze
+ *  parserów (dawniej ręcznie utrzymywane „lustro"). */
+const ALIAS_OPERATION_TYPES: ReadonlySet<string> = ALIAS_ALLOWED_OPERATION_TYPES;
 
 /** Walidacja targetu aliasu — zwraca komunikat błędu (PL) albo null gdy OK. */
 function validateAliasTarget(broker: string, target: TypeAliasTarget): string | null {

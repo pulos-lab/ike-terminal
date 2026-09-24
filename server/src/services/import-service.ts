@@ -684,6 +684,38 @@ export async function bulkImport(input: BulkInput): Promise<ImportResult> {
 
   const orphanedSells = getActionableOrphanedSells(pid);
 
+  // Nic nie zaimportowano, nic nie było duplikatem, nic nie trafiło do skrzynki:
+  // plik rozpoznany po nagłówku, ale bez żadnego użytecznego wiersza (np. nagłówek
+  // w innym wariancie). Wcześniej to był „sukces, 0 zaimportowanych" — ścieżka
+  // combined i import uniwersalny już zwracały tu błąd.
+  // Markery rekoncyliacji wstawiają dane poza licznikami (np. zwroty kapitału,
+  // healing ING) — ich obecność = plik był użyteczny.
+  const hadMarkers =
+    !!parsedOps?.redemptions?.length ||
+    !!parsedOps?.ipoSubscriptions?.length ||
+    !!parsedOps?.bondAllocations?.length ||
+    !!parsedOps?.capitalReturns?.length ||
+    !!parsedOps?.orderIsinMap?.size;
+  const nothingHappened =
+    !hadMarkers &&
+    result.transactionsImported === 0 &&
+    result.operationsImported === 0 &&
+    duplicatesSkipped === 0 &&
+    syntheticSells === 0 &&
+    quarantined === 0;
+  if (nothingHappened) {
+    return {
+      ...result,
+      success: false,
+      errors: [
+        'Plik nie zawiera żadnych wierszy, które udało się zaimportować — sprawdź, czy to ' +
+          'pełny eksport (a nie np. pusty zakres dat) i czy układ kolumn się nie zmienił.',
+      ],
+      skipped: allSkipped.length > 0 ? allSkipped : undefined,
+      crossFileWarnings: crossFileWarnings.length > 0 ? crossFileWarnings : undefined,
+    };
+  }
+
   return {
     ...result,
     success: true,
@@ -778,7 +810,17 @@ async function importCombinedFiles(
   const allTxData = parsedFiles.flatMap((p) => p.output.transactions.data);
   const allOpsData = parsedFiles.flatMap((p) => p.output.operations.data);
   if (allTxData.length === 0 && allOpsData.length === 0) {
-    return emptyResult(importBatch, [`Pliki ${parser.label} nie zawierają rozpoznawalnych danych`]);
+    // Zwracamy też pominięte wiersze i ostrzeżenia parsera — sam komunikat
+    // nie mówił użytkownikowi DLACZEGO nic nie weszło.
+    const skipped = parsedFiles.flatMap((p) => [
+      ...p.output.transactions.skipped,
+      ...p.output.operations.skipped,
+    ]);
+    return {
+      ...emptyResult(importBatch, [`Pliki ${parser.label} nie zawierają rozpoznawalnych danych`]),
+      skipped: skipped.length > 0 ? skipped : undefined,
+      warnings: parserWarnings.length > 0 ? parserWarnings : undefined,
+    };
   }
 
   seedTickerMap(pid);

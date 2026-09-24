@@ -1,7 +1,8 @@
 import { sameCurrency, penceFactor } from 'shared';
 import Papa from 'papaparse';
 import type { Transaction, CashOperation, SkippedRow } from 'shared';
-import type { CombinedParseOutput } from '../registry.js';
+import type { CombinedParseOutput, ParserContext } from '../registry.js';
+import { buildAliasedCashOperation } from '../alias-ops.js';
 // Marker splitu jest wspólny dla wszystkich parserów combined (nazwa historyczna
 // po IBKR) — `CombinedParseOutput.splits` przyjmuje dokładnie ten typ.
 import type { IbkrSplitMarker } from '../ibkr/index.js';
@@ -56,6 +57,7 @@ export function parseT212File(
   buffer: Buffer,
   importBatch: string,
   _fileName?: string,
+  ctx?: ParserContext,
 ): Promise<CombinedParseOutput> {
   const content = buffer.toString('utf8').replace(/^﻿/, '');
   const parsed = Papa.parse<string[]>(content.trim(), { delimiter: ',', skipEmptyLines: true });
@@ -96,6 +98,33 @@ export function parseT212File(
       // wygląda jak "Market buy", a nim nie jest.
       const hintDate = parseT212Time(at(cols.time));
       const hintAmount = parseNumber(at(cols.total) ?? '');
+
+      // Zatwierdzony przez admina alias typu (globalny, per broker) — wcześniej
+      // T212 go nie konsultował, więc approve w panelu nie miał żadnego skutku.
+      const alias = rawAction ? ctx?.typeAliases?.get(rawAction.trim().toLowerCase()) : undefined;
+      if (alias?.kind === 'ignore') {
+        opsSkipped.push({ row: rowNum, reason: 'aliased_ignore', paperName: rawAction });
+        continue;
+      }
+      if (alias?.kind === 'cash_operation' && alias.value && hintDate) {
+        const op = buildAliasedCashOperation(
+          {
+            date: hintDate,
+            amount: hintAmount,
+            currency: at(cols.totalCurrency)?.trim() || 'EUR',
+            description: [rawAction, at(cols.notes)?.trim()].filter(Boolean).join(': '),
+            ticker: at(cols.ticker)?.trim() || undefined,
+            source: SOURCE,
+            importBatch,
+          },
+          alias.value,
+        );
+        if (op) {
+          operations.push(op);
+          continue;
+        }
+      }
+
       opsSkipped.push({
         row: rowNum,
         reason: 'unknown_operation_type',

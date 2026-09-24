@@ -13,8 +13,8 @@ async function workbookToBuffer(wb: ExcelJS.Workbook): Promise<Buffer> {
 }
 
 describe('cellToString', () => {
-  it('data → "YYYY-MM-DD HH:mm:ss" w czasie lokalnym', () => {
-    const d = new Date(2025, 2, 14, 9, 30, 2); // 2025-03-14 09:30:02 lokalnie
+  it('data → "YYYY-MM-DD HH:mm:ss" w czasie ścianowym z pliku (UTC, niezależnie od TZ)', () => {
+    const d = new Date(Date.UTC(2025, 2, 14, 9, 30, 2)); // ExcelJS: wall-clock w UTC
     expect(cellToString(d)).toBe('2025-03-14 09:30:02');
   });
 

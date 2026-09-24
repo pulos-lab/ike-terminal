@@ -17,14 +17,15 @@ import Papa from 'papaparse';
 
 const XLSX_DELIMITER = ';';
 
-/** Serializacja komórki do tekstu (daty: czas LOKALNY, jak parser wbudowany XTB). */
+/** Serializacja komórki do tekstu (daty: czas ścianowy z pliku = gettery UTC,
+ *  jak parser wbudowany XTB — parytet compare:generic). */
 export function cellToString(v: ExcelJS.CellValue): string {
   if (v === null || v === undefined) return '';
   if (v instanceof Date) {
     const p = (n: number) => String(n).padStart(2, '0');
     return (
-      `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())} ` +
-      `${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`
+      `${v.getUTCFullYear()}-${p(v.getUTCMonth() + 1)}-${p(v.getUTCDate())} ` +
+      `${p(v.getUTCHours())}:${p(v.getUTCMinutes())}:${p(v.getUTCSeconds())}`
     );
   }
   if (typeof v === 'object') {
