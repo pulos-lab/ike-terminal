@@ -31,6 +31,16 @@ import {
 const YAHOO_BLOCK_BACKOFF_MS = 15 * 60 * 1000;
 
 /**
+ * Mail dopiero przy DRUGIM epizodzie pod rząd (blokada przetrwała backoff).
+ * Limiter trzyma do 4 fetchy w locie, więc jeden chwilowy 429 od Yahoo wraca
+ * jako 3 blokady w <1 s i otwiera bezpiecznik — tak wyglądał alarm z
+ * 2026-10-16 (ostatni sukces 22:24:38.2, otwarcie 22:24:38.8). Taki epizod
+ * mija sam po 15 min i nie wymaga reakcji admina; stan i tak widać w
+ * `/api/health`.
+ */
+const YAHOO_NOTIFY_AFTER_BLOCK_EPISODES = 2;
+
+/**
  * Ile równoległych połączeń do Yahoo naraz.
  *
  * 4 to kompromis: pętla wyceny i tak jest sekwencyjna (batch ją omija), a
@@ -85,6 +95,7 @@ export function getYahooGuard(): SourceGuard {
       store: createSqliteGuardStore('yahoo', path.join(config.dataDir, 'price_history.db')),
       notify: notifyAdmin,
       blockBackoffMs: YAHOO_BLOCK_BACKOFF_MS,
+      notifyAfterBlockEpisodes: YAHOO_NOTIFY_AFTER_BLOCK_EPISODES,
     });
   }
   return defaultGuard;
