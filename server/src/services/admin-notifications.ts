@@ -175,6 +175,9 @@ export async function notifySourceGuardAlert(alert: SourceGuardAlert): Promise<v
       isBlock && alert.consecutiveBlocks
         ? `<li>Blokad pod rząd: <b>${alert.consecutiveBlocks}</b></li>`
         : '',
+      isBlock && alert.blockEpisodes && alert.blockEpisodes > 1
+        ? `<li>Otwarć bezpiecznika bez sukcesu pomiędzy: <b>${alert.blockEpisodes}</b> (blokada przetrwała backoff)</li>`
+        : '',
       !isBlock && alert.missKeys?.length
         ? `<li>Puste parse'y (klucze): <b>${escapeHtml(alert.missKeys.join(', '))}</b></li>`
         : '',
