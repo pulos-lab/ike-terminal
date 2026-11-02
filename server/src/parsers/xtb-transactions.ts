@@ -58,11 +58,15 @@ function inferCategoryFromSymbol(symbol: string): InstrumentCategory | null {
 
 // ── Regex patterns ──────────────────────────────────────────────────────────
 
-/** "OPEN BUY 64 @ 16.00" or "OPEN BUY 33/60 @ 35.560" or "OPEN BUY 0.3069 @ 494.15" */
-const BUY_RE = /(?:OPEN )?BUY ([\d.]+)(?:\/[\d.]+)? @ ([\d.]+)/;
+// Od ~10.2026 XTB wstawia ticker między "BUY" a ilość ("OPEN BUY DIG.PL 1 @ 308.80");
+// opcjonalna grupa `(?:[A-Z0-9][\w.-]* )?` go pomija, a przy starym formacie odpada,
+// bo nie domyka się spacją przed liczbą.
 
-/** "CLOSE BUY 64 @ 26.07" or "CLOSE BUY 2/4 @ 222.03" or "CLOSE BUY 0.4926 @ 175.20" */
-const SELL_RE = /CLOSE BUY ([\d.]+)(?:\/[\d.]+)? @ ([\d.]+)/;
+/** "OPEN BUY 64 @ 16.00", "OPEN BUY 33/60 @ 35.560", "OPEN BUY 0.3069 @ 494.15", "OPEN BUY DIG.PL 1 @ 308.80" */
+const BUY_RE = /(?:OPEN )?BUY (?:[A-Z0-9][\w.-]* )?([\d.]+)(?:\/[\d.]+)? @ ([\d.]+)/;
+
+/** "CLOSE BUY 64 @ 26.07", "CLOSE BUY 2/4 @ 222.03", "CLOSE BUY 0.4926 @ 175.20", "CLOSE BUY VRC.PL 1/3 @ 126.40" */
+const SELL_RE = /CLOSE BUY (?:[A-Z0-9][\w.-]* )?([\d.]+)(?:\/[\d.]+)? @ ([\d.]+)/;
 
 /** "Sec Fee adj PLTR.US 20201201" → symbol=PLTR.US, date=20201201 */
 const SEC_FEE_RE = /Sec Fee adj (\S+) (\d{8})/;
@@ -201,7 +205,7 @@ function normalizeType(type: string, ctx?: ParserContext): string {
 // ── Commission data extraction (for old-format JSW-like entries) ────────────
 
 /** "BUY 80 @ 19.32" → { qty: 80, price: 19.32 } */
-const COMMISSION_BUY_RE = /BUY ([\d.]+) @ ([\d.]+)/;
+const COMMISSION_BUY_RE = /BUY (?:[A-Z0-9][\w.-]* )?([\d.]+) @ ([\d.]+)/;
 
 /** Determine paperName and isin for a raw symbol.
  * Old format: "JSW.PL" → yahooTicker "JSW.WA"
