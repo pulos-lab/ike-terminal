@@ -81,6 +81,41 @@ describe('circuit breaker', () => {
     expect(notify).toHaveBeenCalledTimes(2);
   });
 
+  it('notifyAfterBlockEpisodes=2: chwilowy burst bez maila, blokada po backoffie z mailem', () => {
+    const { guard, clock, notify } = makeGuard({
+      blockBackoffMs: 15 * MIN,
+      notifyAfterBlockEpisodes: 2,
+    });
+    // burst równoległych 429 — bezpiecznik otwiera się od razu, ale bez maila
+    for (let i = 0; i < 3; i++) guard.registerBlock();
+    expect(guard.isBlocked()).toBe(true);
+    expect(guard.getState().blockEpisodes).toBe(1);
+    expect(notify).not.toHaveBeenCalled();
+
+    // po backoffie pierwszy fetch dalej dostaje 429 → drugi epizod → mail
+    clock.now += 15 * MIN + 1;
+    guard.registerBlock();
+    expect(guard.isBlocked()).toBe(true);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0][0]).toMatchObject({ kind: 'blocked', blockEpisodes: 2 });
+  });
+
+  it('notifyAfterBlockEpisodes=2: sukces po backoffie zeruje epizody (kolejny burst bez maila)', () => {
+    const { guard, clock, notify } = makeGuard({
+      blockBackoffMs: 15 * MIN,
+      notifyAfterBlockEpisodes: 2,
+    });
+    for (let i = 0; i < 3; i++) guard.registerBlock();
+    clock.now += 15 * MIN + 1;
+    guard.registerSuccess();
+    expect(guard.getState().blockEpisodes).toBe(0);
+
+    clock.now += HOUR;
+    for (let i = 0; i < 3; i++) guard.registerBlock();
+    expect(guard.isBlocked()).toBe(true);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it('dedup powiadomień przeżywa restart (nowy guard na tym samym store)', () => {
     const store = createMemoryGuardStore();
     const first = makeGuard({ store });

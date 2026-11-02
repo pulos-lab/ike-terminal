@@ -81,6 +81,8 @@ export interface SourceGuardAlert {
   /** ISO — tylko dla kind='blocked'. */
   blockedUntil?: string;
   consecutiveBlocks?: number;
+  /** Ile razy pod rząd (bez sukcesu pomiędzy) otworzył się bezpiecznik — tylko dla kind='blocked'. */
+  blockEpisodes?: number;
   /** Klucze z pustymi parse'ami — tylko dla kind='markup-change'. */
   missKeys?: string[];
   lastSuccessAt?: string | null;
@@ -91,6 +93,7 @@ export interface SourceGuardState {
   blocked: boolean;
   blockedUntil: string | null;
   consecutiveBlocks: number;
+  blockEpisodes: number;
   suspectedMarkupChange: boolean;
   parseMissKeys: string[];
   lastSuccessAt: string | null;
@@ -110,6 +113,15 @@ export interface SourceGuardOptions {
   blockThreshold?: number;
   /** Cisza po odcięciu (default 30 min — jak dotychczasowy breaker). */
   blockBackoffMs?: number;
+  /**
+   * Od którego epizodu blokady (otwarcia bezpiecznika bez sukcesu pomiędzy)
+   * wysyłać mail (default 1 = od pierwszego). Bezpiecznik otwiera się zawsze
+   * od razu — próg dotyczy wyłącznie powiadomienia. 2 = mail dopiero, gdy
+   * blokada przetrwała pełny backoff: przy równoległych fetchach jeden
+   * chwilowy burst 429 daje 3 blokady w ułamku sekundy i sam otwiera
+   * bezpiecznik, choć po backoffie ruch wraca bez interwencji.
+   */
+  notifyAfterBlockEpisodes?: number;
   /** Okno, w którym parse-missy się kumulują/wygasają (default 24 h). */
   missWindowMs?: number;
   /** Tyle RÓŻNYCH kluczy per-ticker w oknie podnosi podejrzenie markupu (default 3). */
@@ -154,6 +166,7 @@ export function createSourceGuard(options: SourceGuardOptions): SourceGuard {
     now = Date.now,
     blockThreshold = 3,
     blockBackoffMs = 30 * 60 * 1000,
+    notifyAfterBlockEpisodes = 1,
     missWindowMs = 24 * 60 * 60 * 1000,
     distinctMissThreshold = 3,
     structuralMissThreshold = 2,
@@ -165,6 +178,7 @@ export function createSourceGuard(options: SourceGuardOptions): SourceGuard {
   // ── Stan w pamięci (backoff 30 min ≪ interwał deployów — celowo bez persystencji) ──
   let consecutiveBlocks = 0;
   let blockedUntilMs = 0;
+  let blockEpisodes = 0;
   const missMap = new Map<string, MissEntry>();
   let lastMarkup = false; // ostatnio wyliczony stan markupu — do detekcji przejścia false→true
 
@@ -249,6 +263,7 @@ export function createSourceGuard(options: SourceGuardOptions): SourceGuard {
             kind: 'blocked',
             blockedUntil: new Date(blockedUntilMs).toISOString(),
             consecutiveBlocks,
+            blockEpisodes,
             lastSuccessAt: lastSuccessIso,
           }
         : {
@@ -278,12 +293,13 @@ export function createSourceGuard(options: SourceGuardOptions): SourceGuard {
       consecutiveBlocks += 1;
       if (consecutiveBlocks >= blockThreshold && nowMs >= blockedUntilMs) {
         blockedUntilMs = nowMs + blockBackoffMs;
+        blockEpisodes += 1;
         console.warn(
-          `[${name}] wykryto odcięcie (${consecutiveBlocks} blokad pod rząd) — ` +
+          `[${name}] wykryto odcięcie (${consecutiveBlocks} blokad pod rząd, epizod ${blockEpisodes}) — ` +
             `bezpiecznik otwarty do ${new Date(blockedUntilMs).toISOString()}. ` +
             `Fetch-e wstrzymane; sprawdź czy ${name} nie zmienił zabezpieczeń.`,
         );
-        maybeNotify('blocked', nowMs);
+        if (blockEpisodes >= notifyAfterBlockEpisodes) maybeNotify('blocked', nowMs);
       }
     },
 
@@ -292,6 +308,7 @@ export function createSourceGuard(options: SourceGuardOptions): SourceGuard {
       const nowMs = now();
       consecutiveBlocks = 0;
       blockedUntilMs = 0;
+      blockEpisodes = 0;
       lastSuccessAtMs = nowMs;
       if (
         lastPersistedSuccessMs === null ||
@@ -334,6 +351,7 @@ export function createSourceGuard(options: SourceGuardOptions): SourceGuard {
         blocked: nowMs < blockedUntilMs,
         blockedUntil: blockedUntilMs > 0 ? new Date(blockedUntilMs).toISOString() : null,
         consecutiveBlocks,
+        blockEpisodes,
         suspectedMarkupChange: markup,
         parseMissKeys: [...missMap.keys()],
         lastSuccessAt: lastSuccessAtMs !== null ? new Date(lastSuccessAtMs).toISOString() : null,
