@@ -13,7 +13,8 @@ import { SUFFIX_CURRENCY } from '../../xtb-transactions.js';
  * Najtrudniejszy format w repo — profil odwzorowuje:
  * - transakcje zakodowane w Comment: "OPEN BUY 99 @ 9.796", partial fill
  *   "OPEN BUY 53/60 @ 39.490", sprzedaż "CLOSE BUY 64 @ 26.07", fractional
- *   "BUY 0.3069 @ 494.15" → quantity/price przez regexExtract (jeden wzorzec
+ *   "BUY 0.3069 @ 494.15", od ~10.2026 z tickerem "OPEN BUY DIG.PL 1 @ 308.80"
+ *   → quantity/price przez regexExtract (jeden wzorzec
  *   łapie OPEN/CLOSE — sprzedaż XTB też pisze "BUY" w komentarzu),
  * - strona K/S z kolumny Type (Stock purchase/Stock sale),
  * - value/total wyliczane z qty×price; kwota w Amount (rozliczenie konta)
@@ -161,13 +162,13 @@ export function buildXtbCashOperationsProfile(
       quantity: {
         kind: 'regexExtract',
         col: { name: 'Comment' },
-        pattern: 'BUY ([\\d.]+)(?:/[\\d.]+)? @ ([\\d.]+)',
+        pattern: 'BUY (?:[A-Z0-9][\\w.-]* )?([\\d.]+)(?:/[\\d.]+)? @ ([\\d.]+)',
         group: 1,
       },
       price: {
         kind: 'regexExtract',
         col: { name: 'Comment' },
-        pattern: 'BUY ([\\d.]+)(?:/[\\d.]+)? @ ([\\d.]+)',
+        pattern: 'BUY (?:[A-Z0-9][\\w.-]* )?([\\d.]+)(?:/[\\d.]+)? @ ([\\d.]+)',
         group: 2,
       },
       currency: { kind: 'const', value: accountCurrency },

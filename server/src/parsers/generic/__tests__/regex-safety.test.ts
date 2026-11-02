@@ -12,6 +12,7 @@ describe('isCatastrophicRegex — ochrona przed ReDoS w regexach profili', () =>
   it.each([
     // Wzorce z wbudowanych profili — nie mogą dać fałszywego alarmu.
     'BUY ([\\d.]+)(?:/[\\d.]+)? @ ([\\d.]+)',
+    'BUY (?:[A-Z0-9][\\w.-]* )?([\\d.]+)(?:/[\\d.]+)? @ ([\\d.]+)',
     'Wymiana waluty (\\w+/\\w+)',
     'Wymiana waluty \\w+/\\w+ ([\\d.]+)',
     'Wypłata kuponu\\s+(\\S+)',

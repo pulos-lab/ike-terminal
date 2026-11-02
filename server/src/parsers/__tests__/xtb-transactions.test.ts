@@ -1207,3 +1207,80 @@ describe('parseXtbFile — aliasy ISIN (konwersja PDA→akcje REXA→REX)', () =
     expect(buy?.paperName).toBe('REX.WA');
   });
 });
+
+describe('parseXtbFile — komentarz z tickerem (format od ~10.2026)', () => {
+  it('"OPEN/CLOSE BUY <TICKER> qty @ cena" daje transakcje zamiast unparseable_comment', async () => {
+    const buf = await buildXtbXlsxTicker([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: '12/10/2026 07:48:35',
+        comment: 'OPEN BUY CLD.PL 5 @ 127.50',
+        ticker: 'CLD.PL',
+        amount: -637.5,
+      },
+      {
+        id: 2,
+        type: 'Stock purchase',
+        time: '12/10/2026 07:49:00',
+        comment: 'OPEN BUY BFT.PL 0.1002 @ 4998.00',
+        ticker: 'BFT.PL',
+        amount: -500.8,
+      },
+      // Partial fille sprzedaży: trzy wiersze "1/3" w tej samej chwili
+      ...[3, 4, 5].map((id) => ({
+        id,
+        type: 'Stock sell',
+        time: '12/10/2026 07:46:42',
+        comment: 'CLOSE BUY VRC.PL 1/3 @ 126.40',
+        ticker: 'VRC.PL',
+        amount: 126.4,
+      })),
+    ]);
+    const { transactions } = await parseXtbFile(buf, 'b1', 'IKE_12345_2026-01-01_2026-11-02.xlsx');
+
+    expect(transactions.skipped).toEqual([]);
+    const buys = transactions.data.filter((t) => t.side === 'K');
+    expect(buys.map((t) => [t.paperName, t.quantity, t.price])).toEqual([
+      ['CLD.WA', 5, 127.5],
+      ['BFT.WA', 0.1002, 4998],
+    ]);
+    const sells = transactions.data.filter((t) => t.side === 'S');
+    expect(sells).toHaveLength(3);
+    for (const s of sells) {
+      expect(s.paperName).toBe('VRC.WA');
+      expect(s.quantity).toBe(1);
+      expect(s.price).toBe(126.4);
+    }
+  });
+
+  it('stary format bez tickera dalej działa (partial fill i ułamek)', async () => {
+    const buf = await buildXtbXlsxTicker([
+      {
+        id: 1,
+        type: 'Stock purchase',
+        time: '24/06/2026 08:23:31',
+        comment: 'OPEN BUY 2/3 @ 13.196',
+        ticker: 'REX.PL',
+        amount: -26.39,
+      },
+      {
+        id: 2,
+        type: 'Stock sell',
+        time: '25/06/2026 08:23:31',
+        comment: 'CLOSE BUY 0.4926 @ 175.20',
+        ticker: 'CDR.PL',
+        amount: 86.3,
+      },
+    ]);
+    const { transactions } = await parseXtbFile(buf, 'b1', 'IKE_12345_2026-01-01_2026-11-02.xlsx');
+
+    expect(transactions.skipped).toEqual([]);
+    expect(transactions.data.map((t) => [t.side, t.quantity, t.price])).toEqual(
+      expect.arrayContaining([
+        ['K', 2, 13.196],
+        ['S', 0.4926, 175.2],
+      ]),
+    );
+  });
+});
