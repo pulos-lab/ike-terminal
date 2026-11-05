@@ -69,6 +69,25 @@ function tokenize(value: string): string[] {
     .filter((t) => t.length > 0 && !IGNORED_TOKENS.has(t));
 }
 
+/**
+ * Nazwa papieru od brokera sprowadzona do zapytania, które zna wyszukiwarka Yahoo:
+ * kropki i interpunkcja → spacje, bez form prawnych i oznaczeń ADR/klas akcji.
+ *
+ * GENEZA (zgłoszenie 2026-11-05): Bossa podaje ADR TSMC jako
+ * „Taiwan Semi.Manufa.Ltd ADR", a Yahoo NIE indeksuje ISIN-u tego ADR-a
+ * (US8740391003 → pusta lista). Wyszukiwarka nie zna ani pełnej nazwy z Bossy,
+ * ani wersji z „Ltd" — dopiero „TAIWAN SEMI MANUFA" zwraca TSM (NYSE).
+ *
+ * Zwraca `null`, gdy po oczyszczeniu nic nie zostało albo wynik niczym się nie
+ * różni od wejścia (wołający nie powtarza wtedy tego samego zapytania).
+ */
+export function searchableCompanyName(value: string): string | null {
+  const tokens = tokenize(value);
+  if (tokens.length === 0) return null;
+  const query = tokens.join(' ');
+  return query === value.trim().toUpperCase() ? null : query;
+}
+
 /** Część symbolu przed sufiksem giełdy: „INPST.AS" → „INPST". */
 function baseSymbol(value: string): string {
   const dot = value.indexOf('.');

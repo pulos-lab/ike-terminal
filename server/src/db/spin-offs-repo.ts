@@ -100,6 +100,23 @@ export function updateSpinOffStatus(
   return result.changes > 0;
 }
 
+/**
+ * Przepina dziecko spin-offu na ISIN, pod którym portfel realnie trzyma papier
+ * (patrz `rehomeSpinOffChildren` w spin-offs-applier). Alokacja i ilości zostają —
+ * zmienia się wyłącznie klucz pozycji, pod którym silnik wstawia syntetyczne kupno.
+ */
+export function updateSpinOffChildIsin(
+  portfolioId: string,
+  id: number,
+  childIsin: string,
+): boolean {
+  const db = getDb(portfolioId);
+  const result = db
+    .prepare('UPDATE spin_offs SET child_isin = ? WHERE id = ? AND child_isin != ?')
+    .run(childIsin, id, childIsin);
+  return result.changes > 0;
+}
+
 /** Hard delete — do testów/administracji. Cofnięcie w UI to updateSpinOffStatus('reverted'). */
 export function deleteSpinOff(portfolioId: string, id: number): boolean {
   const db = getDb(portfolioId);

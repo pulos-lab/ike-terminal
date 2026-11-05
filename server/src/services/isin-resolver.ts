@@ -17,7 +17,12 @@ import { fetchYahooPrice } from './yahoo-finance.js';
 import { resolveSector } from './sector-resolver.js';
 import { mapWithConcurrency } from './concurrency.js';
 import { normalizeBossaPaperName, isNewConnectPaperName } from './stooq-utils.js';
-import { pickPlausible, isExactSymbolMatch, isSameBaseSymbol } from './ticker-match.js';
+import {
+  pickPlausible,
+  isExactSymbolMatch,
+  isSameBaseSymbol,
+  searchableCompanyName,
+} from './ticker-match.js';
 
 interface UnresolvedIsin {
   isin: string;
@@ -757,8 +762,16 @@ export async function resolveIsin(
       const base = baseTickerSymbol(isin);
       if (base && !searchVariants.includes(base)) searchVariants.push(base);
     }
+    // Nazwa oczyszczona z interpunkcji i form prawnych („Taiwan Semi.Manufa.Ltd ADR"
+    // → „TAIWAN SEMI MANUFA") — OSTATNIA, bo to zapytanie luźniejsze od nazwy
+    // brokera. Trafienie z niej musi przejść walidację nazwy (`pickPlausible`),
+    // bez fallbacku do [0] nawet na ścieżce niewalidowanej. Gałąź polska ma
+    // własny łańcuch (katalog BR) i akceptuje tylko `.WA` — tam tego nie dokładamy.
+    const looseVariant = isPolishTicker ? null : searchableCompanyName(cleanName);
+    if (looseVariant && !searchVariants.includes(looseVariant)) searchVariants.push(looseVariant);
 
     for (const variant of searchVariants) {
+      const isLooseVariant = variant === looseVariant;
       const byName = await searchYahoo(variant);
       if (byName.length > 0) {
         if (isPolishTicker) {
@@ -776,7 +789,9 @@ export async function resolveIsin(
         } else {
           // Prefer-plausible jak w Strategy 1 — fallback [0] tylko na ścieżce
           // niewalidowanej.
-          const hit = pickPlausible(byName, matchQueries) ?? (shouldValidate ? null : byName[0]);
+          const hit =
+            pickPlausible(byName, matchQueries) ??
+            (shouldValidate || isLooseVariant ? null : byName[0]);
           if (hit) {
             const entry = shouldValidate
               ? await buildEntryGuarded(
