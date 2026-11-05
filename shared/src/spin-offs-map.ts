@@ -47,6 +47,8 @@ export const SPIN_OFF_MAP: SpinOffMapEntry[] = [
     parentTicker: 'SPGI',
     parentIsin: 'US78409V1044',
     childTicker: 'MBGL',
+    // ISIN z eksportu Bossy (sprzedaż 2026-11-05), potwierdzony wyszukiwarką Yahoo → MBGL (NYSE).
+    childIsin: 'US60744M1062',
     childName: 'Mobility Global Inc. (spin-off S&P Global)',
     exDate: '2026-07-01',
     ratio: 1,

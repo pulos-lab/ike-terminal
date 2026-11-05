@@ -19,7 +19,12 @@
  */
 import type { Transaction, TickerMapEntry, DetectedSplit, AppliedSpinOff } from 'shared';
 import { SPIN_OFF_MAP, type SpinOffMapEntry } from 'shared';
-import { getSpinOffs, insertSpinOff, updateSpinOffStatus } from '../db/spin-offs-repo.js';
+import {
+  getSpinOffs,
+  insertSpinOff,
+  updateSpinOffStatus,
+  updateSpinOffChildIsin,
+} from '../db/spin-offs-repo.js';
 import { getTickerBySymbol, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { invalidateCachedPrices } from './history-cache.js';
@@ -226,7 +231,20 @@ function findParentEntry(
 async function resolveChildEntry(
   pid: string,
   candidate: SpinOffMapEntry,
+  tickerMap: Map<string, TickerMapEntry>,
+  transactions: Transaction[],
 ): Promise<TickerMapEntry | null> {
+  // Kolejność: papier, który portfel REALNIE ma w transakcjach (sprzedaż dziecka
+  // zaimportowana przed aplikacją) → ISIN z mapy statycznej → dowolny wpis po
+  // tickerze. `getTickerBySymbol` przy dwóch wpisach z tym samym tickerem
+  // (`AUTO_MBGL` + `US60744M1062`) zwraca przypadkowy — stąd jawne preferencje.
+  const heldIsin = findHeldChildIsin(tickerMap, transactions, candidate.childTicker);
+  const held = heldIsin ? tickerMap.get(heldIsin) : undefined;
+  if (held) return held;
+  if (candidate.childIsin) {
+    const byIsin = tickerMap.get(candidate.childIsin);
+    if (byIsin) return byIsin;
+  }
   const existing = getTickerBySymbol(candidate.childTicker, pid);
   if (existing) return existing;
 
@@ -255,6 +273,67 @@ async function resolveChildEntry(
 }
 
 /**
+ * ISIN, pod którym portfel REALNIE trzyma papier dziecka: wpis ticker_map z
+ * tickerem dziecka, pod którym są transakcje. `null`, gdy takiego nie ma albo
+ * kandydatów jest kilka (cross-listingi — nie zgadujemy).
+ *
+ * `exclude` pomija ISIN, którego dotyczy pytanie (sam wiersz spin-offu).
+ */
+export function findHeldChildIsin(
+  tickerMap: Map<string, TickerMapEntry>,
+  transactions: Transaction[],
+  childTicker: string,
+  exclude?: string,
+): string | null {
+  const upper = childTicker.toUpperCase();
+  const isinsWithTx = new Set<string>();
+  for (const tx of transactions) if (!tx.syntheticOrigin) isinsWithTx.add(tx.isin);
+  const held = [...tickerMap.values()].filter(
+    (e) => e.ticker.toUpperCase() === upper && e.isin !== exclude && isinsWithTx.has(e.isin),
+  );
+  return held.length === 1 ? held[0].isin : null;
+}
+
+/**
+ * Samonaprawa klucza pozycji dziecka zastosowanego spin-offu.
+ *
+ * GENEZA (zgłoszenie 2026-11-05, SPGI→MBGL w Bossie): spin-off zaaplikował się
+ * w lipcu, gdy portfel nie miał jeszcze żadnego wpisu MBGL, więc dziecko dostało
+ * `AUTO_MBGL` (ZAMROŻONE w `spin_offs`). W listopadzie Bossa zaksięgowała
+ * sprzedaż pod prawdziwym ISIN-em `US60744M1062`. Silnik grupuje pozycje po
+ * ISIN-ie, więc powstały DWIE: 9 szt. syntetycznych `AUTO_MBGL` wiszących
+ * w portfelu i sprzedaż bez kupna. Skrzynka „Sprzedaż bez kupna" nic nie
+ * pokazała, bo filtruje dzieci spin-offów po tickerze.
+ *
+ * Reguła: jeśli pod ISIN-em dziecka z wiersza nie ma ŻADNEJ realnej transakcji,
+ * a jednoznacznie istnieje inny ISIN z tym samym tickerem, który transakcje ma —
+ * przepinamy wiersz na niego. Obejmuje to też pseudo-ISIN-y XTB (`MBGL.US`).
+ * Alokacja i ilość zostają nietknięte; zmienia się wyłącznie klucz pozycji.
+ */
+function rehomeSpinOffChildren(
+  pid: string,
+  rows: AppliedSpinOff[],
+  transactions: Transaction[],
+  tickerMap: Map<string, TickerMapEntry>,
+): void {
+  const isinsWithTx = new Set<string>();
+  for (const tx of transactions) if (!tx.syntheticOrigin) isinsWithTx.add(tx.isin);
+  for (const row of rows) {
+    if (!row.id || isinsWithTx.has(row.childIsin)) continue;
+    const target = findHeldChildIsin(tickerMap, transactions, row.childTicker, row.childIsin);
+    if (!target) continue;
+    if (updateSpinOffChildIsin(pid, row.id, target)) {
+      console.log(
+        `[spin-offs] ${row.parentTicker}→${row.childTicker} (${row.exDate}): dziecko ` +
+          `przepięte ${row.childIsin} → ${target} (tam są realne transakcje)`,
+      );
+      row.childIsin = target;
+      bumpPortfolioDataVersion(pid);
+    }
+  }
+}
+
+/**
  * Skanuje kandydatów i aplikuje zaległe spin-offy do portfela. Bezpieczne do
  * wołania przy każdym budowaniu widoku: tanie lokalne bramki, sieć tylko gdy
  * istnieje niezastosowane zdarzenie (z backoffem po porażce), a bump wersji
@@ -271,6 +350,7 @@ export async function applyPendingSpinOffs(
   const appliedNow: AppliedSpinOff[] = [];
   const today = new Date().toISOString().split('T')[0];
   const existing = getSpinOffs(pid);
+  rehomeSpinOffChildren(pid, existing, transactions, tickerMap);
 
   // ── Problem D cz. 2: broker zaksięgował dziecko PO naszej aplikacji ──
   // Realne wiersze zawsze wygrywają — syntetyk cicho się wycofuje.
@@ -324,7 +404,10 @@ export async function applyPendingSpinOffs(
 
     // ── Problem D cz. 1: dziecko już zaksięgowane (broker albo ręczne
     //    kupno-0 z sekcji „Sprzedaże bez kupna") → skipped_broker ──
-    const childIsinGuess = candidate.childIsin ?? `AUTO_${candidate.childTicker.toUpperCase()}`;
+    const childIsinGuess =
+      findHeldChildIsin(tickerMap, transactions, candidate.childTicker) ??
+      candidate.childIsin ??
+      `AUTO_${candidate.childTicker.toUpperCase()}`;
     const preReal = realChildBuys(
       transactions,
       childIsinGuess,
@@ -356,7 +439,7 @@ export async function applyPendingSpinOffs(
     if (deferredTs && Date.now() - deferredTs < DEFER_RETRY_MS) continue;
 
     // Resolve tickera dziecka (+ auto ticker_map). Yahoo nie zna → defer.
-    const childEntry = await resolveChildEntry(pid, candidate);
+    const childEntry = await resolveChildEntry(pid, candidate, tickerMap, transactions);
     if (!childEntry) {
       deferredUntil.set(deferKey, Date.now());
       console.warn(

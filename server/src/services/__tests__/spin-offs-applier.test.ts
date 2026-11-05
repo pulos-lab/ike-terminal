@@ -481,3 +481,115 @@ describe('applyPendingSpinOffs', () => {
     expect(repo.getSpinOffs(pid)).toHaveLength(0);
   });
 });
+
+// Zgłoszenie 2026-11-05: spin-off SPGI→MBGL zaaplikowany w lipcu pod `AUTO_MBGL`,
+// a Bossa w listopadzie zaksięgowała sprzedaż pod prawdziwym ISIN-em — silnik
+// (pozycje per ISIN) widział dwie osobne pozycje zamiast jednej zamkniętej.
+describe('ISIN dziecka = papier realnie trzymany w portfelu', () => {
+  const REAL_CHILD_ISIN = 'US60744M1062';
+  const realChildEntry: TickerMapEntry = {
+    isin: REAL_CHILD_ISIN,
+    ticker: 'MBGL',
+    name: 'Mobility Global Inc.',
+    exchange: 'NYSE',
+    currency: 'USD',
+    priceSource: 'yahoo',
+  };
+  const childSell = makeTx({
+    date: '2026-11-05',
+    side: 'S',
+    quantity: 10,
+    price: 78.7,
+    isin: REAL_CHILD_ISIN,
+    paperName: 'Mobility Global Inc.',
+  });
+
+  it('wiersz zamrożony z AUTO_MBGL przepina się na ISIN sprzedaży z Bossy (bump wersji)', async () => {
+    const parentBuy = makeTx({ side: 'K', quantity: 10, price: 500 });
+    // Lipiec: portfel ma tylko rodzica → dziecko dostaje AUTO_MBGL.
+    await applier.applyPendingSpinOffs(pid, [parentBuy], makeTickerMap(), [], [CANDIDATE]);
+    expect(repo.getSpinOffs(pid)[0].childIsin).toBe('AUTO_MBGL');
+
+    // Listopad: import sprzedaży z prawdziwym ISIN-em.
+    const tickerMap = makeTickerMap();
+    tickerMap.set('AUTO_MBGL', { ...realChildEntry, isin: 'AUTO_MBGL' });
+    tickerMap.set(REAL_CHILD_ISIN, realChildEntry);
+    const versionBefore = dataVersion.getPortfolioDataVersion(pid);
+
+    await applier.applyPendingSpinOffs(pid, [parentBuy, childSell], tickerMap, [], [CANDIDATE]);
+
+    const [row] = repo.getSpinOffs(pid);
+    expect(row.childIsin).toBe(REAL_CHILD_ISIN);
+    expect(row.status).toBe('applied');
+    expect(row.allocationPct).toBeCloseTo(41 / 496, 8); // alokacja nietknięta
+    expect(dataVersion.getPortfolioDataVersion(pid)).toBeGreaterThan(versionBefore);
+
+    // Idempotencja: kolejny przebieg nic nie zmienia.
+    const versionAfter = dataVersion.getPortfolioDataVersion(pid);
+    await applier.applyPendingSpinOffs(pid, [parentBuy, childSell], tickerMap, [], [CANDIDATE]);
+    expect(dataVersion.getPortfolioDataVersion(pid)).toBe(versionAfter);
+  });
+
+  it('nie przepina, gdy pod ISIN-em z wiersza są realne transakcje', async () => {
+    const parentBuy = makeTx({ side: 'K', quantity: 10, price: 500 });
+    await applier.applyPendingSpinOffs(pid, [parentBuy], makeTickerMap(), [], [CANDIDATE]);
+
+    const manualSell = { ...childSell, isin: 'AUTO_MBGL', quantity: 2 };
+    const tickerMap = makeTickerMap();
+    tickerMap.set('AUTO_MBGL', { ...realChildEntry, isin: 'AUTO_MBGL' });
+    tickerMap.set(REAL_CHILD_ISIN, realChildEntry);
+
+    await applier.applyPendingSpinOffs(
+      pid,
+      [parentBuy, manualSell, childSell],
+      tickerMap,
+      [],
+      [CANDIDATE],
+    );
+    expect(repo.getSpinOffs(pid)[0].childIsin).toBe('AUTO_MBGL');
+  });
+
+  it('nie zgaduje przy kilku ISIN-ach z tym samym tickerem (cross-listingi)', async () => {
+    const parentBuy = makeTx({ side: 'K', quantity: 10, price: 500 });
+    await applier.applyPendingSpinOffs(pid, [parentBuy], makeTickerMap(), [], [CANDIDATE]);
+
+    const otherIsin = 'US60744M9999';
+    const tickerMap = makeTickerMap();
+    tickerMap.set(REAL_CHILD_ISIN, realChildEntry);
+    tickerMap.set(otherIsin, { ...realChildEntry, isin: otherIsin });
+    const otherSell = { ...childSell, isin: otherIsin };
+
+    await applier.applyPendingSpinOffs(
+      pid,
+      [parentBuy, childSell, otherSell],
+      tickerMap,
+      [],
+      [CANDIDATE],
+    );
+    expect(repo.getSpinOffs(pid)[0].childIsin).toBe('AUTO_MBGL');
+  });
+
+  it('sprzedaż zaimportowana PRZED aplikacją: nowe zdarzenie od razu pod realnym ISIN-em', async () => {
+    const parentBuy = makeTx({ side: 'K', quantity: 10, price: 500 });
+    const tickerMap = makeTickerMap();
+    tickerMap.set(REAL_CHILD_ISIN, realChildEntry);
+
+    await applier.applyPendingSpinOffs(pid, [parentBuy, childSell], tickerMap, [], [CANDIDATE]);
+
+    const [row] = repo.getSpinOffs(pid);
+    expect(row.status).toBe('applied');
+    expect(row.childIsin).toBe(REAL_CHILD_ISIN);
+  });
+
+  it('ISIN z mapy statycznej wygrywa z AUTO_, gdy portfel nie ma jeszcze dziecka', async () => {
+    const parentBuy = makeTx({ side: 'K', quantity: 10, price: 500 });
+    await applier.applyPendingSpinOffs(
+      pid,
+      [parentBuy],
+      makeTickerMap(),
+      [],
+      [{ ...CANDIDATE, childIsin: REAL_CHILD_ISIN }],
+    );
+    expect(repo.getSpinOffs(pid)[0].childIsin).toBe(REAL_CHILD_ISIN);
+  });
+});

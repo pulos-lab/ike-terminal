@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isPlausibleMatch, pickPlausible } from '../ticker-match.js';
+import { isPlausibleMatch, pickPlausible, searchableCompanyName } from '../ticker-match.js';
 
 /**
  * Wszystkie pary poniżej pochodzą z realnych danych: albo z produkcyjnego
@@ -135,5 +135,17 @@ describe('pickPlausible — wybór pierwszego sensownego trafienia', () => {
 
   it('pusta lista kandydatów → null', () => {
     expect(pickPlausible([], ['RELI'])).toBeNull();
+  });
+});
+
+describe('searchableCompanyName — nazwa brokera jako zapytanie do wyszukiwarki', () => {
+  it('Bossa: kropki zamiast spacji, forma prawna i ADR odpadają', () => {
+    expect(searchableCompanyName('Taiwan Semi.Manufa.Ltd ADR')).toBe('TAIWAN SEMI MANUFA');
+    expect(searchableCompanyName('Novo-Nordisk A/S ADR')).toBe('NOVO NORDISK');
+  });
+
+  it('null, gdy oczyszczanie nic nie zmienia albo nic nie zostaje', () => {
+    expect(searchableCompanyName('NVIDIA')).toBeNull();
+    expect(searchableCompanyName('Ltd ADR')).toBeNull();
   });
 });
