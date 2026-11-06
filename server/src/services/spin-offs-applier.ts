@@ -25,7 +25,8 @@ import {
   updateSpinOffStatus,
   updateSpinOffChildIsin,
 } from '../db/spin-offs-repo.js';
-import { getTickerBySymbol, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
+import { getTickerBySymbol, getTickerMap, upsertTickerMapEntry } from '../db/ticker-map-repo.js';
+import { getAllTransactions } from '../db/transactions-repo.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { invalidateCachedPrices } from './history-cache.js';
 import { fetchYahooPrice, fetchYahooHistory, fetchYahooHistoryDirect } from './yahoo-finance.js';
@@ -331,6 +332,19 @@ function rehomeSpinOffChildren(
       bumpPortfolioDataVersion(pid);
     }
   }
+}
+
+/**
+ * Samonaprawa kluczy dzieci poza budowaniem widoku — dla ścieżek, które czytają
+ * `spin_offs` bez `applyPendingSpinOffs` (skrzynka „Sprzedaż bez kupna” liczona
+ * zaraz po imporcie, zanim ktokolwiek otworzy dashboard). Bez tego świeżo
+ * zaimportowana sprzedaż dziecka pokazywałaby się jako osierocona do pierwszego
+ * wczytania portfela. Portfel bez wierszy spin-offów nie ładuje transakcji.
+ */
+export function rehomeSpinOffChildrenForPortfolio(pid: string): void {
+  const rows = getSpinOffs(pid);
+  if (rows.length === 0) return;
+  rehomeSpinOffChildren(pid, rows, getAllTransactions(pid), getTickerMap(pid));
 }
 
 /**
