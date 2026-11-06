@@ -18,7 +18,8 @@ vi.mock('../admin-notifications.js', () => ({ notifySourceGuardAlert: vi.fn() })
 
 /**
  * Fixture'y to ZAPIS ŻYWYCH ODPOWIEDZI `POST https://api.openfigi.com/v3/mapping`
- * (bez klucza, 2026-11-06), bajt w bajt:
+ * (bez klucza, 2026-11-06). Treść 1:1 z odpowiedzią (sprawdzone równością JSON);
+ * różni się wyłącznie wcięciami, bo lint-staged przepuszcza `*.json` przez prettiera:
  *  - tsm-mbgl:           [US8740391003, US60744M1062]
  *  - sap-brkb-unknown:   [DE0007164600, US0846707026, XS0000000009]
  *    (ostatni = {"warning":"No identifier found."})
