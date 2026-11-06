@@ -169,6 +169,78 @@ describe('orphaned-sells', () => {
     expect(svc.getOrphanedSellsView(PID).pending).toHaveLength(1);
   });
 
+  // Zgłoszenie 2026-11-05: dziecko spin-offu pod `AUTO_MBGL`, sprzedaż z Bossy pod
+  // realnym ISIN-em. Pokrycie liczy się wyłącznie po ISIN-ie dziecka.
+  describe('dziecko spin-offu pod innym ISIN-em niż sprzedaż', () => {
+    const REAL = 'US60744M1062';
+    const appliedRow = {
+      parentIsin: 'US78409V1044',
+      parentTicker: 'SPGI',
+      childIsin: 'AUTO_MBGL',
+      childTicker: 'MBGL',
+      childName: 'Mobility Global',
+      exDate: '2026-07-01',
+      ratio: 1,
+      allocationPct: 0.08,
+      childQty: 9,
+      currency: 'USD',
+      status: 'applied' as const,
+      source: 'map' as const,
+    };
+    const mbglEntry = (isin: string) => ({
+      isin,
+      ticker: 'MBGL',
+      name: 'Mobility Global Inc.',
+      exchange: 'NYSE' as const,
+      currency: 'USD',
+      priceSource: 'yahoo' as const,
+    });
+
+    beforeEach(() => {
+      connection.getDb(PID).prepare('DELETE FROM ticker_map').run();
+    });
+
+    it('jeden realny ISIN: wiersz przepina się na niego, sprzedaż nie jest osierocona', async () => {
+      const tm = await import('../../db/ticker-map-repo.js');
+      tm.upsertTickerMapEntry(mbglEntry(REAL), PID);
+      txRepo.insertTransactions(
+        [tx({ isin: REAL, paperName: 'Mobility Global Inc.', quantity: 9 })],
+        PID,
+      );
+      spinOffsRepo.insertSpinOff(PID, appliedRow);
+
+      expect(svc.getOrphanedSellsView(PID).pending).toHaveLength(0);
+      expect(spinOffsRepo.getSpinOffs(PID)[0].childIsin).toBe(REAL);
+    });
+
+    it('niejednoznaczny ticker: sprzedaż WRACA do skrzynki zamiast znikać po tickerze', async () => {
+      const tm = await import('../../db/ticker-map-repo.js');
+      const OTHER = 'US60744M9999';
+      tm.upsertTickerMapEntry(mbglEntry(REAL), PID);
+      tm.upsertTickerMapEntry(mbglEntry(OTHER), PID);
+      txRepo.insertTransactions(
+        [
+          tx({ isin: REAL, paperName: 'Mobility Global Inc.', quantity: 9 }),
+          tx({
+            isin: OTHER,
+            paperName: 'Mobility Global Inc.',
+            quantity: 1,
+            date: '2026-11-06T10:00:00',
+          }),
+        ],
+        PID,
+      );
+      spinOffsRepo.insertSpinOff(PID, appliedRow);
+
+      const pending = svc
+        .getOrphanedSellsView(PID)
+        .pending.map((o) => o.isin)
+        .sort();
+      expect(pending).toEqual([REAL, OTHER].sort());
+      expect(spinOffsRepo.getSpinOffs(PID)[0].childIsin).toBe('AUTO_MBGL');
+    });
+  });
+
   it('clearOrphanDismissals usuwa decyzje (kaskada /api/import/clear)', () => {
     repo.dismissOrphanedSell('A', 1, PID);
     repo.dismissOrphanedSell('B', 2, PID);
