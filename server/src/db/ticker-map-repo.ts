@@ -273,13 +273,36 @@ export function updateTickerSectors(
   supersector: string | null,
   subsector: string | null,
   portfolioId: string = 'default',
+  expect?: TickerMapSnapshot & { supersector: string | null },
 ): boolean {
   const db = getDb(portfolioId);
-  const res = db
-    .prepare('UPDATE ticker_map SET sector = ?, supersector = ? WHERE isin = ?')
-    .run(subsector, supersector, isin);
+  const res = expect
+    ? db
+        .prepare(
+          `UPDATE ticker_map SET sector = ?, supersector = ?
+           WHERE isin = ? AND ticker = ? AND exchange = ?
+             AND COALESCE(supersector, '') = COALESCE(?, '')`,
+        )
+        .run(subsector, supersector, isin, expect.ticker, expect.exchange, expect.supersector)
+    : db
+        .prepare('UPDATE ticker_map SET sector = ?, supersector = ? WHERE isin = ?')
+        .run(subsector, supersector, isin);
   if (res.changes > 0) bumpPortfolioDataVersion(portfolioId);
   return res.changes > 0;
+}
+
+/**
+ * Stan wpisu, na którym backfill policzył klasyfikację (compare-and-set).
+ *
+ * GENEZA (audyt 2026-11-06): backfill sektorów/kraju chodzi w tle na KOPII
+ * wpisów sprzed sieciowych lookupów. TSM z Bossy był najpierw prowizorycznym
+ * stubem z giełdą GPW, w międzyczasie samonaprawa przepisała go na NYSE — a
+ * backfill dopisał krajowi „Poland" policzone dla starego stuba. Zapis z tym
+ * parametrem przechodzi tylko, gdy wpis nadal wygląda tak jak w kopii.
+ */
+export interface TickerMapSnapshot {
+  ticker: string;
+  exchange: string;
 }
 
 /** Update kraju siedziby (Yahoo assetProfile.country / "Poland" dla GPW/NC/Catalyst).
@@ -289,9 +312,18 @@ export function updateTickerCountry(
   isin: string,
   country: string,
   portfolioId: string = 'default',
+  expect?: TickerMapSnapshot & { country: string | null },
 ): boolean {
   const db = getDb(portfolioId);
-  const res = db.prepare('UPDATE ticker_map SET country = ? WHERE isin = ?').run(country, isin);
+  const res = expect
+    ? db
+        .prepare(
+          `UPDATE ticker_map SET country = ?
+           WHERE isin = ? AND ticker = ? AND exchange = ?
+             AND COALESCE(country, '') = COALESCE(?, '')`,
+        )
+        .run(country, isin, expect.ticker, expect.exchange, expect.country)
+    : db.prepare('UPDATE ticker_map SET country = ? WHERE isin = ?').run(country, isin);
   if (res.changes > 0) bumpPortfolioDataVersion(portfolioId);
   return res.changes > 0;
 }
