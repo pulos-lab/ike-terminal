@@ -6,7 +6,11 @@ import { TrendingUp, TrendingDown, DollarSign, Target, ArrowLeftRight, Gauge } f
 import type { FxImpact, LeverageInfo } from 'shared';
 
 export function MetricsBar() {
-  const { data } = useMetricsQuery();
+  const { data, isError } = useMetricsQuery();
+
+  // Błąd bez danych: pasek znika zamiast pulsować szkieletem w nieskończoność —
+  // komunikat i ponowienie pokazuje strona pod spodem, tu nie ma czego dublować.
+  if (!data && isError) return null;
 
   if (!data)
     return (

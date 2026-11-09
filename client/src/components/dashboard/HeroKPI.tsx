@@ -8,7 +8,10 @@ interface HeroKPIProps {
 }
 
 export function HeroKPI({ history }: HeroKPIProps) {
-  const { data } = useMetricsQuery();
+  const { data, isError } = useMetricsQuery();
+
+  // Jak w MetricsBar: przy błędzie bez danych nie udajemy wiecznego ładowania.
+  if (!data && isError) return null;
 
   if (!data) {
     return (

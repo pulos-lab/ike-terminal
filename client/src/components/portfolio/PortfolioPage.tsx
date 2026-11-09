@@ -22,6 +22,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
+import { QueryErrorState } from '@/components/ui/query-error-state';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { CcyChip } from '@/components/ui/ccy-chip';
@@ -190,7 +191,7 @@ export function PortfolioPage() {
   // rynku): co ~15 min w trakcie sesji, co kilka godzin po zamknięciu, praktycznie
   // zero pollingu w weekend. Sztywne 15 min nie miało związku z tym, kiedy dane
   // faktycznie się zmieniają.
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: QUERY_KEYS.positions,
     queryFn: api.getPositions,
     refetchInterval: (query) => {
@@ -420,6 +421,13 @@ export function PortfolioPage() {
         <CardContent>
           {isLoading ? (
             <LoadingSpinner />
+          ) : isError && !data ? (
+            <QueryErrorState
+              title="Nie udało się wczytać pozycji"
+              error={error}
+              onRetry={() => refetch()}
+              retrying={isFetching}
+            />
           ) : regularPositions.length ? (
             <>
               <div className="md:hidden flex flex-col gap-2">
