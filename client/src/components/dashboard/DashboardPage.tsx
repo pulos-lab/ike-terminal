@@ -39,8 +39,7 @@ import { DrawdownChart } from './DrawdownChart';
 import { MonthlyReturnsChart } from './MonthlyReturnsChart';
 import { ShareDialog } from './ShareDialog';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
-
-const PRESET_RANGES = ['1M', '3M', '6M', 'YTD', '1Y', '3Y', 'ALL'] as const;
+import { PRESET_RANGES, DEFAULT_PRESET_RANGE, clampPresetRange } from '@/lib/dashboard-range';
 
 function ChartLegend({
   portfolioPct,
@@ -85,7 +84,14 @@ export function DashboardPage() {
   // sprowadza ją do domyślnej zamiast wysyłać nieznany klucz do API.
   const [storedBenchmark, setBenchmark] = useLocalStorage('dashboard-benchmark', 'sp500');
   const benchmark = BENCHMARKS.some((b) => b.value === storedBenchmark) ? storedBenchmark : 'sp500';
-  const [timeRange, setTimeRange] = useState<string>('ALL');
+  // Wybrany preset przeżywa reload tak jak benchmark i tryb wykresu. Zakres
+  // własny jest stanem sesji (patrz clampPresetRange) — po powrocie wraca preset.
+  const [storedRange, setStoredRange] = useLocalStorage<string>(
+    'dashboard-time-range',
+    DEFAULT_PRESET_RANGE,
+  );
+  const [customActive, setCustomActive] = useState(false);
+  const timeRange: string = customActive ? 'CUSTOM' : clampPresetRange(storedRange);
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [storedChartMode, setChartMode] = useLocalStorage<'mwr' | 'twr'>(
@@ -312,11 +318,12 @@ export function DashboardPage() {
   const dismissUnpricedNotice = () => setDismissedUnpricedKey(unpricedKey);
 
   function selectPreset(range: string) {
-    setTimeRange(range);
+    setStoredRange(range);
+    setCustomActive(false);
   }
 
   function selectCustom() {
-    setTimeRange('CUSTOM');
+    setCustomActive(true);
     if (!customFrom && data?.history?.length) {
       setCustomFrom(data.history[0].date);
     }
