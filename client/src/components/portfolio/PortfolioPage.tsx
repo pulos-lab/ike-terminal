@@ -35,7 +35,8 @@ import {
 } from '@/lib/formatters';
 import { Eye, EyeOff, AlertTriangle, Info, ChevronUp, ChevronDown } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { QuoteFreshnessLabel } from './QuoteFreshnessLabel';
+import { QuoteFreshnessLabel } from '@/components/shared/QuoteFreshnessLabel';
+import { usePositionsQuery } from '@/lib/use-positions-query';
 import { PortfolioDiversification } from './PortfolioDiversification';
 import { RiskReturnScatter } from './RiskReturnScatter';
 import { PortfolioOptionsCard } from './PortfolioOptionsCard';
@@ -187,19 +188,7 @@ export function PortfolioPage() {
 
   const allVisible = colVis.avgPrice && colVis.dailyChange && colVis.pl && colVis.plPct;
 
-  // Tempo odświeżania dyktuje serwer przez `quotes.nextRefreshAt` (TTL wg stanu
-  // rynku): co ~15 min w trakcie sesji, co kilka godzin po zamknięciu, praktycznie
-  // zero pollingu w weekend. Sztywne 15 min nie miało związku z tym, kiedy dane
-  // faktycznie się zmieniają.
-  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: QUERY_KEYS.positions,
-    queryFn: api.getPositions,
-    refetchInterval: (query) => {
-      const next = query.state.data?.quotes?.nextRefreshAt;
-      const ms = next ? Date.parse(next) - Date.now() : NaN;
-      return Number.isFinite(ms) ? Math.max(ms, 60_000) : 15 * 60 * 1000;
-    },
-  });
+  const { data, isLoading, isError, error, refetch, isFetching } = usePositionsQuery();
 
   // Waluta bazowa portfela — PLN dla polskich/mixed, USD/EUR dla single-currency
   // (np. XTB USD sub-konto). Gdy != PLN, wyświetlamy natywne wartości pozycji
@@ -374,7 +363,7 @@ export function PortfolioPage() {
                   )
                 </span>
               )}
-              {data?.quotes && <QuoteFreshnessLabel quotes={data.quotes} />}
+              {data?.quotes && <QuoteFreshnessLabel className="ml-2" quotes={data.quotes} />}
             </CardTitle>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

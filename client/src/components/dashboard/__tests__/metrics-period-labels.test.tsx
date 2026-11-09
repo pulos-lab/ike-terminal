@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { MetricsBar } from '../MetricsBar';
 import { HeroKPI } from '../HeroKPI';
 
@@ -22,10 +23,17 @@ const metrics = {
 vi.mock('@/lib/use-metrics-query', () => ({
   useMetricsQuery: () => ({ data: metrics }),
 }));
+vi.mock('@/lib/use-positions-query', () => ({
+  usePositionsQuery: () => ({ data: undefined }),
+}));
 
 describe('etykiety okresu przy metrykach', () => {
   it('pasek opisuje Zysk jako „od początku”, a XIRR jako roczny', () => {
-    render(<MetricsBar />);
+    render(
+      <MemoryRouter initialEntries={['/app/portfolio']}>
+        <MetricsBar />
+      </MemoryRouter>,
+    );
     expect(screen.getByText('Zysk · od początku')).toBeTruthy();
     expect(screen.getByText('XIRR · rocznie')).toBeTruthy();
   });
