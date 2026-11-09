@@ -34,6 +34,7 @@ import { computePortfolioHistoryMemoized } from './history-memo.js';
 import { applyPendingSpinOffs, getPendingRatioSpinOffs } from './spin-offs-applier.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
 import { getEarningsCalendarService } from './earnings/earnings-calendar.js';
+import { summarizeDayChange } from './day-change.js';
 
 /**
  * Widoki portfela (historia zwrotów, otwarte pozycje) wyciągnięte z handlerów
@@ -460,6 +461,8 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     // odświeżanie źródeł chodzi z timerów w index.ts.
     upcomingEarnings: getEarningsCalendarService().getUpcomingForPositions(positions),
     baseCurrency,
+    // Jedno źródło dziennej zmiany dla Portfela, paska metryk i dashboardu.
+    dayChange: summarizeDayChange(positions, totalValuePln, baseCurrency),
     quotes: {
       asOf: freshness.asOf,
       nextRefreshAt: new Date(Date.now() + freshness.ttlSeconds * 1000).toISOString(),

@@ -15,6 +15,7 @@ import {
   stripTickerSuffix,
 } from './stooq-utils.js';
 import { createConcurrencyLimiter } from './concurrency.js';
+import { lastWeekdayIso, pickPreviousClose } from './day-change.js';
 import { detectYahooBlock, getYahooGuard, withYahooLimit } from './yahoo-guard.js';
 
 const withStooqLimit = createConcurrencyLimiter(3);
@@ -101,9 +102,10 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
           stooqTicker,
           tenDaysAgo.toISOString().split('T')[0],
         );
-        if (cachedRows.length >= 2) {
-          cachedRows.sort((a, b) => a.date.localeCompare(b.date));
-          const prevCloseVal = cachedRows[cachedRows.length - 2].close;
+        // Ostatnie zamknięcie SPRZED dnia sesji i nie starsze niż tydzień —
+        // „przedostatni wiersz” przy dziurze w cache'u dawał zmianę kilkudniową.
+        const prevCloseVal = pickPreviousClose(cachedRows, lastWeekdayIso(end));
+        if (prevCloseVal !== null) {
           setCached(cacheKey, prevCloseVal, config.cache.stooqLiveTtl);
           return prevCloseVal;
         }
@@ -118,9 +120,10 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
           stooqTicker,
           tenDaysAgo.toISOString().split('T')[0],
         );
-        if (cachedRows.length >= 2) {
-          cachedRows.sort((a, b) => a.date.localeCompare(b.date));
-          const prevCloseVal = cachedRows[cachedRows.length - 2].close;
+        // Ostatnie zamknięcie SPRZED dnia sesji i nie starsze niż tydzień —
+        // „przedostatni wiersz” przy dziurze w cache'u dawał zmianę kilkudniową.
+        const prevCloseVal = pickPreviousClose(cachedRows, lastWeekdayIso(end));
+        if (prevCloseVal !== null) {
           setCached(cacheKey, prevCloseVal, config.cache.stooqLiveTtl);
           return prevCloseVal;
         }
@@ -130,7 +133,7 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
       const { dateIdx, closeIdx } = parseStooqCsvHeaders(lines[0]);
       if (closeIdx === -1) return null;
 
-      // Parse all rows, sort by date, take second-to-last
+      // Parse all rows; poprzednie zamknięcie wybiera pickPreviousClose
       const rows: { date: string; close: number }[] = [];
       for (let i = 1; i < lines.length; i++) {
         const vals = lines[i].split(',');
@@ -138,10 +141,10 @@ export async function fetchStooqPreviousClose(ticker: string): Promise<number | 
         const close = parseFloat(vals[closeIdx]);
         if (!isNaN(close) && date) rows.push({ date, close });
       }
-      rows.sort((a, b) => a.date.localeCompare(b.date));
-      if (rows.length < 2) return null;
-
-      const prevClose = rows[rows.length - 2].close;
+      // Ta sama reguła co w zapasie z cache'u: kurs sprzed dnia sesji, nie
+      // „przedostatni wiersz” (CSV nie zawsze zawiera już dzisiejszą sesję).
+      const prevClose = pickPreviousClose(rows, lastWeekdayIso(end));
+      if (prevClose === null) return null;
       setCached(cacheKey, prevClose, config.cache.stooqLiveTtl);
       return prevClose;
     } catch (error) {
