@@ -7,6 +7,7 @@ import { BENCHMARKS } from '@/lib/benchmarks';
 import { filterAndRebaseHistory, getPresetStartDate } from '@/lib/returns';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { useLocalStorage } from '@/lib/use-local-storage';
+import { PRESET_RANGES, DEFAULT_PRESET_RANGE, clampPresetRange } from '@/lib/dashboard-range';
 import { useTheme } from '@/lib/use-theme';
 import {
   compareSeriesColor,
@@ -39,7 +40,6 @@ import { DrawdownChart } from './DrawdownChart';
 import { MonthlyReturnsChart } from './MonthlyReturnsChart';
 import { ShareDialog } from './ShareDialog';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
-import { PRESET_RANGES, DEFAULT_PRESET_RANGE, clampPresetRange } from '@/lib/dashboard-range';
 
 function ChartLegend({
   portfolioPct,
