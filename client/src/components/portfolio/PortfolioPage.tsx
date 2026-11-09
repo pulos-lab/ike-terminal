@@ -33,6 +33,8 @@ import {
   formatQuantity,
 } from '@/lib/formatters';
 import { Eye, EyeOff, AlertTriangle, Info, ChevronUp, ChevronDown } from 'lucide-react';
+import { Briefcase } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { QuoteFreshnessLabel } from './QuoteFreshnessLabel';
 import { PortfolioDiversification } from './PortfolioDiversification';
@@ -169,6 +171,7 @@ function saveVisibility(v: ColumnVisibility) {
 }
 
 export function PortfolioPage() {
+  const navigate = useNavigate();
   const [colVis, setColVis] = useState<ColumnVisibility>(loadVisibility);
   const [sort, setSort] = useState<SortState>(loadSort);
   const [expandedPositions, togglePosition] = useToggleSet<string>();
@@ -674,7 +677,11 @@ export function PortfolioPage() {
               </div>
             </>
           ) : (
-            <EmptyState message="Brak otwartych pozycji. Zaimportuj historię transakcji lub dodaj ręcznie transakcje." />
+            <EmptyState
+              icon={Briefcase}
+              message="Brak otwartych pozycji. Zaimportuj historię transakcji lub dodaj transakcje ręcznie."
+              action={{ label: 'Przejdź do importu', onClick: () => navigate('/app/import') }}
+            />
           )}
         </CardContent>
       </Card>

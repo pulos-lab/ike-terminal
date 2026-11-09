@@ -1,6 +1,9 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { AlertTriangle, Calendar, Info, RefreshCw, Settings, X } from 'lucide-react';
+import { LineChart } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { EmptyState } from '@/components/ui/loading-spinner';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { BENCHMARKS } from '@/lib/benchmarks';
@@ -35,6 +38,7 @@ import { ComparePortfolioPicker } from './ComparePortfolioPicker';
 import { CombinedStatsSection, type CombinedPortfolioSummary } from './CombinedStatsSection';
 import { PerformanceStats } from './PerformanceStats';
 import { HeroKPI } from './HeroKPI';
+import { GettingStartedCard } from './GettingStartedCard';
 import { DrawdownChart } from './DrawdownChart';
 import { MonthlyReturnsChart } from './MonthlyReturnsChart';
 import { ShareDialog } from './ShareDialog';
@@ -78,6 +82,7 @@ function ChartLegend({
 }
 
 export function DashboardPage() {
+  const navigate = useNavigate();
   const { activeName, activeId, portfolios } = usePortfolio();
   const { isDark } = useTheme();
   // Benchmark i tryb wykresu to trwałe preferencje (przeżywają zmianę zakładki
@@ -344,6 +349,8 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-4">
+      <GettingStartedCard />
+
       {/* Mobile-only hero KPI (desktop uses MetricsBar) */}
       <div className="md:hidden">
         <HeroKPI history={filteredHistory} />
@@ -687,9 +694,12 @@ export function DashboardPage() {
               />
             </div>
           ) : (
-            <div className="flex items-center justify-center h-80 text-muted-foreground">
-              Brak danych. Zaimportuj historię transakcji lub dodaj ręcznie transakcje.
-            </div>
+            <EmptyState
+              className="h-80 justify-center"
+              icon={LineChart}
+              message="Brak danych. Zaimportuj historię transakcji lub dodaj transakcje ręcznie."
+              action={{ label: 'Przejdź do importu', onClick: () => navigate('/app/import') }}
+            />
           )}
 
           {compareMode && startDatesDiffer && (
