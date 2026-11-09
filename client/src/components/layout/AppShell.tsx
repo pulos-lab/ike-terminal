@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { NavLink, useNavigate, useMatch } from 'react-router-dom';
+import { NavLink, useNavigate, useMatch, useLocation } from 'react-router-dom';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
@@ -187,6 +188,7 @@ function NavContent({
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { data: session } = useSession();
   const { isDark: dark, toggleTheme } = useTheme();
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
@@ -369,9 +371,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {isDemoMode() && <DemoBanner />}
 
-        <MetricsBar />
+        {/* Pasek to dodatek do powłoki — jego awaria nie może zabrać całej strony. */}
+        <ErrorBoundary variant="silent">
+          <MetricsBar />
+        </ErrorBoundary>
 
-        <main className="flex-1 overflow-auto p-4 md:p-6 pb-20 md:pb-6">{children}</main>
+        {/* Błąd renderowania jednej strony zostaje w obszarze treści: menu działa,
+            a przejście na inną zakładkę (zmiana ścieżki) czyści komunikat. */}
+        <main className="flex-1 overflow-auto p-4 md:p-6 pb-20 md:pb-6">
+          <ErrorBoundary variant="inline" resetKey={pathname}>
+            {children}
+          </ErrorBoundary>
+        </main>
       </div>
 
       <BottomTabBar />
