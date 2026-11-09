@@ -6,7 +6,11 @@ import { TrendingUp, TrendingDown, DollarSign, Target, ArrowLeftRight, Gauge } f
 import type { FxImpact, LeverageInfo } from 'shared';
 
 export function MetricsBar() {
-  const { data } = useMetricsQuery();
+  const { data, isError } = useMetricsQuery();
+
+  // Błąd bez danych: pasek znika zamiast pulsować szkieletem w nieskończoność —
+  // komunikat i ponowienie pokazuje strona pod spodem, tu nie ma czego dublować.
+  if (!data && isError) return null;
 
   if (!data)
     return (
@@ -70,7 +74,7 @@ export function MetricsBar() {
           <TrendingDown className="h-3.5 w-3.5 text-loss" />
         )}
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-          Zysk
+          Zysk · od początku
         </span>
         <span className={`font-semibold tabular-nums ${plColor(data.totalReturn)}`}>
           {fmt(data.totalReturn)} ({formatPercent(data.totalReturnPct)})
@@ -78,7 +82,7 @@ export function MetricsBar() {
       </div>
       <div className="flex items-center gap-2">
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-          XIRR
+          XIRR · rocznie
         </span>
         <span className={`font-semibold tabular-nums ${plColor(data.xirr)}`}>
           {formatPercent(data.xirr)}
