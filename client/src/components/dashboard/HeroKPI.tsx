@@ -38,7 +38,7 @@ export function HeroKPI({ history }: HeroKPIProps) {
 
       <div className="relative">
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold mb-2">
-          Wartość portfela · dziś
+          Wartość portfela
         </p>
         <p className="text-[2rem] font-bold tracking-tight leading-none tabular-nums mb-1.5">
           {formatNumber(data.currentValue, 0)}
@@ -58,6 +58,8 @@ export function HeroKPI({ history }: HeroKPIProps) {
           </span>
           <span className="text-muted-foreground">·</span>
           <span className="tabular-nums">{formatPercent(data.totalReturnPct)}</span>
+          {/* Zysk liczony od pierwszej wpłaty — bez dopisku czytał się jak wynik dnia. */}
+          <span className="text-xs font-medium text-muted-foreground">od początku</span>
         </div>
       </div>
 
