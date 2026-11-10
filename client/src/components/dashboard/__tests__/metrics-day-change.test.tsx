@@ -86,7 +86,8 @@ describe('dzienna zmiana w pasku metryk', () => {
     expect(dash.container.firstElementChild?.className).toContain('hidden md:flex');
     dash.unmount();
     const other = renderBar('/app/dividends');
-    expect(other.container.firstElementChild?.className).not.toContain('hidden');
+    // Po tokenach, nie po podciągu: klasa chowająca pasek przewijania też zawiera „hidden”.
+    expect(other.container.firstElementChild?.className.split(/\s+/)).not.toContain('hidden');
   });
 });
 
