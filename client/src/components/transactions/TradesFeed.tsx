@@ -29,6 +29,8 @@ import { DeleteTransactionDialog } from './DeleteTransactionDialog';
 import { cn } from '@/lib/utils';
 import { Search, Info, Pencil, Trash2, Check, X, Loader2 } from 'lucide-react';
 import type { TransactionWithMeta } from 'shared';
+import { ExportCsvButton } from '@/components/shared/ExportCsvButton';
+import { TRANSACTION_COLUMNS } from '@/lib/csv-columns';
 import { TickerLabel } from '@/components/ui/ticker-label';
 
 // useSyncExternalStore na matchMedia — idiomatic React 18. Tailwind md: breakpoint = 768px.
@@ -288,6 +290,8 @@ export const TradesFeed = memo(function TradesFeed() {
         <span className="text-xs text-muted-foreground ml-auto tabular-nums">
           {sorted.length} transakcji
         </span>
+        {/* Eksportuje to, co widać — po wyszukiwaniu, w kolejności listy. */}
+        <ExportCsvButton kind="transakcje" rows={sorted} columns={TRANSACTION_COLUMNS} />
       </div>
 
       {error && (

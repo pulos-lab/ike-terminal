@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import type { Position, UpcomingEarnings } from 'shared';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
+import { ExportCsvButton } from '@/components/shared/ExportCsvButton';
+import { POSITION_COLUMNS } from '@/lib/csv-columns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -376,6 +378,15 @@ export function PortfolioPage() {
               )}
               {data?.quotes && <QuoteFreshnessLabel quotes={data.quotes} />}
             </CardTitle>
+            {/* ml-auto: przy justify-between trzeci element wylądowałby na środku —
+                automatyczny margines dosuwa eksport do prawej, obok widoczności kolumn. */}
+            <ExportCsvButton
+              iconOnly
+              kind="pozycje"
+              rows={data?.positions ?? []}
+              columns={POSITION_COLUMNS}
+              className="ml-auto border-0 bg-transparent text-muted-foreground shadow-none"
+            />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
