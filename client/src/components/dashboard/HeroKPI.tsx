@@ -2,6 +2,11 @@ import { useMetricsQuery } from '@/lib/use-metrics-query';
 import { formatCurrency, formatPercent, formatNumber } from '@/lib/formatters';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { plColor } from '@/components/ui/pl-badge';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { QuoteFreshnessLabel } from '@/components/shared/QuoteFreshnessLabel';
+import { usePositionsQuery } from '@/lib/use-positions-query';
+import { describeDayChange } from '@/lib/day-change';
 
 interface HeroKPIProps {
   history?: Array<{ date: string; returnPct: number }>;
@@ -9,6 +14,7 @@ interface HeroKPIProps {
 
 export function HeroKPI({ history }: HeroKPIProps) {
   const { data, isError } = useMetricsQuery();
+  const { data: positions } = usePositionsQuery();
 
   // Jak w MetricsBar: przy błędzie bez danych nie udajemy wiecznego ładowania.
   if (!data && isError) return null;
@@ -24,6 +30,7 @@ export function HeroKPI({ history }: HeroKPIProps) {
   }
 
   const isPositive = data.totalReturn >= 0;
+  const dayView = describeDayChange(positions?.dayChange, positions?.quotes, new Date());
   const DeltaIcon = isPositive ? TrendingUp : TrendingDown;
 
   // Simple sparkline from history returnPct values (normalized)
@@ -49,6 +56,27 @@ export function HeroKPI({ history }: HeroKPIProps) {
             {data.baseCurrency || 'PLN'}
           </span>
         </p>
+        {/* Wynik dnia — pierwsza liczba, po którą sięga się na telefonie. Przy
+            niepełnym pokryciu dopisek jest obowiązkowy; przy zerowym „brak danych”. */}
+        {dayView && (
+          <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+              {dayView.label}
+            </span>
+            {dayView.amount !== null ? (
+              <span className={cn('font-semibold tabular-nums', plColor(dayView.amount))}>
+                {dayView.amount > 0 ? '+' : ''}
+                {formatCurrency(dayView.amount, dayView.currency)}
+                {dayView.pct !== null && ` · ${formatPercent(dayView.pct)}`}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">brak danych</span>
+            )}
+            {dayView.coverageNote && dayView.amount !== null && (
+              <span className="text-[11px] text-muted-foreground">{dayView.coverageNote}</span>
+            )}
+          </div>
+        )}
         <div
           className={cn(
             'flex items-center gap-2 text-sm font-semibold',
@@ -64,6 +92,11 @@ export function HeroKPI({ history }: HeroKPIProps) {
           {/* Zysk liczony od pierwszej wpłaty — bez dopisku czytał się jak wynik dnia. */}
           <span className="text-xs font-medium text-muted-foreground">od początku</span>
         </div>
+        {positions?.quotes && (
+          <TooltipProvider delayDuration={150}>
+            <QuoteFreshnessLabel className="mt-2 block text-[11px]" quotes={positions.quotes} />
+          </TooltipProvider>
+        )}
       </div>
 
       {sparkPath && (

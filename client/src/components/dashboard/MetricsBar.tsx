@@ -2,11 +2,30 @@ import { useMetricsQuery } from '@/lib/use-metrics-query';
 import { plColor } from '@/components/ui/pl-badge';
 import { formatCurrency, formatNumber, formatPercent, formatPLN } from '@/lib/formatters';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { TrendingUp, TrendingDown, DollarSign, Target, ArrowLeftRight, Gauge } from 'lucide-react';
-import type { FxImpact, LeverageInfo } from 'shared';
+import {
+  TrendingUp,
+  TrendingDown,
+  DollarSign,
+  Target,
+  ArrowLeftRight,
+  Gauge,
+  CalendarDays,
+} from 'lucide-react';
+import { useMatch } from 'react-router-dom';
+import type { FxImpact, LeverageInfo, PortfolioPositionsResponse } from 'shared';
+import { usePositionsQuery } from '@/lib/use-positions-query';
+import { describeDayChange, quoteFreshnessText, type DayChangeView } from '@/lib/day-change';
+import { cn } from '@/lib/utils';
 
 export function MetricsBar() {
   const { data, isError } = useMetricsQuery();
+  // Dzienna zmiana idzie z widoku pozycji (jedno źródło liczby dla Portfela,
+  // paska i dashboardu) — to samo zapytanie co strona Portfel, bez duplikatu.
+  const { data: positions } = usePositionsQuery();
+  // Na telefonie pasek jest jednym przewijanym wierszem. Na samym dashboardzie
+  // chowamy go poniżej `md`, bo te same liczby pokazuje tam HeroKPI.
+  const onDashboard = useMatch({ path: '/app', end: true }) !== null;
+  const barVisibility = onDashboard ? 'hidden md:flex' : 'flex';
 
   // Błąd bez danych: pasek znika zamiast pulsować szkieletem w nieskończoność —
   // komunikat i ponowienie pokazuje strona pod spodem, tu nie ma czego dublować.
@@ -14,7 +33,7 @@ export function MetricsBar() {
 
   if (!data)
     return (
-      <div className="hidden md:flex border-b px-4 md:px-6 py-3 gap-6 text-sm animate-pulse">
+      <div className={cn(barVisibility, 'border-b px-4 md:px-6 py-3 gap-6 text-sm animate-pulse')}>
         <div className="h-4 w-32 bg-muted rounded" />
         <div className="h-4 w-32 bg-muted rounded" />
         <div className="h-4 w-24 bg-muted rounded" />
@@ -26,7 +45,14 @@ export function MetricsBar() {
   const fmt = (v: number) => formatCurrency(v, ccy);
 
   return (
-    <div className="hidden md:flex border-b px-4 md:px-6 py-3 flex-wrap items-center gap-x-8 gap-y-1 text-sm">
+    <div
+      className={cn(
+        barVisibility,
+        'border-b px-4 md:px-6 py-3 items-center gap-x-8 gap-y-1 text-sm',
+        // Telefon: jeden wiersz przewijany w poziomie; desktop: zawijanie jak dotąd.
+        'overflow-x-auto whitespace-nowrap [&>*]:shrink-0 md:flex-wrap md:overflow-visible md:whitespace-normal',
+      )}
+    >
       <div className="flex items-center gap-2">
         <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
@@ -34,6 +60,10 @@ export function MetricsBar() {
         </span>
         <span className="font-semibold tabular-nums">{fmt(data.currentValue)}</span>
       </div>
+      <DayChangeSlot
+        view={describeDayChange(positions?.dayChange, positions?.quotes, new Date())}
+        quotes={positions?.quotes}
+      />
       {/* Badge tylko przy realnej dźwigni — próg 1.01× odcina drobne ujemne
           rezydua gotówkowe (literówki cen itp.) na kontach bez marginu. */}
       {data.leverage && data.leverage.ratio >= 1.01 && (
@@ -111,6 +141,71 @@ export function MetricsBar() {
         </TooltipProvider>
       )}
     </div>
+  );
+}
+
+/**
+ * „Dziś +1 234,56 zł (+0,62%)” — z dopiskiem pokrycia, gdy część pozycji nie
+ * ma danych. Przy zerowym pokryciu pokazujemy „brak danych”, nigdy 0.
+ */
+function DayChangeSlot({
+  view,
+  quotes,
+}: {
+  view: DayChangeView | null;
+  quotes: PortfolioPositionsResponse['quotes'];
+}) {
+  if (!view) return null;
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex items-center gap-2 cursor-help">
+            <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+              {view.label}
+            </span>
+            {view.amount !== null ? (
+              <span className={`font-semibold tabular-nums ${plColor(view.amount)}`}>
+                {view.amount > 0 ? '+' : ''}
+                {formatCurrency(view.amount, view.currency)}
+                {view.pct !== null && ` (${formatPercent(view.pct)})`}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">brak danych</span>
+            )}
+            {view.coverageNote && view.amount !== null && (
+              <span className="text-[10px] text-muted-foreground">· {view.coverageNote}</span>
+            )}
+          </div>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-sm">
+          <div className="text-xs space-y-1.5">
+            <p className="font-semibold">
+              {view.label === 'Dziś'
+                ? 'Zmiana wartości pozycji od poprzedniego zamknięcia'
+                : 'Zmiana wartości pozycji na ostatniej sesji'}
+            </p>
+            <p className="text-muted-foreground">
+              Pozycje kupione w dniu sesji liczone są od ceny zakupu. Sprzedane tego dnia nie
+              wchodzą do wyniku{view.fxNote ? `; liczba jest ${view.fxNote}` : ''}.
+            </p>
+            {view.coverageNote && (
+              <p className="text-muted-foreground">
+                Bez danych o zmianie dziennej ({view.coverageNote.replace('bez danych: ', '')}):{' '}
+                {view.missingTickers.join(', ')}
+                {view.missingTickers.length > 0 ? '.' : ''} Ich ruch nie jest w tej liczbie.
+              </p>
+            )}
+            {quotes && (
+              <p className="text-muted-foreground text-[10px] pt-1 border-t border-border">
+                {quoteFreshnessText(quotes, new Date())}
+              </p>
+            )}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
