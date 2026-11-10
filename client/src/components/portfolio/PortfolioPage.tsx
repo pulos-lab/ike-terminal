@@ -1,8 +1,5 @@
 import { useMemo, useState, useRef, useLayoutEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import type { Position, UpcomingEarnings } from 'shared';
-import { api } from '@/lib/api-client';
-import { QUERY_KEYS } from '@/lib/query-keys';
 import { ExportCsvButton } from '@/components/shared/ExportCsvButton';
 import { POSITION_COLUMNS } from '@/lib/csv-columns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
