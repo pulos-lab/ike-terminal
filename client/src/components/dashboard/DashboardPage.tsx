@@ -39,6 +39,7 @@ import { DrawdownChart } from './DrawdownChart';
 import { MonthlyReturnsChart } from './MonthlyReturnsChart';
 import { ShareDialog } from './ShareDialog';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import { QueryErrorState } from '@/components/ui/query-error-state';
 
 const PRESET_RANGES = ['1M', '3M', '6M', 'YTD', '1Y', '3Y', 'ALL'] as const;
 
@@ -132,7 +133,7 @@ export function DashboardPage() {
   const endDate = isCustom && !customRangeError ? customTo || undefined : undefined;
 
   // Always fetch full history (server ignores startDate), cache per benchmark only
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['portfolio', 'history', benchmark],
     queryFn: () => api.postHistory({ benchmark }),
     staleTime: 60 * 60 * 1000,
@@ -651,6 +652,16 @@ export function DashboardPage() {
 
           {isLoading ? (
             <LoadingSpinner />
+          ) : isError && !data ? (
+            // Nieudane żądanie to nie „pusty portfel” — bez tej gałęzi awaria sieci
+            // kończyła się zachętą do importu transakcji.
+            <QueryErrorState
+              className="h-80 justify-center"
+              title="Nie udało się wczytać historii portfela"
+              error={error}
+              onRetry={() => refetch()}
+              retrying={isFetching}
+            />
           ) : compareMode ? (
             chartSeries.length ? (
               <ComparisonChart series={chartSeries} mode={chartMode} benchmark={compareBenchmark} />
