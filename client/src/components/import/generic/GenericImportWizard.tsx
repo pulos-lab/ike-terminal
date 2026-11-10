@@ -628,7 +628,9 @@ export function GenericImportWizard({ files, open, onOpenChange, onKnownBroker }
                   <CheckCircle className="h-4 w-4 text-success" />
                   {liveScore.gaps.length === 0
                     ? 'Wszystko gotowe — pokaż podgląd'
-                    : `Prawie gotowe — uzupełnij ${liveScore.gaps.length} ${pluralFields(liveScore.gaps.length)}`}
+                    : liveScore.gaps.length === 1 && liveScore.gaps[0] === 'side'
+                      ? 'Prawie gotowe — wskaż kupno i sprzedaż'
+                      : `Prawie gotowe — uzupełnij ${liveScore.gaps.length} ${pluralFields(liveScore.gaps.length)}`}
                 </div>
                 <GapFields
                   draft={draft}

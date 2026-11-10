@@ -246,6 +246,135 @@ export function suggestSideValues(
   return { buyValues: buys.join(', '), sellValues: sells.join(', ') };
 }
 
+// ── Wartości kolumny strony do wyboru w kreatorze ────────────────────────────
+
+/** Domyślne wartości kupna/sprzedaży — tylko gdy NIE wskazano kolumny strony. */
+const DEFAULT_BUY_VALUES = 'K, BUY, Kupno';
+const DEFAULT_SELL_VALUES = 'S, SELL, Sprzedaż';
+
+/** Limity schematu profilu (`SideRuleSchema`): długość wartości i liczba wartości na stronę. */
+const SIDE_VALUE_MAX_LENGTH = 40;
+export const SIDE_VALUES_MAX_COUNT = 10;
+
+/** Znacznik komórki zamaskowanej przez redaktor próbki — nie jest wartością z pliku. */
+const REDACTED_CELL = '***';
+
+/** Przypisanie wartości kolumny strony: kupno / sprzedaż / pomiń wiersz. */
+export type SideAssignment = 'buy' | 'sell' | 'skip';
+
+/**
+ * Unikalne wartości kolumny strony z próbki — do przypisania kliknięciem zamiast
+ * przepisywania z pliku. Pomija wartości, których lista w profilu nie pomieści
+ * (przecinek = separator pól tekstowych, limit 40 znaków) oraz komórki zamaskowane.
+ * UWAGA: próbka to pierwsze wiersze pliku — rzadsze wartości mogą w niej nie wystąpić,
+ * dlatego kreator zostawia też pola tekstowe do dopisania reszty.
+ */
+export function sideColumnValues(sampleRows: string[][], col: number): string[] {
+  if (col < 0) return [];
+  const seen = new Map<string, string>();
+  for (const row of sampleRows) {
+    const v = (row[col] ?? '').trim();
+    if (!v || v === REDACTED_CELL || v.includes(',') || v.length > SIDE_VALUE_MAX_LENGTH) continue;
+    const key = v.toLowerCase();
+    if (!seen.has(key)) seen.set(key, v);
+  }
+  return [...seen.values()];
+}
+
+/** Dopasowanie jak w silniku (`resolveSide`): cała komórka, bez rozróżniania wielkości liter. */
+const listHas = (raw: string, value: string) =>
+  splitValues(raw).some((v) => v.toLowerCase() === value.trim().toLowerCase());
+
+/** Do której strony draft przypisuje daną wartość kolumny. */
+export function sideAssignmentOf(
+  trade: Pick<DraftTradeMapping, 'buyValues' | 'sellValues'>,
+  value: string,
+): SideAssignment {
+  if (listHas(trade.buyValues, value)) return 'buy';
+  if (listHas(trade.sellValues, value)) return 'sell';
+  return 'skip';
+}
+
+/** Przypisz wartość kolumny do strony (usuwa ją z drugiej listy; 'skip' = z obu). */
+export function assignSideValue(
+  trade: Pick<DraftTradeMapping, 'buyValues' | 'sellValues'>,
+  value: string,
+  to: SideAssignment,
+): { buyValues: string; sellValues: string } {
+  const without = (raw: string) =>
+    splitValues(raw).filter((v) => v.toLowerCase() !== value.trim().toLowerCase());
+  const buys = without(trade.buyValues);
+  const sells = without(trade.sellValues);
+  if (to === 'buy') buys.push(value.trim());
+  if (to === 'sell') sells.push(value.trim());
+  return { buyValues: buys.join(', '), sellValues: sells.join(', ') };
+}
+
+/**
+ * Wartości kupna/sprzedaży dla ŚWIEŻO wskazanej kolumny strony: rozpoznane po
+ * tokenach albo PUSTE. Nie zostawiamy tu domyślnych „K, BUY, Kupno" ani wartości
+ * poprzedniej kolumny — wyglądałyby na dopasowane, a silnik odrzuciłby każdy wiersz.
+ */
+export function sideValuesForColumn(
+  sampleRows: string[][],
+  col: number,
+): { buyValues: string; sellValues: string } {
+  return suggestSideValues(sampleRows, col) ?? { buyValues: '', sellValues: '' };
+}
+
+// ── Kolumna wartości: zgodność z ilość×cena ──────────────────────────────────
+
+/** Liczba z komórki (separatory PL/EN, spacje, waluta w tekście); null = brak liczby. */
+function parseLooseNumber(raw: string): number | null {
+  const cleaned = raw.trim().replace(/[^\d.,-]/g, '');
+  if (!/\d/.test(cleaned)) return null;
+  const normalized =
+    cleaned.includes(',') && !cleaned.includes('.')
+      ? cleaned.replace(',', '.')
+      : cleaned.replace(/,/g, '');
+  const n = parseFloat(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Czy kolumna wskazana jako „Wartość" faktycznie jest wartością transakcji — test
+ * na próbce tym samym kryterium, którym silnik odrzuca wiersze (`value_mismatch`:
+ * max(0.05, 1%)). Kolumna „Wartość rejestru po transakcji" (saldo) pasuje po nazwie,
+ * a po imporcie zeruje podgląd — tu wychodzi to od razu.
+ *   true  → większość wierszy zgadza się z ilość×cena, albo iloraz jest STAŁY
+ *           (obligacje: kurs w % nominału, wartość = ilość×cena×nominał/100),
+ *   false → wartości nie mają związku z ilość×cena,
+ *   null  → nie ma czego porównać (brak kolumn/liczb w próbce).
+ */
+export function valueColumnMatchesSamples(
+  sampleRows: string[][],
+  quantityCol: number,
+  priceCol: number,
+  valueCol: number,
+): boolean | null {
+  if (quantityCol < 0 || priceCol < 0 || valueCol < 0) return null;
+  const pairs: Array<{ value: number; expected: number }> = [];
+  for (const row of sampleRows) {
+    const qty = parseLooseNumber(row[quantityCol] ?? '');
+    const price = parseLooseNumber(row[priceCol] ?? '');
+    const value = parseLooseNumber(row[valueCol] ?? '');
+    if (qty === null || price === null || value === null) continue;
+    const expected = Math.abs(qty * price);
+    if (expected === 0) continue;
+    pairs.push({ value: Math.abs(value), expected });
+  }
+  if (pairs.length === 0) return null;
+  const matching = pairs.filter(
+    ({ value, expected }) =>
+      Math.abs(value - expected) <= Math.max(0.05, 0.01 * Math.max(value, expected)),
+  );
+  if (matching.length >= Math.ceil(pairs.length / 2)) return true;
+  // Stały iloraz ≠ 1 na co najmniej dwóch wierszach = inna jednostka ceny, nie saldo.
+  if (pairs.length < 2) return false;
+  const ratio = pairs[0].value / pairs[0].expected;
+  return pairs.every(({ value, expected }) => Math.abs(value / expected - ratio) <= 0.01 * ratio);
+}
+
 /** Heurystyczny prefill draftu z nagłówków i (zredagowanej) próbki. */
 export function suggestDraft(
   headers: string[],
@@ -260,7 +389,15 @@ export function suggestDraft(
   ]);
   const quantityCol = findCol(headers, [/(ilość|ilosc|liczba|shares|quantity|qty|volume|sztuk)/]);
   const priceCol = findCol(headers, [/(cena|kurs|price)/]);
-  const valueCol = findCol(headers, [/(wartość|wartosc|value)/]);
+  // „Wartość" po nazwie łapie też salda („Wartość rejestru po transakcji") — bierzemy
+  // pierwszą kolumnę, która na próbce NIE kłóci się z ilość×cena. Pole jest opcjonalne:
+  // bez niego silnik liczy wartość sam, a zła kolumna odrzuca wszystkie wiersze.
+  const valueCol =
+    headers
+      .map((h, i) => (/(wartość|wartosc|value)/.test(norm(h)) ? i : -1))
+      .find(
+        (i) => i >= 0 && valueColumnMatchesSamples(sampleRows, quantityCol, priceCol, i) !== false,
+      ) ?? -1;
   const commissionCol = findCol(headers, [/(prowizja|commission)/]);
   const currencyCol = findCol(headers, [/(waluta|currency|ccy)/]);
   const sideCol = findCol(headers, [
@@ -274,13 +411,12 @@ export function suggestDraft(
   const dateFormat = detectDateFormat(dateSamples);
 
   // Strona K/S: spróbuj rozpoznać wartości kupna/sprzedaży w kolumnie strony.
-  let buyValues = 'K, BUY, Kupno';
-  let sellValues = 'S, SELL, Sprzedaż';
-  const detectedSide = suggestSideValues(sampleRows, sideCol);
-  if (detectedSide) {
-    if (detectedSide.buyValues) buyValues = detectedSide.buyValues;
-    if (detectedSide.sellValues) sellValues = detectedSide.sellValues;
-  }
+  // Kolumna strony wskazana → wartości rozpoznane w NIEJ albo puste (do wskazania przez
+  // użytkownika z listy wartości pliku). Domyślne zostają tylko bez kolumny strony.
+  const { buyValues, sellValues } =
+    sideCol >= 0
+      ? sideValuesForColumn(sampleRows, sideCol)
+      : { buyValues: DEFAULT_BUY_VALUES, sellValues: DEFAULT_SELL_VALUES };
 
   return {
     brokerLabel: '',
@@ -588,9 +724,15 @@ export function buildProfileFromDraft(draft: ProfileDraft): BuildResult {
     }
     if (t.sideStrategy === 'column') {
       if (t.sideCol < 0) errors.push('Transakcje: wybierz kolumnę strony (K/S)');
-      if (splitValues(t.buyValues).length === 0) errors.push('Transakcje: podaj wartości kupna');
-      if (splitValues(t.sellValues).length === 0)
-        errors.push('Transakcje: podaj wartości sprzedaży');
+      // Plik z samymi kupnami (np. wpłaty do funduszu) jest poprawny — wystarczy jedna strona.
+      const buys = splitValues(t.buyValues).length;
+      const sells = splitValues(t.sellValues).length;
+      if (buys === 0 && sells === 0)
+        errors.push('Transakcje: wskaż, które wartości oznaczają kupno, a które sprzedaż');
+      if (buys > SIDE_VALUES_MAX_COUNT || sells > SIDE_VALUES_MAX_COUNT)
+        errors.push(
+          `Transakcje: najwyżej ${SIDE_VALUES_MAX_COUNT} wartości kupna i ${SIDE_VALUES_MAX_COUNT} sprzedaży`,
+        );
     } else if (t.sideCol < 0) {
       errors.push('Transakcje: wybierz kolumnę dla znaku ilości/kwoty');
     }
