@@ -29,6 +29,7 @@ import { groupClosedTrades, type TradeGroup } from '@/lib/closed-trades-grouping
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import type { ClosedTrade } from 'shared';
 import { ClosedPositionCardMobile } from './ClosedPositionCardMobile';
@@ -127,6 +128,7 @@ interface ClosedTradesPageProps {
 }
 
 export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -745,7 +747,10 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
               action={{ label: 'Wyczyść filtry', onClick: clearFilters }}
             />
           ) : (
-            <EmptyState message="Brak zamkniętych transakcji. Zaimportuj historię transakcji lub dodaj ręcznie." />
+            <EmptyState
+              message="Brak zamkniętych pozycji. Pojawią się tu po pierwszej sprzedaży — zaimportuj historię transakcji lub dodaj ją ręcznie."
+              action={{ label: 'Przejdź do importu', onClick: () => navigate('/app/import') }}
+            />
           )}
         </CardContent>
       </Card>

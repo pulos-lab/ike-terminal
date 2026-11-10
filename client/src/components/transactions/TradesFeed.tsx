@@ -28,6 +28,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { DeleteTransactionDialog } from './DeleteTransactionDialog';
 import { cn } from '@/lib/utils';
 import { Search, Info, Pencil, Trash2, Check, X, Loader2 } from 'lucide-react';
+import { ArrowLeftRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { TransactionWithMeta } from 'shared';
 import { ExportCsvButton } from '@/components/shared/ExportCsvButton';
 import { TRANSACTION_COLUMNS } from '@/lib/csv-columns';
@@ -130,6 +132,7 @@ interface EditForm {
 // Komponent nie ma propsów, więc memo zawsze zwraca prev (bail-out) — re-renderuje
 // się tylko gdy jego własny state (search, editingId, deleteTarget) się zmieni.
 export const TradesFeed = memo(function TradesFeed() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isDesktop = useIsDesktop();
   const { data, isLoading } = useQuery({
@@ -270,7 +273,14 @@ export const TradesFeed = memo(function TradesFeed() {
   }, []);
 
   if (isLoading) return <LoadingSpinner />;
-  if (!rows.length) return <EmptyState message="Brak transakcji." />;
+  if (!rows.length)
+    return (
+      <EmptyState
+        icon={ArrowLeftRight}
+        message="Brak transakcji. Wgraj historię od brokera albo dodaj pierwszą transakcję przyciskiem powyżej."
+        action={{ label: 'Przejdź do importu', onClick: () => navigate('/app/import') }}
+      />
+    );
 
   const isEditValid =
     !!editForm.date && parseFloat(editForm.quantity) > 0 && parseFloat(editForm.price) > 0;
