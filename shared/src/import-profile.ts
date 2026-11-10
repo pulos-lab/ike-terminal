@@ -296,12 +296,17 @@ export type DateSpec = z.infer<typeof DateSpecSchema>;
 
 export const SideRuleSchema = z.discriminatedUnion('strategy', [
   /** Jawna kolumna strony: wartości kupna i sprzedaży (np. K/S, BUY/SELL, Kupno/Sprzedaż). */
-  z.object({
-    strategy: z.literal('column'),
-    col: ColRefSchema,
-    buyValues: z.array(z.string().max(40)).min(1).max(10),
-    sellValues: z.array(z.string().max(40)).min(1).max(10),
-  }),
+  /** Jedna z list może być pusta (plik z samymi kupnami, np. wpłaty do funduszu) — obie nie. */
+  z
+    .object({
+      strategy: z.literal('column'),
+      col: ColRefSchema,
+      buyValues: z.array(z.string().max(40)).max(10),
+      sellValues: z.array(z.string().max(40)).max(10),
+    })
+    .refine((s) => s.buyValues.length + s.sellValues.length > 0, {
+      message: 'podaj co najmniej jedną wartość kupna lub sprzedaży',
+    }),
   /** Znak ilości: +qty=K, −qty=S (DEGIRO "Liczba"). */
   z.object({ strategy: z.literal('signedQuantity'), col: ColRefSchema }),
   /** Znak kwoty rozliczenia: wydatek(−)=K, wpływ(+)=S. */
