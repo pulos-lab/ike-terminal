@@ -140,13 +140,13 @@ describe('kolumny eksportu', () => {
       description: 'Dywidenda PKN',
       amount: 405,
       currency: 'PLN',
-      source: 'auto',
+      source: 'auto-yahoo',
       subkind: 'coupon',
       amountPln: null,
       isin: null,
-    } as DividendRecord;
+    };
     const [header, row] = lines(toCsv([d], DIVIDEND_COLUMNS));
     expect(header.split(';')).toHaveLength(DIVIDEND_COLUMNS.length);
-    expect(row).toBe('2025-06-02;PKN.WA;Kupon;405;PLN;;Dywidenda PKN;auto;');
+    expect(row).toBe('2025-06-02;PKN.WA;Kupon;405;PLN;;Dywidenda PKN;auto-yahoo;');
   });
 });
