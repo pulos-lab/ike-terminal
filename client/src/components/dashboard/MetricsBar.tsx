@@ -70,7 +70,7 @@ export function MetricsBar() {
           <TrendingDown className="h-3.5 w-3.5 text-loss" />
         )}
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-          Zysk
+          Zysk · od początku
         </span>
         <span className={`font-semibold tabular-nums ${plColor(data.totalReturn)}`}>
           {fmt(data.totalReturn)} ({formatPercent(data.totalReturnPct)})
@@ -78,7 +78,7 @@ export function MetricsBar() {
       </div>
       <div className="flex items-center gap-2">
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-          XIRR
+          XIRR · rocznie
         </span>
         <span className={`font-semibold tabular-nums ${plColor(data.xirr)}`}>
           {formatPercent(data.xirr)}
