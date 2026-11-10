@@ -1,7 +1,7 @@
 import { useMetricsQuery } from '@/lib/use-metrics-query';
 import { plColor } from '@/components/ui/pl-badge';
 import { formatCurrency, formatNumber, formatPercent, formatPLN } from '@/lib/formatters';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { InfoPopover } from '@/components/ui/info-popover';
 import {
   TrendingUp,
   TrendingDown,
@@ -67,28 +67,27 @@ export function MetricsBar() {
       {/* Badge tylko przy realnej dźwigni — próg 1.01× odcina drobne ujemne
           rezydua gotówkowe (literówki cen itp.) na kontach bez marginu. */}
       {data.leverage && data.leverage.ratio >= 1.01 && (
-        <TooltipProvider delayDuration={150}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex items-center gap-2 cursor-help">
-                <Gauge
-                  className={`h-3.5 w-3.5 ${data.leverage.ratio >= 2 ? 'text-loss' : 'text-amber-600 dark:text-amber-500'}`}
-                />
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                  Dźwignia
-                </span>
-                <span
-                  className={`font-semibold tabular-nums ${data.leverage.ratio >= 2 ? 'text-loss' : 'text-amber-600 dark:text-amber-500'}`}
-                >
-                  {formatNumber(data.leverage.ratio, 2)}×
-                </span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-sm">
-              <LeverageTooltipBody leverage={data.leverage} />
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <InfoPopover
+          label="Dźwignia — szczegóły"
+          triggerClassName="flex items-center gap-2"
+          trigger={
+            <>
+              <Gauge
+                className={`h-3.5 w-3.5 ${data.leverage.ratio >= 2 ? 'text-loss' : 'text-amber-600 dark:text-amber-500'}`}
+              />
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                Dźwignia
+              </span>
+              <span
+                className={`font-semibold tabular-nums ${data.leverage.ratio >= 2 ? 'text-loss' : 'text-amber-600 dark:text-amber-500'}`}
+              >
+                {formatNumber(data.leverage.ratio, 2)}×
+              </span>
+            </>
+          }
+        >
+          <LeverageTooltipBody leverage={data.leverage} />
+        </InfoPopover>
       )}
       <div className="flex items-center gap-2">
         <Target className="h-3.5 w-3.5 text-muted-foreground" />
@@ -119,26 +118,23 @@ export function MetricsBar() {
         </span>
       </div>
       {data.fxImpact && (
-        <TooltipProvider delayDuration={150}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex items-center gap-2 cursor-help">
-                <ArrowLeftRight className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                  Wpływ walut
-                </span>
-                <span
-                  className={`font-semibold tabular-nums ${plColor(data.fxImpact.fxImpactPct)}`}
-                >
-                  {formatPercent(data.fxImpact.fxImpactPct)}
-                </span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-sm">
-              <FxImpactTooltipBody fxImpact={data.fxImpact} />
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <InfoPopover
+          label="Wpływ walut — szczegóły"
+          triggerClassName="flex items-center gap-2"
+          trigger={
+            <>
+              <ArrowLeftRight className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                Wpływ walut
+              </span>
+              <span className={`font-semibold tabular-nums ${plColor(data.fxImpact.fxImpactPct)}`}>
+                {formatPercent(data.fxImpact.fxImpactPct)}
+              </span>
+            </>
+          }
+        >
+          <FxImpactTooltipBody fxImpact={data.fxImpact} />
+        </InfoPopover>
       )}
     </div>
   );
@@ -157,55 +153,54 @@ function DayChangeSlot({
 }) {
   if (!view) return null;
   return (
-    <TooltipProvider delayDuration={150}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div className="flex items-center gap-2 cursor-help">
-            <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-              {view.label}
+    <InfoPopover
+      label={`${view.label} — jak liczona jest zmiana`}
+      triggerClassName="flex items-center gap-2"
+      trigger={
+        <>
+          <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            {view.label}
+          </span>
+          {view.amount !== null ? (
+            <span className={`font-semibold tabular-nums ${plColor(view.amount)}`}>
+              {view.amount > 0 ? '+' : ''}
+              {formatCurrency(view.amount, view.currency)}
+              {view.pct !== null && ` (${formatPercent(view.pct)})`}
             </span>
-            {view.amount !== null ? (
-              <span className={`font-semibold tabular-nums ${plColor(view.amount)}`}>
-                {view.amount > 0 ? '+' : ''}
-                {formatCurrency(view.amount, view.currency)}
-                {view.pct !== null && ` (${formatPercent(view.pct)})`}
-              </span>
-            ) : (
-              <span className="text-muted-foreground">brak danych</span>
-            )}
-            {view.coverageNote && view.amount !== null && (
-              <span className="text-[10px] text-muted-foreground">· {view.coverageNote}</span>
-            )}
-          </div>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-sm">
-          <div className="text-xs space-y-1.5">
-            <p className="font-semibold">
-              {view.label === 'Dziś'
-                ? 'Zmiana wartości pozycji od poprzedniego zamknięcia'
-                : 'Zmiana wartości pozycji na ostatniej sesji'}
-            </p>
-            <p className="text-muted-foreground">
-              Pozycje kupione w dniu sesji liczone są od ceny zakupu. Sprzedane tego dnia nie
-              wchodzą do wyniku{view.fxNote ? `; liczba jest ${view.fxNote}` : ''}.
-            </p>
-            {view.coverageNote && (
-              <p className="text-muted-foreground">
-                Bez danych o zmianie dziennej ({view.coverageNote.replace('bez danych: ', '')}):{' '}
-                {view.missingTickers.join(', ')}
-                {view.missingTickers.length > 0 ? '.' : ''} Ich ruch nie jest w tej liczbie.
-              </p>
-            )}
-            {quotes && (
-              <p className="text-muted-foreground text-[10px] pt-1 border-t border-border">
-                {quoteFreshnessText(quotes, new Date())}
-              </p>
-            )}
-          </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+          ) : (
+            <span className="text-muted-foreground">brak danych</span>
+          )}
+          {view.coverageNote && view.amount !== null && (
+            <span className="text-[10px] text-muted-foreground">· {view.coverageNote}</span>
+          )}
+        </>
+      }
+    >
+      <div className="text-xs space-y-1.5">
+        <p className="font-semibold">
+          {view.label === 'Dziś'
+            ? 'Zmiana wartości pozycji od poprzedniego zamknięcia'
+            : 'Zmiana wartości pozycji na ostatniej sesji'}
+        </p>
+        <p className="text-muted-foreground">
+          Pozycje kupione w dniu sesji liczone są od ceny zakupu. Sprzedane tego dnia nie wchodzą do
+          wyniku{view.fxNote ? `; liczba jest ${view.fxNote}` : ''}.
+        </p>
+        {view.coverageNote && (
+          <p className="text-muted-foreground">
+            Bez danych o zmianie dziennej ({view.coverageNote.replace('bez danych: ', '')}):{' '}
+            {view.missingTickers.join(', ')}
+            {view.missingTickers.length > 0 ? '.' : ''} Ich ruch nie jest w tej liczbie.
+          </p>
+        )}
+        {quotes && (
+          <p className="text-muted-foreground text-[10px] pt-1 border-t border-border">
+            {quoteFreshnessText(quotes, new Date())}
+          </p>
+        )}
+      </div>
+    </InfoPopover>
   );
 }
 
@@ -279,7 +274,7 @@ function FxImpactTooltipBody({ fxImpact }: { fxImpact: FxImpact }) {
         <ul className="space-y-1.5">
           {fxImpact.breakdown.map((e) => (
             <li key={e.currency} className="text-muted-foreground">
-              {/* TooltipContent ma odwrócone kolory (bg-foreground text-background) —
+              {/* Treść podpowiedzi ma odwrócone kolory (bg-foreground text-background) —
                   wyróżnienie w środku to text-background; text-foreground znika w tle. */}
               <div className="font-medium text-background">
                 {e.currency}:{' '}
