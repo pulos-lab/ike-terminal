@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import type { Position, UpcomingEarnings } from 'shared';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
+import { ExportCsvButton } from '@/components/shared/ExportCsvButton';
+import { POSITION_COLUMNS } from '@/lib/csv-columns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -34,6 +36,8 @@ import {
   formatQuantity,
 } from '@/lib/formatters';
 import { Eye, EyeOff, AlertTriangle, Info, ChevronUp, ChevronDown } from 'lucide-react';
+import { Briefcase } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { QuoteFreshnessLabel } from '@/components/shared/QuoteFreshnessLabel';
 import { usePositionsQuery } from '@/lib/use-positions-query';
@@ -171,6 +175,7 @@ function saveVisibility(v: ColumnVisibility) {
 }
 
 export function PortfolioPage() {
+  const navigate = useNavigate();
   const [colVis, setColVis] = useState<ColumnVisibility>(loadVisibility);
   const [sort, setSort] = useState<SortState>(loadSort);
   const [expandedPositions, togglePosition] = useToggleSet<string>();
@@ -365,6 +370,15 @@ export function PortfolioPage() {
               )}
               {data?.quotes && <QuoteFreshnessLabel className="ml-2" quotes={data.quotes} />}
             </CardTitle>
+            {/* ml-auto: przy justify-between trzeci element wylądowałby na środku —
+                automatyczny margines dosuwa eksport do prawej, obok widoczności kolumn. */}
+            <ExportCsvButton
+              iconOnly
+              kind="pozycje"
+              rows={data?.positions ?? []}
+              columns={POSITION_COLUMNS}
+              className="ml-auto border-0 bg-transparent text-muted-foreground shadow-none"
+            />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -671,7 +685,11 @@ export function PortfolioPage() {
               </div>
             </>
           ) : (
-            <EmptyState message="Brak otwartych pozycji. Zaimportuj historię transakcji lub dodaj ręcznie transakcje." />
+            <EmptyState
+              icon={Briefcase}
+              message="Brak otwartych pozycji. Zaimportuj historię transakcji lub dodaj transakcje ręcznie."
+              action={{ label: 'Przejdź do importu', onClick: () => navigate('/app/import') }}
+            />
           )}
         </CardContent>
       </Card>

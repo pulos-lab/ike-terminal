@@ -29,6 +29,7 @@ import type {
 
 import { toast } from 'sonner';
 import { DEMO_PORTFOLIO_ID } from 'shared';
+import { currentLocationPath, rememberPostLoginPath } from './post-login-redirect';
 
 const API_BASE = '/api';
 
@@ -126,6 +127,9 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   // W trybie demo gość nie ma sesji z założenia — redirect robiłby pętlę
   // (np. wejście na /app/admin/*); 401 spada wtedy do zwykłego ApiError.
   if (response.status === 401 && !isDemoActive()) {
+    // Sesja wygasła w trakcie pracy — po ponownym logowaniu wracamy tam, gdzie
+    // użytkownik był, zamiast na dashboard.
+    rememberPostLoginPath(currentLocationPath());
     window.location.href = '/login';
     throw new ApiError('Session expired', 401);
   }
@@ -153,6 +157,9 @@ async function uploadFile<T>(endpoint: string, formData: FormData): Promise<T> {
     body: formData,
   });
   if (response.status === 401 && !isDemoActive()) {
+    // Sesja wygasła w trakcie pracy — po ponownym logowaniu wracamy tam, gdzie
+    // użytkownik był, zamiast na dashboard.
+    rememberPostLoginPath(currentLocationPath());
     window.location.href = '/login';
     throw new ApiError('Session expired', 401);
   }

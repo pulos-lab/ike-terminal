@@ -1,12 +1,16 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { AlertTriangle, Calendar, Info, RefreshCw, Settings, X } from 'lucide-react';
+import { LineChart } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { EmptyState } from '@/components/ui/loading-spinner';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { BENCHMARKS } from '@/lib/benchmarks';
 import { filterAndRebaseHistory, getPresetStartDate } from '@/lib/returns';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { useLocalStorage } from '@/lib/use-local-storage';
+import { PRESET_RANGES, DEFAULT_PRESET_RANGE, clampPresetRange } from '@/lib/dashboard-range';
 import { useTheme } from '@/lib/use-theme';
 import {
   compareSeriesColor,
@@ -35,13 +39,12 @@ import { ComparePortfolioPicker } from './ComparePortfolioPicker';
 import { CombinedStatsSection, type CombinedPortfolioSummary } from './CombinedStatsSection';
 import { PerformanceStats } from './PerformanceStats';
 import { HeroKPI } from './HeroKPI';
+import { GettingStartedCard } from './GettingStartedCard';
 import { DrawdownChart } from './DrawdownChart';
 import { MonthlyReturnsChart } from './MonthlyReturnsChart';
 import { ShareDialog } from './ShareDialog';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import { QueryErrorState } from '@/components/ui/query-error-state';
-
-const PRESET_RANGES = ['1M', '3M', '6M', 'YTD', '1Y', '3Y', 'ALL'] as const;
 
 function ChartLegend({
   portfolioPct,
@@ -79,6 +82,7 @@ function ChartLegend({
 }
 
 export function DashboardPage() {
+  const navigate = useNavigate();
   const { activeName, activeId, portfolios } = usePortfolio();
   const { isDark } = useTheme();
   // Benchmark i tryb wykresu to trwałe preferencje (przeżywają zmianę zakładki
@@ -86,7 +90,14 @@ export function DashboardPage() {
   // sprowadza ją do domyślnej zamiast wysyłać nieznany klucz do API.
   const [storedBenchmark, setBenchmark] = useLocalStorage('dashboard-benchmark', 'sp500');
   const benchmark = BENCHMARKS.some((b) => b.value === storedBenchmark) ? storedBenchmark : 'sp500';
-  const [timeRange, setTimeRange] = useState<string>('ALL');
+  // Wybrany preset przeżywa reload tak jak benchmark i tryb wykresu. Zakres
+  // własny jest stanem sesji (patrz clampPresetRange) — po powrocie wraca preset.
+  const [storedRange, setStoredRange] = useLocalStorage<string>(
+    'dashboard-time-range',
+    DEFAULT_PRESET_RANGE,
+  );
+  const [customActive, setCustomActive] = useState(false);
+  const timeRange: string = customActive ? 'CUSTOM' : clampPresetRange(storedRange);
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [storedChartMode, setChartMode] = useLocalStorage<'mwr' | 'twr'>(
@@ -313,11 +324,12 @@ export function DashboardPage() {
   const dismissUnpricedNotice = () => setDismissedUnpricedKey(unpricedKey);
 
   function selectPreset(range: string) {
-    setTimeRange(range);
+    setStoredRange(range);
+    setCustomActive(false);
   }
 
   function selectCustom() {
-    setTimeRange('CUSTOM');
+    setCustomActive(true);
     if (!customFrom && data?.history?.length) {
       setCustomFrom(data.history[0].date);
     }
@@ -345,6 +357,8 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-4">
+      <GettingStartedCard />
+
       {/* Mobile-only hero KPI (desktop uses MetricsBar) */}
       <div className="md:hidden">
         <HeroKPI history={filteredHistory} />
@@ -698,9 +712,12 @@ export function DashboardPage() {
               />
             </div>
           ) : (
-            <div className="flex items-center justify-center h-80 text-muted-foreground">
-              Brak danych. Zaimportuj historię transakcji lub dodaj ręcznie transakcje.
-            </div>
+            <EmptyState
+              className="h-80 justify-center"
+              icon={LineChart}
+              message="Brak danych. Zaimportuj historię transakcji lub dodaj transakcje ręcznie."
+              action={{ label: 'Przejdź do importu', onClick: () => navigate('/app/import') }}
+            />
           )}
 
           {compareMode && startDatesDiffer && (

@@ -1,8 +1,6 @@
 import { useState } from 'react';
-import { NavLink, useNavigate, useMatch } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api-client';
-import { QUERY_KEYS } from '@/lib/query-keys';
+import { NavLink, useNavigate, useMatch, useLocation } from 'react-router-dom';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useSession, signOut } from '@/lib/auth-client';
 import {
   LayoutDashboard,
@@ -26,6 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useLocalStorage } from '@/lib/use-local-storage';
+import { useImportBadgeCount, importIssuesLabel } from '@/lib/use-import-badge-count';
 import { useTheme } from '@/lib/use-theme';
 import { cn } from '@/lib/utils';
 import {
@@ -124,24 +123,8 @@ function NavContent({
   // zunifikowane). Link zawsze widoczny — panel pokazuje empty state gdy brak danych.
   const navItems = baseNavItems;
 
-  // Zbiorczy licznik spraw importu na pozycji "Import": wiersze czekające
-  // w skrzynce "Do wyjaśnienia" + importy uniwersalne do ponownego wgrania po
-  // korekcie mapowania. Klucze query współdzielone z hubem/GenericBatchesSection
-  // (react-query deduplikuje).
-  const { data: importStatus } = useQuery({
-    queryKey: QUERY_KEYS.importStatus,
-    queryFn: api.getImportStatus,
-  });
-  const { data: genericBatches } = useQuery({
-    queryKey: ['generic-batches'],
-    queryFn: api.genericBatches,
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-  });
-  const importBadgeCount =
-    (importStatus?.quarantinePending ?? 0) +
-    (importStatus?.orphanedSellsPending ?? 0) +
-    (genericBatches?.batches.filter((b) => b.needsReimport).length ?? 0);
+  // Zbiorczy licznik spraw importu na pozycji "Import" (patrz useImportBadgeCount).
+  const importBadgeCount = useImportBadgeCount();
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -187,6 +170,7 @@ function NavContent({
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { data: session } = useSession();
   const { isDark: dark, toggleTheme } = useTheme();
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
@@ -198,22 +182,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     navigate('/login', { replace: true });
   };
 
-  // Zbiorczy licznik spraw importu do badge'a w menu mobilnym (lustro NavContent;
-  // klucze query współdzielone — react-query deduplikuje zapytania).
-  const { data: importStatus } = useQuery({
-    queryKey: QUERY_KEYS.importStatus,
-    queryFn: api.getImportStatus,
-  });
-  const { data: genericBatches } = useQuery({
-    queryKey: ['generic-batches'],
-    queryFn: api.genericBatches,
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-  });
-  const importBadgeCount =
-    (importStatus?.quarantinePending ?? 0) +
-    (importStatus?.orphanedSellsPending ?? 0) +
-    (genericBatches?.batches.filter((b) => b.needsReimport).length ?? 0);
+  // Ten sam licznik dla menu mobilnego i jego przycisku.
+  const importBadgeCount = useImportBadgeCount();
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -315,8 +285,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label="Menu">
+              {/* Licznik spraw importu musi być widać BEZ otwierania menu — na
+                  telefonie „Import” nie ma własnej zakładki, więc bez kropki na
+                  przycisku wiersze czekające w skrzynce były niewidoczne. */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="relative"
+                aria-label={
+                  importBadgeCount > 0 ? `Menu — ${importIssuesLabel(importBadgeCount)}` : 'Menu'
+                }
+              >
                 <MoreHorizontal className="h-5 w-5" />
+                {importBadgeCount > 0 && (
+                  <span
+                    aria-hidden
+                    className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-semibold leading-none text-warning-foreground"
+                  >
+                    {importBadgeCount > 9 ? '9+' : importBadgeCount}
+                  </span>
+                )}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
@@ -369,9 +357,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {isDemoMode() && <DemoBanner />}
 
-        <MetricsBar />
+        {/* Pasek to dodatek do powłoki — jego awaria nie może zabrać całej strony. */}
+        <ErrorBoundary variant="silent">
+          <MetricsBar />
+        </ErrorBoundary>
 
-        <main className="flex-1 overflow-auto p-4 md:p-6 pb-20 md:pb-6">{children}</main>
+        {/* Błąd renderowania jednej strony zostaje w obszarze treści: menu działa,
+            a przejście na inną zakładkę (zmiana ścieżki) czyści komunikat. */}
+        <main className="flex-1 overflow-auto p-4 md:p-6 pb-20 md:pb-6">
+          <ErrorBoundary variant="inline" resetKey={pathname}>
+            {children}
+          </ErrorBoundary>
+        </main>
       </div>
 
       <BottomTabBar />
