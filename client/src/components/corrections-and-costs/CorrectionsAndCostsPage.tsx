@@ -932,6 +932,7 @@ export function CorrectionsAndCostsPage() {
                                   variant="ghost"
                                   className="h-7 w-7 text-destructive"
                                   onClick={() => setDeletingCA(a)}
+                                  aria-label="Usuń zdarzenie"
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </Button>
@@ -1141,6 +1142,7 @@ export function CorrectionsAndCostsPage() {
                               variant="ghost"
                               className="h-7 w-7 text-destructive"
                               onClick={() => setDeletingCost(c)}
+                              aria-label="Usuń koszt"
                               disabled={deleteCostMut.isPending}
                             >
                               <Trash2 className="h-3 w-3" />
