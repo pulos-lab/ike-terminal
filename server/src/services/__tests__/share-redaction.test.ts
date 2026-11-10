@@ -207,6 +207,33 @@ describe('toPublicPositions', () => {
     }
   });
 
+  it('dzienna zmiana w kwotach nie wycieka do widoku publicznego', () => {
+    // Kwota dziennej zmiany pozwala odtworzyć wielkość pozycji (zmiana / % ceny),
+    // więc przy ukrytych kwotach zdradzałaby dokładnie to, co właściciel schował.
+    // Procent zmiany ceny (dailyChangePct) jest publiczny i zostaje.
+    const view = {
+      ...VIEW,
+      positions: [{ ...POSITION, dailyChangeValue: 18, dailyChangeValuePln: 18 }],
+      dayChange: {
+        change: 18,
+        changePct: 0.73,
+        currency: 'PLN',
+        coveredCount: 1,
+        totalCount: 1,
+        missingTickers: [],
+        fxIncluded: false as const,
+        hasForeignPositions: false,
+      },
+    };
+    for (const showAmounts of [false, true]) {
+      const pub = toPublicPositions(view, showAmounts);
+      expect(pub).not.toHaveProperty('dayChange');
+      expect(pub.positions[0]).not.toHaveProperty('dailyChangeValue');
+      expect(pub.positions[0]).not.toHaveProperty('dailyChangeValuePln');
+      expect(pub.positions[0].dailyChangePct).toBe(1.2);
+    }
+  });
+
   it('showAmounts=true: kwoty obecne, ale buyLots/recentSplits nadal ukryte', () => {
     const pub = toPublicPositions(VIEW, true);
     const p = pub.positions[0] as Record<string, unknown>;
