@@ -32,6 +32,7 @@ import { scanAllPortfolios } from './services/dividend-scanner.js';
 import { scanAllInterest } from './services/interest-scanner.js';
 import { getBrCatalogService } from './services/biznesradar-catalog.js';
 import { getBiznesradarGuard } from './services/biznesradar-guard.js';
+import { getOpenFigiGuard } from './services/openfigi.js';
 import { getYahooGuard } from './services/yahoo-guard.js';
 import { getCacheStats } from './services/price-cache.js';
 import { getHistoryMemoSize } from './services/history-memo.js';
@@ -168,6 +169,8 @@ app.get('/api/health', (_req, res) => {
       // Yahoo dostał guard razem z batchem cen — do tej pory było to jedyne
       // źródło bez bezpiecznika, więc jego odcięcie nie było nigdzie widoczne.
       yahoo: getYahooGuard().getState(),
+      // OpenFIGI (ISIN → ticker w resolverze) — bez maili, odcięcie = powrót do szukania po nazwie.
+      openfigi: getOpenFigiGuard().getState(),
     };
   } catch (err) {
     console.error('[health] odczyt stanu guarda źródeł nie powiódł się:', err);

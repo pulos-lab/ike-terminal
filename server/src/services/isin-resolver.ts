@@ -14,6 +14,7 @@ import { getTickerMap, upsertTickerMapEntry, isProvisionalStub } from '../db/tic
 import { searchYahoo, fetchYahooSymbolInfo } from './ticker-search.js';
 import { getBrCatalogService } from './biznesradar-catalog.js';
 import { fetchYahooPrice } from './yahoo-finance.js';
+import { findOpenFigiCandidates } from './openfigi.js';
 import { resolveSector } from './sector-resolver.js';
 import { mapWithConcurrency } from './concurrency.js';
 import { normalizeBossaPaperName, isNewConnectPaperName } from './stooq-utils.js';
@@ -684,6 +685,17 @@ export async function resolveIsin(
     }
   }
 
+  // Strategy 1b: OpenFIGI — ISIN → ticker NIEZALEŻNIE OD NAZWY z pliku brokera.
+  // Tylko gdy Yahoo ISIN-u NIE ZNA (pusta lista), tylko dla prawdziwych
+  // zagranicznych ISIN-ów (Bossa/DEGIRO/IBKR). Gałąź polska (PL ISIN, katalog BR)
+  // zostaje nietknięta. GENEZA: `US8740391003` (ADR TSMC) — Yahoo po ISIN-ie daje
+  // `[]`, a nazwa z Bossy („Taiwan Semi.Manufa.Ltd ADR") jest skrócona tak, że
+  // trafia dopiero łatka na ten jeden wzorzec skrótów (`searchableCompanyName`).
+  if (byIsin.length === 0 && !isPseudoIsin && !isRealPolishIsin && !isPolishTicker && !cfdKnown) {
+    const viaFigi = await resolveViaOpenFigi(isin, paperName, txCurrency);
+    if (viaFigi) return viaFigi;
+  }
+
   // Strategy 2: katalog BR check for real Polish ISINs BEFORE Yahoo name search.
   // This prevents Yahoo from matching "MINERAL" → NAK (Northern Dynasty)
   // when the actual stock is MINERAL-NC on NewConnect.
@@ -833,6 +845,59 @@ export async function resolveIsin(
     }
   }
 
+  return null;
+}
+
+/**
+ * Strategy 1b — kandydaci z OpenFIGI, każdy POTWIERDZANY jak w Strategy 0:
+ * najpierw `fetchYahooSymbolInfo` (dokładna zgodność symbolu = Yahoo zna ten
+ * papier), dopiero potem cena. Sama cena z chartu nie dowodzi, że symbol
+ * istnieje (`SMSN.L`). Nazwa wpisu idzie z Yahoo, nie z OpenFIGI (Bloomberg
+ * skraca: „TAIWAN SEMICONDUCTOR-SP ADR").
+ *
+ * Bez guardu waluty: ISIN to dokładny identyfikator, a wybór kandydatów
+ * (`selectFigiCandidates`) już odrzuca obce linie notowań w obcej walucie —
+ * zostaje giełda macierzysta emitenta lub listing w walucie transakcji.
+ */
+async function resolveViaOpenFigi(
+  isin: string,
+  paperName: string,
+  txCurrency: string,
+): Promise<TickerMapEntry | null> {
+  let candidates: Awaited<ReturnType<typeof findOpenFigiCandidates>> = [];
+  try {
+    candidates = await findOpenFigiCandidates(isin, txCurrency);
+  } catch {
+    return null;
+  }
+  for (const c of candidates) {
+    let info: Awaited<ReturnType<typeof fetchYahooSymbolInfo>> = null;
+    try {
+      info = await fetchYahooSymbolInfo(c.symbol);
+    } catch {
+      info = null;
+    }
+    if (!info?.name) {
+      console.log(`  ✗ ${isin} → ${c.symbol} (OpenFIGI ${c.exchCode}) — Yahoo nie zna symbolu`);
+      continue;
+    }
+    let quote: Awaited<ReturnType<typeof fetchYahooPrice>> = null;
+    try {
+      quote = await fetchYahooPrice(c.symbol);
+    } catch {
+      quote = null;
+    }
+    if (!quote) continue;
+    console.log(`  ✓ ${isin} → ${c.symbol} (OpenFIGI ${c.exchCode}, potwierdzone w Yahoo)`);
+    return await buildEntry(
+      isin,
+      c.symbol,
+      info.name,
+      info.exchange ?? undefined,
+      paperName,
+      txCurrency,
+    );
+  }
   return null;
 }
 
