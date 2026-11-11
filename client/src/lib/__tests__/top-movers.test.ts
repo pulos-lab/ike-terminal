@@ -5,13 +5,19 @@ const pos = (
   ticker: string,
   pln: number | null,
   pct: number | null,
-  over: Partial<{ shares: number; category: 'stock' | 'option'; native: number | null }> = {},
+  over: Partial<{
+    shares: number;
+    category: 'stock' | 'option';
+    native: number | null;
+    currency: string;
+  }> = {},
 ) => ({
   isin: `ISIN_${ticker}`,
   ticker,
   paperName: `${ticker} S.A.`,
   shares: over.shares ?? 10,
   category: over.category ?? ('stock' as const),
+  currency: over.currency ?? 'PLN',
   dailyChangePct: pct,
   dailyChangeValue: over.native === undefined ? pln : over.native,
   dailyChangeValuePln: pln,
@@ -73,5 +79,16 @@ describe('selectTopMovers', () => {
     const r = selectTopMovers([]);
     expect(r.byValue).toEqual({ gainers: [], losers: [] });
     expect(r.totalCount).toBe(0);
+  });
+
+  it('kwota do wyświetlenia jest w walucie waloru, ranking zostaje w walucie portfela', () => {
+    const { byValue } = selectTopMovers([
+      pos('US', 400, 1.0, { native: 100, currency: 'USD' }),
+      pos('PL', 300, 1.0),
+    ]);
+    // 100 USD < 300 PLN liczbowo, ale wpływ na portfel (400 zł) jest większy.
+    expect(byValue.gainers.map((m) => m.ticker)).toEqual(['US', 'PL']);
+    expect(byValue.gainers[0]).toMatchObject({ nativeAmount: 100, currency: 'USD' });
+    expect(byValue.gainers[1]).toMatchObject({ nativeAmount: 300, currency: 'PLN' });
   });
 });

@@ -97,7 +97,7 @@ describe('dzienna zmiana w HeroKPI', () => {
   it('pokazuje wynik dnia nad zyskiem od początku', () => {
     positionsMock.mockReturnValue({ dayChange: dayChange({ change: -500, changePct: -0.25 }) });
     render(<HeroKPI />);
-    expect(screen.getByText('Dziś')).toBeTruthy();
+    expect(screen.getByText('dziś')).toBeTruthy();
     expect(screen.getByText(/-500,00/)).toBeTruthy();
     expect(screen.getByText('od początku')).toBeTruthy();
   });
