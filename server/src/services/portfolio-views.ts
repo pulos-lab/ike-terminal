@@ -9,13 +9,7 @@ import {
 } from 'shared';
 import { getAllTransactions } from '../db/transactions-repo.js';
 import { getAllOperations, getMetadata, setMetadata } from '../db/operations-repo.js';
-import {
-  getTickerMap,
-  getAllTickers,
-  updateTickerSectors,
-  updateTickerCountry,
-  getUnresolvedTickerIsins,
-} from '../db/ticker-map-repo.js';
+import { getTickerMap, getAllTickers, getUnresolvedTickerIsins } from '../db/ticker-map-repo.js';
 import { getSplits, upsertSplits } from '../db/splits-repo.js';
 import { getOptionContractsMap } from '../db/option-contracts-repo.js';
 import { getSpinOffs } from '../db/spin-offs-repo.js';
@@ -25,6 +19,10 @@ import { fetchFxRate } from './yahoo-finance.js';
 import { summarizeQuoteFreshness } from './yahoo-quotes.js';
 import { riskFreeRate } from './risk-free-rate.js';
 import { resolveSector } from './sector-resolver.js';
+import {
+  applyClassificationBackfill,
+  needsClassificationBackfill,
+} from './classification-backfill.js';
 import {
   computeOpenPositions,
   computeCashBalances,
@@ -145,9 +143,7 @@ async function lazyBackfillSectors(pid: string): Promise<void> {
   // `sector` z Yahoo GICS (po angielsku) nie jest już autorytatywny — lub gdy
   // brak kraju siedziby (pole `country` dodane później niż sektory).
   // Opcje (pseudo-ISIN OPT:...) nie mają sektora — pomijamy zbędne strzały do Yahoo.
-  const toUpdate = entries.filter(
-    (e) => (!e.supersector || !e.country) && !e.isin.startsWith('OPT:'),
-  );
+  const toUpdate = entries.filter(needsClassificationBackfill);
   if (
     !shouldRunLazyPass(
       toUpdate.length > 0,
@@ -164,14 +160,9 @@ async function lazyBackfillSectors(pid: string): Promise<void> {
   try {
     for (const entry of toUpdate) {
       try {
-        const { supersector, subsector, country } = await resolveSector(entry);
-        // Sektory tylko gdy brakowało — nie nadpisujemy ręcznie przypisanych.
-        if (!entry.supersector && (supersector || subsector)) {
-          updateTickerSectors(entry.isin, supersector, subsector, pid);
-        }
-        if (!entry.country && country) {
-          updateTickerCountry(entry.isin, country, pid);
-        }
+        // Reguły zapisu (w tym compare-and-set względem kopii wpisu) —
+        // classification-backfill.ts, wspólne z POST /ticker-map/refresh-sectors.
+        applyClassificationBackfill(entry, await resolveSector(entry), pid);
       } catch {
         // ignore — pojedynczy fail nie blokuje reszty
       }

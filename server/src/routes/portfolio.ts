@@ -28,10 +28,12 @@ import {
   getTickerBySymbol,
   upsertTickerMapEntry,
   getAllTickers,
-  updateTickerSectors,
-  updateTickerCountry,
 } from '../db/ticker-map-repo.js';
 import { resolveSector } from '../services/sector-resolver.js';
+import {
+  applyClassificationBackfill,
+  needsClassificationBackfill,
+} from '../services/classification-backfill.js';
 import { getSplits, upsertSplits, deleteSplit as deleteSplitFromDb } from '../db/splits-repo.js';
 import { getOptionContractsMap, upsertOptionContracts } from '../db/option-contracts-repo.js';
 import { getSpinOffs, updateSpinOffStatus } from '../db/spin-offs-repo.js';
@@ -1146,24 +1148,14 @@ router.post(
   asyncHandler(async (req, res) => {
     const pid = req.portfolioId;
     const entries = getAllTickers(pid);
-    const toUpdate = entries.filter((e) => !e.supersector || !e.country);
+    const toUpdate = entries.filter(needsClassificationBackfill);
 
     let updatedCount = 0;
     const failed: string[] = [];
 
     for (const entry of toUpdate) {
       try {
-        const { supersector, subsector, country } = await resolveSector(entry);
-        let touched = false;
-        // Sektory tylko gdy brakowało — nie nadpisujemy ręcznie przypisanych.
-        if (!entry.supersector && (supersector || subsector)) {
-          updateTickerSectors(entry.isin, supersector, subsector, pid);
-          touched = true;
-        }
-        if (!entry.country && country) {
-          updateTickerCountry(entry.isin, country, pid);
-          touched = true;
-        }
+        const touched = applyClassificationBackfill(entry, await resolveSector(entry), pid);
         if (touched) {
           updatedCount++;
         } else {
