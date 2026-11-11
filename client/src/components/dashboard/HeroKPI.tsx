@@ -2,8 +2,6 @@ import { useMetricsQuery } from '@/lib/use-metrics-query';
 import { formatCurrency, formatPercent, formatNumber } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import { plColor } from '@/components/ui/pl-badge';
-import { TooltipProvider } from '@/components/ui/tooltip';
-import { QuoteFreshnessLabel } from '@/components/shared/QuoteFreshnessLabel';
 import { usePositionsQuery } from '@/lib/use-positions-query';
 import { describeDayChange } from '@/lib/day-change';
 
@@ -11,7 +9,8 @@ import { describeDayChange } from '@/lib/day-change';
  * Kafel główny dashboardu na telefonie (desktop ma pasek metryk).
  *
  * Trzy poziomy i nic więcej: wartość portfela → wynik dnia → zysk od początku.
- * Sparkline'a tu nie ma celowo — tuż pod kaflem jest pełny wykres.
+ * Sparkline'a tu nie ma celowo — tuż pod kaflem jest pełny wykres. Świeżość
+ * kursów też nie: jest w nagłówku Portfela, tu była czwartą warstwą tekstu.
  */
 export function HeroKPI() {
   const { data, isError } = useMetricsQuery();
@@ -44,19 +43,9 @@ export function HeroKPI() {
       />
 
       <div className="relative">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
-            Wartość portfela
-          </p>
-          {positions?.quotes && (
-            <TooltipProvider delayDuration={150}>
-              <QuoteFreshnessLabel
-                className="min-w-0 truncate text-[11px]"
-                quotes={positions.quotes}
-              />
-            </TooltipProvider>
-          )}
-        </div>
+        <p className="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">
+          Wartość portfela
+        </p>
         <p className="text-[2rem] font-bold tracking-tight leading-none tabular-nums">
           {formatNumber(data.currentValue, 0)}
           <span className="ml-2 text-base font-medium text-muted-foreground">{currency}</span>
