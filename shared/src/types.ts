@@ -5,6 +5,7 @@ export type BrokerType =
   | 'bossa'
   | 'mbank'
   | 'ing'
+  | 'pko'
   | 'degiro'
   | 'xtb'
   | 'ibkr'
@@ -16,6 +17,7 @@ export const BROKER_LABELS: Record<BrokerType, string> = {
   bossa: 'Bossa',
   mbank: 'mBank eMakler',
   ing: 'ING Biuro Maklerskie',
+  pko: 'PKO BP Biuro Maklerskie',
   degiro: 'DEGIRO',
   xtb: 'XTB',
   ibkr: 'Interactive Brokers',
@@ -31,6 +33,7 @@ export type RecordSource =
   | 'bossa'
   | 'mbank'
   | 'ing'
+  | 'pko'
   | 'degiro'
   | 'xtb'
   | 'ibkr'

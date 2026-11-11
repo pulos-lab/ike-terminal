@@ -21,6 +21,10 @@ const DEGIRO_TX =
   'Wartość lokalna,,Wartość EUR,Kurs wymiany,Opłaty AutoFX,' +
   'Opłata transakcyjna DEGIRO i/lub opłata stron,Razem EUR,Identyfikator zlecenia\n';
 const DEGIRO_OPS = 'Data,Czas,Data,Produkt,ISIN,Opis,Kurs,Zmiana,,Saldo,,Identyfikator zlecenia\n';
+const PKO_TX =
+  'Czas zawarcia;Walor;Giełda;Waluta notowania;Oferta;Ilość;Kurs;Waluta Kurs;Wartość;' +
+  'Waluta Wartość;Prowizja;Waluta Prowizja;Numer transakcji;Status zlecenia;Data rozliczenia;' +
+  'Id zlecenia;Kwota nieopłacona;Waluta Kwota nieopłacona;Kurs przewalutowania\n';
 // ING nie ma nagłówków — fixtures to wiersze DANYCH (detekcja po kształcie treści).
 const ING_TX =
   '29-08-2023 14:25:33;843790613;ETFSP500;Kupno;35;190,20;6 657,00;24.63;6 681,63\n' +
@@ -47,6 +51,7 @@ describe('PARSER_REGISTRY — detectOperations', () => {
     expect(detectOperationsBroker(MBANK_TX)).toBeNull();
     expect(detectOperationsBroker(DEGIRO_TX)).toBeNull();
     expect(detectOperationsBroker(ING_TX)).toBeNull();
+    expect(detectOperationsBroker(PKO_TX)).toBeNull();
   });
 
   it('Bossa ma zarejestrowane oba hooki operacji (detect + parse)', () => {
@@ -62,6 +67,7 @@ describe('detectBroker — detekcja transakcji', () => {
     expect(detectBroker(MBANK_TX)?.id).toBe('mbank');
     expect(detectBroker(DEGIRO_TX)?.id).toBe('degiro');
     expect(detectBroker(ING_TX)?.id).toBe('ing');
+    expect(detectBroker(PKO_TX)?.id).toBe('pko');
   });
 
   it('zwraca null dla nierozpoznanej zawartości', () => {
@@ -88,6 +94,7 @@ describe('guard niejednoznaczności (P3) — detectAllMatches', () => {
     expect(detectAllMatches(MBANK_TX).transactions).toEqual(['mbank']);
     expect(detectAllMatches(DEGIRO_TX).transactions).toEqual(['degiro']);
     expect(detectAllMatches(ING_TX).transactions).toEqual(['ing']);
+    expect(detectAllMatches(PKO_TX).transactions).toEqual(['pko']);
   });
 
   it('priorytet rejestru rozstrzyga rolę operacji (pierwszy = właściwy)', () => {
@@ -102,7 +109,15 @@ describe('guard niejednoznaczności (P3) — detectAllMatches', () => {
     // Detektory treściowe ING są ostatnie w rejestrze — nie mogą współ-trafiać
     // z nagłówkowymi i odwrotnie (fixtures innych brokerów nie pasują do ING).
     expect(detectAllMatches(ING_OPS).operations).toEqual(['ing']);
-    for (const fixture of [BOSSA_TX, MBANK_TX, DEGIRO_TX, BOSSA_OPS, MBANK_OPS, DEGIRO_OPS]) {
+    for (const fixture of [
+      BOSSA_TX,
+      MBANK_TX,
+      DEGIRO_TX,
+      PKO_TX,
+      BOSSA_OPS,
+      MBANK_OPS,
+      DEGIRO_OPS,
+    ]) {
       expect(detectAllMatches(fixture).transactions).not.toContain('ing');
       expect(detectAllMatches(fixture).operations).not.toContain('ing');
     }
