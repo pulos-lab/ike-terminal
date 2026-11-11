@@ -145,7 +145,11 @@ function MoversList({
                   <span className="shrink-0 md:hidden">{icon}</span>
                   <span className="min-w-0 truncate">
                     <span className="font-semibold">{m.ticker}</span>
-                    <span className="ml-2 text-xs text-muted-foreground">{m.name}</span>
+                    {/* Pełna nazwa tylko od md — na telefonie ticker wystarcza, a nazwa
+                        i tak kończyła się wielokropkiem. */}
+                    <span className="ml-2 hidden text-xs text-muted-foreground md:inline">
+                      {m.name}
+                    </span>
                   </span>
                 </span>
                 {/* Główna miara + druga drobnym drukiem: kwota bez procentu (i odwrotnie)
