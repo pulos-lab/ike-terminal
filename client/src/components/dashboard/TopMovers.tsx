@@ -72,13 +72,14 @@ export function TopMovers() {
         </div>
       </CardHeader>
       <CardContent>
-        <div className="grid gap-x-8 gap-y-4 md:grid-cols-2">
+        {/* `grid-cols-1` jest konieczne: bez zdefiniowanej kolumny tor siatki rośnie do
+            szerokości najdłuższej nazwy spółki (nowrap) i rozpycha całą stronę w poziomie. */}
+        <div className="grid grid-cols-1 gap-x-8 gap-y-3 md:grid-cols-2 md:gap-y-4">
           <MoversList
             title="Największe wzrosty"
             icon={<TrendingUp className="h-3.5 w-3.5 text-gain" aria-hidden />}
             movers={side.gainers}
             mode={mode}
-            currency={baseCurrency}
             emptyText="Żadna pozycja nie zyskała"
           />
           <MoversList
@@ -86,8 +87,8 @@ export function TopMovers() {
             icon={<TrendingDown className="h-3.5 w-3.5 text-loss" aria-hidden />}
             movers={side.losers}
             mode={mode}
-            currency={baseCurrency}
             emptyText="Żadna pozycja nie straciła"
+            className="border-t border-border pt-3 md:border-t-0 md:pt-0"
           />
         </div>
         {missing > 0 && (
@@ -101,51 +102,65 @@ export function TopMovers() {
   );
 }
 
+/** Kwota zmiany w walucie waloru; ranking i tak liczy się w walucie portfela. */
+function formatMoverAmount(m: Mover): string {
+  const amount = m.nativeAmount ?? 0;
+  return `${amount > 0 ? '+' : ''}${formatCurrency(amount, m.currency)}`;
+}
+
 function MoversList({
   title,
   icon,
   movers,
   mode,
-  currency,
   emptyText,
+  className,
 }: {
   title: string;
   icon: React.ReactNode;
   movers: Mover[];
   mode: MoversMode;
-  currency: string;
   emptyText: string;
+  className?: string;
 }) {
   return (
-    <div>
-      <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className={cn('min-w-0', className)}>
+      {/* Na telefonie nagłówek sekcji jest zbędny — kierunek niosą kolor i ikona
+          w wierszu; zostaje dla czytników ekranu i na szerokim ekranie. */}
+      <p className="sr-only mb-1.5 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground md:not-sr-only md:flex">
         {icon}
         {title}
       </p>
       {movers.length === 0 ? (
         <p className="text-sm text-muted-foreground">{emptyText}</p>
       ) : (
-        <ul className="space-y-1">
+        <ul className="space-y-2 md:space-y-1">
           {movers.map((m) => {
-            const primary = mode === 'value' ? m.amount : m.pct;
+            const primary = mode === 'value' ? m.nativeAmount : m.pct;
+            const amountText = formatMoverAmount(m);
+            const pctText = formatPercent(m.pct);
             return (
-              <li key={m.isin} className="flex items-baseline justify-between gap-3 text-sm">
-                <span className="min-w-0 truncate">
-                  <span className="font-semibold">{m.ticker}</span>
-                  <span className="ml-2 text-xs text-muted-foreground">{m.name}</span>
-                </span>
-                <span className="shrink-0 tabular-nums">
-                  <span className={cn('font-semibold', plColor(primary ?? 0))}>
-                    {mode === 'value'
-                      ? `${(m.amount ?? 0) > 0 ? '+' : ''}${formatCurrency(m.amount ?? 0, currency)}`
-                      : formatPercent(m.pct)}
+              <li key={m.isin} className="flex items-center justify-between gap-3 text-sm">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="shrink-0 md:hidden">{icon}</span>
+                  <span className="min-w-0 truncate">
+                    <span className="font-semibold">{m.ticker}</span>
+                    {/* Pełna nazwa tylko od md — na telefonie ticker wystarcza, a nazwa
+                        i tak kończyła się wielokropkiem. */}
+                    <span className="ml-2 hidden text-xs text-muted-foreground md:inline">
+                      {m.name}
+                    </span>
                   </span>
-                  {/* Druga miara drobnym drukiem — kwota bez procentu (i odwrotnie)
-                      nie mówi, czy to duża pozycja, czy duży ruch. */}
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    {mode === 'value'
-                      ? formatPercent(m.pct)
-                      : `${(m.amount ?? 0) > 0 ? '+' : ''}${formatCurrency(m.amount ?? 0, currency)}`}
+                </span>
+                {/* Główna miara + druga drobnym drukiem: kwota bez procentu (i odwrotnie)
+                    nie mówi, czy to duża pozycja, czy duży ruch. Na telefonie jedna pod
+                    drugą, żeby nie zabierały szerokości nazwie. */}
+                <span className="flex shrink-0 flex-col items-end leading-tight tabular-nums md:flex-row md:items-baseline md:gap-2">
+                  <span className={cn('font-semibold', plColor(primary ?? 0))}>
+                    {mode === 'value' ? amountText : pctText}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {mode === 'value' ? pctText : amountText}
                   </span>
                 </span>
               </li>

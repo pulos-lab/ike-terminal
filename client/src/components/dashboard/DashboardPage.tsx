@@ -58,7 +58,8 @@ function ChartLegend({
 }) {
   const pfmt = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
   return (
-    <div className="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-3 rounded-md border bg-background/80 px-2.5 py-1 text-xs tabular-nums">
+    // Na telefonie te same liczby niosą etykiety przy osi — druga legenda tylko zasłania wykres.
+    <div className="pointer-events-none absolute left-2 top-2 z-10 hidden items-center md:flex gap-3 rounded-md border bg-background/80 px-2.5 py-1 text-xs tabular-nums">
       <span className="flex items-center gap-1.5">
         <span className="inline-block w-3 h-0.5 rounded-full bg-primary" />
         <span className="text-muted-foreground">portfel</span>
@@ -323,6 +324,7 @@ export function DashboardPage() {
     );
   }, [unpriced, unpricedKey, dismissedUnpricedKey]);
   const dismissUnpricedNotice = () => setDismissedUnpricedKey(unpricedKey);
+  const [unpricedExpanded, setUnpricedExpanded] = useState(false);
 
   function selectPreset(range: string) {
     setStoredRange(range);
@@ -732,7 +734,16 @@ export function DashboardPage() {
           {!compareMode && unpricedNotice && (
             <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
               <Info className="mt-0.5 h-3 w-3 shrink-0" />
-              <span className="flex-1">{unpricedNotice}</span>
+              {/* Na telefonie jedna linia — pełna treść po dotknięciu. */}
+              <span
+                className={cn(
+                  'min-w-0 flex-1 md:line-clamp-none',
+                  !unpricedExpanded && 'line-clamp-1',
+                )}
+                onClick={() => setUnpricedExpanded((v) => !v)}
+              >
+                {unpricedNotice}
+              </span>
               <button
                 type="button"
                 className="shrink-0 hover:text-foreground transition-colors"

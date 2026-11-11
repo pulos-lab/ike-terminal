@@ -23,7 +23,7 @@ const tabs = [
 export function BottomTabBar() {
   return (
     <nav
-      className="md:hidden fixed bottom-0 inset-x-0 z-40 grid grid-cols-7 bg-transparent border-t border-border"
+      className="md:hidden fixed bottom-0 inset-x-0 z-40 grid grid-cols-7 bg-background/95 backdrop-blur border-t border-border"
       style={{ paddingBottom: 'env(safe-area-inset-bottom, 14px)' }}
     >
       {tabs.map((tab) => (

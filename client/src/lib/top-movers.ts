@@ -4,8 +4,15 @@ export interface Mover {
   isin: string;
   ticker: string;
   name: string;
-  /** Kwota zmiany w walucie bazowej portfela; null w rankingu procentowym bez kwoty. */
+  /**
+   * Kwota zmiany w walucie bazowej portfela — WYŁĄCZNIE do rankingu (kwoty
+   * w różnych walutach nie są porównywalne). Na ekran idzie `nativeAmount`.
+   */
   amount: number | null;
+  /** Ta sama zmiana w walucie notowania waloru — to pokazujemy użytkownikowi. */
+  nativeAmount: number | null;
+  /** Waluta notowania waloru (ISO 4217), w niej wyrażone jest `nativeAmount`. */
+  currency: string;
   /** Dzienna zmiana ceny w %; null, gdy źródło jej nie podało. */
   pct: number | null;
 }
@@ -32,6 +39,7 @@ type MoverSource = Pick<
   | 'paperName'
   | 'shares'
   | 'category'
+  | 'currency'
   | 'dailyChangePct'
   | 'dailyChangeValue'
   | 'dailyChangeValuePln'
@@ -65,6 +73,8 @@ export function selectTopMovers(
       ticker: p.ticker,
       name: p.paperName,
       amount,
+      nativeAmount: p.dailyChangeValue ?? null,
+      currency: p.currency,
       pct: p.dailyChangePct,
     };
     valued.push(mover);
