@@ -364,7 +364,7 @@ export function DashboardPage() {
 
       {/* Mobile-only hero KPI (desktop uses MetricsBar) */}
       <div className="md:hidden">
-        <HeroKPI />
+        <HeroKPI history={filteredHistory} />
       </div>
 
       <Card className="gap-3">
