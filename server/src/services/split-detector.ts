@@ -519,6 +519,124 @@ export function adjustTransactionsForSplits(
   });
 }
 
+// ── Split „w drodze": notowanie bieżące sprzed dnia ex ───────────────────────
+//
+// GENEZA (zgłoszenie 2026-11-20, SNDK 8:1): rano w dniu ex Yahoo ma już historię
+// dzienną podzieloną przez 8 i zdarzenie split z dzisiejszą datą, ale notowanie
+// bieżące (`regularMarketPrice`) to nadal zamknięcie WCZORAJSZEJ sesji — w starej
+// skali. Ilości przeliczone o split (×8) mnożone przez taki kurs dawały wartość
+// pozycji i zysk ośmiokrotnie za wysokie, aż do otwarcia sesji.
+
+/** Jak daleko przed ex-date może leżeć notowanie, żeby uznać je za „ostatnie sprzed
+ *  splitu". Tydzień pokrywa weekend i święta; starsze notowanie to papier bez obrotu
+ *  i nie wiemy, w jakiej skali provider je trzyma — wtedy nie ruszamy. */
+const PENDING_SPLIT_MAX_GAP_DAYS = 7;
+
+/** Tolerancja rozpoznania „poprzednie zamknięcie zostało w starej skali" w dniu ex:
+ *  iloraz prevClose/cena musi leżeć w 25% od ratio splitu. Dla 2:1 wymaga to ilorazu
+ *  ≥1,6 — czyli jednodniowego spadku o 37%, żeby pomylić ruch rynku ze skalą. */
+const PREV_CLOSE_SCALE_TOLERANCE = Math.log(1.25);
+
+/**
+ * Sprowadź notowanie bieżące do skali, w której są ilości po korekcie o splity.
+ *
+ * `adjustTransactionsForSplits` przelicza transakcje sprzed `split.date` (ex-date)
+ * do skali PO splicie. Notowanie musi być w tej samej skali, a nie zawsze jest:
+ *  1. notowanie z sesji SPRZED ex-date (`quoteDate < split.date`) jest w starej
+ *     skali — dzielimy cenę i poprzednie zamknięcie przez ratio;
+ *  2. w dniu ex cena jest już nowa, ale poprzednie zamknięcie bywa podane w starej
+ *     skali — wtedy zmiana dzienna wyszłaby jak krach o (1 − 1/ratio). Dzielimy samo
+ *     poprzednie zamknięcie, i tylko gdy iloraz do ceny rzeczywiście wskazuje skalę.
+ *
+ * `quoteDate` i `split.date` są datami UTC (czas notowania / otwarcia sesji ex), więc
+ * porównanie jest spójne także dla giełd, których sesja zaczyna się przed północą UTC.
+ */
+export function normalizeLiveQuoteForSplits(args: {
+  splits: DetectedSplit[];
+  isin: string;
+  /** Data (YYYY-MM-DD, UTC) sesji, z której pochodzi notowanie. */
+  quoteDate: string;
+  price: number | null;
+  previousClose: number | null;
+}): { price: number | null; previousClose: number | null } {
+  const { splits, isin, quoteDate } = args;
+  let { price, previousClose } = args;
+
+  let pendingRatio = 1;
+  let exDayRatio = 1;
+  for (const split of splits) {
+    if (split.isin !== isin || !(split.ratio > 0)) continue;
+    if (split.date === quoteDate) {
+      exDayRatio *= split.ratio;
+    } else if (
+      split.date > quoteDate &&
+      daysBetweenIso(quoteDate, split.date) <= PENDING_SPLIT_MAX_GAP_DAYS
+    ) {
+      pendingRatio *= split.ratio;
+    }
+  }
+
+  if (pendingRatio !== 1) {
+    if (price != null) price /= pendingRatio;
+    if (previousClose != null) previousClose /= pendingRatio;
+    return { price, previousClose };
+  }
+
+  if (exDayRatio !== 1 && price != null && price > 0 && previousClose != null) {
+    const observed = previousClose / price;
+    if (observed > 0 && Math.abs(Math.log(observed / exDayRatio)) < PREV_CLOSE_SCALE_TOLERANCE) {
+      previousClose /= exDayRatio;
+    }
+  }
+  return { price, previousClose };
+}
+
+// ── Samonaprawa daty splitu zapisanego z datą zastępczą ─────────────────────
+
+/** O ile dni data zdarzenia Yahoo może się różnić od dnia WYKRYCIA splitu. Błąd, który
+ *  naprawiamy, powstawał wyłącznie przy wykryciu w dniu ex (patrz `resolveSplitEventDates`),
+ *  więc zdarzenie musi leżeć tuż przy dniu wykrycia; zapas na strefy czasowe i weekend. */
+const SPLIT_DATE_HEAL_MAX_DAYS_FROM_DETECTION = 3;
+
+/**
+ * Czy zapisany automatycznie split ma datę zastępczą, a Yahoo zna już prawdziwą?
+ *
+ * Zwraca zdarzenie, na które należy przepiąć wpis, albo `null`. Warunki są celowo
+ * ciasne — przepięcie zmienia, które transakcje są przeliczane o ratio:
+ *  - Yahoo NIE ma zdarzenia w zapisanej dacie (inaczej wpis jest poprawny),
+ *  - dokładnie JEDNO zdarzenie Yahoo ma to samo ratio (±5%) i późniejszą datę,
+ *  - ta data leży przy dniu wykrycia splitu (sygnatura błędu z dnia ex),
+ *  - pod tą datą nie ma już innego wpisu dla tego papieru.
+ */
+export function pickSplitDateCorrection(args: {
+  saved: { splitDate: string; ratio: number; detectedAt?: string };
+  /** Zdarzenia Yahoo od zapisanej daty włącznie do dziś włącznie. */
+  events: Array<{ date: string; ratio: number }>;
+  /** Daty POZOSTAŁYCH zapisanych splitów tego samego papieru. */
+  otherSavedDates: string[];
+}): { date: string; ratio: number } | null {
+  const { saved, events, otherSavedDates } = args;
+  const detectedDate = saved.detectedAt?.slice(0, 10);
+  if (!detectedDate || !/^\d{4}-\d{2}-\d{2}$/.test(detectedDate)) return null;
+
+  const sameRatio = events.filter(
+    (e) => e.ratio > 0 && Math.abs(e.ratio / saved.ratio - 1) < RATIO_TOLERANCE,
+  );
+  if (sameRatio.some((e) => e.date === saved.splitDate)) return null;
+
+  const later = sameRatio.filter((e) => e.date > saved.splitDate);
+  if (later.length !== 1) return null;
+  const event = later[0];
+
+  if (
+    Math.abs(daysBetweenIso(detectedDate, event.date)) > SPLIT_DATE_HEAL_MAX_DAYS_FROM_DETECTION
+  ) {
+    return null;
+  }
+  if (otherSavedDates.includes(event.date)) return null;
+  return event;
+}
+
 /**
  * Detect a split by noticing that a sell quantity exceeds accumulated buy quantity.
  * This is a strong signal — if you bought 10 shares and try to sell 50, a split
