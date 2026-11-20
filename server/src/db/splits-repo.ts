@@ -62,6 +62,24 @@ export function upsertSplits(portfolioId: string, splits: StockSplit[]): void {
   insertMany(splits);
 }
 
+/**
+ * Przepina zapisany split na inną datę (i ratio). Używane przez samonaprawę wpisów
+ * zapisanych z datą zastępczą — wołający odpowiada za brak kolizji z
+ * `UNIQUE(isin, split_date)` oraz za bump wersji danych (patrz uwaga na górze pliku).
+ */
+export function updateSplitDate(
+  portfolioId: string,
+  id: number,
+  splitDate: string,
+  ratio: number,
+): boolean {
+  const db = getDb(portfolioId);
+  const result = db
+    .prepare('UPDATE stock_splits SET split_date = ?, ratio = ? WHERE id = ?')
+    .run(splitDate, ratio, id);
+  return result.changes > 0;
+}
+
 export function deleteSplit(portfolioId: string, id: number): boolean {
   const db = getDb(portfolioId);
   const result = db.prepare('DELETE FROM stock_splits WHERE id = ?').run(id);

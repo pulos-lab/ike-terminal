@@ -36,6 +36,7 @@ import {
   detectSplitFromQuantityMismatch,
   isPlausibleSplitRatio,
   snapToKnownRatio,
+  normalizeLiveQuoteForSplits,
 } from './split-detector.js';
 import {
   applySpinOffs,
@@ -154,8 +155,20 @@ function addDaysIso(date: string, days: number): string {
 export async function resolveSplitEventDates(
   detected: DetectedSplit[],
   tickerMap: Map<string, TickerMapEntry>,
+  opts: { nowMs?: number } = {},
 ): Promise<DetectedSplit[]> {
   if (detected.length === 0) return detected;
+
+  // Okno zdarzeń MUSI obejmować dzień bieżący. Yahoo koryguje historię o split już
+  // rano w dniu ex i datuje zdarzenie na otwarcie sesji tego dnia (dla USA 14:30 UTC).
+  // Domyślne okno `fetchYahooSplitEvents` kończy się o północy UTC dnia bieżącego,
+  // więc akurat w dniu splitu zdarzenia w nim NIE BYŁO: heurystyka widziała już
+  // skorygowaną historię, Yahoo „nie potwierdzało", i split dostawał datę zastępczą
+  // (pierwsza transakcja +1 dzień). Skutki (zgłoszenie SNDK 8:1, 2026-11-20): późniejsze
+  // zakupy sprzed splitu zostawały w starej skali, a znaczek splitu się nie zapalał.
+  // Tu sięgnięcie po dzisiejsze zdarzenie jest bezpieczne, bo samo wykrycie heurystyczne
+  // dowodzi, że historia providera jest już skorygowana.
+  const eventsEnd = addDaysIso(new Date(opts.nowMs ?? Date.now()).toISOString().split('T')[0], 1);
 
   const byTicker = new Map<string, DetectedSplit[]>();
   for (const s of detected) {
@@ -173,7 +186,7 @@ export async function resolveSplitEventDates(
 
       let events: Array<{ date: string; ratio: number }> = [];
       if (entry?.exchange !== 'NC') {
-        events = await fetchYahooSplitEvents(ticker, sorted[0].date);
+        events = await fetchYahooSplitEvents(ticker, sorted[0].date, eventsEnd);
       }
 
       const eventsProduct = events.reduce((acc, e) => acc * e.ratio, 1);
@@ -853,7 +866,21 @@ export async function computeOpenPositions(
       const yp = await fetchYahooPrice(entry.ticker);
       currentPrice = yp?.price || null;
       previousClose = yp?.previousClose ?? null;
-      if (yp?.quoteTime) sessionDate = new Date(yp.quoteTime).toISOString().slice(0, 10);
+      if (yp?.quoteTime) {
+        sessionDate = new Date(yp.quoteTime).toISOString().slice(0, 10);
+        // Split „w drodze": ilości są już w skali po splicie, a notowanie sprzed dnia
+        // ex jeszcze nie (w dniu ex bywa tak z samym poprzednim zamknięciem). Bez czasu
+        // notowania nie wiemy, z której sesji jest kurs — wtedy go nie ruszamy.
+        const scaled = normalizeLiveQuoteForSplits({
+          splits: allSplits,
+          isin,
+          quoteDate: sessionDate,
+          price: currentPrice,
+          previousClose,
+        });
+        currentPrice = scaled.price;
+        previousClose = scaled.previousClose;
+      }
       // GPW: zapas biznesradar przy chybieniu Yahoo (rate limit/awaria) — tylko .WA.
       // previousClose zostaje z Yahoo: biznesradar nie daje poprzedniego zamknięcia,
       // więc zmiana dzienna będzie null zamiast wartości z mieszanych źródeł.
