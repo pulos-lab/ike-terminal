@@ -11,7 +11,15 @@ import type { BrokerType } from 'shared';
  */
 
 /** Brokerzy ze znanym schematem importu (osobno od ścieżki „Inny broker"). */
-export type KnownBroker = 'bossa' | 'mbank' | 'ing' | 'degiro' | 'xtb' | 'ibkr' | 'trading212';
+export type KnownBroker =
+  | 'bossa'
+  | 'mbank'
+  | 'ing'
+  | 'pko'
+  | 'degiro'
+  | 'xtb'
+  | 'ibkr'
+  | 'trading212';
 
 export type FileRole = 'transactions' | 'operations';
 
@@ -43,6 +51,7 @@ export const BROKER_TILES: Array<{ id: KnownBroker | 'generic'; tagline: string 
   { id: 'degiro', tagline: '2 pliki CSV (Transactions + Account)' },
   { id: 'mbank', tagline: '1 plik CSV (operacje opcjonalnie)' },
   { id: 'ing', tagline: '2+ pliki CSV (transakcje + historia finansowa per waluta)' },
+  { id: 'pko', tagline: '1+ plik CSV (Raport transakcji)' },
   { id: 'xtb', tagline: '1 plik XLSX' },
   { id: 'ibkr', tagline: 'Pliki HTML (Activity Statement, 1 na rok)' },
   { id: 'trading212', tagline: '1 plik CSV (transakcje + gotówka)' },
@@ -132,6 +141,26 @@ export const BROKER_IMPORT_CONFIG: Record<KnownBroker, BrokerImportConfig> = {
       },
     ],
     formatNote: 'Format mBank: CSV ze średnikami, kodowanie Windows-1250.',
+  },
+
+  pko: {
+    exportSteps: [
+      'Zaloguj się do iPKO → część maklerska (Supermakler) → Historia / Raporty.',
+      'Wygeneruj „Raport transakcji" w formacie CSV (plik „Raport_transakcji_….csv").',
+      'Zakres dat ustaw od początku rachunku. Jeśli formularz ogranicza długość okresu, wygeneruj kilka raportów pod rząd — wgraj je wszystkie naraz, nakładające się transakcje zostaną wykryte jako duplikaty.',
+      'Raport zawiera WYŁĄCZNIE transakcje. Dywidendy, wpłaty, wypłaty i podatek trzeba na razie dodać ręcznie — historii rachunku pieniężnego PKO jeszcze nie obsługujemy.',
+    ],
+    files: [
+      {
+        role: 'transactions',
+        label: 'Raport transakcji (CSV)',
+        accept: '.csv',
+        multiple: true,
+        required: true,
+        hint: 'Pliki „Raport_transakcji_….csv". Wiersz podsumowania na końcu i zlecenia „Unieważnione" pomijamy automatycznie.',
+      },
+    ],
+    formatNote: 'Format PKO: CSV ze średnikami, kodowanie UTF-8.',
   },
 
   ing: {
