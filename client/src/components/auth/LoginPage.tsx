@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardDescription } from '@/components/ui/card';
 import { Logo } from '@/components/ui/Logo';
+import { takePostLoginTarget } from '@/lib/post-login-redirect';
 
 export function LoginPage() {
   const { data: session, isPending } = useSession();
@@ -57,7 +58,7 @@ export function LoginPage() {
         }
       }
       // Full reload to ensure auth cookies are picked up by all components
-      window.location.href = '/app';
+      window.location.href = takePostLoginTarget();
     } catch {
       setError('Wystąpił błąd. Spróbuj ponownie.');
     } finally {
@@ -66,7 +67,8 @@ export function LoginPage() {
   }
 
   async function handleGoogleSignIn() {
-    await signIn.social({ provider: 'google', callbackURL: '/app' });
+    // Runda przez Google kończy się pod callbackURL — cel konsumujemy już tutaj.
+    await signIn.social({ provider: 'google', callbackURL: takePostLoginTarget() });
   }
 
   // Redirect to dashboard if already logged in

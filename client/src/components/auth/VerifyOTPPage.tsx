@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Logo } from '@/components/ui/Logo';
+import { takePostLoginTarget } from '@/lib/post-login-redirect';
 
 const OTP_LENGTH = 6;
 const RESEND_COOLDOWN = 60; // seconds
@@ -27,7 +28,7 @@ export function VerifyOTPPage() {
   // Redirect if already verified
   useEffect(() => {
     if (session?.user?.emailVerified) {
-      window.location.href = '/app';
+      window.location.href = takePostLoginTarget();
     }
   }, [session]);
 
@@ -129,7 +130,7 @@ export function VerifyOTPPage() {
       setSuccess(true);
       // Full reload to ensure auth cookies are refreshed
       setTimeout(() => {
-        window.location.href = '/app';
+        window.location.href = takePostLoginTarget();
       }, 500);
     } catch {
       setError('Wystąpił błąd. Spróbuj ponownie.');

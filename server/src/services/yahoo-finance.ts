@@ -483,6 +483,11 @@ export async function fetchYahooDividendEvents(
  * Returns real split dates + ratios (numerator/denominator), e.g. 10:1 split → ratio 10.
  * Used to assign REAL dates to heuristically detected splits — without them
  * adjustment of transactions cannot distinguish pre- from post-split buys.
+ *
+ * UWAGA na koniec okna: `endDate` to północ UTC tego dnia, więc domyślne „dziś"
+ * NIE obejmuje zdarzeń z dnia bieżącego (Yahoo datuje split na otwarcie sesji ex).
+ * Kto potrzebuje dzisiejszego zdarzenia, podaje jutrzejszą datę — i musi mieć pewność,
+ * że historia providera jest już skorygowana (patrz `resolveSplitEventDates`).
  */
 export async function fetchYahooSplitEvents(
   ticker: string,

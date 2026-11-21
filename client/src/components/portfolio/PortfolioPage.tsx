@@ -1,8 +1,7 @@
 import { useMemo, useState, useRef, useLayoutEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import type { Position, UpcomingEarnings } from 'shared';
-import { api } from '@/lib/api-client';
-import { QUERY_KEYS } from '@/lib/query-keys';
+import { ExportCsvButton } from '@/components/shared/ExportCsvButton';
+import { POSITION_COLUMNS } from '@/lib/csv-columns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -22,6 +21,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { LoadingSpinner, EmptyState } from '@/components/ui/loading-spinner';
+import { QueryErrorState } from '@/components/ui/query-error-state';
 import { CategoryBadge } from '@/components/ui/category-badge';
 import { PLBadge, plColor } from '@/components/ui/pl-badge';
 import { CcyChip } from '@/components/ui/ccy-chip';
@@ -33,8 +33,11 @@ import {
   formatQuantity,
 } from '@/lib/formatters';
 import { Eye, EyeOff, AlertTriangle, Info, ChevronUp, ChevronDown } from 'lucide-react';
+import { Briefcase } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { QuoteFreshnessLabel } from './QuoteFreshnessLabel';
+import { QuoteFreshnessLabel } from '@/components/shared/QuoteFreshnessLabel';
+import { usePositionsQuery } from '@/lib/use-positions-query';
 import { PortfolioDiversification } from './PortfolioDiversification';
 import { RiskReturnScatter } from './RiskReturnScatter';
 import { PortfolioOptionsCard } from './PortfolioOptionsCard';
@@ -169,6 +172,7 @@ function saveVisibility(v: ColumnVisibility) {
 }
 
 export function PortfolioPage() {
+  const navigate = useNavigate();
   const [colVis, setColVis] = useState<ColumnVisibility>(loadVisibility);
   const [sort, setSort] = useState<SortState>(loadSort);
   const [expandedPositions, togglePosition] = useToggleSet<string>();
@@ -186,19 +190,7 @@ export function PortfolioPage() {
 
   const allVisible = colVis.avgPrice && colVis.dailyChange && colVis.pl && colVis.plPct;
 
-  // Tempo odświeżania dyktuje serwer przez `quotes.nextRefreshAt` (TTL wg stanu
-  // rynku): co ~15 min w trakcie sesji, co kilka godzin po zamknięciu, praktycznie
-  // zero pollingu w weekend. Sztywne 15 min nie miało związku z tym, kiedy dane
-  // faktycznie się zmieniają.
-  const { data, isLoading } = useQuery({
-    queryKey: QUERY_KEYS.positions,
-    queryFn: api.getPositions,
-    refetchInterval: (query) => {
-      const next = query.state.data?.quotes?.nextRefreshAt;
-      const ms = next ? Date.parse(next) - Date.now() : NaN;
-      return Number.isFinite(ms) ? Math.max(ms, 60_000) : 15 * 60 * 1000;
-    },
-  });
+  const { data, isLoading, isError, error, refetch, isFetching } = usePositionsQuery();
 
   // Waluta bazowa portfela — PLN dla polskich/mixed, USD/EUR dla single-currency
   // (np. XTB USD sub-konto). Gdy != PLN, wyświetlamy natywne wartości pozycji
@@ -373,8 +365,17 @@ export function PortfolioPage() {
                   )
                 </span>
               )}
-              {data?.quotes && <QuoteFreshnessLabel quotes={data.quotes} />}
+              {data?.quotes && <QuoteFreshnessLabel className="ml-2" quotes={data.quotes} />}
             </CardTitle>
+            {/* ml-auto: przy justify-between trzeci element wylądowałby na środku —
+                automatyczny margines dosuwa eksport do prawej, obok widoczności kolumn. */}
+            <ExportCsvButton
+              iconOnly
+              kind="pozycje"
+              rows={data?.positions ?? []}
+              columns={POSITION_COLUMNS}
+              className="ml-auto border-0 bg-transparent text-muted-foreground shadow-none"
+            />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -420,6 +421,13 @@ export function PortfolioPage() {
         <CardContent>
           {isLoading ? (
             <LoadingSpinner />
+          ) : isError && !data ? (
+            <QueryErrorState
+              title="Nie udało się wczytać pozycji"
+              error={error}
+              onRetry={() => refetch()}
+              retrying={isFetching}
+            />
           ) : regularPositions.length ? (
             <>
               <div className="md:hidden flex flex-col gap-2">
@@ -674,7 +682,11 @@ export function PortfolioPage() {
               </div>
             </>
           ) : (
-            <EmptyState message="Brak otwartych pozycji. Zaimportuj historię transakcji lub dodaj ręcznie transakcje." />
+            <EmptyState
+              icon={Briefcase}
+              message="Brak otwartych pozycji. Zaimportuj historię transakcji lub dodaj transakcje ręcznie."
+              action={{ label: 'Przejdź do importu', onClick: () => navigate('/app/import') }}
+            />
           )}
         </CardContent>
       </Card>

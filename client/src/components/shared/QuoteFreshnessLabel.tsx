@@ -1,36 +1,34 @@
 import type { PortfolioPositionsResponse } from 'shared';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { quoteFreshnessText } from '@/lib/day-change';
+import { cn } from '@/lib/utils';
 
 type Quotes = NonNullable<PortfolioPositionsResponse['quotes']>;
 
 /**
- * Znacznik świeżości kursów w nagłówku Portfela.
+ * Znacznik świeżości kursów — nagłówek Portfela i dzienna zmiana na dashboardzie.
  *
  * Bez niego dłuższe TTL po sesji wygląda jak zawieszona aplikacja („czemu ta
  * kwota się nie rusza?"). Z nim jest widoczną, zrozumiałą decyzją: po zamknięciu
  * rynku kurs nie ma się z czego zmieniać.
+ *
+ * Wymaga `TooltipProvider` wyżej w drzewie.
  */
-export function QuoteFreshnessLabel({ quotes }: { quotes: Quotes }) {
-  const asOf = quotes.asOf ? new Date(quotes.asOf) : null;
-  const time = asOf
-    ? asOf.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
-    : null;
-  // Kurs z innego dnia niż dziś (weekend, święto) — sama godzina wprowadzałaby
-  // w błąd, więc dokładamy datę.
-  const isToday = asOf ? asOf.toDateString() === new Date().toDateString() : false;
-  const stamp = asOf
-    ? isToday
-      ? time
-      : `${asOf.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })} ${time}`
-    : null;
-
+export function QuoteFreshnessLabel({
+  quotes,
+  className,
+  now,
+}: {
+  quotes: Quotes;
+  className?: string;
+  /** Wstrzykiwany moment (testy); domyślnie bieżący czas. */
+  now?: Date;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className="ml-2 text-xs font-normal text-muted-foreground cursor-help">
-          {stamp ? `Kursy z ${stamp}` : 'Kursy z cache'}
-          {' · '}
-          {quotes.marketOpen ? 'sesja trwa' : 'rynek zamknięty'}
+        <span className={cn('text-xs font-normal text-muted-foreground cursor-help', className)}>
+          {quoteFreshnessText(quotes, now ?? new Date())}
         </span>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-[300px]">

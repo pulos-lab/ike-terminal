@@ -81,6 +81,34 @@ jobs:
       - name: Client tests
         run: npm run test -w client
 
+  # Bramka budowania dla PR-ów. Testy i prettier NIE łapią tego, co łapie build:
+  # `tsc -b` klienta ma `noUnusedLocals` i obejmuje pliki testów, a vitest typów
+  # nie sprawdza. 2026-11-10 zielony PR #276 zostawił trzy nieużywane importy
+  # w AppShell — wyszło dopiero w kroku Build deployu, PO merge'u: `main`
+  # przestał się budować i trzeba było dosyłać poprawkę (#286). Dwa kolejne
+  # PR-y z tej samej serii miały ten sam rodzaj błędu (#278, #282).
+  #
+  # Ta sama komenda co w jobie `deploy`, więc PR zielony tutaj nie wywróci
+  # deployu na budowaniu. Tylko dla PR-ów: po pushu do main buduje sam `deploy`,
+  # drugi build byłby tam czystym kosztem. Dlatego job NIE jest w `needs`
+  # deployu — pominięty job w `needs` pomijałby też deploy.
+  build:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (shared + server + client)
+        run: npm run build
+
   deploy:
     needs: [format-check, test]
     if: >-

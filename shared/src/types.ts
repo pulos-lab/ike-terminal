@@ -261,6 +261,14 @@ export interface Position {
   /** Kraj siedziby z ticker_map (EN, np. "United States") — patrz country-region-map. */
   country?: string;
   dailyChangePct: number | null;
+  /**
+   * Dzienna zmiana WARTOŚCI pozycji w walucie notowania (ruch ceny × ilość,
+   * loty otwarte w dniu sesji liczone od ceny otwarcia). null = brak danych
+   * (cena z fallbacku, nieznane poprzednie zamknięcie) — nigdy 0 „na niby”.
+   */
+  dailyChangeValue?: number | null;
+  /** To samo w PLN po BIEŻĄCYM kursie (ruch kursu walut nie wchodzi do liczby). */
+  dailyChangeValuePln?: number | null;
   category?: InstrumentCategory;
   buyLots?: OpenBuyLot[];
   /** true when price comes from last transaction, not live market data */
@@ -1076,6 +1084,29 @@ export interface RecentSpinOff {
   allocationPct: number;
 }
 
+/**
+ * Dzienna zmiana portfela — suma zmian pozycji z JAWNYM pokryciem.
+ * Liczona w jednym miejscu (`summarizeDayChange`) dla Portfela, paska i dashboardu.
+ */
+export interface PortfolioDayChange {
+  /** Kwota w `currency`; null, gdy żadna pozycja nie ma danych. */
+  change: number | null;
+  /** Procent wartości portfela sprzed zmiany (z gotówką); null przy braku danych / kapitale ≤ 0. */
+  changePct: number | null;
+  /** Waluta kwoty = waluta bazowa portfela. */
+  currency: string;
+  /** Pozycje, dla których zmiana jest znana. */
+  coveredCount: number;
+  /** Wszystkie otwarte pozycje (gotówka się nie liczy). */
+  totalCount: number;
+  /** Tickery bez danych (do 20) — do podpowiedzi „bez danych: n z N”. */
+  missingTickers: string[];
+  /** Zawsze false: liczba to ruch cen po bieżącym kursie, bez dziennego ruchu walut. */
+  fxIncluded: false;
+  /** Są pozycje w walucie innej niż bazowa — UI dopisuje „bez ruchu kursów walut”. */
+  hasForeignPositions: boolean;
+}
+
 export interface PortfolioPositionsResponse {
   positions: Position[];
   cashPositions: CashPosition[];
@@ -1094,6 +1125,11 @@ export interface PortfolioPositionsResponse {
   upcomingEarnings: UpcomingEarnings[];
   /** Waluta bazowa portfela (np. 'PLN' dla Bossa, 'USD' dla XTB USD sub-account). */
   baseCurrency: string;
+  /**
+   * Dzienna zmiana portfela; null dla portfela bez pozycji. Celowo NIE trafia
+   * do widoku publicznego (whitelist w `share-redaction.ts`).
+   */
+  dayChange?: PortfolioDayChange | null;
   /**
    * Świeżość notowań, na których policzono ten widok. Klient używa
    * `nextRefreshAt` jako tempa odpytywania (zamiast sztywnego interwału, który

@@ -10,12 +10,13 @@ import {
 import { getAllTransactions } from '../db/transactions-repo.js';
 import { getAllOperations, getMetadata, setMetadata } from '../db/operations-repo.js';
 import { getTickerMap, getAllTickers, getUnresolvedTickerIsins } from '../db/ticker-map-repo.js';
-import { getSplits, upsertSplits } from '../db/splits-repo.js';
+import { getSplits, upsertSplits, updateSplitDate } from '../db/splits-repo.js';
 import { getOptionContractsMap } from '../db/option-contracts-repo.js';
 import { getSpinOffs } from '../db/spin-offs-repo.js';
 import { bumpPortfolioDataVersion } from '../db/data-version.js';
 import { invalidateCachedPrices } from './history-cache.js';
-import { fetchFxRate } from './yahoo-finance.js';
+import { fetchFxRate, fetchYahooSplitEvents } from './yahoo-finance.js';
+import { pickSplitDateCorrection } from './split-detector.js';
 import { summarizeQuoteFreshness } from './yahoo-quotes.js';
 import { riskFreeRate } from './risk-free-rate.js';
 import { resolveSector } from './sector-resolver.js';
@@ -32,6 +33,7 @@ import { computePortfolioHistoryMemoized } from './history-memo.js';
 import { applyPendingSpinOffs, getPendingRatioSpinOffs } from './spin-offs-applier.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
 import { getEarningsCalendarService } from './earnings/earnings-calendar.js';
+import { summarizeDayChange } from './day-change.js';
 
 /**
  * Widoki portfela (historia zwrotów, otwarte pozycje) wyciągnięte z handlerów
@@ -270,6 +272,91 @@ function persistNewSplits(pid: string, detected: DetectedSplit[], saved: Detecte
   if (newSplits.length > 0) bumpPortfolioDataVersion(pid);
 }
 
+/** Jak długo po wykryciu splitu sprawdzamy, czy jego data nie jest zastępcza. */
+const SPLIT_DATE_HEAL_WINDOW_DAYS = 30;
+
+function shiftIsoDate(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Samonaprawa splitów zapisanych z datą ZASTĘPCZĄ zamiast faktycznego dnia ex.
+ *
+ * Do 2026-11 split wykryty w samym dniu ex dostawał datę „pierwsza transakcja +1 dzień",
+ * bo okno zapytania o zdarzenia Yahoo kończyło się o północy i dzisiejszego zdarzenia
+ * nie obejmowało (patrz `resolveSplitEventDates`). Taki wpis sam się nie poprawiał —
+ * papier z zapisanym splitem nie jest już ponownie badany — a skutkował trwale złą
+ * ilością u każdego, kto dokupował akcje między pierwszym zakupem a splitem.
+ *
+ * Raz na dobę per portfel, tylko dla świeżo wykrytych wpisów automatycznych: zero
+ * żądań, gdy takich nie ma. O samym przepięciu decyduje `pickSplitDateCorrection`.
+ *
+ * @returns liczba przepiętych wpisów
+ */
+export async function healSplitDatesFromYahoo(
+  pid: string,
+  tickerMap: Map<string, { ticker: string; exchange: string }>,
+  opts: { nowMs?: number } = {},
+): Promise<number> {
+  const today = new Date(opts.nowMs ?? Date.now()).toISOString().slice(0, 10);
+  if (getMetadata(pid, 'last_split_date_heal') === today) return 0;
+  // Znacznik PRZED siecią: historia i pozycje ładują się równolegle, a drugi
+  // przebieg nie wniósłby nic poza zdublowanym żądaniem.
+  setMetadata(pid, 'last_split_date_heal', today);
+
+  const all = getSplits(pid);
+  const cutoff = shiftIsoDate(today, -SPLIT_DATE_HEAL_WINDOW_DAYS);
+  const eventsEnd = shiftIsoDate(today, 1);
+  let healed = 0;
+
+  for (const saved of all) {
+    if (saved.source !== 'auto' || saved.id == null) continue;
+    if ((saved.detectedAt ?? '').slice(0, 10) < cutoff) continue;
+    const entry = tickerMap.get(saved.isin);
+    // NewConnect / Catalyst nie są notowane na Yahoo — nie ma czym potwierdzić.
+    if (entry?.exchange === 'NC' || entry?.exchange === 'CATALYST') continue;
+
+    const events = await fetchYahooSplitEvents(
+      entry?.ticker ?? saved.ticker,
+      saved.splitDate,
+      eventsEnd,
+    );
+    const fix = pickSplitDateCorrection({
+      saved,
+      events,
+      otherSavedDates: all
+        .filter((o) => o.isin === saved.isin && o.id !== saved.id)
+        .map((o) => o.splitDate),
+    });
+    if (!fix) continue;
+
+    if (updateSplitDate(pid, saved.id, fix.date, fix.ratio)) {
+      healed++;
+      console.log(
+        `Split ${saved.ticker} ${saved.ratio}:1 — data zastępcza ${saved.splitDate} przepięta na ex-date ${fix.date} z Yahoo`,
+      );
+    }
+  }
+
+  // Inna data = inny zbiór transakcji przeliczanych o ratio → memo historii nieważne.
+  if (healed > 0) bumpPortfolioDataVersion(pid);
+  return healed;
+}
+
+/** Samonaprawa nie może wywrócić widoku — to porządki, nie warunek odpowiedzi. */
+async function healSplitDatesSafely(
+  pid: string,
+  tickerMap: Map<string, { ticker: string; exchange: string }>,
+): Promise<void> {
+  try {
+    await healSplitDatesFromYahoo(pid, tickerMap);
+  } catch (error) {
+    console.error(`Samonaprawa dat splitów nie powiodła się (${pid}):`, error);
+  }
+}
+
 /** Historia zwrotów vs benchmark — ciało dawnego POST /api/portfolio/history. */
 export async function buildHistoryView(
   pid: string,
@@ -288,6 +375,7 @@ export async function buildHistoryView(
         ? (benchConfig as any).stooqTicker
         : (benchConfig as any).yahooTicker;
 
+  await healSplitDatesSafely(pid, tickerMap);
   const savedSplits = loadSplitsForEngine(pid);
 
   // Auto-aplikacja zaległych spin-offów PRZED liczeniem — bump wersji wewnątrz
@@ -340,6 +428,7 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
   const transactions = getAllTransactions(pid);
   const operations = getAllOperations(pid);
   const tickerMap = getTickerMap(pid);
+  await healSplitDatesSafely(pid, tickerMap);
   const savedSplits = loadSplitsForEngine(pid);
 
   // Fire-and-forget: lazy backfill brakujących sektorów w tle (raz per proces
@@ -451,6 +540,8 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     // odświeżanie źródeł chodzi z timerów w index.ts.
     upcomingEarnings: getEarningsCalendarService().getUpcomingForPositions(positions),
     baseCurrency,
+    // Jedno źródło dziennej zmiany dla Portfela, paska metryk i dashboardu.
+    dayChange: summarizeDayChange(positions, totalValuePln, baseCurrency),
     quotes: {
       asOf: freshness.asOf,
       nextRefreshAt: new Date(Date.now() + freshness.ttlSeconds * 1000).toISOString(),

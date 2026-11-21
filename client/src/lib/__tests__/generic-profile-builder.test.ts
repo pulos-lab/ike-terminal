@@ -1,13 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import {
   adoptProfileForDocument,
+  assignSideValue,
   buildProfileFromDraft,
   detectDateFormat,
   draftFromProfile,
   scoreDraft,
+  sideAssignmentOf,
+  sideColumnValues,
   suggestDraft,
   suggestRules,
   suggestSideValues,
+  valueColumnMatchesSamples,
   type ProfileDraft,
 } from '../generic-profile-builder';
 import { validateImportProfile } from 'shared';
@@ -81,6 +85,120 @@ describe('suggestSideValues — wartości kupna/sprzedaży z kolumny', () => {
   it('zwraca null, gdy żadna wartość nie wygląda na kupno/sprzedaż', () => {
     expect(suggestSideValues([['Dividend'], ['Deposit']], 0)).toBeNull();
     expect(suggestSideValues([['x']], -1)).toBeNull();
+  });
+});
+
+/**
+ * Zgłoszenie użytkownika (Uniqa PPK): „Wartość rejestru po transakcji" to SALDO, a
+ * „Typ transakcji" niesie nazwy operacji, których żaden token kupna/sprzedaży nie łapie.
+ * 1.14728 × 209.19 = 240.00 (dopłata roczna) — saldo 19579.69 nie ma z tym związku.
+ */
+const FUND_HEADERS = [
+  'Data zlecenia',
+  'Nazwa produktu',
+  'Typ transakcji',
+  'Liczba JU',
+  'Cena JU',
+  'Wartość rejestru po transakcji',
+];
+const FUND_SAMPLE = [
+  ['2025-03-27', 'PPK', 'dopłata roczna', '1.14728', '209.19', '19579.69'],
+  ['2025-03-12', 'PPK', 'wpłata pracownika', '0.95125', '208.41', '19267.31'],
+  ['2025-03-12', 'PPK', 'wpłata pracodawcy', '0.71344', '208.41', '19069.06'],
+];
+
+describe('plik funduszu z saldem i własnymi nazwami operacji', () => {
+  const draft = suggestDraft(FUND_HEADERS, FUND_SAMPLE, { delimiter: ';', headerRowIndex: 0 });
+
+  it('nie mapuje salda na „Wartość", choć nagłówek pasuje po nazwie', () => {
+    expect(draft.trade.quantityCol).toBe(3);
+    expect(draft.trade.priceCol).toBe(4);
+    expect(draft.trade.valueCol).toBe(-1);
+  });
+
+  it('nie podstawia „K, BUY, Kupno", gdy w kolumnie strony ich nie ma', () => {
+    expect(draft.trade.sideStrategy).toBe('column');
+    expect(draft.trade.sideCol).toBe(2);
+    expect(draft.trade.buyValues).toBe('');
+    expect(draft.trade.sellValues).toBe('');
+    expect(scoreDraft(draft, FUND_SAMPLE).gaps).toEqual(['side']);
+  });
+
+  it('wartości kolumny do przypisania kliknięciem → profil z samymi kupnami', () => {
+    const values = sideColumnValues(FUND_SAMPLE, draft.trade.sideCol);
+    expect(values).toEqual(['dopłata roczna', 'wpłata pracownika', 'wpłata pracodawcy']);
+
+    const trade = values.reduce((t, v) => ({ ...t, ...assignSideValue(t, v, 'buy') }), draft.trade);
+    const { ok, profile } = buildProfileFromDraft({ ...draft, trade });
+
+    expect(ok).toBe(true);
+    expect(validateImportProfile(profile).ok).toBe(true);
+    const side = (profile as { trade: { side: Record<string, unknown>; value?: unknown } }).trade;
+    expect(side.side).toMatchObject({ buyValues: values, sellValues: [] });
+    expect(side.value).toBeUndefined();
+  });
+
+  it('bez żadnej wskazanej wartości → czytelny błąd zamiast pustego podglądu', () => {
+    expect(buildProfileFromDraft(draft).errors).toContain(
+      'Transakcje: wskaż, które wartości oznaczają kupno, a które sprzedaż',
+    );
+  });
+});
+
+describe('sideColumnValues / assignSideValue', () => {
+  it('unikalne wartości bez rozróżniania wielkości liter; bez maskowanych i z przecinkiem', () => {
+    const rows = [['Kupno'], ['kupno'], ['***'], ['Zakup, rynek'], [''], ['Sprzedaż']];
+    expect(sideColumnValues(rows, 0)).toEqual(['Kupno', 'Sprzedaż']);
+    expect(sideColumnValues(rows, -1)).toEqual([]);
+  });
+
+  it('przypisanie przenosi wartość między listami, „pomiń" usuwa z obu', () => {
+    const start = { buyValues: 'wpłata', sellValues: '' };
+    expect(sideAssignmentOf(start, 'WPŁATA')).toBe('buy');
+
+    const moved = assignSideValue(start, 'wpłata', 'sell');
+    expect(moved).toEqual({ buyValues: '', sellValues: 'wpłata' });
+    expect(assignSideValue(moved, 'wpłata', 'skip')).toEqual({ buyValues: '', sellValues: '' });
+    expect(sideAssignmentOf(moved, 'umorzenie')).toBe('skip');
+  });
+});
+
+describe('valueColumnMatchesSamples — czy „Wartość" to wartość transakcji', () => {
+  it('zgodna z ilość×cena (także z separatorami PL) → true', () => {
+    const rows = [
+      ['10', '150,50', '1 505,00 PLN'],
+      ['3', '99,99', '299,97'],
+    ];
+    expect(valueColumnMatchesSamples(rows, 0, 1, 2)).toBe(true);
+  });
+
+  it('saldo po transakcji → false', () => {
+    expect(valueColumnMatchesSamples(FUND_SAMPLE, 3, 4, 5)).toBe(false);
+  });
+
+  it('obligacje (kurs w % nominału): stały iloraz wartość/(ilość×cena) → true', () => {
+    const rows = [
+      ['5', '99,50', '4975,00'],
+      ['2', '101,20', '2024,00'],
+    ];
+    expect(valueColumnMatchesSamples(rows, 0, 1, 2)).toBe(true);
+  });
+
+  it('brak kolumny albo liczb w próbce → null (nie oceniamy)', () => {
+    expect(valueColumnMatchesSamples(FUND_SAMPLE, 3, 4, -1)).toBeNull();
+    expect(valueColumnMatchesSamples([['a', 'b', 'c']], 0, 1, 2)).toBeNull();
+  });
+
+  it('suggestDraft zostawia poprawną kolumnę wartości', () => {
+    const draft = suggestDraft(
+      ['Data', 'Papier', 'K/S', 'Ilość', 'Kurs', 'Wartość'],
+      [
+        ['2025-01-02', 'KGHM', 'K', '10', '150,50', '1505,00'],
+        ['2025-01-03', 'PKN', 'S', '4', '60,00', '240,00'],
+      ],
+      { delimiter: ';', headerRowIndex: 0 },
+    );
+    expect(draft.trade.valueCol).toBe(5);
   });
 });
 

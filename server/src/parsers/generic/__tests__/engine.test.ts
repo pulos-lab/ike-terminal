@@ -177,6 +177,37 @@ describe('parseWithProfile — transakcje', () => {
     expect(out.transactions.skipped.map((s) => s.reason)).toEqual(['invalid_side', 'invalid_date']);
   });
 
+  it('plik z samymi kupnami: pusta lista sprzedaży jest poprawna, obie puste — nie', () => {
+    const tradeWithSide = (buyValues: string[], sellValues: string[]) => ({
+      date: { source: { kind: 'column', col: { name: 'data' } }, formats: ['DD.MM.YYYY'] },
+      paperName: { kind: 'column', col: { name: 'papier' } },
+      quantity: { kind: 'column', col: { name: 'ilosc' } },
+      price: { kind: 'column', col: { name: 'cena' } },
+      currency: { kind: 'const', value: 'PLN' },
+      side: { strategy: 'column', col: { name: 'strona' }, buyValues, sellValues },
+    });
+    // Wpłaty do funduszu (PPK): każdy typ operacji to nabycie jednostek, sprzedaży brak.
+    const profile = tradeProfile({
+      trade: tradeWithSide(['dopłata roczna', 'wpłata pracownika'], []),
+      needsNameResolution: true,
+    });
+    const csv =
+      `${TRADE_HEADER}\n27.03.2025;PPK;;dopłata roczna;1,14728;209,19;PLN` +
+      `\n12.03.2025;PPK;;Wpłata pracownika;0,95125;208,41;PLN` +
+      `\n12.03.2025;PPK;;opłata;0,1;208,41;PLN`;
+    const out = parseWithProfile(csv, profile, BATCH);
+
+    expect(out.transactions.data.map((t) => [t.side, t.value])).toEqual([
+      ['K', 240],
+      ['K', 198.25],
+    ]);
+    expect(out.transactions.skipped.map((s) => s.reason)).toEqual(['invalid_side']);
+
+    expect(() => tradeProfile({ trade: tradeWithSide([], []), needsNameResolution: true })).toThrow(
+      /co najmniej jedną wartość kupna lub sprzedaży/,
+    );
+  });
+
   it('brak kolumny wymaganej przez profil → GenericParseError (PL)', () => {
     const csv = `data;papier;strona;ilosc;cena;waluta\n01.03.2026;KGHM;K;10;150,00;PLN`;
     expect(() => parseWithProfile(csv, tradeProfile(), BATCH)).toThrow(GenericParseError);

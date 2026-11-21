@@ -189,7 +189,13 @@ export function PortfolioSelector() {
             </SelectItem>
           </SelectContent>
         </Select>
-        <Button variant="ghost" size="icon" className="shrink-0 h-9 w-9" onClick={openSettings}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="shrink-0 h-9 w-9"
+          onClick={openSettings}
+          aria-label="Ustawienia portfela"
+        >
           <Settings className="h-4 w-4" />
         </Button>
       </div>

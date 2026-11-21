@@ -2,11 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthGuard } from '../AuthGuard';
+import { consumePostLoginPath } from '@/lib/post-login-redirect';
 
 const authGuardLoadingDataTestId = 'client__auth__auth-guard-loading';
 const landingPageDataTestId = 'client__auth__landing-page';
 const verifyEmailPageDataTestId = 'client__auth__verify-email-page';
 const protectedContentDataTestId = 'client__auth__protected-content';
+const loginPageDataTestId = 'client__auth__login-page';
 
 const useSessionMock = vi.fn();
 
@@ -25,6 +27,15 @@ function renderWithRouter(initialPath = '/protected') {
       <Routes>
         <Route path="/" element={<div data-test-id={landingPageDataTestId} />} />
         <Route path="/verify-email" element={<VerifyEmailRoute />} />
+        <Route path="/login" element={<div data-test-id={loginPageDataTestId} />} />
+        <Route
+          path="/app/*"
+          element={
+            <AuthGuard>
+              <div data-test-id={protectedContentDataTestId} />
+            </AuthGuard>
+          }
+        />
         <Route
           path="/protected"
           element={
@@ -41,6 +52,38 @@ function renderWithRouter(initialPath = '/protected') {
 describe('AuthGuard', () => {
   beforeEach(() => {
     useSessionMock.mockReset();
+    window.sessionStorage.clear();
+  });
+
+  it('gość z linkiem do podstrony trafia na logowanie, a cel jest zapamiętany', () => {
+    useSessionMock.mockReturnValue({ data: null, isPending: false });
+
+    renderWithRouter('/app/dividends?year=2025');
+
+    expect(screen.getByTestId(loginPageDataTestId)).toBeInTheDocument();
+    expect(screen.queryByTestId(protectedContentDataTestId)).not.toBeInTheDocument();
+    expect(consumePostLoginPath()).toBe('/app/dividends?year=2025');
+  });
+
+  it('gość wchodzący na sam /app trafia na stronę główną — nic nie zapamiętujemy', () => {
+    useSessionMock.mockReturnValue({ data: null, isPending: false });
+
+    renderWithRouter('/app');
+
+    expect(screen.getByTestId(landingPageDataTestId)).toBeInTheDocument();
+    expect(consumePostLoginPath()).toBeNull();
+  });
+
+  it('niezweryfikowany e-mail: cel przeżywa przejście przez weryfikację', () => {
+    useSessionMock.mockReturnValue({
+      data: { user: { email: 'user@example.com', emailVerified: false } },
+      isPending: false,
+    });
+
+    renderWithRouter('/app/cash');
+
+    expect(screen.getByTestId(verifyEmailPageDataTestId)).toBeInTheDocument();
+    expect(consumePostLoginPath()).toBe('/app/cash');
   });
 
   it('renders loading state while session is pending', () => {

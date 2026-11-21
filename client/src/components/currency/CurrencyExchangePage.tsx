@@ -264,6 +264,7 @@ export function CurrencyExchangePage() {
                               className="h-7 w-7 text-muted-foreground hover:text-destructive"
                               disabled={deleteMutation.isPending}
                               onClick={() => setDeleting(ex)}
+                              aria-label="Usuń wymianę"
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>

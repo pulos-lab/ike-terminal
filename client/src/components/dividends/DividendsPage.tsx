@@ -47,6 +47,8 @@ import { useToggleSet } from '@/hooks/useToggleSet';
 import { useSortableData } from '@/hooks/useSortableData';
 import type { DividendRecord, UpcomingDividend } from 'shared';
 import { formatDividendDescription } from '@/lib/dividend-description';
+import { ExportCsvButton } from '@/components/shared/ExportCsvButton';
+import { DIVIDEND_COLUMNS } from '@/lib/csv-columns';
 
 type BadgeVariant = ComponentProps<typeof Badge>['variant'];
 
@@ -468,6 +470,7 @@ export function DividendsPage() {
           )}
           Skanuj dywidendy
         </Button>
+        <ExportCsvButton kind="dywidendy" rows={sortedDividends} columns={DIVIDEND_COLUMNS} />
         <Button size="sm" onClick={() => setAddOpen(true)}>
           <Plus className="h-4 w-4" />
           Dodaj dywidende

@@ -1,15 +1,7 @@
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { CheckCircle2 } from 'lucide-react';
 import type { DraftScore, ProfileDraft, ScoredField } from '@/lib/generic-profile-builder';
-import { suggestSideValues } from '@/lib/generic-profile-builder';
-import { ColumnSelect, DateFormatHint, DateFormatSelect, Field } from './mapping-fields';
+import { ColumnSelect, DateFormatHint, DateFormatSelect, Field, FIELD_GRID } from './mapping-fields';
+import { SideMapping } from './SideMapping';
 
 /**
  * Karta „uzupełnij brakujące pola" (gałąź NEAR kreatora). Pokazuje TYLKO pola,
@@ -58,10 +50,12 @@ export function GapFields({ draft, sampleRows, score, onChange }: Props) {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className={FIELD_GRID}>
         {score.gaps.map((field) => {
           if (field === 'side')
-            return <SideField key="side" draft={draft} colProps={colProps} setTrade={setTrade} />;
+            return (
+              <SideField key="side" draft={draft} sampleRows={sampleRows} setTrade={setTrade} />
+            );
           if (field === 'date') {
             return (
               <div key="date" className="contents">
@@ -120,79 +114,23 @@ export function GapFields({ draft, sampleRows, score, onChange }: Props) {
   );
 }
 
-/** Mini-formularz strony K/S — strategia + kolumna + wartości kupna/sprzedaży. */
+/** Mini-formularz strony K/S w ramce ostrzeżenia — sam formularz dzieli z pełnym edytorem. */
 function SideField({
   draft,
-  colProps,
+  sampleRows,
   setTrade,
 }: {
   draft: ProfileDraft;
-  colProps: { headers: string[]; sampleRows: string[][] };
+  sampleRows: string[][];
   setTrade: (patch: Partial<ProfileDraft['trade']>) => void;
 }) {
-  const t = draft.trade;
   return (
-    <div className="col-span-2 space-y-3 rounded-md border border-warning/30 bg-warning/5 p-3">
+    <div className="space-y-3 rounded-md border border-warning/30 bg-warning/5 p-3 sm:col-span-2">
       <p className="text-xs text-muted-foreground">
         Nie rozpoznaliśmy automatycznie, które wiersze to kupno, a które sprzedaż — wskaż to
         poniżej.
       </p>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Skąd wiadomo, że to kupno czy sprzedaż?">
-          <Select
-            value={t.sideStrategy}
-            onValueChange={(v) =>
-              setTrade({ sideStrategy: v as ProfileDraft['trade']['sideStrategy'] })
-            }
-          >
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="column">Osobna kolumna (K/S, BUY/SELL…)</SelectItem>
-              <SelectItem value="signedQuantity">Znak ilości (−5 = sprzedaż)</SelectItem>
-              <SelectItem value="signedAmount">Znak kwoty (wydatek = kupno)</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field
-          label={
-            t.sideStrategy === 'column'
-              ? 'W której kolumnie jest kupno/sprzedaż?'
-              : 'Kolumna ze znakiem (+/−)'
-          }
-        >
-          <ColumnSelect
-            {...colProps}
-            value={t.sideCol}
-            onValue={(v) => {
-              if (t.sideStrategy !== 'column') return setTrade({ sideCol: v });
-              // Po wyborze kolumny auto-uzupełnij wartości kupna/sprzedaży z próbki.
-              const sv = suggestSideValues(colProps.sampleRows, v);
-              setTrade({ sideCol: v, ...(sv ?? {}) });
-            }}
-            allowNone={false}
-          />
-        </Field>
-        {t.sideStrategy === 'column' && (
-          <>
-            <Field label="Wartości oznaczające kupno">
-              <Input
-                className="h-8 text-xs"
-                value={t.buyValues}
-                onChange={(e) => setTrade({ buyValues: e.target.value })}
-              />
-            </Field>
-            <Field label="Wartości oznaczające sprzedaż">
-              <Input
-                className="h-8 text-xs"
-                value={t.sellValues}
-                onChange={(e) => setTrade({ sellValues: e.target.value })}
-              />
-            </Field>
-          </>
-        )}
-      </div>
+      <SideMapping draft={draft} sampleRows={sampleRows} setTrade={setTrade} />
     </div>
   );
 }

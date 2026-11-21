@@ -36,6 +36,7 @@ import {
   detectSplitFromQuantityMismatch,
   isPlausibleSplitRatio,
   snapToKnownRatio,
+  normalizeLiveQuoteForSplits,
 } from './split-detector.js';
 import {
   applySpinOffs,
@@ -43,6 +44,7 @@ import {
   type SpinOffGuardEvent,
 } from './spin-off-transform.js';
 import { expireOptions, resolveOptionExpirySettlements } from './option-expiry-transform.js';
+import { computePositionDayChange } from './day-change.js';
 import { getDb } from '../db/connection.js';
 import {
   BENCHMARKS,
@@ -153,8 +155,20 @@ function addDaysIso(date: string, days: number): string {
 export async function resolveSplitEventDates(
   detected: DetectedSplit[],
   tickerMap: Map<string, TickerMapEntry>,
+  opts: { nowMs?: number } = {},
 ): Promise<DetectedSplit[]> {
   if (detected.length === 0) return detected;
+
+  // Okno zdarzeń MUSI obejmować dzień bieżący. Yahoo koryguje historię o split już
+  // rano w dniu ex i datuje zdarzenie na otwarcie sesji tego dnia (dla USA 14:30 UTC).
+  // Domyślne okno `fetchYahooSplitEvents` kończy się o północy UTC dnia bieżącego,
+  // więc akurat w dniu splitu zdarzenia w nim NIE BYŁO: heurystyka widziała już
+  // skorygowaną historię, Yahoo „nie potwierdzało", i split dostawał datę zastępczą
+  // (pierwsza transakcja +1 dzień). Skutki (zgłoszenie SNDK 8:1, 2026-11-20): późniejsze
+  // zakupy sprzed splitu zostawały w starej skali, a znaczek splitu się nie zapalał.
+  // Tu sięgnięcie po dzisiejsze zdarzenie jest bezpieczne, bo samo wykrycie heurystyczne
+  // dowodzi, że historia providera jest już skorygowana.
+  const eventsEnd = addDaysIso(new Date(opts.nowMs ?? Date.now()).toISOString().split('T')[0], 1);
 
   const byTicker = new Map<string, DetectedSplit[]>();
   for (const s of detected) {
@@ -172,7 +186,7 @@ export async function resolveSplitEventDates(
 
       let events: Array<{ date: string; ratio: number }> = [];
       if (entry?.exchange !== 'NC') {
-        events = await fetchYahooSplitEvents(ticker, sorted[0].date);
+        events = await fetchYahooSplitEvents(ticker, sorted[0].date, eventsEnd);
       }
 
       const eventsProduct = events.reduce((acc, e) => acc * e.ratio, 1);
@@ -799,6 +813,8 @@ export async function computeOpenPositions(
         weight: 0,
         exchange: fallbackEntry.exchange,
         dailyChangePct: null,
+        dailyChangeValue: null,
+        dailyChangeValuePln: null,
         category,
         priceManual: true,
         optionMeta: optionContract
@@ -828,6 +844,10 @@ export async function computeOpenPositions(
     let priceManual = false;
     /** Kiedy pobrano cenę, gdy pochodzi ze store'u — UI pokazuje „kurs z …". */
     let priceAsOf: string | undefined;
+    // Dzień sesji, z której jest cena — loty otwarte tego dnia liczą dzienną
+    // zmianę od ceny otwarcia, nie od poprzedniego zamknięcia. Yahoo podaje czas
+    // notowania; pozostałe źródła nie, więc przyjmujemy dzień odniesienia.
+    let sessionDate = today;
     if (entry.exchange === 'NC') {
       // NC: biznesradar główne źródło (Stooq live CSV padł ~03.2026), Stooq zapas —
       // ta sama kolejność co /api/prices/live. Yahoo nie listuje NC.
@@ -846,6 +866,21 @@ export async function computeOpenPositions(
       const yp = await fetchYahooPrice(entry.ticker);
       currentPrice = yp?.price || null;
       previousClose = yp?.previousClose ?? null;
+      if (yp?.quoteTime) {
+        sessionDate = new Date(yp.quoteTime).toISOString().slice(0, 10);
+        // Split „w drodze": ilości są już w skali po splicie, a notowanie sprzed dnia
+        // ex jeszcze nie (w dniu ex bywa tak z samym poprzednim zamknięciem). Bez czasu
+        // notowania nie wiemy, z której sesji jest kurs — wtedy go nie ruszamy.
+        const scaled = normalizeLiveQuoteForSplits({
+          splits: allSplits,
+          isin,
+          quoteDate: sessionDate,
+          price: currentPrice,
+          previousClose,
+        });
+        currentPrice = scaled.price;
+        previousClose = scaled.previousClose;
+      }
       // GPW: zapas biznesradar przy chybieniu Yahoo (rate limit/awaria) — tylko .WA.
       // previousClose zostaje z Yahoo: biznesradar nie daje poprzedniego zamknięcia,
       // więc zmiana dzienna będzie null zamiast wartości z mieszanych źródeł.
@@ -901,12 +936,11 @@ export async function computeOpenPositions(
         ? ((currentPrice - previousClose) / previousClose) * 100
         : null;
 
-    let priceInNative = currentPrice || 0;
     // Yahoo returns London-listed prices in GBX (pence) — convert to GBP
     const entCurUpper = entry.currency.toUpperCase();
-    if ((entCurUpper === 'GBP' || entCurUpper === 'GBX') && entry.ticker.endsWith('.L')) {
-      priceInNative = priceInNative / 100;
-    }
+    const pennyDivisor =
+      (entCurUpper === 'GBP' || entCurUpper === 'GBX') && entry.ticker.endsWith('.L') ? 100 : 1;
+    const priceInNative = (currentPrice || 0) / pennyDivisor;
     const fxKey = currencyBucket(entCurUpper);
     const fxNativeToPln = fxRates[fxKey] || fxRates[entry.currency] || 1;
 
@@ -934,6 +968,22 @@ export async function computeOpenPositions(
 
     const currentValueNative = effShares * priceInNative * instMult;
     const currentValuePln = currentValueNative * fxNativeToPln;
+
+    // Dzienna zmiana wartości — te same warunki co dla procentu: tylko realna
+    // cena live (po fallbacku różnica dwóch źródeł nie jest „zmianą dzienną").
+    const dayChange = priceManual
+      ? null
+      : computePositionDayChange({
+          lots: effLots,
+          isShort,
+          priceNative: priceInNative,
+          previousCloseNative:
+            previousClose != null && previousClose > 0 ? previousClose / pennyDivisor : null,
+          sessionDate,
+          instMult,
+          fxNativeToPln,
+          fxRates,
+        });
 
     // Cost basis in PLN: convert each buy lot individually using its own currency.
     // This correctly handles mixed-currency purchases (e.g. NVO bought in PLN and USD).
@@ -983,6 +1033,8 @@ export async function computeOpenPositions(
       supersector: entry.supersector,
       country: entry.country,
       dailyChangePct,
+      dailyChangeValue: dayChange?.native ?? null,
+      dailyChangeValuePln: dayChange?.pln ?? null,
       category,
       priceManual: priceManual || undefined,
       priceAsOf,

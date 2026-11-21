@@ -1,12 +1,16 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { AlertTriangle, Calendar, Info, RefreshCw, Settings, X } from 'lucide-react';
+import { LineChart } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { EmptyState } from '@/components/ui/loading-spinner';
 import { api } from '@/lib/api-client';
 import { QUERY_KEYS } from '@/lib/query-keys';
 import { BENCHMARKS } from '@/lib/benchmarks';
 import { filterAndRebaseHistory, getPresetStartDate } from '@/lib/returns';
 import { usePortfolio } from '@/lib/portfolio-context';
 import { useLocalStorage } from '@/lib/use-local-storage';
+import { PRESET_RANGES, DEFAULT_PRESET_RANGE, clampPresetRange } from '@/lib/dashboard-range';
 import { useTheme } from '@/lib/use-theme';
 import {
   compareSeriesColor,
@@ -34,13 +38,14 @@ import { ComparisonChart, type BenchmarkLine } from './ComparisonChart';
 import { ComparePortfolioPicker } from './ComparePortfolioPicker';
 import { CombinedStatsSection, type CombinedPortfolioSummary } from './CombinedStatsSection';
 import { PerformanceStats } from './PerformanceStats';
+import { TopMovers } from './TopMovers';
 import { HeroKPI } from './HeroKPI';
+import { GettingStartedCard } from './GettingStartedCard';
 import { DrawdownChart } from './DrawdownChart';
 import { MonthlyReturnsChart } from './MonthlyReturnsChart';
 import { ShareDialog } from './ShareDialog';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
-
-const PRESET_RANGES = ['1M', '3M', '6M', 'YTD', '1Y', '3Y', 'ALL'] as const;
+import { QueryErrorState } from '@/components/ui/query-error-state';
 
 function ChartLegend({
   portfolioPct,
@@ -53,7 +58,8 @@ function ChartLegend({
 }) {
   const pfmt = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
   return (
-    <div className="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-3 rounded-md border bg-background/80 px-2.5 py-1 text-xs tabular-nums">
+    // Na telefonie te same liczby niosą etykiety przy osi — druga legenda tylko zasłania wykres.
+    <div className="pointer-events-none absolute left-2 top-2 z-10 hidden items-center md:flex gap-3 rounded-md border bg-background/80 px-2.5 py-1 text-xs tabular-nums">
       <span className="flex items-center gap-1.5">
         <span className="inline-block w-3 h-0.5 rounded-full bg-primary" />
         <span className="text-muted-foreground">portfel</span>
@@ -78,6 +84,7 @@ function ChartLegend({
 }
 
 export function DashboardPage() {
+  const navigate = useNavigate();
   const { activeName, activeId, portfolios } = usePortfolio();
   const { isDark } = useTheme();
   // Benchmark i tryb wykresu to trwałe preferencje (przeżywają zmianę zakładki
@@ -85,7 +92,14 @@ export function DashboardPage() {
   // sprowadza ją do domyślnej zamiast wysyłać nieznany klucz do API.
   const [storedBenchmark, setBenchmark] = useLocalStorage('dashboard-benchmark', 'sp500');
   const benchmark = BENCHMARKS.some((b) => b.value === storedBenchmark) ? storedBenchmark : 'sp500';
-  const [timeRange, setTimeRange] = useState<string>('ALL');
+  // Wybrany preset przeżywa reload tak jak benchmark i tryb wykresu. Zakres
+  // własny jest stanem sesji (patrz clampPresetRange) — po powrocie wraca preset.
+  const [storedRange, setStoredRange] = useLocalStorage<string>(
+    'dashboard-time-range',
+    DEFAULT_PRESET_RANGE,
+  );
+  const [customActive, setCustomActive] = useState(false);
+  const timeRange: string = customActive ? 'CUSTOM' : clampPresetRange(storedRange);
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [storedChartMode, setChartMode] = useLocalStorage<'mwr' | 'twr'>(
@@ -132,7 +146,7 @@ export function DashboardPage() {
   const endDate = isCustom && !customRangeError ? customTo || undefined : undefined;
 
   // Always fetch full history (server ignores startDate), cache per benchmark only
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['portfolio', 'history', benchmark],
     queryFn: () => api.postHistory({ benchmark }),
     staleTime: 60 * 60 * 1000,
@@ -310,13 +324,15 @@ export function DashboardPage() {
     );
   }, [unpriced, unpricedKey, dismissedUnpricedKey]);
   const dismissUnpricedNotice = () => setDismissedUnpricedKey(unpricedKey);
+  const [unpricedExpanded, setUnpricedExpanded] = useState(false);
 
   function selectPreset(range: string) {
-    setTimeRange(range);
+    setStoredRange(range);
+    setCustomActive(false);
   }
 
   function selectCustom() {
-    setTimeRange('CUSTOM');
+    setCustomActive(true);
     if (!customFrom && data?.history?.length) {
       setCustomFrom(data.history[0].date);
     }
@@ -344,6 +360,8 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-4">
+      <GettingStartedCard />
+
       {/* Mobile-only hero KPI (desktop uses MetricsBar) */}
       <div className="md:hidden">
         <HeroKPI history={filteredHistory} />
@@ -651,6 +669,16 @@ export function DashboardPage() {
 
           {isLoading ? (
             <LoadingSpinner />
+          ) : isError && !data ? (
+            // Nieudane żądanie to nie „pusty portfel” — bez tej gałęzi awaria sieci
+            // kończyła się zachętą do importu transakcji.
+            <QueryErrorState
+              className="h-80 justify-center"
+              title="Nie udało się wczytać historii portfela"
+              error={error}
+              onRetry={() => refetch()}
+              retrying={isFetching}
+            />
           ) : compareMode ? (
             chartSeries.length ? (
               <ComparisonChart series={chartSeries} mode={chartMode} benchmark={compareBenchmark} />
@@ -687,9 +715,12 @@ export function DashboardPage() {
               />
             </div>
           ) : (
-            <div className="flex items-center justify-center h-80 text-muted-foreground">
-              Brak danych. Zaimportuj historię transakcji lub dodaj ręcznie transakcje.
-            </div>
+            <EmptyState
+              className="h-80 justify-center"
+              icon={LineChart}
+              message="Brak danych. Zaimportuj historię transakcji lub dodaj transakcje ręcznie."
+              action={{ label: 'Przejdź do importu', onClick: () => navigate('/app/import') }}
+            />
           )}
 
           {compareMode && startDatesDiffer && (
@@ -703,7 +734,16 @@ export function DashboardPage() {
           {!compareMode && unpricedNotice && (
             <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
               <Info className="mt-0.5 h-3 w-3 shrink-0" />
-              <span className="flex-1">{unpricedNotice}</span>
+              {/* Na telefonie jedna linia — pełna treść po dotknięciu. */}
+              <span
+                className={cn(
+                  'min-w-0 flex-1 md:line-clamp-none',
+                  !unpricedExpanded && 'line-clamp-1',
+                )}
+                onClick={() => setUnpricedExpanded((v) => !v)}
+              >
+                {unpricedNotice}
+              </span>
               <button
                 type="button"
                 className="shrink-0 hover:text-foreground transition-colors"
@@ -716,6 +756,9 @@ export function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Wzrosty i spadki dnia dotyczą jednego portfela — w porównaniu schodzą ze sceny. */}
+      {!compareMode && <TopMovers />}
 
       {/* W trybie porównania warunek rozluźniony: statystyki/drawdown renderują się,
           gdy KTÓRAKOLWIEK seria ma dane (nawet jeśli aktywny jest „krótki" w zakresie). */}

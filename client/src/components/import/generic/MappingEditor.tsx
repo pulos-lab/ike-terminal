@@ -12,11 +12,19 @@ import {
   ROW_CLASS_LABELS,
   RULE_CLASSES,
   suggestRules,
-  suggestSideValues,
   type DraftClassifyRule,
   type ProfileDraft,
 } from '@/lib/generic-profile-builder';
-import { ColumnSelect, DateFormatHint, DateFormatSelect, Field } from './mapping-fields';
+import {
+  ColumnSelect,
+  DateFormatHint,
+  DateFormatSelect,
+  Field,
+  FIELD_GRID,
+  SELECT_TRIGGER,
+  ValueColumnHint,
+} from './mapping-fields';
+import { SideMapping } from './SideMapping';
 
 /**
  * Edytor mapowania kolumn — ręczna ścieżka kreatora importu uniwersalnego.
@@ -89,7 +97,7 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3">
+      <div className={FIELD_GRID}>
         <Field label="Nazwa brokera (etykieta)">
           <Input
             className="h-8 text-xs"
@@ -103,7 +111,7 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
             value={draft.mode}
             onValueChange={(v) => set({ mode: v as ProfileDraft['mode'] })}
           >
-            <SelectTrigger className="h-8 text-xs">
+            <SelectTrigger className={SELECT_TRIGGER}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -116,7 +124,7 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
 
       {draft.mode === 'rules' && (
         <section className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-sm font-semibold">Reguły klasyfikacji wierszy</h4>
             <Button
               variant="outline"
@@ -128,7 +136,7 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
               Zasugeruj reguły z opisu
             </Button>
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>Pierwsza pasująca reguła wygrywa. Wiersze bez dopasowania:</span>
             <Select
               value={draft.defaultClass}
@@ -146,20 +154,23 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
           {draft.classify.map((rule, i) => (
             <div
               key={rule.id}
-              className="grid grid-cols-[1fr_auto_1fr_1fr_auto] items-center gap-2"
+              // Telefon: kolumna w pierwszym wierszu, pod nią operator + wartości i typ + kosz.
+              className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 max-sm:rounded-md max-sm:border max-sm:border-border max-sm:p-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,1fr)_auto]"
             >
-              <ColumnSelect
-                {...colProps}
-                value={rule.colIndex}
-                onValue={(v) => updateRule(i, { colIndex: v })}
-                allowNone={false}
-                placeholder="Kolumna"
-              />
+              <div className="col-span-3 min-w-0 sm:col-span-1">
+                <ColumnSelect
+                  {...colProps}
+                  value={rule.colIndex}
+                  onValue={(v) => updateRule(i, { colIndex: v })}
+                  allowNone={false}
+                  placeholder="Kolumna"
+                />
+              </div>
               <Select
                 value={rule.op}
                 onValueChange={(v) => updateRule(i, { op: v as DraftClassifyRule['op'] })}
               >
-                <SelectTrigger className="h-8 w-32 text-xs">
+                <SelectTrigger className={`${SELECT_TRIGGER} sm:w-32`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -171,7 +182,7 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
                 </SelectContent>
               </Select>
               <Input
-                className="h-8 text-xs"
+                className="col-span-2 h-8 text-xs sm:col-span-1"
                 placeholder="wartości, po przecinku"
                 disabled={rule.op === 'notEmpty'}
                 value={rule.values}
@@ -181,7 +192,7 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
                 value={rule.emit}
                 onValueChange={(v) => updateRule(i, { emit: v as DraftClassifyRule['emit'] })}
               >
-                <SelectTrigger className="h-8 text-xs">
+                <SelectTrigger className={`${SELECT_TRIGGER} max-sm:col-span-2`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -212,7 +223,7 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
       {emitsTrade && (
         <section className="space-y-3">
           <h4 className="text-sm font-semibold">Transakcje kupna/sprzedaży</h4>
-          <div className="grid grid-cols-2 gap-3">
+          <div className={FIELD_GRID}>
             <Field label="Data transakcji">
               <ColumnSelect
                 {...colProps}
@@ -269,6 +280,12 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
                 value={draft.trade.valueCol}
                 onValue={(v) => setTrade({ valueCol: v })}
               />
+              <ValueColumnHint
+                sampleRows={sampleRows}
+                quantityCol={draft.trade.quantityCol}
+                priceCol={draft.trade.priceCol}
+                valueCol={draft.trade.valueCol}
+              />
             </Field>
             <Field label="Prowizja (opcjonalnie)">
               <ColumnSelect
@@ -294,62 +311,7 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
             </Field>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Skąd wiadomo, że to kupno czy sprzedaż?">
-              <Select
-                value={draft.trade.sideStrategy}
-                onValueChange={(v) =>
-                  setTrade({ sideStrategy: v as ProfileDraft['trade']['sideStrategy'] })
-                }
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="column">Osobna kolumna (K/S, BUY/SELL…)</SelectItem>
-                  <SelectItem value="signedQuantity">Znak ilości (−5 = sprzedaż)</SelectItem>
-                  <SelectItem value="signedAmount">Znak kwoty (wydatek = kupno)</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field
-              label={
-                draft.trade.sideStrategy === 'column'
-                  ? 'W której kolumnie jest kupno/sprzedaż?'
-                  : 'Kolumna ze znakiem (+/−)'
-              }
-            >
-              <ColumnSelect
-                {...colProps}
-                value={draft.trade.sideCol}
-                onValue={(v) => {
-                  if (draft.trade.sideStrategy !== 'column') return setTrade({ sideCol: v });
-                  // Po wyborze kolumny auto-uzupełnij wartości kupna/sprzedaży z próbki.
-                  const sv = suggestSideValues(sampleRows, v);
-                  setTrade({ sideCol: v, ...(sv ?? {}) });
-                }}
-                allowNone={false}
-              />
-            </Field>
-            {draft.trade.sideStrategy === 'column' && (
-              <>
-                <Field label="Wartości oznaczające kupno">
-                  <Input
-                    className="h-8 text-xs"
-                    value={draft.trade.buyValues}
-                    onChange={(e) => setTrade({ buyValues: e.target.value })}
-                  />
-                </Field>
-                <Field label="Wartości oznaczające sprzedaż">
-                  <Input
-                    className="h-8 text-xs"
-                    value={draft.trade.sellValues}
-                    onChange={(e) => setTrade({ sellValues: e.target.value })}
-                  />
-                </Field>
-              </>
-            )}
-          </div>
+          <SideMapping draft={draft} sampleRows={sampleRows} setTrade={setTrade} />
 
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <input
@@ -368,7 +330,7 @@ export function MappingEditor({ draft, sampleRows, onChange }: Props) {
           <p className="text-xs text-muted-foreground">
             Wspólne mapowanie dla wszystkich typów operacji z reguł powyżej.
           </p>
-          <div className="grid grid-cols-2 gap-3">
+          <div className={FIELD_GRID}>
             <Field label="Data operacji">
               <ColumnSelect
                 {...colProps}

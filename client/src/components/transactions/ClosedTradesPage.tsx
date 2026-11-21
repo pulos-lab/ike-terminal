@@ -29,11 +29,14 @@ import { groupClosedTrades, type TradeGroup } from '@/lib/closed-trades-grouping
 import { useToggleSet } from '@/hooks/useToggleSet';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import type { ClosedTrade } from 'shared';
 import { ClosedPositionCardMobile } from './ClosedPositionCardMobile';
 import { FilterBar, FilterFieldLabel, YearRangeFilter } from '@/components/shared/filters';
 import { displayOptionTicker } from 'shared';
+import { ExportCsvButton } from '@/components/shared/ExportCsvButton';
+import { CLOSED_TRADE_COLUMNS } from '@/lib/csv-columns';
 import { TickerLabel } from '@/components/ui/ticker-label';
 
 /** Round-trip wskazany do usunięcia — może obejmować kilka transakcji sprzedaży. */
@@ -125,6 +128,7 @@ interface ClosedTradesPageProps {
 }
 
 export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -234,6 +238,7 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
 
   // Liczba nóg (transakcji) w przefiltrowanych grupach — do nagłówka.
   const filteredLegCount = useMemo(() => groups.reduce((s, g) => s + g.trades.length, 0), [groups]);
+  const exportRows = useMemo(() => groups.flatMap((g) => g.trades), [groups]);
 
   const plSummary = useMemo(() => {
     const map = new Map<
@@ -282,15 +287,23 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
     <div>
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">
-            Historia zamkniętych pozycji (FIFO)
-            {groups.length > 0 && (
-              <span className="ml-2 text-muted-foreground font-normal">
-                ({groups.length} pozycji, {filteredLegCount} transakcji
-                {isFiltered && ` z ${totalTrades}`})
-              </span>
-            )}
-          </CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="text-base">
+              Historia zamkniętych pozycji (FIFO)
+              {groups.length > 0 && (
+                <span className="ml-2 text-muted-foreground font-normal">
+                  ({groups.length} pozycji, {filteredLegCount} transakcji
+                  {isFiltered && ` z ${totalTrades}`})
+                </span>
+              )}
+            </CardTitle>
+            {/* Nogi przefiltrowanych pozycji — plik odpowiada temu, co na ekranie. */}
+            <ExportCsvButton
+              kind="zamkniete-pozycje"
+              rows={exportRows}
+              columns={CLOSED_TRADE_COLUMNS}
+            />
+          </div>
         </CardHeader>
         <CardContent>
           {!isLoading && data?.trades?.length ? (
@@ -734,7 +747,10 @@ export function ClosedTradesPage(props: ClosedTradesPageProps = {}) {
               action={{ label: 'Wyczyść filtry', onClick: clearFilters }}
             />
           ) : (
-            <EmptyState message="Brak zamkniętych transakcji. Zaimportuj historię transakcji lub dodaj ręcznie." />
+            <EmptyState
+              message="Brak zamkniętych pozycji. Pojawią się tu po pierwszej sprzedaży — zaimportuj historię transakcji lub dodaj ją ręcznie."
+              action={{ label: 'Przejdź do importu', onClick: () => navigate('/app/import') }}
+            />
           )}
         </CardContent>
       </Card>
