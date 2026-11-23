@@ -33,9 +33,11 @@ vi.mock('../history-cache.js', () => ({
 import { parseBiznesradarHistoryTable, fetchBiznesradarHistory } from '../biznesradar.js';
 import { setBiznesradarGuardForTests, getBiznesradarGuard } from '../biznesradar-guard.js';
 import { createSourceGuard, createMemoryGuardStore } from '../source-guard.js';
+import { resetHistoryTailChecks } from '../history-tail-freshness.js';
 
 // Świeży guard per test — bez tego default singleton otwierałby realny price_history.db.
 beforeEach(() => {
+  resetHistoryTailChecks();
   setBiznesradarGuardForTests(
     createSourceGuard({ name: 'biznesradar', store: createMemoryGuardStore(), notify: () => {} }),
   );
@@ -161,6 +163,77 @@ describe('fetchBiznesradarHistory', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(data.length).toBe(12);
+  });
+
+  describe('świeżość ogona serii', () => {
+    /** 12 sesji kończących się w poniedziałek 13.07.2026 — cache „używalny" (>10 punktów). */
+    function seedThroughMonday(): void {
+      const rows: Array<{ date: string; close: number }> = [];
+      for (let day = 1; day <= 12; day++) {
+        rows.push({ date: `2026-06-${String(day).padStart(2, '0')}`, close: 0.4 });
+      }
+      rows[11] = { date: '2026-07-13', close: 0.56 };
+      store.set('exc', rows);
+    }
+
+    beforeEach(() => vi.useFakeTimers({ toFake: ['Date'] }));
+    afterEach(() => vi.useRealTimers());
+
+    it('REGRESJA: cache do poniedziałku, czwartek → dociąga nowsze sesje (stary próg ≤3 dni je pomijał)', async () => {
+      seedThroughMonday();
+      vi.setSystemTime(new Date('2026-07-16T10:00:00Z')); // czwartek: 3 dni po 13.07
+      const fetchMock = vi.fn(async (url: string) => serve(url));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const data = await fetchBiznesradarHistory('EXC', '2026-06-01');
+
+      // Jedna strona: najstarszy wiersz (10.07) ≤ ostatnia data w cache → stop.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(data.at(-1)).toEqual({ date: '2026-07-14', close: 0.565 });
+    });
+
+    it('źródło odpowiedziało, ale nie ma nic nowszego → kolejne żądanie w oknie bez sieci', async () => {
+      seedThroughMonday();
+      vi.setSystemTime(new Date('2026-07-16T10:00:00Z'));
+      const fetchMock = vi.fn(async (url: string) => serve(url));
+      vi.stubGlobal('fetch', fetchMock);
+
+      // Po pierwszym pobraniu cache sięga 14.07, a oczekiwana jest sesja z 15.07,
+      // której źródło nie ma (papier bez obrotu) — bez pamięci sprawdzenia każde
+      // żądanie znów pobierałoby stronę.
+      await fetchBiznesradarHistory('EXC', '2026-06-01');
+      await fetchBiznesradarHistory('EXC', '2026-06-01');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(new Date('2026-07-16T16:00:01Z')); // 6 h później
+      await fetchBiznesradarHistory('EXC', '2026-06-01');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('blokada NIE liczy się jako sprawdzenie — po zdjęciu bezpiecznika ponawiamy od razu', async () => {
+      seedThroughMonday();
+      vi.setSystemTime(new Date('2026-07-16T10:00:00Z'));
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => makeResp('https://x', 'rate limited', 429)),
+      );
+      await fetchBiznesradarHistory('EXC', '2026-06-01');
+
+      // Świeży guard = bezpiecznik zamknięty; źródło znów odpowiada.
+      setBiznesradarGuardForTests(
+        createSourceGuard({
+          name: 'biznesradar',
+          store: createMemoryGuardStore(),
+          notify: () => {},
+        }),
+      );
+      const fetchMock = vi.fn(async (url: string) => serve(url));
+      vi.stubGlobal('fetch', fetchMock);
+      const data = await fetchBiznesradarHistory('EXC', '2026-06-01');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(data.at(-1)?.date).toBe('2026-07-14');
+    });
   });
 
   it('zapisuje pobrane dane do cache pod kluczem = ticker lowercase', async () => {

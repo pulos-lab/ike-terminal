@@ -17,6 +17,7 @@ import {
 import { createConcurrencyLimiter } from './concurrency.js';
 import { lastWeekdayIso, pickPreviousClose } from './day-change.js';
 import { detectYahooBlock, getYahooGuard, withYahooLimit } from './yahoo-guard.js';
+import { getHistoryTailStatus, noteHistoryTailChecked } from './history-tail-freshness.js';
 
 const withStooqLimit = createConcurrencyLimiter(3);
 const FETCH_TIMEOUT = 15_000; // 15 seconds (Stooq can be slow)
@@ -217,7 +218,12 @@ export async function fetchStooqHistory(
 ): Promise<Array<{ date: string; close: number }>> {
   const stooqTicker = resolveStooqTicker(ticker);
   if (!stooqTicker) return [];
-  const cacheKey = `stooq_history_${stooqTicker}_${startDate || 'all'}`;
+  // Dzień (UTC) w kluczu, jak w `fetchYahooHistory`: 12-godzinny wpis założony
+  // wieczorem przeżywałby północ i rano serwował serię bez wczorajszego
+  // zamknięcia — a z pierwszego porannego żądania liczy się memo historii na
+  // cały dzień.
+  const today = new Date().toISOString().split('T')[0];
+  const cacheKey = `stooq_history_${stooqTicker}_${startDate || 'all'}_${today}`;
   const cached = getCached<Array<{ date: string; close: number }>>(cacheKey);
   if (cached) return cached;
 
@@ -225,18 +231,17 @@ export async function fetchStooqHistory(
   const cachedData = loadHistoricalPrices(stooqTicker, startDate);
   const lastCached = getLastCachedDate(stooqTicker);
   const firstCached = getFirstCachedDate(stooqTicker);
-  const today = new Date().toISOString().split('T')[0];
 
   // Czy cache pokrywa żądany początek zakresu? (jak w yahoo-finance.ts — bez tego
   // dane sprzed pierwszej zakeszowanej daty nigdy nie byłyby dociągnięte)
   const cacheCoversStart = !startDate || (firstCached != null && firstCached <= startDate);
 
-  // If we have cached data covering the start and it's recent (within 3 days — covers weekends), use it
-  const daysDiff = lastCached
-    ? Math.floor((new Date(today).getTime() - new Date(lastCached).getTime()) / 86_400_000)
-    : Infinity;
-  if (cachedData.length > 10 && daysDiff <= 3 && cacheCoversStart) {
-    setCached(cacheKey, cachedData, 12 * 3600);
+  // Cache pokrywa początek i sięga ostatniej zakończonej sesji → bez sieci
+  // (reguła świeżości ogona: history-tail-freshness.ts).
+  const tailKey = `stooq:${stooqTicker}`;
+  const tail = getHistoryTailStatus(tailKey, lastCached);
+  if (cachedData.length > 10 && tail.fresh && cacheCoversStart) {
+    setCached(cacheKey, cachedData, tail.cacheTtlSeconds);
     return cachedData;
   }
 
@@ -290,6 +295,9 @@ export async function fetchStooqHistory(
           console.warn(`Stooq historical API blocked for ${stooqTicker}, trying live fallback`);
           // Try to supplement cache with today's live data point
           const liveData = await fetchLiveClose(stooqTicker);
+          // Notowanie live odpowiedziało — nawet jeśli nie jest nowsze niż cache,
+          // nic świeższego teraz nie dostaniemy.
+          if (liveData) noteHistoryTailChecked(tailKey);
           if (liveData && (!lastCached || liveData.date > lastCached)) {
             storeHistoricalPrices(stooqTicker, [liveData], 'stooq-live');
             console.log(
@@ -308,6 +316,8 @@ export async function fetchStooqHistory(
           }
           return [];
         }
+        // Odpowiedź 200 bez blokady na zakres sięgający dziś = ogon sprawdzony.
+        if (range.to === today) noteHistoryTailChecked(tailKey);
         const lines = text.trim().split('\n');
         if (lines.length < 2) {
           // No data from Stooq for this range — try remaining ranges

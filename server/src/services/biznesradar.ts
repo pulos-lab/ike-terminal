@@ -27,6 +27,7 @@ import {
 import { parseNumber } from '../parsers/utils.js';
 import { detectBiznesradarBlock, getBiznesradarGuard } from './biznesradar-guard.js';
 import { getLiveQuoteStore } from './live-quote-store.js';
+import { getHistoryTailStatus, noteHistoryTailChecked } from './history-tail-freshness.js';
 
 // Re-export dla zastanych importów (testy, skrypty) — definicja przeniesiona
 // do lekkiego biznesradar-guard.ts, żeby katalog/kalendarz nie ciągnęły tego modułu.
@@ -211,14 +212,14 @@ export async function fetchBiznesradarHistory(
   const cached = loadHistoricalPrices(key, startDate);
   const lastCached = getLastCachedDate(key);
   const firstCached = getFirstCachedDate(key);
-  const today = new Date().toISOString().split('T')[0];
 
   const cacheCoversStart = !startDate || (firstCached != null && firstCached <= startDate);
-  const daysDiff = lastCached
-    ? Math.floor((new Date(today).getTime() - new Date(lastCached).getTime()) / 86_400_000)
-    : Infinity;
-  // Cache świeży i pokrywa żądany początek → bez sieci.
-  if (cached.length > 10 && daysDiff <= 3 && cacheCoversStart) return cached;
+  // Cache pokrywa żądany początek i sięga ostatniej zakończonej sesji → bez sieci
+  // (reguła świeżości ogona: history-tail-freshness.ts).
+  const tailKey = `biznesradar:${key}`;
+  if (cached.length > 10 && getHistoryTailStatus(tailKey, lastCached).fresh && cacheCoversStart) {
+    return cached;
+  }
 
   const guard = getBiznesradarGuard();
   // Bezpiecznik otwarty — oddaj co mamy, nie ruszaj sieci.
@@ -257,6 +258,9 @@ export async function fetchBiznesradarHistory(
     if (fresh.length > 0) {
       guard.registerSuccess(`history:${key}`);
       storeHistoricalPrices(key, fresh, 'biznesradar');
+      // Strona 1 z tabelą = źródło odpowiedziało na pytanie o najnowsze sesje.
+      // Blokada i parse-miss tu nie trafiają, więc po nich ponawiamy od razu.
+      noteHistoryTailChecked(tailKey);
     }
 
     const merged = new Map<string, number>();

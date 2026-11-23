@@ -3,8 +3,8 @@
  * (USD/EUR = USDPLN / EURPLN).
  *
  * Serie składowe są cache'owane NIEZALEŻNIE i każda może się zestarzeć osobno —
- * reguła „ostatnia data ≤3 dni = cache świeży" w `fetchYahooHistory` pozwala
- * jednej nodze wyprzedzić drugą o kilka dni. Zwykłe przecięcie dat obcinało
+ * po nieudanym pobraniu albo w oknie ponownego sprawdzenia
+ * (history-tail-freshness.ts) jedna noga potrafi wyprzedzić drugą. Zwykłe przecięcie dat obcinało
  * wtedy końcówkę wykresu krzyżowego: przy USDPLN do 04.08 i EURPLN do 05.08
  * cross kończył się na 02.08, mimo świeżych danych po obu stronach.
  *

@@ -68,8 +68,8 @@ describe('fetchYahooHistory — częściowy słupek bieżącego dnia', () => {
     const d2 = new Date(today.getTime() - DAY_MS);
 
     // Yahoo przy period2 = dziś dokłada słupek trwającej sesji: `close` to cena
-    // śróddzienna, nie zamknięcie. Zapisany do price_history byłby przez regułę
-    // „≤3 dni = cache świeży" serwowany jako oficjalne zamknięcie i wchodził
+    // śróddzienna, nie zamknięcie. Zapisany do price_history uchodziłby nazajutrz
+    // za komplet (reguła świeżości ogona), więc jako oficjalne zamknięcie wchodził
     // w łańcuch TWR oraz na wykres.
     vi.stubGlobal(
       'fetch',
