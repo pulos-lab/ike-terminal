@@ -9,6 +9,7 @@ import { getYahooAuth, invalidateYahooAuth } from './yahoo-auth.js';
 import { detectYahooBlock, getYahooGuard, withYahooLimit } from './yahoo-guard.js';
 import { normalizeMarketState, quoteTtlSeconds, type CachedLiveQuote } from './yahoo-quotes.js';
 import { getLiveQuoteStore } from './live-quote-store.js';
+import { getHistoryTailStatus, noteHistoryTailChecked } from './history-tail-freshness.js';
 
 const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const YAHOO_V10_BASE = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary';
@@ -353,12 +354,13 @@ async function fetchYahooHistoryUncached(
   // Check if cache covers the requested start date
   const cacheCoversStart = firstCached != null && firstCached <= startDate;
 
-  // If we have cached data that covers the start and is recent (within 3 days), use it
-  const daysDiff = lastCached
-    ? Math.floor((new Date(today).getTime() - new Date(lastCached).getTime()) / 86_400_000)
-    : Infinity;
-  if (cachedData.length > 10 && daysDiff <= 3 && cacheCoversStart) {
-    setCached(cacheKey, cachedData, 12 * 3600);
+  // Cache pokrywa początek i sięga ostatniej zakończonej sesji → bez sieci.
+  // Reguła świeżości ogona (i powód odejścia od progu „≤3 dni") jest opisana
+  // w history-tail-freshness.ts.
+  const tailKey = `yahoo:${ticker}`;
+  const tail = getHistoryTailStatus(tailKey, lastCached);
+  if (cachedData.length > 10 && tail.fresh && cacheCoversStart) {
+    setCached(cacheKey, cachedData, tail.cacheTtlSeconds);
     return cachedData;
   }
 
@@ -391,11 +393,21 @@ async function fetchYahooHistoryUncached(
   }
 
   try {
+    // Czy Yahoo ODPOWIEDZIAŁO na zakres sięgający dziś — tylko wtedy wolno
+    // uznać ogon za sprawdzony (patrz history-tail-freshness.ts).
+    let tailAnswered = false;
+
     for (const range of fetchRanges) {
       const period1 = String(Math.floor(new Date(range.from).getTime() / 1000));
       const period2 = String(Math.floor(new Date(range.to).getTime() / 1000));
 
+      // `yahooChart` oddaje null w dwóch różnych sytuacjach: przy otwartym
+      // bezpieczniku (do sieci nie poszliśmy) i przy odpowiedzi 200 bez wyniku
+      // (papier nieznany/wycofany). Tylko druga jest odpowiedzią źródła, więc
+      // stan bezpiecznika czytamy PRZED wywołaniem.
+      const blockedBefore = getYahooGuard().isBlocked();
       const result = await yahooChart(ticker, { interval: '1d', period1, period2 });
+      if (range.to === end && !blockedBefore) tailAnswered = true;
       if (!result) continue;
 
       const timestamps: number[] = result.timestamp || [];
@@ -408,10 +420,11 @@ async function fetchYahooHistoryUncached(
         }))
         .filter((r): r is { date: string; close: number } => r.close != null)
         // Słupek z DZISIAJ jest częściowy — sesja jeszcze trwa, więc `close` to
-        // cena śróddzienna, nie zamknięcie. Zapisany do price_history byłby przez
-        // regułę „ostatnia data ≤3 dni = cache świeży" serwowany jako oficjalne
-        // zamknięcie i wchodziłby w łańcuch TWR oraz na wykres. Historia bierze
-        // się z zamknięć; cena bieżąca ma własną ścieżkę (live_quotes).
+        // cena śróddzienna, nie zamknięcie. Zapisany do price_history uchodziłby
+        // nazajutrz za komplet („cache sięga wczorajszej sesji" — patrz
+        // history-tail-freshness.ts), więc nikt by go nie poprawił i jako
+        // oficjalne zamknięcie wchodziłby w łańcuch TWR oraz na wykres. Historia
+        // bierze się z zamknięć; cena bieżąca ma własną ścieżkę (live_quotes).
         .filter((r) => r.date < today)
         .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -419,6 +432,8 @@ async function fetchYahooHistoryUncached(
         storeHistoricalPrices(ticker, freshData, 'yahoo');
       }
     }
+
+    if (tailAnswered) noteHistoryTailChecked(tailKey);
 
     // Merge: load full range from persistent cache (now includes fresh data)
     const mergedData = loadHistoricalPrices(ticker, startDate);

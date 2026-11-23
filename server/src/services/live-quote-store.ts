@@ -11,8 +11,8 @@
  *
  * ŚWIADOMIE OSOBNA TABELA, nie `price_history`. Tamta jest źródłem dziennych
  * zamknięć dla TWR i wykresu; wpisanie tam ceny śróddziennej fałszowałoby
- * historię (reguła „ostatnia data ≤3 dni = cache świeży" serwowałaby ją potem
- * jako oficjalne zamknięcie). Tabela `price_cache` per portfel też odpada —
+ * historię (reguła świeżości ogona uznałaby nazajutrz, że cache jest kompletny,
+ * i serwowała ją jako oficjalne zamknięcie). Tabela `price_cache` per portfel też odpada —
  * cena rynkowa jest wspólna dla wszystkich najemców, nie prywatna dla portfela.
  */
 
