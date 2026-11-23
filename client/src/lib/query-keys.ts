@@ -24,6 +24,8 @@ export const QUERY_KEYS = {
    *  auto-reset przy zmianie portfela (resetPortfolioScopedQueries). */
   share: ['portfolio', 'share'] as const,
   livePrices: ['prices', 'live'] as const,
+  /** Dzienna zmiana indeksu-benchmarku (panel „Dziś w portfelu") — niezależna od portfela. */
+  benchmarkDay: (benchmark: string) => ['prices', 'benchmark-day', benchmark] as const,
   /** Historia kursu jednego instrumentu (wykres pozycji z markerami K/S);
    *  full = pełna historia notowań (preset sięgający przed pierwszą transakcję). */
   instrumentHistory: (isin: string, full = false) =>

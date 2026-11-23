@@ -1110,6 +1110,23 @@ export interface PortfolioDayChange {
   hasForeignPositions: boolean;
 }
 
+/**
+ * GET /prices/benchmark-day — dzienna zmiana indeksu wybranego jako benchmark,
+ * z notowania live (nie z historii wykresu, której ostatni punkt bywa kopią
+ * poprzedniej sesji).
+ */
+export interface BenchmarkDayChange {
+  /** Klucz z rejestru `BENCHMARKS`. */
+  benchmark: string;
+  /** Zmiana w % względem poprzedniego zamknięcia; null = brak wiarygodnych danych. */
+  changePct: number | null;
+  /**
+   * ISO — moment notowania. Klient pokazuje liczbę tylko wtedy, gdy to ten sam
+   * dzień co sesja portfela (rano S&P wciąż niesie wczorajszą zmianę).
+   */
+  asOf: string | null;
+}
+
 export interface PortfolioPositionsResponse {
   positions: Position[];
   cashPositions: CashPosition[];
