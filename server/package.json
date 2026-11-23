@@ -24,6 +24,7 @@
     "fix:tickers": "tsx src/scripts/fix-tickers.ts",
     "fix:ticker-price-mismatch": "tsx src/scripts/fix-ticker-price-mismatch.ts",
     "fix:mismatched-tickers": "tsx src/scripts/fix-mismatched-tickers.ts",
+    "fix:yahoo-bar-dates": "tsx src/scripts/fix-yahoo-bar-dates.ts",
     "audit:tickers": "tsx src/scripts/audit-ticker-map.ts",
     "diagnose:isin": "tsx src/scripts/diagnose-isin.ts",
     "backfill:assignments": "tsx src/scripts/backfill-assignments.ts",

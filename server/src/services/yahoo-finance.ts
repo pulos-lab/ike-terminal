@@ -5,6 +5,7 @@ import {
   getLastCachedDate,
   getFirstCachedDate,
 } from './history-cache.js';
+import { isSettledYahooBar, yahooBarDate } from './yahoo-bar-date.js';
 import { getYahooAuth, invalidateYahooAuth } from './yahoo-auth.js';
 import { detectYahooBlock, getYahooGuard, withYahooLimit } from './yahoo-guard.js';
 import { normalizeMarketState, quoteTtlSeconds, type CachedLiveQuote } from './yahoo-quotes.js';
@@ -400,11 +401,16 @@ async function fetchYahooHistoryUncached(
 
       const timestamps: number[] = result.timestamp || [];
       const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
+      const barTimeZone: string | undefined = result.meta?.exchangeTimezoneName;
 
       const freshData = timestamps
         .map((ts, i) => ({
-          date: new Date(ts * 1000).toISOString().split('T')[0],
-          close: closes[i],
+          // Data SESJI w strefie giełdy, nie data UTC stempla: latem słupek pary
+          // walutowej ma stempel 23:00 UTC dnia poprzedniego (yahoo-bar-date.ts).
+          date: yahooBarDate(ts, barTimeZone),
+          // Słupek trwającej sesji odpada już tutaj (`null` = brak zamknięcia):
+          // rozpoznanie wymaga stempla, a dalej płynie sama data sesji.
+          close: isSettledYahooBar(ts, barTimeZone, today) ? closes[i] : null,
         }))
         .filter((r): r is { date: string; close: number } => r.close != null)
         // Słupek z DZISIAJ jest częściowy — sesja jeszcze trwa, więc `close` to
@@ -572,7 +578,7 @@ export async function fetchYahooHistoryDirect(
     const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
 
     for (let i = 0; i < timestamps.length; i++) {
-      const d = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
+      const d = yahooBarDate(timestamps[i], result.meta?.exchangeTimezoneName);
       if (d === date && closes[i] != null) return closes[i]!;
     }
 
@@ -584,6 +590,50 @@ export async function fetchYahooHistoryDirect(
   } catch {
     return null;
   }
+}
+
+/**
+ * Dzienne zamknięcia prosto z Yahoo, z pominięciem WSZYSTKICH warstw cache —
+ * niczego nie czyta i niczego nie zapisuje. Daty i odsiew słupka trwającej
+ * sesji idą tą samą regułą co w `fetchYahooHistory` (`yahoo-bar-date.ts`).
+ *
+ * Dla skryptów, które muszą najpierw ZOBACZYĆ serię, a dopiero potem zdecydować
+ * o zapisie (`fix-yahoo-bar-dates.ts` podmienia historię w jednej transakcji
+ * i tylko wtedy, gdy Yahoo odpowiedziało kompletem).
+ *
+ * @param todayUtc bieżąca data UTC — wstrzykiwana, żeby testy nie czytały zegara
+ * @returns `null`, gdy Yahoo nie zna symbolu albo bezpiecznik jest otwarty;
+ *   błąd HTTP rzuca wyjątek (wołający sam decyduje, czy to przerywa pracę)
+ */
+export async function fetchYahooDailyClosesDirect(
+  ticker: string,
+  startDate: string,
+  endDate: string,
+  todayUtc: string = new Date().toISOString().split('T')[0],
+): Promise<Array<{ date: string; close: number }> | null> {
+  const period1 = String(Math.floor(new Date(startDate).getTime() / 1000));
+  const period2 = String(Math.floor(new Date(endDate).getTime() / 1000));
+
+  const result = await yahooChart(ticker, { interval: '1d', period1, period2 });
+  if (!result) return null;
+
+  const timestamps: number[] = result.timestamp || [];
+  const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
+  const barTimeZone: string | undefined = result.meta?.exchangeTimezoneName;
+
+  // Yahoo potrafi oddać DWA słupki tej samej sesji (zamknięty, stemplowany jej
+  // początkiem, i drugi ze stemplem ostatniego notowania — zmierzone na BHP.AX).
+  // Mapa po dacie zostawia późniejszy, tak jak `INSERT OR REPLACE` w historii.
+  const byDate = new Map<string, number>();
+  timestamps.forEach((ts, i) => {
+    const close = closes[i];
+    if (close == null || !isSettledYahooBar(ts, barTimeZone, todayUtc)) return;
+    byDate.set(yahooBarDate(ts, barTimeZone), close);
+  });
+
+  return [...byDate]
+    .map(([date, close]) => ({ date, close }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 /**
