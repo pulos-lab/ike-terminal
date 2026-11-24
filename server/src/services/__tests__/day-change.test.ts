@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  applyDaySessions,
   computePositionDayChange,
   lastWeekdayIso,
   pickPreviousClose,
@@ -194,6 +195,125 @@ describe('summarizeDayChange', () => {
     const r = summarizeDayChange(many, 1000, 'PLN');
     expect(r?.missingTickers).toHaveLength(20);
     expect(r?.totalCount).toBe(30);
+  });
+
+  it('pozycja ze starszej sesji ma dane, ale nie wchodzi do sumy dnia', () => {
+    // 10:00: GPW +100 dziś, USA +400 z wczorajszej sesji (rynek jeszcze zamknięty).
+    const r = summarizeDayChange(
+      [pos('A.WA', 100), { ...pos('AAPL', 400, 'USD', 100), dailyChangeStale: true }],
+      10_500,
+      'PLN',
+      '2026-11-24',
+    );
+    expect(r?.change).toBe(100);
+    // Mianownik: wartość portfela sprzed DZISIEJSZEJ zmiany = 10 500 − 100.
+    expect(r?.changePct).toBeCloseTo((100 / 10_400) * 100, 10);
+    expect(r).toMatchObject({
+      coveredCount: 2,
+      totalCount: 2,
+      missingTickers: [],
+      staleCount: 1,
+      staleTickers: ['AAPL'],
+      sessionDate: '2026-11-24',
+    });
+  });
+
+  it('bez podanego dnia sesji i bez flag: zachowanie jak dotąd', () => {
+    const r = summarizeDayChange([pos('A.WA', 100)], 1100, 'PLN');
+    expect(r).toMatchObject({ change: 100, sessionDate: null, staleCount: 0, staleTickers: [] });
+  });
+});
+
+describe('applyDaySessions', () => {
+  const pos = (
+    ticker: string,
+    exchange: string,
+    session: string | undefined,
+    change: number | null = 10,
+  ) => ({
+    ticker,
+    exchange,
+    dailyChangeValue: change,
+    dailyChangeValuePln: change,
+    dailyChangeSession: session,
+    dailyChangeStale: undefined as boolean | undefined,
+  });
+  const stale = (list: ReturnType<typeof pos>[]) =>
+    list.filter((p) => p.dailyChangeStale).map((p) => p.ticker);
+
+  it('przed otwarciem USA: dzień sesji = GPW, pozycje z USA są z wczoraj', () => {
+    const list = [
+      pos('PKN.WA', 'GPW', '2026-11-24'),
+      pos('AAPL', 'NASDAQ', '2026-11-23'),
+      pos('NVDA', 'NASDAQ', '2026-11-23'),
+    ];
+    expect(applyDaySessions(list)).toBe('2026-11-24');
+    expect(stale(list)).toEqual(['AAPL', 'NVDA']);
+  });
+
+  it('po otwarciu USA wszystko jest z tego samego dnia', () => {
+    const list = [pos('PKN.WA', 'GPW', '2026-11-24'), pos('AAPL', 'NASDAQ', '2026-11-24')];
+    expect(applyDaySessions(list)).toBe('2026-11-24');
+    expect(stale(list)).toEqual([]);
+  });
+
+  it('przed 9:00 i w weekend: wspólna ostatnia sesja, nic nie odpada', () => {
+    const list = [pos('PKN.WA', 'GPW', '2026-11-20'), pos('AAPL', 'NASDAQ', '2026-11-20')];
+    expect(applyDaySessions(list)).toBe('2026-11-20');
+    expect(stale(list)).toEqual([]);
+  });
+
+  it('święto GPW przy otwartych USA: to pozycje z GPW nie mają sesji tego dnia', () => {
+    const list = [pos('PKN.WA', 'GPW', '2026-11-10'), pos('AAPL', 'NASDAQ', '2026-11-11')];
+    expect(applyDaySessions(list)).toBe('2026-11-11');
+    expect(stale(list)).toEqual(['PKN.WA']);
+  });
+
+  it('NC i Catalyst bez czasu notowania dziedziczą dzień po GPW', () => {
+    const list = [
+      pos('PKN.WA', 'GPW', '2026-11-20'),
+      pos('NCX', 'NC', undefined),
+      pos('BND1126', 'CATALYST', undefined),
+      pos('BTC-USD', 'CCC', '2026-11-21'), // sobota: handluje tylko krypto
+    ];
+    expect(applyDaySessions(list)).toBe('2026-11-21');
+    expect(list.map((p) => p.dailyChangeSession)).toEqual([
+      '2026-11-20',
+      '2026-11-20',
+      '2026-11-20',
+      '2026-11-21',
+    ]);
+    expect(stale(list)).toEqual(['PKN.WA', 'NCX', 'BND1126']);
+  });
+
+  it('pozycja bez daty i bez GPW w portfelu zawsze wchodzi do wyniku', () => {
+    const list = [pos('NCX', 'NC', undefined), pos('AAPL', 'NASDAQ', '2026-11-23')];
+    expect(applyDaySessions(list)).toBe('2026-11-23');
+    expect(list[0].dailyChangeSession).toBeUndefined();
+    expect(stale(list)).toEqual([]);
+  });
+
+  it('pozycja bez danych o zmianie nie wyznacza dnia sesji ani nie jest oznaczana', () => {
+    const list = [
+      pos('PKN.WA', 'GPW', '2026-11-23'),
+      pos('XYZ', 'NASDAQ', '2026-11-24', null), // świeża data, ale brak zmiany
+    ];
+    expect(applyDaySessions(list)).toBe('2026-11-23');
+    expect(stale(list)).toEqual([]);
+  });
+
+  it('żadnej daty notowania → null i brak oznaczeń', () => {
+    const list = [pos('NCX', 'NC', undefined), pos('NCY', 'NC', undefined)];
+    expect(applyDaySessions(list)).toBeNull();
+    expect(stale(list)).toEqual([]);
+  });
+
+  it('ponowne wywołanie zdejmuje nieaktualną flagę', () => {
+    const list = [pos('PKN.WA', 'GPW', '2026-11-24'), pos('AAPL', 'NASDAQ', '2026-11-23')];
+    applyDaySessions(list);
+    list[1].dailyChangeSession = '2026-11-24';
+    applyDaySessions(list);
+    expect(stale(list)).toEqual([]);
   });
 });
 

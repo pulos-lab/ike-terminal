@@ -1,17 +1,18 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { CalendarClock, Coins, TrendingDown, TrendingUp } from 'lucide-react';
+import { CalendarClock, Clock, Coins, TrendingDown, TrendingUp } from 'lucide-react';
 import type { PortfolioHistoryPoint } from 'shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { plColor } from '@/components/ui/pl-badge';
 import { api } from '@/lib/api-client';
 import { formatCurrency, formatPercent } from '@/lib/formatters';
-import { describeDayChange, quoteFreshnessText } from '@/lib/day-change';
+import { describeDayChange, formatSessionDay, quoteFreshnessText } from '@/lib/day-change';
 import {
   selectDayContributions,
   type ContributionMode,
   type DayContribution,
+  type StaleContributions,
 } from '@/lib/day-contributions';
 import { describeBenchmarkDay, describeDayInHistory, localIsoDate } from '@/lib/day-fact';
 import {
@@ -89,8 +90,11 @@ export function TodayPanel({ history, benchmark, benchmarkLabel }: TodayPanelPro
   // Dzień, którego dotyczy wynik: data notowań, a bez znacznika czasu — dziś.
   const asOf = data.quotes?.asOf ? new Date(data.quotes.asOf) : null;
   const sessionDate = asOf && !Number.isNaN(asOf.getTime()) ? localIsoDate(asOf) : today;
+  const isToday = dayView.label === 'Dziś';
   const fact = describeDayInHistory(history ?? [], dayView.pct, sessionDate, {
-    provisional: Boolean(data.quotes?.marketOpen),
+    // Wynik jest jeszcze niepełny także wtedy, gdy część pozycji czeka na swoją
+    // sesję (USA przed 15:30) — nawet jeśli w tej chwili żaden rynek nie handluje.
+    provisional: Boolean(data.quotes?.marketOpen) || (isToday && contributions.stale !== null),
   });
   const benchmarkText =
     benchmark === 'none'
@@ -105,7 +109,7 @@ export function TodayPanel({ history, benchmark, benchmarkLabel }: TodayPanelPro
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
             <CardTitle className="text-sm font-semibold">
-              {dayView.label === 'Dziś' ? 'Dziś w portfelu' : 'Ostatnia sesja w portfelu'}
+              {isToday ? 'Dziś w portfelu' : 'Ostatnia sesja w portfelu'}
             </CardTitle>
             {data.quotes && (
               <span className="text-[11px] text-muted-foreground">
@@ -213,6 +217,9 @@ export function TodayPanel({ history, benchmark, benchmarkLabel }: TodayPanelPro
                 )}
               </ul>
             )}
+            {contributions.stale && (
+              <StaleNote stale={contributions.stale} isToday={isToday} currency={baseCurrency} />
+            )}
           </div>
 
           <div className="min-w-0 border-t border-border pt-4 md:border-l md:border-t-0 md:pl-8 md:pt-0">
@@ -319,6 +326,51 @@ function ContributionRow({
         </span>
       </span>
     </li>
+  );
+}
+
+/** „1 inna", „3 inne", „7 innych" — odmiana po liczbie. */
+function otherWord(n: number): string {
+  if (n === 1) return 'inna';
+  const lastTwo = n % 100;
+  const last = n % 10;
+  return last >= 2 && last <= 4 && !(lastTwo >= 12 && lastTwo <= 14) ? 'inne' : 'innych';
+}
+
+/** Ile tickerów wymieniamy z nazwy w dopisku o pozycjach bez sesji. */
+const MAX_STALE_TICKERS = 4;
+
+/**
+ * Pozycje, których rynek tego dnia jeszcze nie handlował. Ich ostatni ruch jest
+ * z wcześniejszej sesji i do wyniku w nagłówku NIE wchodzi — dlatego stoi pod
+ * listą, szary, bez słupka i poza kolumną kwot, które się sumują.
+ */
+function StaleNote({
+  stale,
+  isToday,
+  currency,
+}: {
+  stale: StaleContributions;
+  isToday: boolean;
+  currency: string;
+}) {
+  const named = stale.tickers.slice(0, MAX_STALE_TICKERS).join(', ');
+  const more = stale.count - Math.min(stale.count, MAX_STALE_TICKERS);
+  return (
+    <p className="mt-3 flex items-start gap-2 text-xs leading-snug text-muted-foreground">
+      <Clock className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span>
+        <span className="font-medium text-foreground/80">
+          {isToday ? 'Jeszcze bez dzisiejszej sesji' : 'Bez notowań z tej sesji'}:
+        </span>{' '}
+        {named}
+        {more > 0 ? ` i ${more} ${otherWord(more)}` : ''}. Poza wynikiem —{' '}
+        {stale.sessionDate
+          ? `poprzednia sesja (${formatSessionDay(stale.sessionDate)})`
+          : 'ich ostatnie sesje'}
+        : <span className="tabular-nums">{signed(stale.amount, currency)}</span>.
+      </span>
+    </p>
   );
 }
 

@@ -33,7 +33,7 @@ import { computePortfolioHistoryMemoized } from './history-memo.js';
 import { applyPendingSpinOffs, getPendingRatioSpinOffs } from './spin-offs-applier.js';
 import { resolveUnknownIsins } from './isin-resolver.js';
 import { getEarningsCalendarService } from './earnings/earnings-calendar.js';
-import { summarizeDayChange } from './day-change.js';
+import { applyDaySessions, summarizeDayChange } from './day-change.js';
 
 /**
  * Widoki portfela (historia zwrotów, otwarte pozycje) wyciągnięte z handlerów
@@ -524,6 +524,10 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
   // tempo odpytywania, zamiast pytać co 15 min niezależnie od stanu rynku.
   const freshness = summarizeQuoteFreshness(positions.map((p) => p.ticker));
 
+  // Dzień sesji portfela + oznaczenie pozycji, których „zmiana dzienna” jest
+  // z wcześniejszej sesji (USA przed otwarciem) — te nie wchodzą do sumy dnia.
+  const daySession = applyDaySessions(positions);
+
   return {
     positions,
     cashPositions,
@@ -541,7 +545,7 @@ export async function buildPositionsView(pid: string): Promise<PortfolioPosition
     upcomingEarnings: getEarningsCalendarService().getUpcomingForPositions(positions),
     baseCurrency,
     // Jedno źródło dziennej zmiany dla Portfela, paska metryk i dashboardu.
-    dayChange: summarizeDayChange(positions, totalValuePln, baseCurrency),
+    dayChange: summarizeDayChange(positions, totalValuePln, baseCurrency, daySession),
     quotes: {
       asOf: freshness.asOf,
       nextRefreshAt: new Date(Date.now() + freshness.ttlSeconds * 1000).toISOString(),

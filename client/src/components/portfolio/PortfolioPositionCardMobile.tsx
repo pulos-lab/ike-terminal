@@ -11,6 +11,7 @@ import {
 import { AlertTriangle, ChartLine, ChevronDown, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { Position, UpcomingEarnings } from 'shared';
+import { formatSessionDay, staleDayChangeTitle } from '@/lib/day-change';
 import { EarningsBadge } from './EarningsBadge';
 
 interface SplitInfo {
@@ -146,11 +147,23 @@ export function PortfolioPositionCardMobile({
                 ? `${formatNumber(position.currentPrice)} ${position.currency}`
                 : '—'}
             </span>
-            {position.dailyChangePct != null && (
-              <span className={`ml-1.5 ${plColor(position.dailyChangePct)}`}>
-                {formatPercent(position.dailyChangePct)}
-              </span>
-            )}
+            {position.dailyChangePct != null &&
+              (position.dailyChangeStale ? (
+                // Zmiana z wcześniejszej sesji (rynek jeszcze dziś nie handlował).
+                <span
+                  className="ml-1.5 text-muted-foreground"
+                  title={staleDayChangeTitle(position.dailyChangeSession)}
+                >
+                  {formatPercent(position.dailyChangePct)}
+                  {position.dailyChangeSession
+                    ? ` (${formatSessionDay(position.dailyChangeSession)})`
+                    : ''}
+                </span>
+              ) : (
+                <span className={`ml-1.5 ${plColor(position.dailyChangePct)}`}>
+                  {formatPercent(position.dailyChangePct)}
+                </span>
+              ))}
           </span>
           <PLBadge value={position.profitLossPct} />
         </div>
