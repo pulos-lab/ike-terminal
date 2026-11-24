@@ -38,6 +38,7 @@ import { useNavigate } from 'react-router-dom';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { QuoteFreshnessLabel } from '@/components/shared/QuoteFreshnessLabel';
 import { usePositionsQuery } from '@/lib/use-positions-query';
+import { staleDayChangeTitle } from '@/lib/day-change';
 import { PortfolioDiversification } from './PortfolioDiversification';
 import { RiskReturnScatter } from './RiskReturnScatter';
 import { PortfolioOptionsCard } from './PortfolioOptionsCard';
@@ -624,7 +625,15 @@ export function PortfolioPage() {
                         {colVis.dailyChange && (
                           <TableCell className="text-right">
                             {pos.dailyChangePct != null ? (
-                              <PLBadge value={pos.dailyChangePct} />
+                              pos.dailyChangeStale ? (
+                                // Rynek pozycji jeszcze dziś nie handlował — liczba jest
+                                // z wcześniejszej sesji, więc wyciszona i podpisana.
+                                <span title={staleDayChangeTitle(pos.dailyChangeSession)}>
+                                  <PLBadge value={pos.dailyChangePct} muted />
+                                </span>
+                              ) : (
+                                <PLBadge value={pos.dailyChangePct} />
+                              )
                             ) : (
                               '—'
                             )}

@@ -23,9 +23,26 @@ export interface DayContributions {
    * się na kwotę z nagłówka. Tylko w rankingu kwotowym: procenty się nie sumują.
    */
   rest: { amount: number; count: number; share: number } | null;
-  /** Pozycje z danymi o zmianie dziennej / wszystkie pozycje. */
+  /**
+   * Pozycje, których rynek tego dnia jeszcze nie handlował (`dailyChangeStale`):
+   * ich ostatni ruch jest z wcześniejszej sesji, więc nie ma ich ani na liście,
+   * ani w „reszcie” — wiersze nadal sumują się do nagłówka. Zebrane osobno,
+   * żeby panel mógł powiedzieć, czego w wyniku NIE ma.
+   */
+  stale: StaleContributions | null;
+  /** Pozycje z danymi o zmianie dziennej (także te bez sesji) / wszystkie pozycje. */
   coveredCount: number;
   totalCount: number;
+}
+
+export interface StaleContributions {
+  count: number;
+  /** Suma ich OSTATNIEJ sesji w walucie bazowej — informacyjnie, poza wynikiem dnia. */
+  amount: number;
+  /** Tickery od największego ruchu. */
+  tickers: string[];
+  /** Wspólny dzień tej sesji (YYYY-MM-DD); null, gdy pozycje mają różne albo nieznane. */
+  sessionDate: string | null;
 }
 
 type ContributionSource = Pick<
@@ -38,6 +55,8 @@ type ContributionSource = Pick<
   | 'dailyChangePct'
   | 'dailyChangeValue'
   | 'dailyChangeValuePln'
+  | 'dailyChangeSession'
+  | 'dailyChangeStale'
 >;
 
 /**
@@ -48,6 +67,8 @@ type ContributionSource = Pick<
  * walutowy → wartości natywne) — inaczej wiersze nie dodawałyby się do nagłówka.
  *
  * - pozycja bez danych nie trafia na listę ani do „reszty" (nie udaje zera),
+ * - pozycja bez sesji tego dnia też nie — serwer nie dolicza jej do wyniku,
+ *   więc jej wczorajszy ruch na liście „co złożyło się na wynik" byłby fałszem,
  * - ranking kwotowy porządkuje po WARTOŚCI BEZWZGLĘDNEJ: pytanie brzmi „co
  *   najmocniej ruszyło wynikiem", kierunek niesie kolor,
  * - ranking procentowy pomija opcje i pozycje krótkie: procent ceny opcji to
@@ -64,9 +85,18 @@ export function selectDayContributions(
   }: { mode?: ContributionMode; limit?: number; useNative?: boolean } = {},
 ): DayContributions {
   const covered: Array<Omit<DayContribution, 'share'> & { rankable: boolean }> = [];
+  const staleRows: Array<{ ticker: string; amount: number; session: string | null }> = [];
   for (const p of positions) {
     // Serwer liczy pozycję jako „pokrytą" tylko z obiema kwotami — trzymamy ten sam warunek.
     if (p.dailyChangeValuePln == null || p.dailyChangeValue == null) continue;
+    if (p.dailyChangeStale) {
+      staleRows.push({
+        ticker: p.ticker,
+        amount: useNative ? p.dailyChangeValue : p.dailyChangeValuePln,
+        session: p.dailyChangeSession ?? null,
+      });
+      continue;
+    }
     covered.push({
       isin: p.isin,
       ticker: p.ticker,
@@ -78,9 +108,24 @@ export function selectDayContributions(
     });
   }
 
-  const counts = { coveredCount: covered.length, totalCount: positions.length };
   const byTicker = (a: { ticker: string }, b: { ticker: string }) =>
     a.ticker.localeCompare(b.ticker);
+  staleRows.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount) || byTicker(a, b));
+  const staleSessions = new Set(staleRows.map((r) => r.session));
+  const [onlySession] = staleSessions;
+  const counts = {
+    stale:
+      staleRows.length > 0
+        ? {
+            count: staleRows.length,
+            amount: staleRows.reduce((sum, r) => sum + r.amount, 0),
+            tickers: staleRows.map((r) => r.ticker),
+            sessionDate: staleSessions.size === 1 ? (onlySession ?? null) : null,
+          }
+        : null,
+    coveredCount: covered.length + staleRows.length,
+    totalCount: positions.length,
+  };
   const strip = ({ rankable: _rankable, ...row }: (typeof covered)[number]) => row;
 
   if (mode === 'pct') {

@@ -112,8 +112,10 @@ export function HeroKPI({ history }: HeroKPIProps) {
                 {dayView.label.toLowerCase()}
               </span>
             </div>
-            {dayView.coverageNote && dayView.amount !== null && (
-              <p className="mt-0.5 text-[11px] text-muted-foreground">{dayView.coverageNote}</p>
+            {(dayView.coverageNote || dayView.staleNote) && dayView.amount !== null && (
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {[dayView.coverageNote, dayView.staleNote].filter(Boolean).join(' · ')}
+              </p>
             )}
           </div>
         )}

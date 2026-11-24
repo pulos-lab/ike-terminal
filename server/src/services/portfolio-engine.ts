@@ -848,6 +848,9 @@ export async function computeOpenPositions(
     // zmianę od ceny otwarcia, nie od poprzedniego zamknięcia. Yahoo podaje czas
     // notowania; pozostałe źródła nie, więc przyjmujemy dzień odniesienia.
     let sessionDate = today;
+    // Ten sam dzień, ale tylko gdy źródło go PODAŁO — po nim widok rozpoznaje
+    // pozycje, których rynek jeszcze dziś nie handlował (patrz applyDaySessions).
+    let quoteSession: string | undefined;
     if (entry.exchange === 'NC') {
       // NC: biznesradar główne źródło (Stooq live CSV padł ~03.2026), Stooq zapas —
       // ta sama kolejność co /api/prices/live. Yahoo nie listuje NC.
@@ -868,6 +871,7 @@ export async function computeOpenPositions(
       previousClose = yp?.previousClose ?? null;
       if (yp?.quoteTime) {
         sessionDate = new Date(yp.quoteTime).toISOString().slice(0, 10);
+        quoteSession = sessionDate;
         // Split „w drodze": ilości są już w skali po splicie, a notowanie sprzed dnia
         // ex jeszcze nie (w dniu ex bywa tak z samym poprzednim zamknięciem). Bez czasu
         // notowania nie wiemy, z której sesji jest kurs — wtedy go nie ruszamy.
@@ -1035,6 +1039,7 @@ export async function computeOpenPositions(
       dailyChangePct,
       dailyChangeValue: dayChange?.native ?? null,
       dailyChangeValuePln: dayChange?.pln ?? null,
+      dailyChangeSession: dayChange ? quoteSession : undefined,
       category,
       priceManual: priceManual || undefined,
       priceAsOf,

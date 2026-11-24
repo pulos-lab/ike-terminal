@@ -272,6 +272,18 @@ export interface Position {
   dailyChangeValue?: number | null;
   /** To samo w PLN po BIEŻĄCYM kursie (ruch kursu walut nie wchodzi do liczby). */
   dailyChangeValuePln?: number | null;
+  /**
+   * Dzień sesji (YYYY-MM-DD), z której pochodzi zmiana dzienna. Brak pola =
+   * źródło nie podaje czasu notowania i nie było od kogo go przejąć.
+   */
+  dailyChangeSession?: string;
+  /**
+   * true: zmiana dzienna tej pozycji jest ze STARSZEJ sesji niż dzień sesji
+   * portfela (`dayChange.sessionDate`) — rynek pozycji jeszcze tego dnia nie
+   * handlował (USA przed 15:30, święto giełdy, papier bez obrotu). Taka zmiana
+   * NIE wchodzi do `dayChange`; UI pokazuje ją wyciszoną.
+   */
+  dailyChangeStale?: boolean;
   category?: InstrumentCategory;
   buyLots?: OpenBuyLot[];
   /** true when price comes from last transaction, not live market data */
@@ -1108,6 +1120,20 @@ export interface PortfolioDayChange {
   fxIncluded: false;
   /** Są pozycje w walucie innej niż bazowa — UI dopisuje „bez ruchu kursów walut”. */
   hasForeignPositions: boolean;
+  /**
+   * Dzień sesji, którego dotyczy liczba (YYYY-MM-DD) = najświeższa sesja wśród
+   * pozycji. null, gdy żadne źródło nie podało czasu notowania.
+   */
+  sessionDate: string | null;
+  /**
+   * Pozycje ze zmianą znaną, ale z WCZEŚNIEJSZEJ sesji niż `sessionDate` — ich
+   * rynek jeszcze tego dnia nie handlował. Liczą się do `coveredCount` (dane
+   * są), ale ich ruch NIE wchodzi do `change`: przed otwarciem USA byłaby to
+   * wczorajsza sesja doliczona do dzisiejszej GPW.
+   */
+  staleCount: number;
+  /** Tickery takich pozycji (do 20). */
+  staleTickers: string[];
 }
 
 /**

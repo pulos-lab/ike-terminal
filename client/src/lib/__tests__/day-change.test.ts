@@ -13,6 +13,9 @@ const full: PortfolioDayChange = {
   missingTickers: [],
   fxIncluded: false,
   hasForeignPositions: false,
+  sessionDate: '2026-11-09',
+  staleCount: 0,
+  staleTickers: [],
 };
 
 const quotes = (over: Partial<{ asOf: string | null; marketOpen: boolean }> = {}) => ({
@@ -37,6 +40,8 @@ describe('describeDayChange', () => {
       coverageNote: null,
       missingTickers: [],
       fxNote: null,
+      staleNote: null,
+      staleTickers: [],
     });
   });
 
@@ -74,6 +79,20 @@ describe('describeDayChange', () => {
   it('pozycje zagraniczne dostają dopisek o kursach walut', () => {
     const v = describeDayChange({ ...full, hasForeignPositions: true }, quotes(), NOW);
     expect(v?.fxNote).toBe('bez ruchu kursów walut');
+  });
+});
+
+describe('describeDayChange — pozycje bez sesji tego dnia', () => {
+  it('są nazwane osobno i nie udają braku danych', () => {
+    const view = describeDayChange(
+      { ...full, staleCount: 3, staleTickers: ['AAPL', 'NVDA', 'MSFT'] },
+      quotes(),
+      NOW,
+    );
+    expect(view?.staleNote).toBe('bez sesji: 3 z 14');
+    expect(view?.staleTickers).toEqual(['AAPL', 'NVDA', 'MSFT']);
+    // Serwer liczy je jako pokryte — dopisek „bez danych” się nie pojawia.
+    expect(view?.coverageNote).toBeNull();
   });
 });
 

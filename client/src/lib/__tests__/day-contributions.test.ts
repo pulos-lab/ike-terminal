@@ -5,7 +5,12 @@ const pos = (
   ticker: string,
   pln: number | null,
   pct: number | null,
-  over: Partial<{ shares: number; category: 'stock' | 'option'; native: number | null }> = {},
+  over: Partial<{
+    shares: number;
+    category: 'stock' | 'option';
+    native: number | null;
+    stale: string;
+  }> = {},
 ) => ({
   isin: `ISIN_${ticker}`,
   ticker,
@@ -15,6 +20,9 @@ const pos = (
   dailyChangePct: pct,
   dailyChangeValue: over.native === undefined ? pln : over.native,
   dailyChangeValuePln: pln,
+  // `stale` = dzień wcześniejszej sesji, z której pochodzi zmiana tej pozycji.
+  dailyChangeSession: over.stale,
+  dailyChangeStale: over.stale ? true : undefined,
 });
 
 describe('selectDayContributions — kwota', () => {
@@ -74,6 +82,7 @@ describe('selectDayContributions — kwota', () => {
     expect(selectDayContributions([])).toEqual({
       rows: [],
       rest: null,
+      stale: null,
       coveredCount: 0,
       totalCount: 0,
     });
@@ -101,5 +110,52 @@ describe('selectDayContributions — procent', () => {
       { mode: 'pct' },
     );
     expect(r.rows.map((x) => x.ticker)).toEqual(['STOCK']);
+  });
+});
+
+describe('selectDayContributions — pozycje bez sesji tego dnia', () => {
+  const book = [
+    pos('PKN', 300, 1.5),
+    pos('CDR', -100, -0.8),
+    pos('AAPL', 900, 2, { stale: '2026-11-23' }),
+    pos('NVDA', -1200, -3, { stale: '2026-11-23' }),
+  ];
+
+  it('nie trafiają na listę ani do „reszty" — wiersze sumują się do dzisiejszego wyniku', () => {
+    const r = selectDayContributions(book, { limit: 1 });
+    expect(r.rows.map((x) => x.ticker)).toEqual(['PKN', 'CDR']);
+    expect(r.rest).toBeNull();
+    expect(r.rows.reduce((s, x) => s + x.amount, 0)).toBe(200);
+  });
+
+  it('są zebrane osobno: liczba, suma ostatniej sesji, tickery od największego ruchu', () => {
+    const r = selectDayContributions(book);
+    expect(r.stale).toEqual({
+      count: 2,
+      amount: -300,
+      tickers: ['NVDA', 'AAPL'],
+      sessionDate: '2026-11-23',
+    });
+    // Mają dane, więc nie są „bez danych".
+    expect(r.coveredCount).toBe(4);
+  });
+
+  it('ranking procentowy też je pomija, ale nadal o nich mówi', () => {
+    const r = selectDayContributions(book, { mode: 'pct' });
+    expect(r.rows.map((x) => x.ticker)).toEqual(['PKN', 'CDR']);
+    expect(r.stale?.count).toBe(2);
+  });
+
+  it('różne dni ostatniej sesji → bez wspólnej daty', () => {
+    const r = selectDayContributions([
+      pos('PKN', 300, 1.5),
+      pos('AAPL', 900, 2, { stale: '2026-11-23' }),
+      pos('ILLIQ', 5, 0.1, { stale: '2026-11-19' }),
+    ]);
+    expect(r.stale?.sessionDate).toBeNull();
+  });
+
+  it('bez takich pozycji pole jest puste', () => {
+    expect(selectDayContributions([pos('PKN', 300, 1.5)]).stale).toBeNull();
   });
 });

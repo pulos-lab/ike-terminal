@@ -34,6 +34,9 @@ const dayChange = (over: Partial<PortfolioDayChange> = {}): PortfolioDayChange =
   missingTickers: [],
   fxIncluded: false,
   hasForeignPositions: false,
+  sessionDate: null,
+  staleCount: 0,
+  staleTickers: [],
   ...over,
 });
 

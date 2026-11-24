@@ -223,6 +223,9 @@ describe('toPublicPositions', () => {
         missingTickers: [],
         fxIncluded: false as const,
         hasForeignPositions: false,
+        sessionDate: null,
+        staleCount: 0,
+        staleTickers: [],
       },
     };
     for (const showAmounts of [false, true]) {

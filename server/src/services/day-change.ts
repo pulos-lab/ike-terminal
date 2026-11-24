@@ -80,6 +80,75 @@ export function computePositionDayChange(
 /** Ile tickerów bez danych wymieniamy z nazwy — reszta mieści się w liczniku. */
 const MAX_MISSING_TICKERS = 20;
 
+/** Giełdy, których źródła nie podają czasu notowania, a kalendarz dzielą z GPW. */
+const GPW_CALENDAR_EXCHANGES = new Set(['NC', 'CATALYST', 'GPW']);
+
+type DaySessionPosition = Pick<
+  Position,
+  | 'ticker'
+  | 'exchange'
+  | 'dailyChangeValue'
+  | 'dailyChangeValuePln'
+  | 'dailyChangeSession'
+  | 'dailyChangeStale'
+>;
+
+const isCovered = (p: Pick<Position, 'dailyChangeValue' | 'dailyChangeValuePln'>): boolean =>
+  p.dailyChangeValuePln != null && p.dailyChangeValue != null;
+
+/**
+ * Ustala DZIEŃ SESJI portfela i oznacza pozycje, których zmiana dzienna jest
+ * ze starszej sesji (`dailyChangeStale`). Modyfikuje pozycje w miejscu, zwraca
+ * dzień sesji (null, gdy żadne źródło nie podało czasu notowania).
+ *
+ * PO CO: „zmiana dzienna” pozycji to cena − poprzednie zamknięcie z OSTATNIEJ
+ * sesji jej rynku. O 10:00 dla spółki z USA jest to cała wczorajsza sesja —
+ * zsumowana z dzisiejszym ruchem GPW dawała pod etykietą „Dziś” liczbę, która
+ * nie opisuje żadnego dnia. To samo w święto jednej z giełd i dla papieru,
+ * który dziś jeszcze nie miał transakcji.
+ *
+ * REGUŁA: dzień sesji portfela = najświeższa sesja wśród pozycji ze znaną
+ * zmianą. Pozycja z sesją starszą jest „stale”. Żadnego zegara ani kalendarza
+ * giełd — porównujemy wyłącznie daty notowań, więc święta, weekendy i krypto
+ * (sesja także w sobotę) wychodzą same.
+ *
+ * NC i Catalyst (biznesradar, stockwatch, Stooq) czasu notowania nie podają.
+ * Handlują w kalendarzu GPW, więc dziedziczą dzień sesji po najświeższej
+ * pozycji GPW z Yahoo; gdy portfel takiej nie ma, zostają bez daty i zawsze
+ * wchodzą do wyniku (dawne zachowanie — nie mamy czym ich rozróżnić).
+ */
+export function applyDaySessions(positions: DaySessionPosition[]): string | null {
+  let gpwDay: string | null = null;
+  for (const p of positions) {
+    if (p.exchange === 'GPW' && p.dailyChangeSession && isCovered(p)) {
+      if (gpwDay === null || p.dailyChangeSession > gpwDay) gpwDay = p.dailyChangeSession;
+    }
+  }
+
+  let sessionDate: string | null = null;
+  for (const p of positions) {
+    if (!isCovered(p)) continue;
+    const followsGpw = !!p.exchange && GPW_CALENDAR_EXCHANGES.has(p.exchange);
+    if (!p.dailyChangeSession && gpwDay && followsGpw) {
+      p.dailyChangeSession = gpwDay;
+    }
+    if (p.dailyChangeSession && (sessionDate === null || p.dailyChangeSession > sessionDate)) {
+      sessionDate = p.dailyChangeSession;
+    }
+  }
+
+  for (const p of positions) {
+    const stale =
+      sessionDate !== null &&
+      isCovered(p) &&
+      !!p.dailyChangeSession &&
+      p.dailyChangeSession < sessionDate;
+    if (stale) p.dailyChangeStale = true;
+    else delete p.dailyChangeStale;
+  }
+  return sessionDate;
+}
+
 /**
  * Dzienna zmiana portfela = suma zmian pozycji.
  *
@@ -92,11 +161,19 @@ const MAX_MISSING_TICKERS = 20;
  * wewnętrznej, GPW z zapasowego źródła) liczy się do `totalCount`, nie do
  * `coveredCount`. Bez tego portfel z dużym udziałem NewConnect pokazywałby
  * zmianę policzoną z połowy pozycji bez żadnej wskazówki, że jest niepełna.
+ *
+ * Pozycje `dailyChangeStale` (patrz `applyDaySessions`) mają dane, więc są
+ * „pokryte”, ale ich ruch jest z wcześniejszej sesji i do sumy NIE wchodzi —
+ * tego dnia ich wkład to zero. Liczone osobno w `staleCount`.
  */
 export function summarizeDayChange(
-  positions: Pick<Position, 'ticker' | 'currency' | 'dailyChangeValue' | 'dailyChangeValuePln'>[],
+  positions: Pick<
+    Position,
+    'ticker' | 'currency' | 'dailyChangeValue' | 'dailyChangeValuePln' | 'dailyChangeStale'
+  >[],
   totalValuePln: number,
   baseCurrency: string,
+  sessionDate: string | null = null,
 ): PortfolioDayChange | null {
   if (positions.length === 0) return null;
 
@@ -104,7 +181,9 @@ export function summarizeDayChange(
   let changePln = 0;
   let changeNative = 0;
   let coveredCount = 0;
+  let staleCount = 0;
   const missingTickers: string[] = [];
+  const staleTickers: string[] = [];
   let hasForeignPositions = false;
 
   for (const p of positions) {
@@ -114,22 +193,28 @@ export function summarizeDayChange(
       continue;
     }
     coveredCount++;
+    if (p.dailyChangeStale) {
+      staleCount++;
+      if (staleTickers.length < MAX_MISSING_TICKERS) staleTickers.push(p.ticker);
+      continue;
+    }
     changePln += p.dailyChangeValuePln;
     changeNative += p.dailyChangeValue;
   }
 
-  if (coveredCount === 0) {
-    return {
-      change: null,
-      changePct: null,
-      currency: base,
-      coveredCount,
-      totalCount: positions.length,
-      missingTickers,
-      fxIncluded: false,
-      hasForeignPositions,
-    };
-  }
+  const shared = {
+    currency: base,
+    coveredCount,
+    totalCount: positions.length,
+    missingTickers,
+    fxIncluded: false as const,
+    hasForeignPositions,
+    sessionDate,
+    staleCount,
+    staleTickers,
+  };
+
+  if (coveredCount === 0) return { change: null, changePct: null, ...shared };
 
   // Portfel w walucie innej niż PLN pokazuje wartości natywne pozycji (tak jak
   // tabela Portfela) — kwota idzie z sumy natywnej, procent z PLN (jest
@@ -138,12 +223,7 @@ export function summarizeDayChange(
   return {
     change: base === 'PLN' ? changePln : changeNative,
     changePct: previousValuePln > 0 ? (changePln / previousValuePln) * 100 : null,
-    currency: base,
-    coveredCount,
-    totalCount: positions.length,
-    missingTickers,
-    fxIncluded: false,
-    hasForeignPositions,
+    ...shared,
   };
 }
 

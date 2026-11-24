@@ -227,6 +227,9 @@ function DayChangeSlot({
           {view.coverageNote && view.amount !== null && (
             <span className="text-[10px] text-muted-foreground">· {view.coverageNote}</span>
           )}
+          {view.staleNote && view.amount !== null && (
+            <span className="text-[10px] text-muted-foreground">· {view.staleNote}</span>
+          )}
         </>
       }
     >
@@ -245,6 +248,14 @@ function DayChangeSlot({
             Bez danych o zmianie dziennej ({view.coverageNote.replace('bez danych: ', '')}):{' '}
             {view.missingTickers.join(', ')}
             {view.missingTickers.length > 0 ? '.' : ''} Ich ruch nie jest w tej liczbie.
+          </p>
+        )}
+        {view.staleNote && (
+          <p className="text-muted-foreground">
+            {view.label === 'Dziś' ? 'Jeszcze bez dzisiejszej sesji' : 'Bez notowań z tej sesji'} (
+            {view.staleNote.replace('bez sesji: ', '')}): {view.staleTickers.join(', ')}
+            {view.staleTickers.length > 0 ? '.' : ''} Ich ostatni ruch jest z wcześniejszego dnia,
+            więc nie jest w tej liczbie.
           </p>
         )}
         {quotes && (
