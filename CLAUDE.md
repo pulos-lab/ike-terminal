@@ -36,6 +36,12 @@ Kod ma wykorzystywać najnowsze wzorce projektowe, być odpowiednio opisany i st
 
 Strony publiczne (bez logowania): Landing (`/`), Login, VerifyOTP, ForgotPassword, Udostępniony portfel (`/share/:token`).
 
+## Panel „Dziś w portfelu" (dashboard, `TodayPanel.tsx`)
+- Wynik dnia + wkład pozycji (`lib/day-contributions.ts`): kwoty w walucie BAZOWEJ, liczone jak suma w `summarizeDayChange`, żeby wiersze i „Reszta" dodawały się do nagłówka; ranking kwotowy po wartości bezwzględnej, procentowy bez opcji i shortów
+- Ciekawostka historyczna (`lib/day-fact.ts`): dzisiejszy wynik z kursów live na tle dziennych stóp TWR. **Historia ma punkt na każdy dzień kalendarzowy, a dzisiejszy bywa kopią poprzedniej sesji** — sesją jest tylko dzień z ruchem indeksu, a punkty od dnia sesji wzwyż odpadają. Kolejność faktów: miejsce w rankingu → „najlepszy od" → seria → percentyl; poniżej 60 sesji linijka milczy, w trakcie sesji dostaje „Na razie"
+- Benchmark dnia: `GET /api/prices/benchmark-day` (`services/benchmark-day.ts`, notowanie live z Yahoo — z historii wykresu wziąć się go nie da z powodu wyżej). Klient pokazuje porównanie tylko, gdy notowanie indeksu jest z TEGO SAMEGO dnia co sesja portfela (rano S&P niesie jeszcze wczorajszą zmianę)
+- Wydarzenia (`lib/portfolio-events.ts`): `upcomingEarnings` z `/positions` + `/dividends/upcoming`, okno 30 dni, jeden wiersz na dywidendę (odcięcie, a po nim wypłata)
+
 ## Udostępnianie portfela (publiczny link)
 - Ikona Share2 na dashboardzie → `ShareDialog`: zakres (wykres / wykres+pozycje), widoczność kwot (tylko % / pełne kwoty), ważność (bezterminowo/7/30/90 dni), benchmark (zablokowany w widoku publicznym)
 - Jeden aktywny link per portfel (UNIQUE w `portfolio_shares` w auth.db); token 192-bit base64url; unieważnienie = hard delete, natychmiastowe

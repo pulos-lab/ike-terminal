@@ -19,6 +19,7 @@ import { extractFxExchanges } from '../services/portfolio-engine.js';
 import { crossRateSeries } from '../services/fx-cross-rate.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { mapWithConcurrency } from '../services/concurrency.js';
+import { getBenchmarkDayChange, isBenchmarkKey } from '../services/benchmark-day.js';
 
 const router = Router();
 
@@ -81,6 +82,21 @@ router.get(
       timestamp: new Date().toISOString(),
     };
     res.json(payload);
+  }),
+);
+
+// GET /api/prices/benchmark-day?benchmark=sp500 — dzisiejsza zmiana indeksu do
+// porównania z wynikiem dnia portfela. Nie zależy od portfela (indeks jest jeden
+// dla wszystkich), a nieznany klucz to 400, nie „brak danych".
+router.get(
+  '/benchmark-day',
+  asyncHandler(async (req, res) => {
+    const benchmark = req.query.benchmark;
+    if (!isBenchmarkKey(benchmark)) {
+      res.status(400).json({ error: 'Nieznany benchmark' });
+      return;
+    }
+    res.json(await getBenchmarkDayChange(benchmark));
   }),
 );
 

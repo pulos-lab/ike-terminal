@@ -228,6 +228,10 @@ export const api = {
         method: 'POST',
       },
     ),
+  getBenchmarkDay: (benchmark: string) =>
+    request<import('shared').BenchmarkDayChange>(
+      `/prices/benchmark-day?benchmark=${encodeURIComponent(benchmark)}`,
+    ),
   getUpcomingDividends: () =>
     request<{ upcoming: import('shared').UpcomingDividend[] }>('/portfolio/dividends/upcoming'),
   postRiskReturn: (tickers: string[]) =>

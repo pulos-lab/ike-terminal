@@ -38,7 +38,7 @@ import { ComparisonChart, type BenchmarkLine } from './ComparisonChart';
 import { ComparePortfolioPicker } from './ComparePortfolioPicker';
 import { CombinedStatsSection, type CombinedPortfolioSummary } from './CombinedStatsSection';
 import { PerformanceStats } from './PerformanceStats';
-import { TopMovers } from './TopMovers';
+import { TodayPanel } from './TodayPanel';
 import { HeroKPI } from './HeroKPI';
 import { GettingStartedCard } from './GettingStartedCard';
 import { DrawdownChart } from './DrawdownChart';
@@ -757,8 +757,11 @@ export function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Wzrosty i spadki dnia dotyczą jednego portfela — w porównaniu schodzą ze sceny. */}
-      {!compareMode && <TopMovers />}
+      {/* Wynik dnia dotyczy jednego portfela — w porównaniu schodzi ze sceny. Dostaje PEŁNĄ
+          historię, nie przyciętą do zakresu wykresu: tłem ciekawostki są wszystkie sesje. */}
+      {!compareMode && (
+        <TodayPanel history={data?.history} benchmark={benchmark} benchmarkLabel={benchmarkLabel} />
+      )}
 
       {/* W trybie porównania warunek rozluźniony: statystyki/drawdown renderują się,
           gdy KTÓRAKOLWIEK seria ma dane (nawet jeśli aktywny jest „krótki" w zakresie). */}
