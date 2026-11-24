@@ -154,7 +154,7 @@ export function TodayPanel({ history, benchmark, benchmarkLabel }: TodayPanelPro
               {signed(dayView.amount, dayView.currency)}
             </span>
             {dayView.pct !== null && (
-              <span className={cn('text-sm font-semibold', plColor(dayView.pct))}>
+              <span className={cn('text-lg font-semibold tracking-tight', plColor(dayView.pct))}>
                 {formatPercent(dayView.pct)}
               </span>
             )}
@@ -205,7 +205,9 @@ export function TodayPanel({ history, benchmark, benchmarkLabel }: TodayPanelPro
                       <span className="font-medium md:text-right">
                         {signed(contributions.rest.amount, baseCurrency)}
                       </span>
-                      <span className="text-xs md:text-right">{contributions.rest.count} poz.</span>
+                      <span className="text-xs md:text-right md:text-sm">
+                        {contributions.rest.count} poz.
+                      </span>
                     </span>
                   </li>
                 )}
@@ -251,6 +253,13 @@ function signed(amount: number, currency: string): string {
 const ROW_GRID =
   'grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-center gap-x-3 text-sm md:grid-cols-[5.5rem_minmax(0,1fr)_7rem_4rem]';
 const VALUE_CELL = 'flex flex-col items-end leading-tight tabular-nums md:contents';
+/** Procent, którego źródło nie podało („—”) — bez koloru kierunku. */
+const MISSING = 'text-xs text-muted-foreground md:text-sm';
+
+/** Kolor kierunku o stopień cichszy niż `plColor` — dla miary drugoplanowej. */
+function softPlColor(value: number): string {
+  return value >= 0 ? 'text-gain/80' : 'text-loss/80';
+}
 
 function Bar({ share, className }: { share: number; className: string }) {
   return (
@@ -273,8 +282,11 @@ function ContributionRow({
   currency: string;
 }) {
   const direction = mode === 'value' ? row.amount : (row.pct ?? 0);
+  // Obie miary tym samym krojem, rozmiarem i kolorem kierunku — różni je tylko
+  // waga i nasycenie. Szary, mniejszy procent obok zielonej kwoty wyglądał jak
+  // dopisek z innego zestawu liczb.
   const emphasis = cn('font-semibold', plColor(direction));
-  const quiet = 'text-xs text-muted-foreground';
+  const quiet = cn('text-xs font-medium md:text-sm', softPlColor(direction));
   return (
     <li className={ROW_GRID}>
       {row.linkable ? (
@@ -297,7 +309,12 @@ function ContributionRow({
         <span className={cn('md:text-right', mode === 'value' ? emphasis : quiet)}>
           {signed(row.amount, currency)}
         </span>
-        <span className={cn('md:text-right', mode === 'pct' ? emphasis : quiet)}>
+        <span
+          className={cn(
+            'md:text-right',
+            row.pct === null ? MISSING : mode === 'pct' ? emphasis : quiet,
+          )}
+        >
           {formatPercent(row.pct)}
         </span>
       </span>
